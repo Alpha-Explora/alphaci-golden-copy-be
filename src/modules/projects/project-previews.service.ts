@@ -32,7 +32,12 @@ export class ProjectPreviewsService {
     userId: string,
   ): Promise<ProjectPreviewsResponse> {
     if (!this.enabled()) {
-      return { enabled: false, liveProvidersEnabled: false, branches: [] };
+      return {
+        enabled: false,
+        liveProvidersEnabled: false,
+        branches: [],
+        providerError: null,
+      };
     }
 
     const history = await this.deploymentsService.listDeployments(
@@ -51,6 +56,7 @@ export class ProjectPreviewsService {
       // Production first, then the most recently deployed branch, so the
       // branch someone just pushed surfaces near the top.
       branches: branches.sort(comparePreviews),
+      providerError: history.providerError,
     };
   }
 

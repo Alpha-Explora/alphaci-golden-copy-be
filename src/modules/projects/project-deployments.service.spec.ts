@@ -54,6 +54,7 @@ describe('ProjectDeploymentsService', () => {
       mode: 'local_mock',
       liveProvidersEnabled: false,
       deployments: [],
+      providerError: null,
     });
 
     expect(provider.listDeployments).toHaveBeenCalledWith([]);
@@ -301,6 +302,131 @@ describe('ProjectDeploymentsService', () => {
           },
         ],
       });
+    });
+
+    /* The three outcomes have to stay distinguishable. Collapsing a provider
+     * outage into local_mock told the reader "no provider integration is
+     * connected yet" about an integration that was connected and failing,
+     * which sends people to reconnect something that is not broken. */
+    it('reports unavailable, not simulated data, when every provider call fails', async () => {
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([
+        {
+          id: 'target-render',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerProjectId: 'srv-1',
+          providerProjectName: 'orders-api-test',
+          branchName: 'test',
+          renderEnvironmentName: 'test',
+          providerMetadata: {},
+        },
+      ]);
+      configService.getOrThrow.mockReturnValue({
+        deploymentHistory: { enabled: true, liveProvidersEnabled: true },
+        envProvisioning: { flowciManaged: { renderToken: 'rnd_secret' } },
+      });
+      renderClient.getDeployHistory.mockRejectedValueOnce(
+        new Error('Render API is unavailable'),
+      );
+
+      const result = await createLiveService().listDeployments(
+        'project-1',
+        'user-1',
+      );
+
+      expect(result.mode).toBe('unavailable');
+      expect(result.deployments).toEqual([]);
+      expect(result.providerError).toContain('Render');
+      // The fixture feed must not stand in for a failed provider.
+      expect(provider.listDeployments).not.toHaveBeenCalled();
+    });
+
+    it('keeps the successful half and still flags the failure', async () => {
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([
+        {
+          id: 'target-render',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerProjectId: 'srv-1',
+          providerProjectName: 'orders-api-test',
+          branchName: 'test',
+          renderEnvironmentName: 'test',
+          providerMetadata: {},
+        },
+        {
+          id: 'target-render-2',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerProjectId: 'srv-2',
+          providerProjectName: 'orders-api-main',
+          branchName: 'main',
+          renderEnvironmentName: 'production',
+          providerMetadata: {},
+        },
+      ]);
+      configService.getOrThrow.mockReturnValue({
+        deploymentHistory: { enabled: true, liveProvidersEnabled: true },
+        envProvisioning: { flowciManaged: { renderToken: 'rnd_secret' } },
+      });
+      renderClient.getDeployHistory
+        .mockResolvedValueOnce([
+          {
+            id: 'dep-1',
+            status: 'live',
+            createdAt: '2026-07-12T11:45:00.000Z',
+            readyAt: null,
+            commitSha: null,
+            commitMessage: null,
+            trigger: null,
+            deploymentUrl: null,
+            environment: null,
+            pullRequestNumber: null,
+            commitRef: null,
+            inspectorUrl: null,
+          },
+        ])
+        .mockRejectedValueOnce(new Error('rate limited'));
+
+      const result = await createLiveService().listDeployments(
+        'project-1',
+        'user-1',
+      );
+
+      expect(result.mode).toBe('live');
+      expect(result.deployments).toHaveLength(1);
+      expect(result.providerError).toContain('Render');
+    });
+
+    /* A connected target with genuinely nothing deployed is a real answer.
+     * Treating it as "no live data" let the fixture feed render as if real. */
+    it('stays live when the provider answers with an empty list', async () => {
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([
+        {
+          id: 'target-render',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerProjectId: 'srv-1',
+          providerProjectName: 'orders-api-test',
+          branchName: 'test',
+          renderEnvironmentName: 'test',
+          providerMetadata: {},
+        },
+      ]);
+      configService.getOrThrow.mockReturnValue({
+        deploymentHistory: { enabled: true, liveProvidersEnabled: true },
+        envProvisioning: { flowciManaged: { renderToken: 'rnd_secret' } },
+      });
+      renderClient.getDeployHistory.mockResolvedValueOnce([]);
+
+      const result = await createLiveService().listDeployments(
+        'project-1',
+        'user-1',
+      );
+
+      expect(result.mode).toBe('live');
+      expect(result.deployments).toEqual([]);
+      expect(result.providerError).toBeNull();
+      expect(provider.listDeployments).not.toHaveBeenCalled();
     });
 
     it('falls back to local mock when no target has a resolvable live connection', async () => {
