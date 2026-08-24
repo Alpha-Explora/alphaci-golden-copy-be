@@ -2126,25 +2126,27 @@ export class ProjectsService {
     provisioningOwnerLogin: string | undefined;
   }> {
     // When the deployment enforces a destination org, every repository is
-    // created there regardless of the request's ownerType/installationId. The
-    // org repo is created with the user's OAuth token (GitHub forbids a
-    // server-to-server installation token from creating org repos), while the
-    // enforced org's installation token drives downstream provisioning.
+    // created there regardless of the request's ownerType/installationId, and
+    // the org's own GitHub App installation token does the creating.
+    //
+    // This used to use the signed-in user's OAuth token, on the belief that
+    // GitHub forbids a server-to-server installation token from creating org
+    // repositories. It does not: POST /orgs/{org}/repos is available to a
+    // GitHub App holding organization `administration: write`. Going through
+    // the App instead removes three failure modes that had nothing to do with
+    // the product — an OAuth App unapproved under the org's third-party access
+    // policy, a signed-in user who is not a member of the enforced org, and a
+    // session minted before the current GITHUB_SCOPE — each of which surfaced
+    // as an unexplained 403 at repository creation.
     const enforcedOrg = this.githubService.getEnforcedOrg();
     if (enforcedOrg) {
-      if (!oauthAccessToken) {
-        throw new UnauthorizedException(
-          `A GitHub OAuth token with the repo scope is required to create a repository in the ${enforcedOrg} organization. Sign out and sign back in with GitHub.`,
-        );
-      }
-
       const context =
         await this.githubService.getOrganizationProvisioningContextByLogin(
           enforcedOrg,
         );
 
       return {
-        repositoryCreationToken: oauthAccessToken,
+        repositoryCreationToken: context.accessToken,
         provisioningToken: context.accessToken,
         provisioningOwnerLogin: context.ownerLogin,
       };
@@ -2158,23 +2160,18 @@ export class ProjectsService {
           'installationId is required when creating a repository in an organization.',
         );
       }
-      if (!oauthAccessToken) {
-        throw new UnauthorizedException(
-          'A GitHub OAuth token with the repo scope is required to create a repository in an organization. Sign out and sign back in with GitHub.',
-        );
-      }
 
       const context =
         await this.githubService.getOrganizationProvisioningContext(
           userId,
           dto.installationId,
         );
-      // GitHub does not allow a server-to-server installation token to create
-      // an organization repository. Use the signed-in user's OAuth token for
-      // POST /orgs/{org}/repos, then use the selected installation token for
-      // repository contents, branches, secrets, and protection settings.
+      // Same reasoning as the enforced-org branch above: the selected
+      // installation creates the repository as well as provisioning it. Fixed
+      // together so the corrected premise cannot survive in one branch and not
+      // the other.
       return {
-        repositoryCreationToken: oauthAccessToken,
+        repositoryCreationToken: context.accessToken,
         provisioningToken: context.accessToken,
         provisioningOwnerLogin: context.ownerLogin,
       };
