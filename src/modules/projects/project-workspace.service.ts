@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -53,6 +54,8 @@ export interface ProjectJobLogResponse {
  */
 @Injectable()
 export class ProjectWorkspaceService {
+  private readonly logger = new Logger(ProjectWorkspaceService.name);
+
   constructor(
     private readonly projectsRepository: ProjectsRepository,
     private readonly githubService: GithubService,
@@ -241,13 +244,22 @@ export class ProjectWorkspaceService {
     // The installation token is preferred over the caller's OAuth token: it is
     // scoped to the repository rather than to everything the person can reach,
     // and it keeps working when their OAuth grant lapses.
-    const installationToken =
-      await this.githubService.getInstallationAccessTokenForUserRepo(
+    //
+    // The enforced org is resolved first and app-to-org, because the per-user
+    // lookup below reads github_app.github_installations — a table populated
+    // by this product's own linking flow and by `installation` webhooks. An
+    // App installed directly on GitHub is real to GitHub and absent from that
+    // table, so the per-user lookup returned null, every read fell through to
+    // OAuth, and each workspace tab reported the repository as unreadable
+    // while the project itself had provisioned fine.
+    const token =
+      (await this.enforcedOrgToken(row.repo_full_name)) ??
+      (await this.githubService.getInstallationAccessTokenForUserRepo(
         userId,
         row.repo_full_name,
-      );
+      )) ??
+      oauthToken;
 
-    const token = installationToken ?? oauthToken;
     if (!token) {
       throw new UnauthorizedException(
         'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
@@ -255,6 +267,40 @@ export class ProjectWorkspaceService {
     }
 
     return { repoFullName: row.repo_full_name, token };
+  }
+
+  /**
+   * Installation token for the enforced org, resolved straight from GitHub.
+   *
+   * Returns null when no org is enforced or the repository belongs to a
+   * different owner, so a repository outside the enforced org still resolves
+   * through the per-user installation and then OAuth. A failure here is also
+   * null rather than a throw: the remaining strategies may still succeed, and
+   * an unreachable App should not turn a readable repository into an error.
+   */
+  private async enforcedOrgToken(repoFullName: string): Promise<string | null> {
+    const enforcedOrg = this.githubService.getEnforcedOrg();
+    if (!enforcedOrg) {
+      return null;
+    }
+
+    const owner = repoFullName.split('/')[0];
+    if (owner?.toLowerCase() !== enforcedOrg.toLowerCase()) {
+      return null;
+    }
+
+    try {
+      const context =
+        await this.githubService.getOrganizationProvisioningContextByLogin(
+          enforcedOrg,
+        );
+      return context.accessToken;
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve the ${enforcedOrg} installation for ${repoFullName}: ${(error as Error).message}`,
+      );
+      return null;
+    }
   }
 
   /**
