@@ -147,9 +147,15 @@ export interface DeploymentProvisioningResult {
     dockerContext?: string | null;
     dockerfilePath?: string | null;
     imageUrl?: string | null;
+    /**
+     * Branch this target tracks. Needed by the cross-link pass, which has to
+     * name the branch to write a preview-lane variable or build a preview URL.
+     */
+    branchName?: string | null;
     errorSummary: string | null;
     env: Array<{
-      environment: 'test' | 'uat' | 'production';
+      lane: 'production' | 'preview';
+      gitBranch: string | null;
       provisioned: Array<{ key: string; status: 'provisioned' }>;
       failed: Array<{ key: string; status: 'failed'; errorSummary: string }>;
     }>;

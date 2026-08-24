@@ -47,7 +47,10 @@ describe('LocalDeploymentHistoryProvider', () => {
         targetId: 'target-vercel',
         provider: 'vercel',
         status: 'ready',
-        providerUrl: 'https://vercel.com/flowci-team/orders-web',
+        deploymentUrl: 'https://orders-web.vercel.app',
+        pullRequestNumber: null,
+        inspectorUrl: null,
+        dashboardUrl: 'https://vercel.com/flowci-team/orders-web',
         consoleUrl: 'https://vercel.com/flowci-team/orders-web/deployments',
       }),
     ]);

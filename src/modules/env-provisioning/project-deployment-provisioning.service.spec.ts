@@ -19,6 +19,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       provider: 'render',
       providerProjectId: 'srv-1',
       providerProjectName: 'orders-api-test',
+      branchName: 'uat',
     });
     envVarsService.provisionEnvVars.mockResolvedValue({
       provisioned: [{ key: 'DATABASE_URL', status: 'provisioned' }],
@@ -59,7 +60,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             renderRuntime: 'python',
             env: [
               {
-                environment: 'uat',
+                lane: 'preview' as const,
                 vars: [{ key: 'DATABASE_URL', value: 'postgres://secret' }],
               },
             ],
@@ -85,7 +86,8 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-1',
-        environment: 'uat',
+        lane: 'preview',
+        gitBranch: 'uat',
         vars: [{ key: 'DATABASE_URL', value: 'postgres://secret' }],
       },
     );
@@ -113,7 +115,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             appliesTo: 'all',
             env: [
               {
-                environment: 'uat',
+                lane: 'preview' as const,
                 vars: [
                   { key: 'API_URL', value: 'https://shared.example.com' },
                   { key: 'LOG_LEVEL', value: 'debug' },
@@ -131,7 +133,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             branchName: 'uat',
             env: [
               {
-                environment: 'uat',
+                lane: 'preview' as const,
                 vars: [{ key: 'API_URL', value: 'https://branch.example.com' }],
               },
             ],
@@ -145,7 +147,8 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-1',
-        environment: 'uat',
+        lane: 'preview',
+        gitBranch: 'uat',
         vars: [
           { key: 'API_URL', value: 'https://branch.example.com' },
           { key: 'LOG_LEVEL', value: 'debug' },
@@ -161,18 +164,21 @@ describe('ProjectDeploymentProvisioningService', () => {
         provider: 'render',
         providerProjectId: 'srv-1',
         providerProjectName: 'orders-api-uat',
+        branchName: 'uat',
       })
       .mockResolvedValueOnce({
         id: 'target-backend-main',
         provider: 'render',
         providerProjectId: 'srv-2',
         providerProjectName: 'orders-api-main',
+        branchName: 'main',
       })
       .mockResolvedValueOnce({
         id: 'target-frontend',
         provider: 'vercel',
         providerProjectId: 'prj_1',
         providerProjectName: 'orders-web-test',
+        branchName: 'uat',
       });
     const service = new ProjectDeploymentProvisioningService(
       deploymentTargetsService as never,
@@ -194,7 +200,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             targetBranches: ['frontend:vercel:uat'],
             env: [
               {
-                environment: 'uat',
+                lane: 'preview' as const,
                 vars: [
                   {
                     key: 'NEXT_PUBLIC_API_URL',
@@ -232,7 +238,8 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-frontend',
-        environment: 'uat',
+        lane: 'preview',
+        gitBranch: 'uat',
         vars: [
           {
             key: 'NEXT_PUBLIC_API_URL',
@@ -408,6 +415,9 @@ describe('ProjectDeploymentProvisioningService', () => {
               providerProjectId: 'prj_123',
               providerProjectName: 'demo-frontend',
               deploymentStrategy: 'vercel_git_connected',
+              // NOT NULL in the database, so a real summary always carries it;
+              // the cross-link pass needs it to name a preview branch.
+              branchName: 'uat',
               providerMetadata: {},
             });
           }
@@ -417,6 +427,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             providerProjectId: `srv-${dto.projectName}`,
             providerProjectName: dto.projectName,
             deploymentStrategy: 'render_git_connected',
+            branchName: dto.projectName?.endsWith('-main') ? 'main' : 'uat',
             renderEnvironmentName: dto.projectName?.endsWith('-main')
               ? 'production'
               : 'uat',
@@ -468,7 +479,8 @@ describe('ProjectDeploymentProvisioningService', () => {
         'user-1',
         {
           deploymentTargetId: 'render-demo-backend-uat',
-          environment: 'uat',
+          lane: 'preview',
+          gitBranch: 'uat',
           vars: [
             { key: 'FRONTEND_URL', value: 'https://demo-frontend.vercel.app' },
             { key: 'CORS_ORIGINS', value: 'https://demo-frontend.vercel.app' },
@@ -480,7 +492,8 @@ describe('ProjectDeploymentProvisioningService', () => {
         'user-1',
         {
           deploymentTargetId: 'render-demo-backend-main',
-          environment: 'production',
+          lane: 'production',
+          gitBranch: null,
           vars: [
             { key: 'FRONTEND_URL', value: 'https://demo-frontend.vercel.app' },
             { key: 'CORS_ORIGINS', value: 'https://demo-frontend.vercel.app' },
@@ -495,7 +508,8 @@ describe('ProjectDeploymentProvisioningService', () => {
         'user-1',
         {
           deploymentTargetId: 'vercel-target',
-          environment: 'uat',
+          lane: 'preview',
+          gitBranch: 'uat',
           vars: [
             {
               key: 'NEXT_PUBLIC_API_URL',
@@ -513,7 +527,8 @@ describe('ProjectDeploymentProvisioningService', () => {
         'user-1',
         {
           deploymentTargetId: 'vercel-target',
-          environment: 'production',
+          lane: 'production',
+          gitBranch: null,
           vars: [
             {
               key: 'NEXT_PUBLIC_API_URL',
@@ -544,7 +559,7 @@ describe('ProjectDeploymentProvisioningService', () => {
           ...fullStackRequest(),
           sharedEnv: [
             {
-              environment: 'uat',
+              lane: 'preview' as const,
               vars: [{ key: 'CORS_ORIGINS', value: 'https://my-own.example' }],
             },
           ],
@@ -557,12 +572,14 @@ describe('ProjectDeploymentProvisioningService', () => {
           string,
           {
             deploymentTargetId: string;
-            environment: string;
+            lane: string;
+            gitBranch: string | null;
             vars: Array<{ key: string }>;
           },
         ]) =>
           dto.deploymentTargetId === 'render-demo-backend-uat' &&
-          dto.environment === 'uat',
+          dto.lane === 'preview' &&
+          dto.gitBranch === 'uat',
       );
       const sentVars = uatBackendCalls.flatMap(
         ([, , dto]: [
@@ -603,6 +620,7 @@ describe('ProjectDeploymentProvisioningService', () => {
           renderServiceUrl: 'https://demo-backend-main.onrender.com',
         },
         renderEnvironmentName: 'production' as const,
+        branchName: 'main',
         errorSummary: null,
         env: [],
       };
@@ -616,6 +634,7 @@ describe('ProjectDeploymentProvisioningService', () => {
         providerProjectId: 'prj_fe',
         providerProjectName: 'demo-frontend',
         providerMetadata: {},
+        branchName: 'main',
         errorSummary: null,
         env: [],
       };
@@ -640,7 +659,8 @@ describe('ProjectDeploymentProvisioningService', () => {
         'user-1',
         {
           deploymentTargetId: 'render-be',
-          environment: 'production',
+          lane: 'production',
+          gitBranch: null,
           vars: [
             { key: 'FRONTEND_URL', value: 'https://demo-frontend.vercel.app' },
             { key: 'CORS_ORIGINS', value: 'https://demo-frontend.vercel.app' },
@@ -652,7 +672,8 @@ describe('ProjectDeploymentProvisioningService', () => {
         'user-1',
         {
           deploymentTargetId: 'vercel-fe',
-          environment: 'production',
+          lane: 'production',
+          gitBranch: null,
           vars: [
             {
               key: 'NEXT_PUBLIC_API_URL',

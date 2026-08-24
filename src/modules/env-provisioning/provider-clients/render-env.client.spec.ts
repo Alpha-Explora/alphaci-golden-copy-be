@@ -93,7 +93,8 @@ describe('RenderEnvClient', () => {
     await client.upsertEnvironmentVariables({
       token: 'rnd',
       targetId: 'srv-1',
-      environment: 'test',
+      lane: 'preview',
+      gitBranch: 'feat/x',
       vars: [{ key: 'DATABASE_URL', value: 'new' }],
     });
 
@@ -130,7 +131,8 @@ describe('RenderEnvClient', () => {
       client.deleteEnvironmentVariable({
         token: 'rnd',
         targetId: 'srv-1',
-        environment: 'test',
+        lane: 'preview',
+        gitBranch: 'feat/x',
         key: 'DATABASE_URL',
       }),
     ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
@@ -683,6 +685,14 @@ describe('RenderEnvClient', () => {
           commitSha: 'ea73844',
           commitMessage: 'feat: add logs endpoint',
           trigger: 'auto_deploy',
+          // Render serves every deploy from one stable service URL and
+          // reports no lane, PR, or per-deploy console link, so callers fall
+          // back to what the target knows.
+          deploymentUrl: null,
+          environment: null,
+          pullRequestNumber: null,
+          commitRef: null,
+          inspectorUrl: null,
         },
         {
           id: 'dep-1',
@@ -692,6 +702,11 @@ describe('RenderEnvClient', () => {
           commitSha: null,
           commitMessage: null,
           trigger: null,
+          deploymentUrl: null,
+          environment: null,
+          pullRequestNumber: null,
+          commitRef: null,
+          inspectorUrl: null,
         },
       ]);
       expect(fetch).toHaveBeenCalledWith(

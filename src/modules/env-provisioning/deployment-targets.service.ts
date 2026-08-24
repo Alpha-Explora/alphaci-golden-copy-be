@@ -27,6 +27,7 @@ import type {
 } from './env-provisioning.types';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
+import { providerPublicUrl } from './provider-public-url';
 import { RenderCostPolicyService } from './render-cost-policy.service';
 import { UsageQuotaService } from '../usage/usage-quota.service';
 import type { UsageLimitCode } from '../usage/usage.types';
@@ -75,34 +76,9 @@ export class DeploymentTargetsService {
     // dashboard, so the UI never has to re-derive provider URL conventions.
     return targets.map((target) => ({
       ...target,
-      publicUrl: this.targetPublicUrl(target),
+      publicUrl: providerPublicUrl(target),
       dashboardUrl: this.providerDashboardUrl(target),
     }));
-  }
-
-  /**
-   * The public URL the deployed service answers on. Prefers the URL the
-   * provider returned at creation (Render stores it in providerMetadata);
-   * falls back to each provider's deterministic naming convention.
-   */
-  private targetPublicUrl(target: DeploymentTargetSummary): string | null {
-    if (target.provider === 'render') {
-      const metadataUrl = target.providerMetadata?.['renderServiceUrl'];
-      if (typeof metadataUrl === 'string' && metadataUrl.trim()) {
-        return metadataUrl.trim();
-      }
-      return target.providerProjectName
-        ? `https://${target.providerProjectName}.onrender.com`
-        : null;
-    }
-
-    if (target.provider === 'vercel') {
-      return target.providerProjectName
-        ? `https://${target.providerProjectName}.vercel.app`
-        : null;
-    }
-
-    return null;
   }
 
   async createDeploymentTarget(

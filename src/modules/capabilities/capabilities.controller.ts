@@ -55,6 +55,15 @@ export class CapabilitiesController {
           config.deploymentHistory.liveProvidersEnabled,
         mode: 'local_mock' as const,
       },
+      previewDeployments: {
+        // Previews read the provider history, so the flag alone is not enough
+        // — without deployment history there is nothing to group by branch.
+        enabled:
+          config.previewDeployments.enabled && config.deploymentHistory.enabled,
+        // Per-branch previews come from the provider's own preview lane, which
+        // only Vercel reports today.
+        providers: ['vercel'] as const,
+      },
       driftDetection: {
         enabled: config.driftDetection.enabled,
         liveProviderChecksEnabled:

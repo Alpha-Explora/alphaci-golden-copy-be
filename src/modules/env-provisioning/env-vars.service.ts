@@ -15,9 +15,10 @@ import { EnvTokenEncryptionService } from './encryption.service';
 import { EnvVarsRepository } from './env-vars.repository';
 import type {
   DeploymentTargetSummary,
-  EnvEnvironment,
+  EnvLane,
   EnvProvider,
   EnvVarInput,
+  EnvVarScope,
 } from './env-provisioning.types';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
@@ -25,13 +26,20 @@ import { UsageQuotaService } from '../usage/usage-quota.service';
 import type { UsageLimitCode } from '../usage/usage.types';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 
-const ENVIRONMENTS: EnvEnvironment[] = ['test', 'uat', 'production'];
+const LANES: EnvLane[] = ['production', 'preview'];
 const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{1,127}$/;
 const MAX_ENV_VALUE_LENGTH = 16_384;
+/**
+ * Git's own ref rules, reduced to what a branch name may contain. Enforced
+ * because the branch reaches Vercel as part of an env var's identity, so a
+ * malformed one would create a record nothing can address again.
+ */
+const GIT_BRANCH_PATTERN = /^(?!\/)(?!.*\/\/)(?!.*\.\.)[\w\-./]{1,255}(?<!\/)$/;
 
 export interface ValidateEnvTextInput {
   deploymentTargetId: string;
-  environment: EnvEnvironment;
+  lane: EnvLane;
+  gitBranch?: string | null;
   text: string;
 }
 
@@ -71,9 +79,7 @@ export class EnvVarsService {
     userId: string,
     input: ValidateEnvTextInput,
   ): Promise<ValidateEnvTextResponse> {
-    if (!ENVIRONMENTS.includes(input.environment)) {
-      throw new BadRequestException('Invalid environment');
-    }
+    this.resolveScope(input);
     await this.getOwnedTargetOrThrow(
       projectId,
       input.deploymentTargetId,
@@ -116,9 +122,7 @@ export class EnvVarsService {
     if (dto.deploymentTargetId === undefined) {
       throw new BadRequestException('deploymentTargetId is required');
     }
-    if (!ENVIRONMENTS.includes(dto.environment)) {
-      throw new BadRequestException('Invalid environment');
-    }
+    const scope = this.resolveScope(dto);
     this.validateVars(dto.vars);
     await this.assertProjectMutationAccess(projectId, userId);
 
@@ -130,7 +134,7 @@ export class EnvVarsService {
     const existingKeyCount =
       await this.envVarsRepository.countExistingActiveKeys({
         deploymentTargetId: target.id,
-        environment: dto.environment,
+        ...scope,
         keys: dto.vars.map((variable) => variable.key),
       });
     const newKeyCount = dto.vars.length - existingKeyCount;
@@ -144,14 +148,14 @@ export class EnvVarsService {
       .upsertEnvironmentVariables({
         token,
         targetId: target.providerProjectId,
-        environment: dto.environment,
+        ...scope,
         vars: dto.vars,
       });
 
     await this.envVarsRepository.upsertEnvMetadataBatch({
       projectId,
       deploymentTargetId: target.id,
-      environment: dto.environment,
+      ...scope,
       provider: target.provider,
       provisionedBy: userId,
       entries: [
@@ -176,13 +180,56 @@ export class EnvVarsService {
       body: `${dto.vars.length} environment variable key${dto.vars.length === 1 ? '' : 's'} sent to ${target.provider}.`,
       metadata: {
         deploymentTargetId: target.id,
-        environment: dto.environment,
+        lane: scope.lane,
+        gitBranch: scope.gitBranch,
         keyCount: dto.vars.length,
         provisionedCount: result.provisioned.length,
         failedCount: result.failed.length,
       },
     });
     return result;
+  }
+
+  /**
+   * Validates the lane/branch pairing and returns it as a scope.
+   *
+   * The single place this pairing is checked, so the invariant cannot drift
+   * between the provisioning path and the validation path. Rejecting a branch
+   * on the production lane matters as much as requiring one on preview: a
+   * production write that silently carried a branch would land on Vercel as a
+   * preview record and appear to have done nothing.
+   */
+  private resolveScope(input: {
+    lane: EnvLane;
+    gitBranch?: string | null;
+  }): EnvVarScope {
+    if (!LANES.includes(input.lane)) {
+      throw new BadRequestException(
+        'lane must be either production or preview',
+      );
+    }
+
+    const branch = input.gitBranch?.trim() ?? '';
+
+    if (input.lane === 'production') {
+      if (branch) {
+        throw new BadRequestException(
+          'The production lane takes no branch — the provider resolves it from the project’s production branch.',
+        );
+      }
+      return { lane: 'production', gitBranch: null };
+    }
+
+    if (!branch) {
+      throw new BadRequestException(
+        'gitBranch is required for the preview lane, so the values apply to one branch.',
+      );
+    }
+    if (!GIT_BRANCH_PATTERN.test(branch)) {
+      throw new BadRequestException('gitBranch is not a valid branch name');
+    }
+
+    return { lane: 'preview', gitBranch: branch };
   }
 
   async deleteEnvMetadata(
@@ -210,7 +257,11 @@ export class EnvVarsService {
       .deleteEnvironmentVariable({
         token,
         targetId: target.providerProjectId,
-        environment: metadata.environment,
+        // The stored row's own scope, not a re-derived one: deleting has to hit
+        // the exact provider record this row describes, or it removes another
+        // branch's value.
+        lane: metadata.lane,
+        gitBranch: metadata.gitBranch,
         key: metadata.key,
       });
 
@@ -232,7 +283,8 @@ export class EnvVarsService {
       metadata: {
         metadataId,
         deploymentTargetId: target.id,
-        environment: metadata.environment,
+        lane: metadata.lane,
+        gitBranch: metadata.gitBranch,
         key: metadata.key,
       },
     });

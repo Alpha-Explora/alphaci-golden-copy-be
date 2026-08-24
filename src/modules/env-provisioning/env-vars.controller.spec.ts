@@ -51,7 +51,8 @@ describe('EnvVarsController', () => {
     const controller = new EnvVarsController(service);
     const body = {
       targetId: 'target-1',
-      environment: 'test',
+      lane: 'preview' as const,
+      gitBranch: 'feat/checkout',
       text: 'API_URL=https://example.test',
     } as never;
 
@@ -76,7 +77,8 @@ describe('EnvVarsController', () => {
     const body = {
       text: 'API_URL=https://example.test',
       deploymentTargetId: 'target-1',
-      environment: 'test' as const,
+      lane: 'preview' as const,
+      gitBranch: 'feat/checkout',
     };
 
     await expect(

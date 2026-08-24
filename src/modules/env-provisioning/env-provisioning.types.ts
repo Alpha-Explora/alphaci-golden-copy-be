@@ -1,5 +1,32 @@
 export type EnvProvider = 'render' | 'vercel';
-export type EnvEnvironment = 'test' | 'uat' | 'production';
+
+/**
+ * Deployment lane an environment variable applies to.
+ *
+ * Mirrors what a provider actually has rather than a promotion ladder:
+ * `production` is the lane the provider's production branch deploys to and
+ * carries no branch of its own (Vercel resolves it from the project's
+ * production-branch setting), while `preview` is always scoped to one branch.
+ *
+ * Replaced the old fixed 'test' | 'uat' | 'production' enum, which could not
+ * express per-branch values and silently collapsed test and uat onto a single
+ * Vercel record.
+ */
+export type EnvLane = 'production' | 'preview';
+
+/**
+ * Which values a provisioning call targets.
+ *
+ * The lane and the branch are not independent: production has no branch, and
+ * preview is meaningless without one. The database enforces the same pairing
+ * (project_env_var_metadata_lane_branch_check).
+ */
+export interface EnvVarScope {
+  lane: EnvLane;
+  /** The branch these values apply to. Null if and only if lane is production. */
+  gitBranch: string | null;
+}
+
 export type EnvOwnershipMode = 'byo' | 'flowci_managed';
 export type EnvTargetSlot = 'backend' | 'frontend' | 'standalone';
 export type RenderDeploymentStrategy =
@@ -31,7 +58,15 @@ export type RenderDeployMethod =
   | 'byo_image'
   | 'native_git'
   | 'existing_service';
-export type RenderEnvironmentName = EnvEnvironment;
+/**
+ * Render's own environment naming on a deployment target.
+ *
+ * Deliberately NOT EnvLane: this is a Render concept stored on the target and
+ * constrained separately in the database
+ * (project_deployment_targets_render_environment_check). It used to alias the
+ * env-var environment enum, which made two unrelated ideas move together.
+ */
+export type RenderEnvironmentName = 'test' | 'uat' | 'production';
 export type ProviderConnectionStatus = 'active' | 'revoked' | 'failed';
 export type DeploymentTargetStatus = 'active' | 'missing' | 'failed';
 export type EnvVarProvisionStatus = 'provisioned' | 'failed';
@@ -89,7 +124,9 @@ export interface EnvVarMetadata {
   id: string;
   projectId: string;
   deploymentTargetId: string;
-  environment: EnvEnvironment;
+  lane: EnvLane;
+  /** Null if and only if `lane` is production. */
+  gitBranch: string | null;
   key: string;
   provider: EnvProvider;
   valueStored: false;

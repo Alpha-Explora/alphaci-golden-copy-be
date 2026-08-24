@@ -35,6 +35,9 @@ const makeConfig = (
         enabled,
         liveProvidersEnabled: false,
       },
+      previewDeployments: {
+        enabled,
+      },
       driftDetection: {
         enabled,
         liveProviderChecksEnabled: false,
@@ -105,6 +108,10 @@ describe('CapabilitiesController', () => {
         enabled: true,
         liveProvidersEnabled: false,
         mode: 'local_mock',
+      },
+      previewDeployments: {
+        enabled: true,
+        providers: ['vercel'],
       },
       driftDetection: {
         enabled: true,
@@ -193,6 +200,10 @@ describe('CapabilitiesController', () => {
         liveProvidersEnabled: false,
         mode: 'local_mock',
       },
+      previewDeployments: {
+        enabled: false,
+        providers: ['vercel'],
+      },
       driftDetection: {
         enabled: false,
         liveProviderChecksEnabled: false,
@@ -236,6 +247,7 @@ describe('CapabilitiesController', () => {
         projectTargetManagement: { enabled: true },
         ciRunTracking: { enabled: true, liveGithubEnabled: true },
         deploymentHistory: { enabled: true, liveProvidersEnabled: true },
+        previewDeployments: { enabled: true },
         driftDetection: { enabled: true },
         driftLiveChecks: { enabled: true },
         driftRepair: { enabled: true, liveRepairEnabled: true },

@@ -157,6 +157,15 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     };
   }
 
+  /**
+   * Writes the whole env-var set for the service.
+   *
+   * `lane` and `gitBranch` are deliberately unused: a Render service holds one
+   * set of variables, so there is nothing to scope them to. Per-branch values
+   * on Render would mean one service per branch, which this product does not
+   * provision. Capabilities advertises `perBranchEnvVars: ['vercel']` so the UI
+   * can say so rather than implying an isolation that does not exist.
+   */
   async upsertEnvironmentVariables(
     input: UpsertProviderEnvInput,
   ): Promise<ProviderProvisionResult> {
@@ -199,6 +208,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     };
   }
 
+  /** Scope-blind for the same reason as the upsert above: one set per service. */
   async deleteEnvironmentVariable(
     input: DeleteProviderEnvInput,
   ): Promise<{ key: string; status: 'removed' }> {
@@ -328,6 +338,16 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         commitSha: deploy.commit?.id ?? null,
         commitMessage: deploy.commit?.message ?? null,
         trigger: deploy.trigger ?? null,
+        // Render serves every deploy of a service from one stable URL, and
+        // its deploy payload carries no lane, PR, or per-deploy console
+        // link. Callers fall back to the target's public URL for the first
+        // of these; the rest have no Render equivalent. Render's own preview
+        // environments are a separate API surface and are not wired up.
+        deploymentUrl: null,
+        environment: null,
+        pullRequestNumber: null,
+        commitRef: null,
+        inspectorUrl: null,
       }));
   }
 

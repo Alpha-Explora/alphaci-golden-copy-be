@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
 import type { DeploymentTargetSummary } from '../env-provisioning/env-provisioning.types';
+import { providerPublicUrl } from '../env-provisioning/index.js';
 import { EnvTokenEncryptionService } from '../env-provisioning/encryption.service';
 import { ProviderClientRegistry } from '../env-provisioning/provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from '../env-provisioning/provider-connections.repository';
@@ -128,13 +129,24 @@ export class ProjectDeploymentsService {
         targetId: target.id,
         targetName: target.providerProjectName,
         provider: target.provider,
-        environment: target.renderEnvironmentName ?? null,
-        branch: target.branchName,
+        // The provider's own lane wins when it reports one; the target's
+        // configured Render environment is the fallback for providers that
+        // don't distinguish production from preview.
+        environment: event.environment ?? target.renderEnvironmentName ?? null,
+        // Likewise: Vercel names the branch on the deployment itself, Render
+        // only knows the branch the target tracks.
+        branch: event.commitRef ?? target.branchName,
         commitSha: event.commitSha,
+        commitMessage: event.commitMessage,
         status: this.provider.normalizeStatus(event.status),
         createdAt: event.createdAt,
         readyAt: event.readyAt,
-        providerUrl: this.provider.providerUrl(target),
+        // Per-deployment hostname where the provider issues one, otherwise
+        // the target's stable public URL.
+        deploymentUrl: event.deploymentUrl ?? providerPublicUrl(target),
+        pullRequestNumber: event.pullRequestNumber,
+        inspectorUrl: event.inspectorUrl,
+        dashboardUrl: this.provider.dashboardUrl(target),
         consoleUrl: this.provider.consoleUrl(target),
       }));
     } catch {

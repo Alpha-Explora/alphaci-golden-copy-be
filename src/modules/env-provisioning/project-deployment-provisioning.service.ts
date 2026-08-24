@@ -8,6 +8,7 @@ import type {
 import type { DeploymentProvisioningResult } from '../projects/projects.service';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
+import type { EnvLane, EnvVarScope } from './env-provisioning.types';
 import { EnvVarsService } from './env-vars.service';
 import { RenderCiSecretsService } from './render-ci-secrets.service';
 import { VercelCiSecretsService } from './vercel-ci-secrets.service';
@@ -30,8 +31,42 @@ export interface CrossLinkGroup {
   result: DeploymentProvisioningResult;
 }
 
-const CROSS_LINK_ENVIRONMENTS = ['uat', 'production'] as const;
-type CrossLinkEnvironment = (typeof CROSS_LINK_ENVIRONMENTS)[number];
+const CROSS_LINK_LANES = ['preview', 'production'] as const;
+
+const PRODUCTION_SCOPE: EnvVarScope = { lane: 'production', gitBranch: null };
+
+/**
+ * The branch a requested target will actually track.
+ *
+ * Mirrors the default the deployment-target create path applies, so the scope a
+ * variable is written under and the scope a user-provided key is recorded under
+ * cannot disagree. They did once: the request target carried no branch while
+ * the created target defaulted to 'uat', so a user's own CORS_ORIGINS no longer
+ * suppressed the cross-link injection meant to defer to it.
+ */
+const DEFAULT_TARGET_BRANCH = 'uat';
+
+function requestedBranch(target: { branchName?: string }): string {
+  return target.branchName?.trim() || DEFAULT_TARGET_BRANCH;
+}
+
+/** Map key for a lane/branch pair. Production has no branch, hence the ''. */
+function scopeKey(scope: EnvVarScope): string {
+  return `${scope.lane}:${scope.gitBranch ?? ''}`;
+}
+
+/**
+ * A preview scope for `branch`, falling back to production when there is no
+ * branch to name.
+ *
+ * A preview row without a branch is not writable — the database rejects it and
+ * so does EnvVarsService.resolveScope — so an unnamed branch has to resolve to
+ * the one lane that needs no branch rather than produce an invalid scope.
+ */
+function previewScope(branch: string | null | undefined): EnvVarScope {
+  const trimmed = branch?.trim();
+  return trimmed ? { lane: 'preview', gitBranch: trimmed } : PRODUCTION_SCOPE;
+}
 
 type ProvisionedTarget = DeploymentProvisioningResult['targets'][number];
 
@@ -73,7 +108,7 @@ export class ProjectDeploymentProvisioningService {
           slot: requestedTarget.slot,
           ownershipMode: requestedTarget.ownershipMode,
           provider: requestedTarget.provider,
-          branchName: requestedTarget.branchName ?? 'uat',
+          branchName: requestedBranch(requestedTarget),
           ...(requestedTarget.providerConnectionId
             ? { providerConnectionId: requestedTarget.providerConnectionId }
             : {}),
@@ -207,13 +242,15 @@ export class ProjectDeploymentProvisioningService {
             input.userId,
             {
               deploymentTargetId: target.id,
-              environment: envSet.environment,
+              lane: envSet.lane,
+              gitBranch: envSet.gitBranch,
               vars: envSet.vars,
             },
           );
 
           env.push({
-            environment: envSet.environment,
+            lane: envSet.lane,
+            gitBranch: envSet.gitBranch,
             provisioned: result.provisioned,
             failed: result.failed,
           });
@@ -230,6 +267,9 @@ export class ProjectDeploymentProvisioningService {
           providerProjectName: target.providerProjectName,
           providerMetadata,
           ...this.renderResultMetadata(target),
+          // Carried through so the cross-link pass can name the branch when it
+          // writes a preview-lane variable or builds a preview URL.
+          branchName: target.branchName,
           errorSummary: null,
           env,
         });
@@ -292,6 +332,7 @@ export class ProjectDeploymentProvisioningService {
     }
 
     const userKeys = this.userProvidedEnvKeys(input.request);
+
     const linked = input.groups.flatMap((group) =>
       group.result.targets
         .filter(
@@ -311,13 +352,11 @@ export class ProjectDeploymentProvisioningService {
     }
 
     for (const { projectId, target } of backends) {
-      const environment = this.crossLinkEnvironment(target) ?? 'uat';
+      const lane = this.crossLinkLane(target) ?? 'preview';
       const frontendUrls = [
         ...new Set(
           frontends
-            .map(({ target: frontend }) =>
-              this.targetPublicUrl(frontend, environment),
-            )
+            .map(({ target: frontend }) => this.targetPublicUrl(frontend, lane))
             .filter((url): url is string => Boolean(url)),
         ),
       ];
@@ -329,7 +368,7 @@ export class ProjectDeploymentProvisioningService {
         userId: input.userId,
         projectId,
         target,
-        environment,
+        scope: this.crossLinkScope(target, lane),
         userKeys,
         vars: [
           { key: 'FRONTEND_URL', value: frontendUrls[0]! },
@@ -339,19 +378,17 @@ export class ProjectDeploymentProvisioningService {
     }
 
     for (const { projectId, target } of frontends) {
-      const ownEnvironment = this.crossLinkEnvironment(target);
-      // A Vercel project serves preview (uat) and production from one target,
-      // so inject the matching backend URL into each environment it covers.
-      const environments = ownEnvironment
-        ? [ownEnvironment]
-        : [...CROSS_LINK_ENVIRONMENTS];
+      const ownLane = this.crossLinkLane(target);
+      // A Vercel project serves preview and production from one target, so
+      // inject the matching backend URL into each lane it covers.
+      const lanes = ownLane ? [ownLane] : [...CROSS_LINK_LANES];
 
-      for (const environment of environments) {
+      for (const lane of lanes) {
         const backendUrl = backends
           .map(({ target: backend }) =>
-            this.crossLinkEnvironment(backend) === environment ||
-            this.crossLinkEnvironment(backend) === null
-              ? this.targetPublicUrl(backend, environment)
+            this.crossLinkLane(backend) === lane ||
+            this.crossLinkLane(backend) === null
+              ? this.targetPublicUrl(backend, lane)
               : null,
           )
           .find((url): url is string => Boolean(url));
@@ -363,7 +400,7 @@ export class ProjectDeploymentProvisioningService {
           userId: input.userId,
           projectId,
           target,
-          environment,
+          scope: this.crossLinkScope(target, lane),
           userKeys,
           vars: [
             { key: 'NEXT_PUBLIC_API_URL', value: backendUrl },
@@ -374,16 +411,30 @@ export class ProjectDeploymentProvisioningService {
     }
   }
 
+  /**
+   * Scope for a cross-link write. The preview lane needs a branch, and the only
+   * one that makes sense is the branch the target itself deploys.
+   */
+  private crossLinkScope(
+    target: ProvisionedTarget,
+    lane: EnvLane,
+  ): EnvVarScope {
+    return lane === 'production'
+      ? PRODUCTION_SCOPE
+      : previewScope(target.branchName);
+  }
+
   private async injectEnvVars(input: {
     userId: string;
     projectId: string;
     target: ProvisionedTarget;
-    environment: CrossLinkEnvironment;
+    scope: EnvVarScope;
     userKeys: Set<string>;
     vars: Array<{ key: string; value: string }>;
   }): Promise<void> {
+    const key = scopeKey(input.scope);
     const vars = input.vars.filter(
-      (variable) => !input.userKeys.has(`${input.environment}:${variable.key}`),
+      (variable) => !input.userKeys.has(`${key}:${variable.key}`),
     );
     if (vars.length === 0 || !input.target.deploymentTargetId) {
       return;
@@ -395,18 +446,18 @@ export class ProjectDeploymentProvisioningService {
         input.userId,
         {
           deploymentTargetId: input.target.deploymentTargetId,
-          environment: input.environment,
+          ...input.scope,
           vars,
         },
       );
       input.target.env.push({
-        environment: input.environment,
+        ...input.scope,
         provisioned: result.provisioned,
         failed: result.failed,
       });
     } catch (error) {
       this.logger.warn(
-        `Cross-service env injection failed for target ${input.target.deploymentTargetId} (${input.environment}): ${this.sanitizeError(error)}`,
+        `Cross-service env injection failed for target ${input.target.deploymentTargetId} (${key}): ${this.sanitizeError(error)}`,
       );
     }
   }
@@ -423,21 +474,21 @@ export class ProjectDeploymentProvisioningService {
   }
 
   /**
-   * The environment a target serves, or null when one provider target covers
-   * every environment (Vercel: preview + production in one project).
+   * The lane a target serves, or null when one provider target covers both
+   * (Vercel: preview + production in one project).
    */
-  private crossLinkEnvironment(
-    target: ProvisionedTarget,
-  ): CrossLinkEnvironment | null {
+  private crossLinkLane(target: ProvisionedTarget): EnvLane | null {
     if (target.provider === 'vercel') {
       return null;
     }
-    return target.renderEnvironmentName === 'production' ? 'production' : 'uat';
+    return target.renderEnvironmentName === 'production'
+      ? 'production'
+      : 'preview';
   }
 
   private targetPublicUrl(
     target: ProvisionedTarget,
-    environment: CrossLinkEnvironment,
+    lane: EnvLane,
   ): string | null {
     const metadata = target.providerMetadata ?? {};
     if (target.provider === 'render') {
@@ -454,41 +505,58 @@ export class ProjectDeploymentProvisioningService {
       return null;
     }
     const productionUrl = `https://${target.providerProjectName}.vercel.app`;
-    if (environment === 'production') {
+    if (lane === 'production') {
       return productionUrl;
     }
-    // Preview deployments only have a stable alias when the team slug is
-    // known; otherwise the production domain is the best stable origin.
+    // Vercel's branch alias needs both the team slug and the branch. The
+    // branch used to be hardcoded to 'uat' here, which pointed every preview
+    // cross-link at a branch that no longer exists; it now follows the target.
     const teamSlug = metadata['vercelTeamSlug'];
-    return typeof teamSlug === 'string' && teamSlug.trim()
-      ? `https://${target.providerProjectName}-git-uat-${teamSlug.trim()}.vercel.app`
+    const branch = target.branchName?.trim();
+    return typeof teamSlug === 'string' && teamSlug.trim() && branch
+      ? `https://${target.providerProjectName}-git-${this.vercelBranchSlug(branch)}-${teamSlug.trim()}.vercel.app`
       : productionUrl;
   }
 
-  /** Keys the user set anywhere in the request, per environment, so the
-   * cross-link pass never overrides an explicit choice. */
+  /** Vercel lowercases a branch and replaces every non-alphanumeric run with '-'. */
+  private vercelBranchSlug(branch: string): string {
+    return branch
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  /** Keys the user set anywhere in the request, per scope, so the cross-link
+   * pass never overrides an explicit choice. */
   private userProvidedEnvKeys(
     request: DeploymentProvisioningRequestDto,
   ): Set<string> {
     const keys = new Set<string>();
     const collect = (
       envSets: DeploymentProvisioningEnvSetDto[] | undefined,
+      target: DeploymentProvisioningTargetDto,
     ) => {
       for (const envSet of envSets ?? []) {
+        const key = scopeKey(this.envSetScope(envSet, target));
         for (const variable of envSet.vars ?? []) {
           if (variable.key) {
-            keys.add(`${envSet.environment}:${variable.key}`);
+            keys.add(`${key}:${variable.key}`);
           }
         }
       }
     };
 
-    collect(request.sharedEnv);
-    for (const group of request.variableGroups ?? []) {
-      collect(group.env);
-    }
-    for (const target of request.targets) {
-      collect(target.env);
+    // Shared and grouped sets have no target of their own, so they are
+    // resolved once per target — an omitted preview branch means "this
+    // target's branch", which differs per target.
+    // The expanded list, not request.targets: managed Render targets fan out
+    // to one target per branch, and each fan-out branch is its own scope.
+    for (const target of this.expandManagedRenderTargets(request)) {
+      collect(request.sharedEnv, target);
+      for (const group of request.variableGroups ?? []) {
+        collect(group.env, target);
+      }
+      collect(target.env, target);
     }
 
     return keys;
@@ -498,33 +566,36 @@ export class ProjectDeploymentProvisioningService {
     request: DeploymentProvisioningRequestDto,
     target: DeploymentProvisioningTargetDto,
     targetEnvSets: DeploymentProvisioningEnvSetDto[] | undefined,
-  ): DeploymentProvisioningEnvSetDto[] {
-    const mergedByEnvironment = new Map<
-      DeploymentProvisioningEnvSetDto['environment'],
-      Map<string, { key: string; value: string }>
+  ): Array<EnvVarScope & { vars: Array<{ key: string; value: string }> }> {
+    const mergedByScope = new Map<
+      string,
+      { scope: EnvVarScope; varsByKey: Map<string, { key: string; value: string }> }
     >();
 
     for (const envSet of request.sharedEnv ?? []) {
-      this.mergeEnvSet(mergedByEnvironment, envSet);
+      this.mergeEnvSet(mergedByScope, envSet, target);
     }
     for (const group of request.variableGroups ?? []) {
       if (!this.variableGroupAppliesToTarget(group, target)) {
         continue;
       }
       for (const envSet of group.env ?? []) {
-        this.mergeEnvSet(mergedByEnvironment, envSet);
+        this.mergeEnvSet(mergedByScope, envSet, target);
       }
     }
     for (const envSet of targetEnvSets ?? []) {
-      this.mergeEnvSet(mergedByEnvironment, envSet);
+      this.mergeEnvSet(mergedByScope, envSet, target);
     }
 
-    return [...mergedByEnvironment.entries()]
-      .map(([environment, varsByKey]) => ({
-        environment,
+    const targetScope = scopeKey(this.targetScope(target));
+    return [...mergedByScope.values()]
+      .map(({ scope, varsByKey }) => ({
+        ...scope,
         vars: [...varsByKey.values()],
       }))
-      .filter((envSet) => envSet.environment === this.targetEnvironment(target))
+      // A target only deploys its own branch, so a set aimed elsewhere is not
+      // this target's to write.
+      .filter((envSet) => scopeKey(envSet) === targetScope)
       .filter((envSet) => envSet.vars.length > 0);
   }
 
@@ -658,40 +729,63 @@ export class ProjectDeploymentProvisioningService {
     return `${target.slot}:${target.provider}:${target.branchName ?? 'uat'}`;
   }
 
-  private targetEnvironment(
-    target: DeploymentProvisioningTargetDto,
-  ): DeploymentProvisioningEnvSetDto['environment'] {
-    if (target.renderEnvironmentName) {
-      return target.renderEnvironmentName;
+  /**
+   * The lane and branch a requested target's variables belong to.
+   *
+   * `main` is the production branch, so it takes the branchless production
+   * lane; anything else is a preview scoped to its own branch. Replaces the old
+   * mapping, which funnelled every non-main branch into a single 'uat' bucket
+   * and so could not tell two branches apart.
+   */
+  private targetScope(target: DeploymentProvisioningTargetDto): EnvVarScope {
+    if (target.renderEnvironmentName === 'production') {
+      return PRODUCTION_SCOPE;
     }
-    if (target.branchName === 'main') {
-      return 'production';
+    if (requestedBranch(target) === 'main') {
+      return PRODUCTION_SCOPE;
     }
-    if (target.branchName === 'uat') {
-      return 'uat';
-    }
+    return previewScope(requestedBranch(target));
+  }
 
-    return 'uat';
+  /**
+   * An env set's scope, defaulting an omitted preview branch to the branch the
+   * target tracks — the wizard is configuring the branch it just set up.
+   */
+  private envSetScope(
+    envSet: DeploymentProvisioningEnvSetDto,
+    target: DeploymentProvisioningTargetDto,
+  ): EnvVarScope {
+    if (envSet.lane === 'production') {
+      return PRODUCTION_SCOPE;
+    }
+    return previewScope(envSet.gitBranch ?? requestedBranch(target));
   }
 
   private mergeEnvSet(
-    mergedByEnvironment: Map<
-      DeploymentProvisioningEnvSetDto['environment'],
-      Map<string, { key: string; value: string }>
+    mergedByScope: Map<
+      string,
+      {
+        scope: EnvVarScope;
+        varsByKey: Map<string, { key: string; value: string }>;
+      }
     >,
     envSet: DeploymentProvisioningEnvSetDto,
+    target: DeploymentProvisioningTargetDto,
   ): void {
-    const varsByKey =
-      mergedByEnvironment.get(envSet.environment) ??
-      new Map<string, { key: string; value: string }>();
+    const scope = this.envSetScope(envSet, target);
+    const key = scopeKey(scope);
+    const entry = mergedByScope.get(key) ?? {
+      scope,
+      varsByKey: new Map<string, { key: string; value: string }>(),
+    };
 
     for (const variable of envSet.vars ?? []) {
       if (variable.key && variable.value !== '') {
-        varsByKey.set(variable.key, variable);
+        entry.varsByKey.set(variable.key, variable);
       }
     }
 
-    mergedByEnvironment.set(envSet.environment, varsByKey);
+    mergedByScope.set(key, entry);
   }
 
   private aggregateStatus(

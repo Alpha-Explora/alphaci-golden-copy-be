@@ -147,7 +147,8 @@ describe('EnvVarsService', () => {
             id: 'meta-1',
             projectId: 'project-1',
             deploymentTargetId: 'target-1',
-            environment: 'test',
+            lane: 'preview',
+      gitBranch: 'feat/checkout',
             key: 'DATABASE_URL',
             provider: 'render',
             valueStored: false,
@@ -183,7 +184,8 @@ describe('EnvVarsService', () => {
 
     await service.provisionEnvVars('project-1', 'user-1', {
       deploymentTargetId: 'target-1',
-      environment: 'test',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
       vars: [{ key: 'DATABASE_URL', value: 'postgres://secret' }],
     });
 
@@ -231,7 +233,8 @@ describe('EnvVarsService', () => {
 
     await service.provisionEnvVars('project-1', 'user-1', {
       deploymentTargetId: 'target-1',
-      environment: 'test',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
       vars: [
         { key: 'DATABASE_URL', value: 'postgres://secret' },
         { key: 'API_URL', value: 'https://api.example.test' },
@@ -240,7 +243,8 @@ describe('EnvVarsService', () => {
 
     expect(envVarsRepository.countExistingActiveKeys).toHaveBeenCalledWith({
       deploymentTargetId: 'target-1',
-      environment: 'test',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
       keys: ['DATABASE_URL', 'API_URL'],
     });
     expect(usageQuotaService.assertWithinLimit).toHaveBeenCalledWith(
@@ -256,7 +260,8 @@ describe('EnvVarsService', () => {
     await expect(
       service.validateEnvText('project-1', 'user-1', {
         deploymentTargetId: 'target-1',
-        environment: 'test',
+        lane: 'preview',
+      gitBranch: 'feat/checkout',
         text: 'DATABASE_URL=postgres://secret\nAPI_KEY="super-secret"\n# ignored\nEMPTY=',
       }),
     ).resolves.toEqual({
@@ -274,7 +279,8 @@ describe('EnvVarsService', () => {
     await expect(
       service.validateEnvText('project-1', 'user-1', {
         deploymentTargetId: 'target-1',
-        environment: 'test',
+        lane: 'preview',
+      gitBranch: 'feat/checkout',
         text: 'DATABASE_URL=one\nDATABASE_URL=two\nbad-key=value',
       }),
     ).resolves.toMatchObject({
@@ -302,7 +308,8 @@ describe('EnvVarsService', () => {
           id: 'meta-1',
           projectId: 'project-1',
           deploymentTargetId: 'target-1',
-          environment: 'production',
+          lane: 'preview',
+          gitBranch: 'feat/checkout',
           key: 'DATABASE_URL',
           provider: 'vercel',
           status: 'provisioned',
@@ -322,10 +329,13 @@ describe('EnvVarsService', () => {
       key: 'DATABASE_URL',
     });
 
+    // The stored row's own scope reaches the provider, so the delete lands on
+    // that branch's record and not another branch's.
     expect(providerClient.deleteEnvironmentVariable).toHaveBeenCalledWith({
       token: 'vercel-token',
       targetId: 'prj_1',
-      environment: 'production',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
       key: 'DATABASE_URL',
     });
     expect(envVarsRepository.markEnvMetadataRemoved).toHaveBeenCalledWith(
@@ -354,7 +364,8 @@ describe('EnvVarsService', () => {
           id: 'meta-1',
           projectId: 'project-1',
           deploymentTargetId: 'target-1',
-          environment: 'test',
+          lane: 'preview',
+      gitBranch: 'feat/checkout',
           key: 'API_KEY',
           provider: 'render',
           status: 'provisioned',
@@ -377,7 +388,8 @@ describe('EnvVarsService', () => {
     expect(providerClient.deleteEnvironmentVariable).toHaveBeenCalledWith({
       token: 'rnd',
       targetId: 'srv-1',
-      environment: 'test',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
       key: 'API_KEY',
     });
     expect(envVarsRepository.markEnvMetadataRemoved).toHaveBeenCalledWith(

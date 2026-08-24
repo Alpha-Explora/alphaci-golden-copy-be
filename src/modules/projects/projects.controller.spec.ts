@@ -6,6 +6,7 @@ import type { Request } from 'express';
 import { ProjectsController } from './projects.controller.js';
 import { ProjectCiRunsService } from './project-ci-runs.service.js';
 import { ProjectDeploymentsService } from './project-deployments.service.js';
+import { ProjectPreviewsService } from './project-previews.service.js';
 import { ProjectDriftRepairService } from './project-drift-repair.service.js';
 import { ProjectDriftService } from './project-drift.service.js';
 import { ProjectsService } from './projects.service.js';
@@ -164,6 +165,15 @@ const makeProjectDeploymentsService = () =>
     }),
   }) as unknown as ProjectDeploymentsService;
 
+const makeProjectPreviewsService = () =>
+  ({
+    listPreviews: jest.fn().mockResolvedValue({
+      enabled: true,
+      liveProvidersEnabled: false,
+      branches: [],
+    }),
+  }) as unknown as ProjectPreviewsService;
+
 const makeProjectDriftService = () =>
   ({
     listFindings: jest.fn().mockResolvedValue({
@@ -195,6 +205,7 @@ describe('ProjectsController', () => {
   let service: ProjectsService;
   let ciRunsService: ProjectCiRunsService;
   let deploymentsService: ProjectDeploymentsService;
+  let previewsService: ProjectPreviewsService;
   let driftService: ProjectDriftService;
   let driftRepairService: ProjectDriftRepairService;
 
@@ -202,6 +213,7 @@ describe('ProjectsController', () => {
     service = makeProjectsService();
     ciRunsService = makeProjectCiRunsService();
     deploymentsService = makeProjectDeploymentsService();
+    previewsService = makeProjectPreviewsService();
     driftService = makeProjectDriftService();
     driftRepairService = makeProjectDriftRepairService();
 
@@ -211,6 +223,7 @@ describe('ProjectsController', () => {
         { provide: ProjectsService, useValue: service },
         { provide: ProjectCiRunsService, useValue: ciRunsService },
         { provide: ProjectDeploymentsService, useValue: deploymentsService },
+        { provide: ProjectPreviewsService, useValue: previewsService },
         { provide: ProjectDriftService, useValue: driftService },
         { provide: ProjectDriftRepairService, useValue: driftRepairService },
       ],
@@ -490,6 +503,35 @@ describe('ProjectsController', () => {
       liveProvidersEnabled: false,
       deployments: [],
     });
+  });
+
+  it('lists per-branch previews without requiring provider credentials', async () => {
+    const result = await controller.listPreviews(
+      makeRequest(fakeUser, undefined),
+      'project-1',
+    );
+
+    expect(previewsService.listPreviews).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+    );
+    expect(result).toMatchObject({
+      enabled: true,
+      liveProvidersEnabled: false,
+      branches: [],
+    });
+  });
+
+  it('throws when listing previews without a session user', async () => {
+    await expect(
+      controller.listPreviews(makeUnauthRequest(), 'project-1'),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('throws when listing previews without a project id', async () => {
+    await expect(
+      controller.listPreviews(makeRequest(fakeUser, undefined), ''),
+    ).rejects.toThrow('Project ID is required');
   });
 
   it('lists local drift findings without requiring provider credentials', async () => {
