@@ -312,6 +312,181 @@ describe('VercelEnvClient', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  describe('custom domains', () => {
+    it('adds a domain and returns the challenge Vercel gave', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            name: 'app.example.com',
+            apexName: 'example.com',
+            verified: false,
+            verification: [
+              {
+                type: 'TXT',
+                domain: '_vercel.example.com',
+                value: 'abc123',
+                reason: 'pending_domain_verification',
+              },
+            ],
+          }),
+      });
+
+      await expect(
+        new VercelEnvClient().addDomain({
+          token: 'vercel',
+          targetId: 'prj_1',
+          hostname: 'app.example.com',
+        }),
+      ).resolves.toEqual({
+        hostname: 'app.example.com',
+        apexDomain: 'example.com',
+        verified: false,
+        verification: [
+          {
+            type: 'TXT',
+            domain: '_vercel.example.com',
+            value: 'abc123',
+            reason: 'pending_domain_verification',
+          },
+        ],
+        misconfigured: null,
+      });
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.vercel.com/v10/projects/prj_1/domains',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('sends gitBranch so a branch can carry its own hostname', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ name: 'staging.example.com' }),
+      });
+
+      await new VercelEnvClient().addDomain({
+        token: 'vercel',
+        targetId: 'prj_1',
+        hostname: 'staging.example.com',
+        gitBranch: 'feat/checkout',
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: JSON.stringify({
+            name: 'staging.example.com',
+            gitBranch: 'feat/checkout',
+          }),
+        }),
+      );
+    });
+
+    it('omits gitBranch entirely for a production domain', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ name: 'app.example.com' }),
+      });
+
+      await new VercelEnvClient().addDomain({
+        token: 'vercel',
+        targetId: 'prj_1',
+        hostname: 'app.example.com',
+      });
+
+      const body = (jest.mocked(fetch).mock.calls[0]?.[1]?.body ?? '') as string;
+      expect(body).not.toContain('gitBranch');
+    });
+
+    /* A 409 needs a different action from a malformed hostname — remove it
+     * from the other project, versus choose another name — so it must not
+     * arrive as a generic failure. */
+    it('names the conflict when the domain is on another project', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: () => Promise.resolve('{"error":{"code":"domain_taken"}}'),
+      });
+
+      await expect(
+        new VercelEnvClient().addDomain({
+          token: 'vercel',
+          targetId: 'prj_1',
+          hostname: 'app.example.com',
+        }),
+      ).rejects.toThrow('already assigned');
+    });
+
+    it('verifies, then asks separately whether DNS actually points at Vercel', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              name: 'app.example.com',
+              verified: true,
+              verification: [],
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ misconfigured: true }),
+        });
+
+      // Verified ownership and correct DNS are two different questions;
+      // reporting only the first would call a domain ready while it serves
+      // nothing.
+      await expect(
+        new VercelEnvClient().verifyDomain({
+          token: 'vercel',
+          targetId: 'prj_1',
+          hostname: 'app.example.com',
+        }),
+      ).resolves.toMatchObject({ verified: true, misconfigured: true });
+
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://api.vercel.com/v6/domains/app.example.com/config',
+        expect.anything(),
+      );
+    });
+
+    it('reports misconfigured as unknown when the config check fails', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ name: 'app.example.com', verified: true }),
+        })
+        .mockResolvedValueOnce({ ok: false, status: 500 });
+
+      await expect(
+        new VercelEnvClient().verifyDomain({
+          token: 'vercel',
+          targetId: 'prj_1',
+          hostname: 'app.example.com',
+        }),
+      ).resolves.toMatchObject({ misconfigured: null });
+    });
+
+    it('treats an already-removed domain as removed', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve(''),
+      });
+
+      await expect(
+        new VercelEnvClient().removeDomain({
+          token: 'vercel',
+          targetId: 'prj_1',
+          hostname: 'gone.example.com',
+        }),
+      ).resolves.toEqual({ removed: true });
+    });
+  });
+
   it('creates Vercel projects from repo metadata', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
