@@ -24,7 +24,7 @@ import { ProjectsModule } from './modules/projects/projects.module.js';
 import { ProjectReferenceModule } from './modules/projects/project-reference.module.js';
 import { CiModule } from './modules/ci/ci.module.js';
 import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
-import { CapabilitiesModule } from './modules/capabilities/capabilities.module.js';
+import { CapabilitiesModule } from './modules/capabilities/index.js';
 import { DeploymentsModule } from './modules/deployments/deployments.module.js';
 import { UsageModule } from './modules/usage/usage.module.js';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module.js';
