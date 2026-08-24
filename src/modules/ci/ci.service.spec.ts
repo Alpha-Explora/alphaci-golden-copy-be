@@ -2,7 +2,7 @@ import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import { CiService } from './ci.service';
-import type { CiTokensRepository } from './ci-tokens.repository';
+import type { CiTokensRepository } from './infra/ci-tokens.repository';
 
 const makeRepository = () =>
   ({

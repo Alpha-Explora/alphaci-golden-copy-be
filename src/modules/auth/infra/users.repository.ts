@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-import type { SessionUser } from '../../common/interfaces/session-user.interface';
-import { DatabaseService } from '../../kernel/db/database.service';
+import type { SessionUser } from '../../../common/interfaces/session-user.interface';
+import { DatabaseService } from '../../../kernel/db/database.service';
 
 interface UpsertGitHubUserInput {
   githubUserId: string;

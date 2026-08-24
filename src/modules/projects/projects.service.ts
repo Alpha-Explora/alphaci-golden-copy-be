@@ -19,9 +19,10 @@ import type { AppConfig } from '../../config/app.config';
 import { CatalogService } from '../catalog/catalog.service';
 import { CiService } from '../ci/ci.service';
 import {
-  CiTokensRepository,
+  CI_TOKEN_STATUS_LOOKUP,
+  type CiTokenStatusLookup,
   type ProjectTokenStatus,
-} from '../ci/ci-tokens.repository';
+} from '../ci/index.js';
 import { AuditEventsService } from '../audit/audit-events.service';
 import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
 import { EnvVarsRepository } from '../env-provisioning/env-vars.repository';
@@ -43,9 +44,10 @@ import {
 } from '../github/github.service';
 import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
 import {
-  WorkflowHistoryRepository,
+  WORKFLOW_HISTORY_QUERY,
+  type WorkflowHistoryQuery,
   type WorkflowHistoryEntry,
-} from '../persistence/workflow-history.repository';
+} from '../workflows/index.js';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -358,13 +360,15 @@ export class ProjectsService {
     @Inject(DEPLOYMENT_PROVISIONING_FACADE)
     private readonly projectDeploymentProvisioningService: DeploymentProvisioningFacade,
     @Optional()
-    private readonly ciTokensRepository?: CiTokensRepository,
+    @Inject(CI_TOKEN_STATUS_LOOKUP)
+    private readonly ciTokensRepository?: CiTokenStatusLookup,
     @Optional()
     private readonly deploymentTargetsRepository?: DeploymentTargetsRepository,
     @Optional()
     private readonly envVarsRepository?: EnvVarsRepository,
     @Optional()
-    private readonly workflowHistoryRepository?: WorkflowHistoryRepository,
+    @Inject(WORKFLOW_HISTORY_QUERY)
+    private readonly workflowHistoryRepository?: WorkflowHistoryQuery,
     @Optional()
     private readonly dashboardSnapshotsRepository?: ProjectDashboardSnapshotsRepository,
     @Optional()

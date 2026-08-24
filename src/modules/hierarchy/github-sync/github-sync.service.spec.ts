@@ -1,6 +1,6 @@
 import type { AuditEventsService } from '../../audit/audit-events.service';
-import type { UsersRepository } from '../../persistence/users.repository';
-import type { OutboxRepository } from '../../persistence/outbox.repository';
+import type { SessionUserLookup } from '../../../kernel/auth/session-user-lookup.contract';
+import type { OutboxRepository } from '../../../kernel/events/outbox.repository';
 import type { AssignmentRecord, AssignmentsRepository } from '../assignments/assignments.repository';
 import type { RepositoriesRepository } from '../repositories/repositories.repository';
 import type { GithubAccessSyncRepository } from './github-access-sync.repository';
@@ -52,7 +52,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
   let assignmentsRepository: jest.Mocked<AssignmentsRepository>;
   let syncRepository: jest.Mocked<GithubAccessSyncRepository>;
   let repositoriesRepository: jest.Mocked<RepositoriesRepository>;
-  let usersRepository: jest.Mocked<UsersRepository>;
+  let sessionUserLookup: jest.Mocked<SessionUserLookup>;
   let provider: jest.Mocked<GithubTeamAccessProvider>;
   let auditEventsService: jest.Mocked<AuditEventsService>;
   let service: GithubSyncService;
@@ -79,9 +79,9 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     repositoriesRepository = {
       findById: jest.fn().mockResolvedValue(baseRepository),
     } as unknown as jest.Mocked<RepositoriesRepository>;
-    usersRepository = {
-      findById: jest.fn().mockResolvedValue(baseUser),
-    } as unknown as jest.Mocked<UsersRepository>;
+    sessionUserLookup = {
+      findSessionUser: jest.fn().mockResolvedValue(baseUser),
+    } as unknown as jest.Mocked<SessionUserLookup>;
     provider = {
       ensureTeam: jest.fn(),
       addMember: jest.fn(),
@@ -98,7 +98,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
       assignmentsRepository,
       syncRepository,
       repositoriesRepository,
-      usersRepository,
+      sessionUserLookup,
       provider,
       auditEventsService,
     );

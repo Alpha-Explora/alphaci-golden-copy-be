@@ -1,8 +1,16 @@
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { CiTokensRepository } from '../ci/ci-tokens.repository';
+import {
+  CI_TOKEN_STATUS_LOOKUP,
+  type CiTokenStatusLookup,
+} from '../ci/index.js';
 import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
 import { EnvVarsRepository } from '../env-provisioning/env-vars.repository';
 import type {
@@ -29,7 +37,8 @@ export class ProjectDriftService {
     @Optional()
     private readonly envVarsRepository?: EnvVarsRepository,
     @Optional()
-    private readonly ciTokensRepository?: CiTokensRepository,
+    @Inject(CI_TOKEN_STATUS_LOOKUP)
+    private readonly ciTokensRepository?: CiTokenStatusLookup,
     @Optional()
     private readonly configService?: ConfigService,
   ) {}
@@ -98,7 +107,9 @@ export class ProjectDriftService {
     project: ProvisionedProjectRow,
     targets: DeploymentTargetSummary[],
     envMetadata: EnvVarMetadata[],
-    ciToken: Awaited<ReturnType<CiTokensRepository['findProjectTokenStatus']>>,
+    ciToken: Awaited<
+      ReturnType<CiTokenStatusLookup['findProjectTokenStatus']>
+    >,
   ): ProjectDriftFindingInput[] {
     const findings: ProjectDriftFindingInput[] = [];
     const projectId = project.id;

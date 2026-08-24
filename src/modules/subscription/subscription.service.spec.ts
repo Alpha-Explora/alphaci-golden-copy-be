@@ -3,8 +3,8 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionService } from './subscription.service.js';
-import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
-import { OutboxRepository } from '../persistence/outbox.repository.js';
+import { SubscriptionsRepository } from './infra/subscriptions.repository.js';
+import { OutboxRepository } from '../../kernel/events/outbox.repository.js';
 import type {
   SessionUser,
   SubscriptionState,

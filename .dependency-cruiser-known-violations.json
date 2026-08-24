@@ -44,20 +44,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/admin/admin.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/modules/admin/admin.service.ts",
     "to": "src/modules/audit/audit-events.repository.ts",
     "unresolvedTo": "../audit/audit-events.repository",
@@ -158,20 +144,6 @@
   {
     "type": "dependency",
     "from": "src/modules/auth/auth.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/auth/auth.module.ts",
     "to": "src/modules/projects/projects.module.ts",
     "unresolvedTo": "../projects/projects.module",
     "dependencyTypes": [
@@ -213,62 +185,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/auth/auth.service.ts",
-    "to": "src/modules/persistence/oauth-state.repository.ts",
-    "unresolvedTo": "../persistence/oauth-state.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/auth/auth.service.ts",
-    "to": "src/modules/persistence/outbox.repository.ts",
-    "unresolvedTo": "../persistence/outbox.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/auth/auth.service.ts",
-    "to": "src/modules/persistence/subscriptions.repository.ts",
-    "unresolvedTo": "../persistence/subscriptions.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/auth/auth.service.ts",
-    "to": "src/modules/persistence/users.repository.ts",
-    "unresolvedTo": "../persistence/users.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/modules/catalog/catalog.controller.ts",
     "to": "src/modules/github/github.service.ts",
     "unresolvedTo": "../github/github.service",
@@ -298,36 +214,8 @@
   {
     "type": "dependency",
     "from": "src/modules/catalog/catalog.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/catalog/catalog.module.ts",
     "to": "src/modules/subscription/subscription.module.ts",
     "unresolvedTo": "../subscription/subscription.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/ci/ci.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
     "dependencyTypes": [
       "local",
       "import"
@@ -442,20 +330,6 @@
     "from": "src/modules/env-provisioning/env-provisioning.module.ts",
     "to": "src/modules/github/github.module.ts",
     "unresolvedTo": "../github/github.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/env-provisioning/env-provisioning.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
     "dependencyTypes": [
       "local",
       "import"
@@ -681,20 +555,6 @@
   {
     "type": "dependency",
     "from": "src/modules/existing-repos/existing-repos.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/existing-repos/existing-repos.module.ts",
     "to": "src/modules/subscription/subscription.module.ts",
     "unresolvedTo": "../subscription/subscription.module",
     "dependencyTypes": [
@@ -725,20 +585,6 @@
     "from": "src/modules/existing-repos/existing-repos.service.ts",
     "to": "src/modules/github/github.service.ts",
     "unresolvedTo": "../github/github.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/feedback/feedback.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
     "dependencyTypes": [
       "local",
       "import"
@@ -795,20 +641,6 @@
     "from": "src/modules/github/github.module.ts",
     "to": "src/modules/audit/audit.module.ts",
     "unresolvedTo": "../audit/audit.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/github/github.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
     "dependencyTypes": [
       "local",
       "import"
@@ -893,34 +725,6 @@
     "from": "src/modules/hierarchy/github-sync/github-sync.service.ts",
     "to": "src/modules/audit/audit-events.service.ts",
     "unresolvedTo": "../../audit/audit-events.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/hierarchy/github-sync/github-sync.service.ts",
-    "to": "src/modules/persistence/outbox.repository.ts",
-    "unresolvedTo": "../../persistence/outbox.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/hierarchy/github-sync/github-sync.service.ts",
-    "to": "src/modules/persistence/users.repository.ts",
-    "unresolvedTo": "../../persistence/users.repository",
     "dependencyTypes": [
       "local",
       "import"
@@ -1059,20 +863,6 @@
   {
     "type": "dependency",
     "from": "src/modules/hierarchy/hierarchy.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/hierarchy/hierarchy.module.ts",
     "to": "src/modules/projects/projects.repository.ts",
     "unresolvedTo": "../projects/projects.repository",
     "dependencyTypes": [
@@ -1146,34 +936,6 @@
     "from": "src/modules/hierarchy/systems/systems.service.ts",
     "to": "src/modules/audit/audit-events.service.ts",
     "unresolvedTo": "../../audit/audit-events.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/notifications/notifications.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/persistence/persistence.module.ts",
-    "to": "src/modules/ci/ci-tokens.repository.ts",
-    "unresolvedTo": "../ci/ci-tokens.repository",
     "dependencyTypes": [
       "local",
       "import"
@@ -1359,20 +1121,6 @@
   {
     "type": "dependency",
     "from": "src/modules/projects/project-drift.service.ts",
-    "to": "src/modules/ci/ci-tokens.repository.ts",
-    "unresolvedTo": "../ci/ci-tokens.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-drift.service.ts",
     "to": "src/modules/env-provisioning/deployment-targets.repository.ts",
     "unresolvedTo": "../env-provisioning/deployment-targets.repository",
     "dependencyTypes": [
@@ -1543,20 +1291,6 @@
   {
     "type": "dependency",
     "from": "src/modules/projects/projects.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.module.ts",
     "to": "src/modules/subscription/subscription.module.ts",
     "unresolvedTo": "../subscription/subscription.module",
     "dependencyTypes": [
@@ -1615,20 +1349,6 @@
     "from": "src/modules/projects/projects.service.ts",
     "to": "src/modules/catalog/catalog.service.ts",
     "unresolvedTo": "../catalog/catalog.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.service.ts",
-    "to": "src/modules/ci/ci-tokens.repository.ts",
-    "unresolvedTo": "../ci/ci-tokens.repository",
     "dependencyTypes": [
       "local",
       "import"
@@ -1728,20 +1448,6 @@
     "from": "src/modules/projects/projects.service.ts",
     "to": "src/modules/hierarchy/project-link/hierarchy-project-link.service.ts",
     "unresolvedTo": "../hierarchy/project-link/hierarchy-project-link.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.service.ts",
-    "to": "src/modules/persistence/workflow-history.repository.ts",
-    "unresolvedTo": "../persistence/workflow-history.repository",
     "dependencyTypes": [
       "local",
       "import"
@@ -1854,62 +1560,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/subscription/subscription.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/subscription/subscription.service.ts",
-    "to": "src/modules/persistence/outbox.repository.ts",
-    "unresolvedTo": "../persistence/outbox.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/subscription/subscription.service.ts",
-    "to": "src/modules/persistence/subscriptions.repository.ts",
-    "unresolvedTo": "../persistence/subscriptions.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/usage/usage.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/modules/workflows/staged-workflow.builder.ts",
     "to": "src/modules/catalog/catalog.service.ts",
     "unresolvedTo": "../catalog/catalog.service",
@@ -1940,20 +1590,6 @@
   {
     "type": "dependency",
     "from": "src/modules/workflows/workflows.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/workflows/workflows.module.ts",
     "to": "src/modules/subscription/subscription.module.ts",
     "unresolvedTo": "../subscription/subscription.module",
     "dependencyTypes": [
@@ -1970,48 +1606,6 @@
     "from": "src/modules/workflows/workflows.service.ts",
     "to": "src/modules/catalog/catalog.service.ts",
     "unresolvedTo": "../catalog/catalog.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/workflows/workflows.service.ts",
-    "to": "src/modules/persistence/outbox.repository.ts",
-    "unresolvedTo": "../persistence/outbox.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/workflows/workflows.service.ts",
-    "to": "src/modules/persistence/workflow-history.repository.ts",
-    "unresolvedTo": "../persistence/workflow-history.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/workspaces/workspaces.module.ts",
-    "to": "src/modules/persistence/persistence.module.ts",
-    "unresolvedTo": "../persistence/persistence.module",
     "dependencyTypes": [
       "local",
       "import"

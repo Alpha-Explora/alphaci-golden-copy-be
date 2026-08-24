@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { UsersRepository } from './users.repository.js';
-import { DatabaseService } from '../../kernel/db/database.service.js';
+import { DatabaseService } from '../../../kernel/db/database.service.js';
 
 const fakeRow = {
   id: 'user-uuid-1',

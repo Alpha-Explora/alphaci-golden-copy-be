@@ -1,4 +1,4 @@
-import type { DatabaseService } from '../../kernel/db/database.service.js';
+import type { DatabaseService } from '../../../kernel/db/database.service.js';
 import { OAuthStateRepository } from './oauth-state.repository.js';
 
 const makeDatabaseService = (rows: unknown[] = [], rowCount = 1) =>

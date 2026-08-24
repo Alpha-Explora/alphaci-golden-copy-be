@@ -3,8 +3,8 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { WorkflowsService } from './workflows.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
-import { WorkflowHistoryRepository } from '../persistence/workflow-history.repository.js';
-import { OutboxRepository } from '../persistence/outbox.repository.js';
+import { WorkflowHistoryRepository } from './infra/workflow-history.repository.js';
+import { OutboxRepository } from '../../kernel/events/outbox.repository.js';
 import type { WorkflowTemplate } from '../catalog/catalog.service.js';
 
 jest.mock('node:fs/promises');

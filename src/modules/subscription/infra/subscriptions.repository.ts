@@ -4,8 +4,8 @@ import type { PoolClient } from 'pg';
 import type {
   SubscriptionPlan,
   SubscriptionState,
-} from '../../common/interfaces/session-user.interface';
-import { DatabaseService } from '../../kernel/db/database.service';
+} from '../../../common/interfaces/session-user.interface';
+import { DatabaseService } from '../../../kernel/db/database.service';
 
 interface PersistedSubscriptionRow {
   plan: SubscriptionPlan;

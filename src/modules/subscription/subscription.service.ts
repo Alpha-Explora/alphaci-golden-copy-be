@@ -7,8 +7,8 @@ import type {
   SubscriptionPlan,
   SubscriptionState,
 } from '../../common/interfaces/session-user.interface';
-import { OutboxRepository } from '../persistence/outbox.repository';
-import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
+import { OutboxRepository } from '../../kernel/events/outbox.repository';
+import { SubscriptionsRepository } from './infra/subscriptions.repository';
 
 @Injectable()
 export class SubscriptionService {

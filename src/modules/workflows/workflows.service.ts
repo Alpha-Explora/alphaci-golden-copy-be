@@ -8,8 +8,8 @@ import {
   CatalogService,
   type WorkflowTemplate,
 } from '../catalog/catalog.service';
-import { OutboxRepository } from '../persistence/outbox.repository';
-import { WorkflowHistoryRepository } from '../persistence/workflow-history.repository';
+import { OutboxRepository } from '../../kernel/events/outbox.repository';
+import { WorkflowHistoryRepository } from './infra/workflow-history.repository';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 import { buildStagedWorkflowBundle } from './staged-workflow.builder';
 

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { DatabaseService } from '../../kernel/db/database.service';
+import { DatabaseService } from '../../../kernel/db/database.service';
 
 interface OAuthStateRow {
   return_to: string;

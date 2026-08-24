@@ -8,8 +8,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { CiTokensRepository } from './ci-tokens.repository';
-import type { CiValidationContextRow } from './ci-tokens.repository';
+import { CiTokensRepository } from './infra/ci-tokens.repository';
+import type { CiValidationContextRow } from './infra/ci-tokens.repository';
 
 export interface IssueProjectTokenResult {
   token: string;

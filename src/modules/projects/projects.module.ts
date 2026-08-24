@@ -8,13 +8,13 @@ import { DatabaseModule } from '../../kernel/db/database.module';
 import { HierarchyProjectLinkRepository } from '../hierarchy/project-link/hierarchy-project-link.repository';
 import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
 import { GithubModule } from '../github/github.module';
-import { CiModule } from '../ci/ci.module';
+import { CiModule } from '../ci/index.js';
 import { EnvProvisioningModule } from '../env-provisioning/env-provisioning.module';
-import { PersistenceModule } from '../persistence/persistence.module';
 import { NotificationsModule } from '../notifications/index.js';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { UsageModule } from '../usage/usage.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
+import { WorkflowsModule } from '../workflows/index.js';
 import { ProjectsController } from './projects.controller';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
@@ -36,7 +36,6 @@ import { ProjectsService } from './projects.service';
 @Module({
   imports: [
     DatabaseModule,
-    PersistenceModule, // UsersRepository (needed by SessionAuthGuard)
     CatalogModule, // CatalogService
     GithubModule, // GithubService
     CiModule, // CiService
@@ -46,6 +45,7 @@ import { ProjectsService } from './projects.service';
     AuditModule,
     WorkspacesModule,
     NotificationsModule,
+    WorkflowsModule,
   ],
   controllers: [ProjectsController, ProjectWorkspaceController],
   providers: [
