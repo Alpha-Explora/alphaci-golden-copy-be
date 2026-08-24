@@ -28,8 +28,11 @@ export type { EnvProvider } from './env-provisioning.types';
 // provider orchestration details.
 export {
   DEPLOYMENT_PROVISIONING_FACADE,
+  DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   type DeploymentProvisioningFacade,
   type DeploymentProvisioningInput,
+  type DeploymentProjectReference,
+  type DeploymentProjectReferenceLookup,
   type DeploymentProvisioningRequest,
   type DeploymentProvisioningResult,
 } from './deployment-provisioning.contract';

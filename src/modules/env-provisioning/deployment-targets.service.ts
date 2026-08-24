@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,7 +11,6 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import { AuditEventsService } from '../audit/audit-events.service';
 import { NotificationEventsService } from '../notifications/index.js';
-import { ProjectsRepository } from '../projects/projects.repository';
 import {
   DeploymentTargetsRepository,
   type UpdateDeploymentTargetMetadataInput,
@@ -33,6 +33,11 @@ import { UsageQuotaService } from '../usage/usage-quota.service';
 import type { UsageLimitCode } from '../usage/usage.types';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import type { WorkspaceRole } from '../workspaces/workspaces.repository';
+import {
+  DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
+  type DeploymentProjectReference,
+  type DeploymentProjectReferenceLookup,
+} from './index.js';
 
 export interface DeploymentTargetLogEntry {
   timestamp: string;
@@ -46,7 +51,8 @@ export class DeploymentTargetsService {
   private readonly renderCostPolicy: RenderCostPolicyService;
 
   constructor(
-    private readonly projectsRepository: ProjectsRepository,
+    @Inject(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP)
+    private readonly projectReferenceLookup: DeploymentProjectReferenceLookup,
     private readonly deploymentTargetsRepository: DeploymentTargetsRepository,
     private readonly providerConnectionsRepository: ProviderConnectionsRepository,
     private readonly encryptionService: EnvTokenEncryptionService,
@@ -140,7 +146,7 @@ export class DeploymentTargetsService {
       dto.action === 'create'
         ? await this.clientRegistry.getClient(dto.provider).createTarget({
             token: providerAuth.token,
-            repoFullName: project.repo_full_name,
+            repoFullName: project.repoFullName,
             projectName: this.requireString(dto.projectName, 'projectName'),
             branchName: dto.branchName?.trim() || 'uat',
             ...(dto.rootDirectory?.trim()
@@ -207,7 +213,7 @@ export class DeploymentTargetsService {
             : null,
         providerProjectId: target.id,
         providerProjectName: target.name,
-        repoFullName: project.repo_full_name,
+        repoFullName: project.repoFullName,
         branchName: dto.branchName?.trim() || 'uat',
         rootDirectory: dto.rootDirectory?.trim() || null,
         buildCommand: dto.buildCommand?.trim() || null,
@@ -547,8 +553,11 @@ export class DeploymentTargetsService {
     };
   }
 
-  private async getProjectOrThrow(projectId: string, userId: string) {
-    const project = await this.projectsRepository.findByIdAndUser(
+  private async getProjectOrThrow(
+    projectId: string,
+    userId: string,
+  ): Promise<DeploymentProjectReference> {
+    const project = await this.projectReferenceLookup.findProjectReference(
       projectId,
       userId,
     );

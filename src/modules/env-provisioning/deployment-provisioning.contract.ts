@@ -88,6 +88,28 @@ export interface DeploymentProvisioningInput {
   request: DeploymentProvisioningRequest | undefined;
 }
 
+/**
+ * Project data the Deployments context is allowed to consume. The reference
+ * is resolved by Projects at the composition boundary; Deployments never
+ * receives a Project aggregate or repository row.
+ */
+export interface DeploymentProjectReference {
+  projectId: string;
+  userId: string;
+  repoFullName: string;
+}
+
+export interface DeploymentProjectReferenceLookup {
+  findProjectReference(
+    projectId: string,
+    userId: string,
+  ): Promise<DeploymentProjectReference | null>;
+}
+
+export const DEPLOYMENT_PROJECT_REFERENCE_LOOKUP = Symbol(
+  'DEPLOYMENT_PROJECT_REFERENCE_LOOKUP',
+);
+
 export type DeploymentProvisioningResult = {
   status: 'skipped' | 'completed' | 'partial' | 'failed';
   targets: Array<{

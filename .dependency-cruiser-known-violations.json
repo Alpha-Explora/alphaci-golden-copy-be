@@ -242,20 +242,6 @@
   {
     "type": "dependency",
     "from": "src/modules/env-provisioning/deployment-targets.service.ts",
-    "to": "src/modules/projects/projects.repository.ts",
-    "unresolvedTo": "../projects/projects.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/env-provisioning/deployment-targets.service.ts",
     "to": "src/modules/usage/usage-quota.service.ts",
     "unresolvedTo": "../usage/usage-quota.service",
     "dependencyTypes": [
@@ -330,20 +316,6 @@
     "from": "src/modules/env-provisioning/env-provisioning.module.ts",
     "to": "src/modules/github/github.module.ts",
     "unresolvedTo": "../github/github.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/env-provisioning/env-provisioning.module.ts",
-    "to": "src/modules/projects/projects.repository.ts",
-    "unresolvedTo": "../projects/projects.repository",
     "dependencyTypes": [
       "local",
       "import"

@@ -4,8 +4,8 @@ import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import { DeploymentTargetsService } from './deployment-targets.service';
 
 describe('DeploymentTargetsService', () => {
-  const projectsRepository = {
-    findByIdAndUser: jest.fn(),
+  const projectReferenceLookup = {
+    findProjectReference: jest.fn(),
   };
   const deploymentTargetsRepository = {
     createDeploymentTarget: jest.fn(),
@@ -48,9 +48,10 @@ describe('DeploymentTargetsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    projectsRepository.findByIdAndUser.mockResolvedValue({
-      id: 'project-1',
-      repo_full_name: 'owner/repo',
+    projectReferenceLookup.findProjectReference.mockResolvedValue({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'owner/repo',
     });
     providerConnectionsRepository.findActiveProviderConnection.mockResolvedValue(
       {
@@ -85,7 +86,7 @@ describe('DeploymentTargetsService', () => {
     });
 
     service = new DeploymentTargetsService(
-      projectsRepository as never,
+      projectReferenceLookup as never,
       deploymentTargetsRepository as never,
       providerConnectionsRepository as never,
       encryptionService as never,

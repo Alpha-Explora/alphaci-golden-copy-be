@@ -21,6 +21,7 @@ import { GithubModule } from './modules/github/github.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 import { ProjectsModule } from './modules/projects/projects.module.js';
+import { ProjectReferenceModule } from './modules/projects/project-reference.module.js';
 import { CiModule } from './modules/ci/ci.module.js';
 import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
 import { CapabilitiesModule } from './modules/capabilities/capabilities.module.js';
@@ -56,6 +57,7 @@ import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';
     CiModule,
     WorkflowsModule,
     ProjectsModule,
+    ProjectReferenceModule,
     ExistingReposModule,
     CapabilitiesModule,
     EnvProvisioningModule,

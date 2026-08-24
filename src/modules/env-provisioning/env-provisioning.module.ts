@@ -6,8 +6,6 @@ import { AuditModule } from '../audit/audit.module';
 import { DatabaseModule } from '../../kernel/db/database.module';
 import { GithubModule } from '../github/github.module';
 import { NotificationsModule } from '../notifications/index.js';
-import { PersistenceModule } from '../persistence/persistence.module';
-import { ProjectsRepository } from '../projects/projects.repository';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { UsageModule } from '../usage/usage.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
@@ -38,7 +36,6 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     DatabaseModule,
     GithubModule,
     NotificationsModule,
-    PersistenceModule,
     SubscriptionModule,
     UsageModule,
     WorkspacesModule,
@@ -49,7 +46,6 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     EnvVarsController,
   ],
   providers: [
-    ProjectsRepository,
     ProviderConnectionsRepository,
     DeploymentTargetsRepository,
     EnvVarsRepository,
