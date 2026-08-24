@@ -23,7 +23,7 @@ import { join } from 'node:path';
 
 import { Client } from 'pg';
 
-import { postgresSslConfig } from '../src/modules/database/postgres-ssl.config';
+import { postgresSslConfig } from '../src/kernel/db/postgres-ssl.config';
 
 const files = process.argv.slice(2);
 const dbUrl = process.env['SUPABASE_DB_URL'];

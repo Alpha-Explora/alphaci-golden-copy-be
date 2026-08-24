@@ -5,7 +5,7 @@ import type {
   SubscriptionPlan,
   SubscriptionState,
 } from '../../common/interfaces/session-user.interface';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../kernel/db/database.service';
 
 interface PersistedSubscriptionRow {
   plan: SubscriptionPlan;

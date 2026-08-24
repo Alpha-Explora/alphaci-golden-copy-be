@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../../database/database.service';
+import { DatabaseService } from '../../../kernel/db/database.service';
 
 export interface LinkProjectInput {
   projectId: string;

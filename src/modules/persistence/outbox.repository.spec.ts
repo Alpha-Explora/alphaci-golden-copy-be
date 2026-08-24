@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { OutboxRepository } from './outbox.repository.js';
-import { DatabaseService } from '../database/database.service.js';
+import { DatabaseService } from '../../kernel/db/database.service.js';
 
 const makeDatabaseService = () =>
   ({

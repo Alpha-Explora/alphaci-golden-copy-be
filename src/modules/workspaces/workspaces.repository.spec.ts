@@ -1,4 +1,4 @@
-import type { DatabaseService } from '../database/database.service';
+import type { DatabaseService } from '../../kernel/db/database.service';
 import { WorkspacesRepository } from './workspaces.repository';
 
 const makeDatabaseService = (query: jest.Mock) =>

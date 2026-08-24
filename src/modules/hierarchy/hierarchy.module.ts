@@ -5,7 +5,7 @@ import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import type { AppConfig } from '../../config/app.config';
 import { AdminModule } from '../admin/admin.module';
 import { AuditModule } from '../audit/audit.module';
-import { DatabaseModule } from '../database/database.module';
+import { DatabaseModule } from '../../kernel/db/database.module';
 import { GithubModule } from '../github/github.module';
 import { PersistenceModule } from '../persistence/persistence.module';
 import { ProjectsRepository } from '../projects/projects.repository';

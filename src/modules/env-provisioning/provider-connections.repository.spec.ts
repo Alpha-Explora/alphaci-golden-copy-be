@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../kernel/db/database.service';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 
 const row = {

@@ -1,4 +1,4 @@
-import type { DatabaseService } from '../database/database.service.js';
+import type { DatabaseService } from '../../kernel/db/database.service.js';
 import { GithubInstallationsRepository } from './github-installations.repository.js';
 
 const makeDatabaseService = (rows: unknown[] = []) =>

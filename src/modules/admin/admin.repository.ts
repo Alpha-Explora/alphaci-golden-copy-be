@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../kernel/db/database.service';
 import type { AppRole, AppRoleSource } from './platform-admins.repository';
 
 export interface AdminUserListRow {

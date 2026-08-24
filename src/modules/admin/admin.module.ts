@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { AuditModule } from '../audit/audit.module';
-import { DatabaseModule } from '../database/database.module';
+import { DatabaseModule } from '../../kernel/db/database.module';
 import { FeedbackModule } from '../feedback/feedback.module';
 import { PersistenceModule } from '../persistence/persistence.module';
 import { AdminController } from './admin.controller';

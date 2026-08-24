@@ -1,5 +1,5 @@
 import { CiTokensRepository } from './ci-tokens.repository';
-import type { DatabaseService } from '../database/database.service';
+import type { DatabaseService } from '../../kernel/db/database.service';
 
 const makeDatabaseService = (query: jest.Mock) =>
   ({

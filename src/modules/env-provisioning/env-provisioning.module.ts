@@ -3,7 +3,7 @@ import { Module } from '@nestjs/common';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { AuditModule } from '../audit/audit.module';
-import { DatabaseModule } from '../database/database.module';
+import { DatabaseModule } from '../../kernel/db/database.module';
 import { GithubModule } from '../github/github.module';
 import { NotificationsModule } from '../notifications/index.js';
 import { PersistenceModule } from '../persistence/persistence.module';

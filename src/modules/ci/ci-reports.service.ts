@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../kernel/db/database.service';
 import { CiRunReportsRepository } from './ci-run-reports.repository';
 import { translateResults } from './translate-results';
 import type { CiReportBodyDto } from './dto/ci-report-body.dto';

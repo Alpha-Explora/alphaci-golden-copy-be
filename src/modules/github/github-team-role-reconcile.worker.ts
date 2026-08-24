@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../kernel/db/database.service';
 import { GithubTeamRoleService } from './github-team-role.service';
 
 /**

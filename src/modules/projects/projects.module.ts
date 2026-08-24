@@ -4,7 +4,7 @@ import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { AuditModule } from '../audit/audit.module';
 import { CatalogModule } from '../catalog/catalog.module';
-import { DatabaseModule } from '../database/database.module';
+import { DatabaseModule } from '../../kernel/db/database.module';
 import { HierarchyProjectLinkRepository } from '../hierarchy/project-link/hierarchy-project-link.repository';
 import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
 import { GithubModule } from '../github/github.module';

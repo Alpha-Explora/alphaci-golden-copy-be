@@ -29,7 +29,7 @@ import { createSign } from 'node:crypto';
 
 import { Client } from 'pg';
 
-import { postgresSslConfig } from '../src/modules/database/postgres-ssl.config';
+import { postgresSslConfig } from '../src/kernel/db/postgres-ssl.config';
 
 const GITHUB_API = 'https://api.github.com';
 const USER_AGENT = 'cicd-workflow-product';
