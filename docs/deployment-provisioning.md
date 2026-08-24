@@ -46,6 +46,32 @@ FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID=<optional-render-registry-credential-id>
 
 `FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID` is needed when Render must pull private GHCR images.
 
+## Canonical Provider Discovery and GCP
+
+`GET /deployment-providers` is the provider-neutral discovery endpoint. It
+returns only public metadata: provider IDs, supported slots, capabilities,
+form schemas, and enabled state. It never returns credentials.
+
+Render and Vercel remain compatibility providers in this registry; their
+existing deployment routes and generated workflows are unchanged.
+
+GCP is disabled by default. When enabled, it uses Application Default
+Credentials through `google-auth-library` and its runtime port can ensure an
+Artifact Registry repository and a Cloud Run service. Configuration:
+
+```env
+GCP_DEPLOYMENTS_ENABLED=true
+GCP_SHARED_PROJECT_ID=<shared-gcp-project-id>
+GCP_REGION=asia-southeast1
+GCP_ARTIFACT_REGISTRY_REPOSITORY=<artifact-registry-repository>
+```
+
+The application service persists a target plus an idempotent provisioning job;
+the executor is intentionally not scheduled or exposed over HTTP in this
+change. A worker integration must claim that job under the deployment
+authorization boundary before it can make Google Cloud calls. This keeps the
+feature safe to deploy and test without creating live resources.
+
 ## Managed Vercel
 
 For FlowCI-managed Vercel targets:

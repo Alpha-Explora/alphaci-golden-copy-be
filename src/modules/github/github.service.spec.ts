@@ -63,6 +63,15 @@ const appConfig: AppConfig = {
       sonarOrganization: '',
     },
   },
+  gcpDeployments: {
+    enabled: false,
+    sharedProjectId: '',
+    region: 'asia-southeast1',
+    artifactRegistryRepository: '',
+    workloadIdentityProvider: '',
+    deployerServiceAccount: '',
+    dedicatedProjectsEnabled: false,
+  },
   projectSyncSnapshots: {
     enabled: false,
     liveGithubEnabled: false,
