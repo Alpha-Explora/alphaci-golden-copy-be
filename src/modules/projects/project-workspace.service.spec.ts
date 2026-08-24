@@ -24,6 +24,16 @@ function build(overrides: {
 
   const github = {
     getInstallationAccessTokenForUserRepo,
+    // Default: no enforced org, so the per-user lookup and the OAuth fallback
+    // keep the behaviour the tests below were written against. The
+    // enforced-org path is exercised explicitly further down.
+    getEnforcedOrg: jest.fn(() => ''),
+    getOrganizationProvisioningContextByLogin: jest.fn(() =>
+      Promise.resolve({
+        accessToken: 'ghs_enforced_org',
+        ownerLogin: 'Alpha-Explora',
+      }),
+    ),
     listBranches: jest.fn(() =>
       Promise.resolve([
         { name: 'develop', protected: false, commitSha: 'a' },
@@ -92,6 +102,65 @@ describe('ProjectWorkspaceService', () => {
       const { service } = build({ installationToken: null });
       await expect(service.listBranches('p1', 'u1', null)).rejects.toThrow(
         UnauthorizedException,
+      );
+    });
+
+    /* github_app.github_installations is populated by this product's linking
+     * flow and by `installation` webhooks. An App installed straight from
+     * GitHub is absent from it, so the per-user lookup returns null and every
+     * read used to fall through to OAuth — which cannot see the enforced org,
+     * leaving each workspace tab reporting an unreadable repository against a
+     * project that had provisioned fine. */
+    it('reads through the enforced org installation with nothing linked to the user', async () => {
+      const { service, github } = build({
+        installationToken: null,
+        github: { getEnforcedOrg: jest.fn(() => 'Alpha-Explora') } as never,
+      });
+
+      await service.listBranches('p1', 'u1', null);
+
+      expect(
+        github.getOrganizationProvisioningContextByLogin,
+      ).toHaveBeenCalledWith('Alpha-Explora');
+      expect(github.listBranches).toHaveBeenCalledWith(
+        'ghs_enforced_org',
+        'Alpha-Explora/orders-api',
+      );
+    });
+
+    it('leaves a repository outside the enforced org to the other strategies', async () => {
+      const { service, github } = build({
+        row: { repo_full_name: 'other-co/orders-api' },
+        github: { getEnforcedOrg: jest.fn(() => 'Alpha-Explora') } as never,
+      });
+
+      await service.listBranches('p1', 'u1', null);
+
+      expect(
+        github.getOrganizationProvisioningContextByLogin,
+      ).not.toHaveBeenCalled();
+      expect(github.listBranches).toHaveBeenCalledWith(
+        'ghs_install',
+        'other-co/orders-api',
+      );
+    });
+
+    it('falls through to the other strategies when the enforced org lookup fails', async () => {
+      const { service, github } = build({
+        github: {
+          getEnforcedOrg: jest.fn(() => 'Alpha-Explora'),
+          getOrganizationProvisioningContextByLogin: jest.fn(() =>
+            Promise.reject(new Error('App not installed')),
+          ),
+        } as never,
+      });
+
+      await service.listBranches('p1', 'u1', null);
+
+      // An unreachable App must not turn a readable repository into an error.
+      expect(github.listBranches).toHaveBeenCalledWith(
+        'ghs_install',
+        'Alpha-Explora/orders-api',
       );
     });
   });
