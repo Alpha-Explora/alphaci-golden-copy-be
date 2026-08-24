@@ -66,6 +66,7 @@ describe('ProjectPreviewsService', () => {
       enabled: false,
       liveProvidersEnabled: false,
       branches: [],
+      providerError: null,
     });
     expect(deploymentsService.listDeployments).not.toHaveBeenCalled();
   });

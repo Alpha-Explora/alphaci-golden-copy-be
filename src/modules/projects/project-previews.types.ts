@@ -37,4 +37,11 @@ export interface ProjectPreviewsResponse {
   /** False when no provider integration is connected, so the list is empty rather than live. */
   liveProvidersEnabled: boolean;
   branches: ProjectBranchPreview[];
+  /**
+   * Safe message when a provider could not be reached.
+   *
+   * Carried so an empty list is not read as "no branch has been deployed" when
+   * the real reason is that the provider did not answer.
+   */
+  providerError: string | null;
 }
