@@ -42,8 +42,8 @@ export class PlatformAdminAccessService {
     return this.repository.setAppRoleSource(userId, source);
   }
 
-  listGithubTeamSyncedUsers(): ReturnType<
-    PlatformAdminsRepository['listGithubTeamSyncedUsers']
+  listGithubTeamSyncedUsers(): Promise<
+    Array<{ id: string; login: string; appRole: AppRole }>
   > {
     return this.repository.listGithubTeamSyncedUsers();
   }
