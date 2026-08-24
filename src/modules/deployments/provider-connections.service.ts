@@ -11,7 +11,7 @@ import type { CreateProviderConnectionDto } from './dto/create-provider-connecti
 import type { EnvProvider } from './deployments.types';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
-import { WorkspacesService } from '../workspaces/workspaces.service';
+import { WorkspacesService } from '../workspaces/index.js';
 
 const PROVIDERS: EnvProvider[] = ['render', 'vercel'];
 type ProviderTeamSummary = { id: string; slug?: string; name?: string };

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { AuditEventsService } from '../../audit/audit-events.service';
+import { AuditEventsService } from '../../audit/index.js';
 import {
   SESSION_USER_LOOKUP,
   type SessionUserLookup,

@@ -14,7 +14,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '../../../common/guards/session-auth.guard';
-import { PlatformAdminGuard } from '../../admin/guards/platform-admin.guard';
+import { PlatformAdminGuard } from '../../admin/index.js';
 import { CreateGroupDto } from '../dto/create-group.dto';
 import { QueryActivityDto } from '../dto/query-activity.dto';
 import { RemoveMemberDto } from '../dto/remove-member.dto';

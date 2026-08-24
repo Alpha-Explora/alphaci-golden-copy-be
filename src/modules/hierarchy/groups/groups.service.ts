@@ -5,8 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { AuditEventsService } from '../../audit/audit-events.service';
-import { GithubService } from '../../github/github.service';
+import { AuditEventsService } from '../../audit/index.js';
+import { GithubService } from '../../github/index.js';
 import { AssignmentsRepository } from '../assignments/assignments.repository';
 import { GithubSyncService } from '../github-sync/github-sync.service';
 import { HierarchyAccessService } from '../hierarchy-access.service';

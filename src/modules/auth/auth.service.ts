@@ -11,7 +11,7 @@ import type { Request } from 'express';
 
 import type { AppConfig } from '../../config/app.config';
 import type { SessionUser } from '../../common/interfaces/session-user.interface';
-import { GithubTeamRoleService } from '../github/github-team-role.service';
+import { GithubTeamRoleService } from '../github/index.js';
 import { OAuthStateRepository } from './infra/oauth-state.repository';
 import { OutboxRepository } from '../../kernel/events/outbox.repository';
 import {

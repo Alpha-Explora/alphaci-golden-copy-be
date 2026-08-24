@@ -7,7 +7,7 @@ import {
 import {
   type AppRole,
   PlatformAdminsRepository,
-} from '../admin/platform-admins.repository';
+} from '../admin/index.js';
 import {
   AssignmentsRepository,
   type AssignmentRecord,

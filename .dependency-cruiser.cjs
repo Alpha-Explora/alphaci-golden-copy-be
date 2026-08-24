@@ -24,6 +24,10 @@ module.exports = {
         pathNot: [
           // Inside your own module, import whatever you like.
           '^src/modules/$1/',
+          // Nest composition files wire module graphs. They may import the
+          // concrete module class directly so a public service barrel does
+          // not pull every provider into a circular dependency.
+          '^src/modules/[^/]+/[^/]+\\.module\\.ts$',
         ],
       },
     },

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { GithubService } from '../github/github.service';
+import { GithubService } from '../github/index.js';
 import { ListCatalogQueryDto } from './dto/list-catalog-query.dto';
 import { CatalogService } from './catalog.service';
 

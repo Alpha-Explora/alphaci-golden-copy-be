@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 
-import { AuditEventsService } from '../../audit/audit-events.service';
+import { AuditEventsService } from '../../audit/index.js';
 import { HierarchyAccessService } from '../hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES, type EnvironmentScope } from '../hierarchy.types';
 import { RepositoriesRepository, type RepositoryRecord } from '../repositories/repositories.repository';

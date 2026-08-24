@@ -28,7 +28,7 @@ import { CapabilitiesModule } from './modules/capabilities/capabilities.module.j
 import { DeploymentsModule } from './modules/deployments/deployments.module.js';
 import { UsageModule } from './modules/usage/usage.module.js';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module.js';
-import { NotificationsModule } from './modules/notifications/index.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { FeedbackModule } from './modules/feedback/feedback.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';

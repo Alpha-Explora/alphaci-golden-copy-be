@@ -16,9 +16,6 @@
  *   NotificationsController — HTTP is an entry point, never a dependency.
  */
 
-// Wiring: what app.module.ts and consuming feature modules import.
-export { NotificationsModule } from './notifications.module';
-
 // Behaviour: how other features raise a notification. Four call sites today —
 // projects, project-drift-repair, deployment-targets and env-vars.
 export { NotificationEventsService } from './domain/notification-events.service';

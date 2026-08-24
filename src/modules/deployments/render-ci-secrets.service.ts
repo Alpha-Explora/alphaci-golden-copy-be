@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { GithubService } from '../github/github.service';
+import { GithubService } from '../github/index.js';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type {
   DeploymentTargetSummary,

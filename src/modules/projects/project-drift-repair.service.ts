@@ -8,8 +8,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { AuditEventsService } from '../audit/audit-events.service';
-import { CiService } from '../ci/ci.service';
+import { AuditEventsService } from '../audit/index.js';
+import { CiService } from '../ci/index.js';
 import {
   DEPLOYMENT_DRIFT_FINDINGS_STORE,
   DEPLOYMENT_TARGET_DELETION,

@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { AuditEventsService } from '../audit/audit-events.service';
+import { AuditEventsService } from '../audit/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import type { ProvisionEnvVarsDto } from './dto/provision-env-vars.dto';
@@ -22,9 +22,8 @@ import type {
 } from './deployments.types';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
-import { UsageQuotaService } from '../usage/usage-quota.service';
-import type { UsageLimitCode } from '../usage/usage.types';
-import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
+import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
+import { WorkspaceAccessService } from '../workspaces/index.js';
 
 const LANES: EnvLane[] = ['production', 'preview'];
 const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{1,127}$/;

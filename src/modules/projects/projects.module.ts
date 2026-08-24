@@ -2,19 +2,21 @@ import { Module } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
-import { AuditModule } from '../audit/audit.module';
-import { CatalogModule } from '../catalog/catalog.module';
+import { AuditModule } from '../audit/audit.module.js';
+import { CatalogModule } from '../catalog/catalog.module.js';
 import { DatabaseModule } from '../../kernel/db/database.module';
-import { HierarchyProjectLinkRepository } from '../hierarchy/project-link/hierarchy-project-link.repository';
-import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
-import { GithubModule } from '../github/github.module';
-import { CiModule } from '../ci/index.js';
-import { DeploymentsModule } from '../deployments/index.js';
-import { NotificationsModule } from '../notifications/index.js';
-import { SubscriptionModule } from '../subscription/subscription.module';
-import { UsageModule } from '../usage/usage.module';
-import { WorkspacesModule } from '../workspaces/workspaces.module';
-import { WorkflowsModule } from '../workflows/index.js';
+import {
+  HierarchyProjectLinkRepository,
+  HierarchyProjectLinkService,
+} from '../hierarchy/index.js';
+import { GithubModule } from '../github/github.module.js';
+import { CiModule } from '../ci/ci.module.js';
+import { DeploymentsModule } from '../deployments/deployments.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
+import { SubscriptionModule } from '../subscription/subscription.module.js';
+import { UsageModule } from '../usage/usage.module.js';
+import { WorkspacesModule } from '../workspaces/workspaces.module.js';
+import { WorkflowsModule } from '../workflows/workflows.module.js';
 import { ProjectsController } from './projects.controller';
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';

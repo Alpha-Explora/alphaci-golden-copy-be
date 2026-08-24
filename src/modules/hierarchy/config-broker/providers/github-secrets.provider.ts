@@ -1,6 +1,6 @@
 import { BadGatewayException, Injectable } from '@nestjs/common';
 
-import { GithubService } from '../../../github/github.service';
+import { GithubService } from '../../../github/index.js';
 
 const GITHUB_API = 'https://api.github.com';
 const USER_AGENT = 'cicd-workflow-product';

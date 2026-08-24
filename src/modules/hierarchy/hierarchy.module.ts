@@ -3,13 +3,13 @@ import { ConfigService } from '@nestjs/config';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import type { AppConfig } from '../../config/app.config';
-import { AdminModule } from '../admin/admin.module';
-import { AuditModule } from '../audit/audit.module';
+import { AdminModule } from '../admin/admin.module.js';
+import { AuditModule } from '../audit/audit.module.js';
 import { DatabaseModule } from '../../kernel/db/database.module';
 import { EventsModule } from '../../kernel/events/events.module';
-import { AuthIdentityModule } from '../auth/index.js';
-import { GithubModule } from '../github/github.module';
-import { ProjectsRepository } from '../projects/projects.repository';
+import { AuthIdentityModule } from '../auth/auth-identity.module.js';
+import { GithubModule } from '../github/github.module.js';
+import { ProjectsRepository } from '../projects/index.js';
 
 import { AssignmentsController } from './assignments/assignments.controller';
 import { AssignmentsRepository } from './assignments/assignments.repository';

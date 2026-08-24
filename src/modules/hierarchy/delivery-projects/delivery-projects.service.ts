@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
-import { AuditEventsService } from '../../audit/audit-events.service';
+import { AuditEventsService } from '../../audit/index.js';
 import { HierarchyAccessService } from '../hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../hierarchy.types';
 import {

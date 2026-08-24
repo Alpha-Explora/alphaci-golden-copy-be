@@ -22,8 +22,6 @@ export type {
   EnvProvider,
   EnvVarMetadata,
 } from './deployments.types';
-export { DeploymentsModule } from './deployments.module';
-
 // Deployment provisioning is consumed by Projects through this facade.  The
 // implementation remains private to this module so Projects cannot couple to
 // provider orchestration details.

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { AuditEventsService } from '../../audit/audit-events.service';
+import { AuditEventsService } from '../../audit/index.js';
 import { DeliveryProjectsService } from '../delivery-projects/delivery-projects.service';
 import { HierarchyAccessService } from '../hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../hierarchy.types';

@@ -1,6 +1,7 @@
 import yaml from 'js-yaml';
 
-import type { WorkflowTemplate } from '../catalog/catalog.service';
+import { ENV_GUARD_CHECK_CONTEXT } from '../github/index.js';
+import type { WorkflowTemplate } from '../catalog/index.js';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
@@ -33,8 +34,6 @@ const CENTRAL_WORKFLOW_REF =
  * requires this context so a pull request that adds an environment file can
  * never be merged into a protected branch.
  */
-export const ENV_GUARD_CHECK_CONTEXT = 'env-guard';
-
 export const ENV_GUARD_WORKFLOW_NAME = 'ALPHACI Env Guard';
 
 export const ENV_GUARD_WORKFLOW_PATH =

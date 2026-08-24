@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { AuditEventsService } from '../audit/audit-events.service';
+import { AuditEventsService } from '../audit/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
 import {
   DeploymentTargetsRepository,
@@ -29,10 +29,8 @@ import { ProviderClientRegistry } from './infrastructure/providers/core/provider
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { providerPublicUrl } from './provider-public-url';
 import { RenderCostPolicyService } from './render-cost-policy.service';
-import { UsageQuotaService } from '../usage/usage-quota.service';
-import type { UsageLimitCode } from '../usage/usage.types';
-import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
-import type { WorkspaceRole } from '../workspaces/workspaces.repository';
+import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
+import { WorkspaceAccessService, type WorkspaceRole } from '../workspaces/index.js';
 import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   type DeploymentProjectReference,

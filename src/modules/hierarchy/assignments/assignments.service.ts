@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../../config/app.config';
-import { AuditEventsService } from '../../audit/audit-events.service';
+import { AuditEventsService } from '../../audit/index.js';
 import { GroupsRepository } from '../groups/groups.repository';
 import { GithubAccessSyncRepository } from '../github-sync/github-access-sync.repository';
 import { GithubSyncService } from '../github-sync/github-sync.service';

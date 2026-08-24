@@ -1,4 +1,4 @@
-import type { WorkflowFileMetadata } from '../workflows/staged-workflow.builder';
+import type { WorkflowFileMetadata } from '../workflows/index.js';
 
 export type CiRunStage =
   | 'access_gate'

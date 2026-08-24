@@ -5,11 +5,11 @@ import type {
   AppConfig,
   GithubTeamRoleSyncMode,
 } from '../../config/app.config';
-import { AuditEventsService } from '../audit/audit-events.service';
+import { AuditEventsService } from '../audit/index.js';
 import {
   PlatformAdminsRepository,
   type AppRole,
-} from '../admin/platform-admins.repository';
+} from '../admin/index.js';
 import { GithubInstallationsRepository } from './github-installations.repository';
 import {
   GithubService,

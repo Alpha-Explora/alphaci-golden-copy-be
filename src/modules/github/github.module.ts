@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { AdminModule } from '../admin/admin.module';
-import { AuditModule } from '../audit/audit.module';
+import { AdminModule } from '../admin/admin.module.js';
+import { AuditModule } from '../audit/audit.module.js';
 import { DatabaseModule } from '../../kernel/db/database.module';
 import { GithubInstallationsRepository } from './github-installations.repository';
 import { GithubController } from './github.controller';

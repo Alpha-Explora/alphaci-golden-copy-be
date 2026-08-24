@@ -16,7 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import sodium from 'libsodium-wrappers';
 
 import type { AppConfig } from '../../config/app.config';
-import { ENV_GUARD_CHECK_CONTEXT } from '../workflows/staged-workflow.builder';
+import { ENV_GUARD_CHECK_CONTEXT } from './github-policy.constants';
 import type {
   GitHubBranchSummary,
   GitHubContentEntry,

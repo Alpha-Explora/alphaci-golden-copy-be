@@ -5,12 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { AuditEventsRepository } from '../audit/audit-events.repository';
-import { FeedbackService } from '../feedback/feedback.service';
+import { AuditEventsRepository } from '../audit/index.js';
+import { FeedbackService } from '../feedback/index.js';
 import type {
   FeedbackRecord,
   FeedbackStatus,
-} from '../feedback/feedback.repository';
+} from '../feedback/index.js';
 import { AdminRepository, type ListUsersOptions } from './admin.repository';
 import {
   PlatformAdminsRepository,

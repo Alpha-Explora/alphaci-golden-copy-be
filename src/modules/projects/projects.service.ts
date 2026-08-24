@@ -16,14 +16,13 @@ import { ConfigService } from '@nestjs/config';
 import yaml from 'js-yaml';
 
 import type { AppConfig } from '../../config/app.config';
-import { CatalogService } from '../catalog/catalog.service';
-import { CiService } from '../ci/ci.service';
 import {
+  CiService,
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
   type ProjectTokenStatus,
 } from '../ci/index.js';
-import { AuditEventsService } from '../audit/audit-events.service';
+import { AuditEventsService } from '../audit/index.js';
 import {
   DEPLOYMENT_ENV_METADATA_QUERY,
   DEPLOYMENT_PROVISIONING_FACADE,
@@ -42,12 +41,20 @@ import {
   REPOSITORY_DELETED_EVENT,
   type GithubRepoDeleteErrorCode,
   type RepositoryDeletedEvent,
-} from '../github/github.service';
-import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
+} from '../github/index.js';
+import { CatalogService } from '../catalog/index.js';
+import { HierarchyProjectLinkService } from '../hierarchy/index.js';
 import {
   WORKFLOW_HISTORY_QUERY,
+  ALPHACI_REPORT_URL,
   type WorkflowHistoryQuery,
   type WorkflowHistoryEntry,
+  buildStagedWorkflowBundle,
+  resolveDefaultCentralWorkflowRef,
+  type StagedWorkflowFile,
+  type WorkflowFileMetadata,
+  type DeploymentProvider,
+  type DeploymentWorkflowTarget,
 } from '../workflows/index.js';
 import {
   ProjectsRepository,
@@ -70,22 +77,12 @@ import {
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
+import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
 import {
-  ALPHACI_REPORT_URL,
-  buildStagedWorkflowBundle,
-  resolveDefaultCentralWorkflowRef,
-  type StagedWorkflowFile,
-  type WorkflowFileMetadata,
-} from '../workflows/staged-workflow.builder';
-import type {
-  DeploymentProvider,
-  DeploymentWorkflowTarget,
-} from '../workflows/dto/generate-workflow.dto';
-import { UsageQuotaService } from '../usage/usage-quota.service';
-import type { UsageLimitCode } from '../usage/usage.types';
-import { WorkspacesService } from '../workspaces/workspaces.service';
-import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
-import type { WorkspaceRole } from '../workspaces/workspaces.repository';
+  WorkspacesService,
+  WorkspaceAccessService,
+  type WorkspaceRole,
+} from '../workspaces/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
 import {
   buildProjectScaffold,

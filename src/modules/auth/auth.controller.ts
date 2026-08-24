@@ -16,8 +16,8 @@ import type { Request, Response } from 'express';
 import type { AppConfig } from '../../config/app.config';
 import { DevOnlyGuard } from '../../common/guards/dev-only.guard';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { SubscriptionService } from '../subscription/subscription.service';
-import { PlatformAdminsRepository } from '../admin/platform-admins.repository';
+import { SubscriptionService } from '../subscription/index.js';
+import { PlatformAdminsRepository } from '../admin/index.js';
 import { AuthService } from './auth.service';
 
 @Throttle({ default: { ttl: 60_000, limit: 10 } })
