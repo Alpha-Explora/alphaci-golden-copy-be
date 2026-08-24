@@ -25,7 +25,10 @@ describe('module boundary policy', () => {
     ) as Array<{ from: string; to?: string; rule?: { name?: string } }>;
 
     expect(Array.isArray(baseline)).toBe(true);
-    expect(baseline.length).toBeGreaterThan(0);
+    // An empty baseline is the desired end state. Keep the shape assertion so
+    // a future exception, if one is temporarily justified, cannot be added as
+    // an arbitrary JSON blob.
+    expect(baseline.length).toBeGreaterThanOrEqual(0);
     expect(
       baseline.every(
         (finding) =>

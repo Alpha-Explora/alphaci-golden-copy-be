@@ -6,7 +6,7 @@ import {
 
 import { AuditEventsService } from '../../audit/index.js';
 import { GithubService } from '../../github/index.js';
-import { ProjectsRepository } from '../../projects/index.js';
+import { ProjectProvisioningService } from '../../projects/index.js';
 import { DeliveryProjectsRepository } from '../delivery-projects/delivery-projects.repository';
 import { HierarchyAccessService } from '../hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../hierarchy.types';
@@ -24,7 +24,7 @@ export class RepositoriesService {
     private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
     private readonly accessService: HierarchyAccessService,
     private readonly githubService: GithubService,
-    private readonly projectsRepository: ProjectsRepository,
+    private readonly projectProvisioningService: ProjectProvisioningService,
     private readonly auditEventsService: AuditEventsService,
   ) {}
 
@@ -58,17 +58,14 @@ export class RepositoriesService {
       });
     const repoFullName = `${ownerLogin}/${repoName}`;
 
-    const provisionedProject = await this.projectsRepository.create({
-      userId,
-      repoFullName,
-      templateId: 'hierarchy-managed',
-      serviceName: repoName,
-      workflowPath: '',
-      status: 'provisioned',
-      repoUrl,
-      visibility: 'private',
-      workspaceId: groupId,
-    });
+    const provisionedProject =
+      await this.projectProvisioningService.createHierarchyManagedProject({
+        userId,
+        repoFullName,
+        serviceName: repoName,
+        repoUrl,
+        workspaceId: groupId,
+      });
 
     const repository = await this.repositoriesRepository.create({
       deliveryProjectId,

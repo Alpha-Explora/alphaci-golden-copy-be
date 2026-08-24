@@ -1,6 +1,9 @@
+export { FeedbackModule } from './feedback.module';
 export { FeedbackService } from './feedback.service';
 export type {
+  CreateFeedbackInput,
   FeedbackCategory,
   FeedbackRecord,
   FeedbackStatus,
-} from './feedback.repository';
+  UpdateFeedbackInput,
+} from './feedback.types';

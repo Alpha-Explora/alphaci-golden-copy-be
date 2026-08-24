@@ -62,3 +62,4 @@ export type {
   ProjectDriftRepairResponse,
   ProjectDriftResponse,
 } from './application/project-drift.types';
+export { DeploymentsModule } from './deployments.module';

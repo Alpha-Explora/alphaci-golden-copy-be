@@ -17,7 +17,7 @@ import type { AppConfig } from '../../config/app.config';
 import { DevOnlyGuard } from '../../common/guards/dev-only.guard';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionService } from '../subscription/index.js';
-import { PlatformAdminsRepository } from '../admin/index.js';
+import { PlatformAdminAccessService } from '../admin/index.js';
 import { AuthService } from './auth.service';
 
 @Throttle({ default: { ttl: 60_000, limit: 10 } })
@@ -28,7 +28,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly subscriptionService: SubscriptionService,
-    private readonly platformAdminsRepository: PlatformAdminsRepository,
+    private readonly platformAdminAccessService: PlatformAdminAccessService,
     private readonly configService: ConfigService,
   ) {
     this.sessionCookieName =
@@ -102,14 +102,14 @@ export class AuthController {
 
     // Role + provenance in one round-trip.
     const { role: appRole, source: appRoleSource } =
-      await this.platformAdminsRepository.findAppRoleWithSource(user.id);
+      await this.platformAdminAccessService.findAppRoleWithSource(user.id);
 
     return {
       authenticated: true,
       user,
       // null for ordinary users; 'admin' | 'super_admin' for platform admins.
       // The frontend uses this to gate the /admin surface.
-      platformRole: await this.platformAdminsRepository.findRole(user.id),
+      platformRole: await this.platformAdminAccessService.findRole(user.id),
       // Global hierarchy role ('admin' | 'lead' | 'member'). The frontend uses
       // this to gate create actions (systems/repositories) — only admin/lead,
       // and to show the "Team lead" / "Developer" badge in the sidebar.

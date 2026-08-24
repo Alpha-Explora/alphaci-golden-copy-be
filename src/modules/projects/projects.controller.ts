@@ -10,6 +10,7 @@ import {
   Query,
   Req,
   UnauthorizedException,
+  Optional,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
@@ -31,6 +32,11 @@ import { ProjectCiRunsService } from './project-ci-runs.service';
 import { ProjectPreviewsService } from './project-previews.service';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
 import { ProjectsService } from './projects.service';
+import { ProjectDashboardService } from './application/project-dashboard.service';
+import { ProjectDriftRepairApplicationService } from './application/project-drift-repair.service';
+import { ProjectLifecycleService } from './application/project-lifecycle.service';
+import { ProjectPreviewsApplicationService } from './application/project-previews.service';
+import { ProjectWorkflowsService } from './application/project-workflows.service';
 
 @Controller('projects')
 export class ProjectsController {
@@ -43,6 +49,19 @@ export class ProjectsController {
     @Inject(DEPLOYMENT_DRIFT_QUERY)
     private readonly deploymentDriftQuery: DeploymentDriftQuery,
     private readonly projectDriftRepairService: ProjectDriftRepairService,
+    // Optional during the compatibility window: older unit consumers can
+    // still provide ProjectsService directly while production wiring uses the
+    // focused application services below.
+    @Optional()
+    private readonly projectLifecycleService?: ProjectLifecycleService,
+    @Optional()
+    private readonly projectDashboardService?: ProjectDashboardService,
+    @Optional()
+    private readonly projectWorkflowsService?: ProjectWorkflowsService,
+    @Optional()
+    private readonly projectPreviewsApplicationService?: ProjectPreviewsApplicationService,
+    @Optional()
+    private readonly projectDriftRepairApplicationService?: ProjectDriftRepairApplicationService,
   ) {}
 
   /**
@@ -67,11 +86,14 @@ export class ProjectsController {
     }
 
     const accessToken = req.session.githubAccessToken ?? null;
-    return this.projectsService.createProject(
-      userId,
-      userLogin,
-      accessToken,
-      body,
+    return (
+      this.projectLifecycleService?.createProject(
+        userId,
+        userLogin,
+        accessToken,
+        body,
+      ) ??
+      this.projectsService.createProject(userId, userLogin, accessToken, body)
     );
   }
 
@@ -88,10 +110,17 @@ export class ProjectsController {
       throw new UnauthorizedException('Authentication required');
     }
 
-    return this.projectsService.setupProject(
-      userId,
-      req.session.githubAccessToken ?? null,
-      body,
+    return (
+      this.projectLifecycleService?.setupProject(
+        userId,
+        req.session.githubAccessToken ?? null,
+        body,
+      ) ??
+      this.projectsService.setupProject(
+        userId,
+        req.session.githubAccessToken ?? null,
+        body,
+      )
     );
   }
 
@@ -114,10 +143,17 @@ export class ProjectsController {
     const parsedLimit = Number.parseInt(limit ?? '25', 10);
     const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
 
-    return this.projectsService.listProjects(
-      userId,
-      safeLimit,
-      workspaceId?.trim() || null,
+    return (
+      this.projectDashboardService?.listProjects(
+        userId,
+        safeLimit,
+        workspaceId?.trim() || null,
+      ) ??
+      this.projectsService.listProjects(
+        userId,
+        safeLimit,
+        workspaceId?.trim() || null,
+      )
     );
   }
 
@@ -137,7 +173,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectsService.getProjectOverview(id, userId);
+    return (
+      this.projectDashboardService?.getProjectOverview(id, userId) ??
+      this.projectsService.getProjectOverview(id, userId)
+    );
   }
 
   /**
@@ -157,7 +196,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectsService.syncProjectSnapshot(id, userId);
+    return (
+      this.projectDashboardService?.syncProjectSnapshot(id, userId) ??
+      this.projectsService.syncProjectSnapshot(id, userId)
+    );
   }
 
   /**
@@ -176,7 +218,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectsService.getWorkflowSettings(id, userId);
+    return (
+      this.projectWorkflowsService?.getWorkflowSettings(id, userId) ??
+      this.projectsService.getWorkflowSettings(id, userId)
+    );
   }
 
   /**
@@ -200,7 +245,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectsService.previewWorkflowSettings(id, userId, body);
+    return (
+      this.projectWorkflowsService?.previewWorkflowSettings(id, userId, body) ??
+      this.projectsService.previewWorkflowSettings(id, userId, body)
+    );
   }
 
   /**
@@ -224,11 +272,19 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectsService.createWorkflowUpdatePullRequest(
-      id,
-      userId,
-      req.session.githubAccessToken ?? null,
-      body,
+    return (
+      this.projectWorkflowsService?.createWorkflowUpdatePullRequest(
+        id,
+        userId,
+        req.session.githubAccessToken ?? null,
+        body,
+      ) ??
+      this.projectsService.createWorkflowUpdatePullRequest(
+        id,
+        userId,
+        req.session.githubAccessToken ?? null,
+        body,
+      )
     );
   }
 
@@ -289,7 +345,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    const project = await this.projectsService.getProjectReference(id, userId);
+    const project = await (this.projectDashboardService?.getProjectReference(
+      id,
+      userId,
+    ) ?? this.projectsService.getProjectReference(id, userId));
     return this.deploymentHistoryQuery.listDeployments(project);
   }
 
@@ -305,8 +364,14 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    const project = await this.projectsService.getProjectReference(id, userId);
-    return this.projectPreviewsService.listPreviews(project);
+    const project = await (this.projectDashboardService?.getProjectReference(
+      id,
+      userId,
+    ) ?? this.projectsService.getProjectReference(id, userId));
+    return (
+      this.projectPreviewsApplicationService?.listPreviews(project) ??
+      this.projectPreviewsService.listPreviews(project)
+    );
   }
 
   @Get(':id/drift')
@@ -321,7 +386,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    const project = await this.projectsService.getProjectReference(id, userId);
+    const project = await (this.projectDashboardService?.getProjectReference(
+      id,
+      userId,
+    ) ?? this.projectsService.getProjectReference(id, userId));
     return this.deploymentDriftQuery.listFindings(project);
   }
 
@@ -337,7 +405,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    const project = await this.projectsService.getProjectReference(id, userId);
+    const project = await (this.projectDashboardService?.getProjectReference(
+      id,
+      userId,
+    ) ?? this.projectsService.getProjectReference(id, userId));
     return this.deploymentDriftQuery.runDetection(project);
   }
 
@@ -358,12 +429,21 @@ export class ProjectsController {
       throw new NotFoundException('Project ID and finding ID are required');
     }
 
-    return this.projectDriftRepairService.repair(
-      id,
-      findingId,
-      userId,
-      body.action ?? 'mark_ignored',
-      req.session.githubAccessToken ?? null,
+    return (
+      this.projectDriftRepairApplicationService?.repair(
+        id,
+        findingId,
+        userId,
+        body.action ?? 'mark_ignored',
+        req.session.githubAccessToken ?? null,
+      ) ??
+      this.projectDriftRepairService.repair(
+        id,
+        findingId,
+        userId,
+        body.action ?? 'mark_ignored',
+        req.session.githubAccessToken ?? null,
+      )
     );
   }
 
@@ -379,7 +459,10 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectsService.listProjectAuditEvents(id, userId);
+    return (
+      this.projectDashboardService?.listProjectAuditEvents(id, userId) ??
+      this.projectsService.listProjectAuditEvents(id, userId)
+    );
   }
 
   /**
@@ -418,11 +501,13 @@ export class ProjectsController {
     }
 
     const accessToken = req.session.githubAccessToken ?? null;
-    return this.projectsService.disconnectProject(
-      id,
-      userId,
-      body,
-      accessToken,
+    return (
+      this.projectLifecycleService?.disconnectProject(
+        id,
+        userId,
+        body,
+        accessToken,
+      ) ?? this.projectsService.disconnectProject(id, userId, body, accessToken)
     );
   }
 
@@ -447,6 +532,9 @@ export class ProjectsController {
       );
     }
 
-    return this.projectsService.syncProjects(userId, accessToken);
+    return (
+      this.projectLifecycleService?.syncProjects(userId, accessToken) ??
+      this.projectsService.syncProjects(userId, accessToken)
+    );
   }
 }

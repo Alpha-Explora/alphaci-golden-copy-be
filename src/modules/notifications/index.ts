@@ -1,7 +1,7 @@
 /**
  * Notifications — public API.
  *
- * This file is the module's entire surface. Everything under api/, domain/ and
+ * This file is the module's entire surface. Everything under api/, application/ and
  * infra/ is private, and `.dependency-cruiser.cjs` fails the build if another
  * module reaches past this file.
  *
@@ -16,15 +16,17 @@
  *   NotificationsController — HTTP is an entry point, never a dependency.
  */
 
+export { NotificationsModule } from './notifications.module';
+
 // Behaviour: how other features raise a notification. Four call sites today —
 // projects, project-drift-repair, deployment-targets and env-vars.
-export { NotificationEventsService } from './domain/notification-events.service';
+export { NotificationEventsService } from './application/notification-events.service';
 
 // Reads: used by consumers that render or summarise notifications.
-export { NotificationsService } from './domain/notifications.service';
+export { NotificationsService } from './application/notifications.service';
 
 // Contracts: the shapes crossing this boundary.
 export type {
   NotificationPreferences,
   NotificationsResponse,
-} from './infra/notifications.repository';
+} from './notifications.types';

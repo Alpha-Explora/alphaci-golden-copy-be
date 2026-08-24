@@ -1,6 +1,6 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
-import type { PlatformAdminsRepository } from '../admin/platform-admins.repository';
+import type { PlatformAdminAccessService } from '../admin/platform-admin-access.service';
 import type { AssignmentsRepository } from './assignments/assignments.repository';
 import type { DeliveryProjectsRepository } from './delivery-projects/delivery-projects.repository';
 import type { GroupsRepository } from './groups/groups.repository';
@@ -29,7 +29,7 @@ describe('HierarchyAccessService', () => {
   const platformAdminsRepository = {
     findRole: jest.fn(),
     findAppRole: jest.fn().mockResolvedValue('member'),
-  } as unknown as jest.Mocked<PlatformAdminsRepository>;
+  } as unknown as jest.Mocked<PlatformAdminAccessService>;
 
   let service: HierarchyAccessService;
 
@@ -55,7 +55,10 @@ describe('HierarchyAccessService', () => {
       });
 
       await expect(
-        service.assertGroupRole('group-1', 'user-1', ['admin', 'delegated_lead']),
+        service.assertGroupRole('group-1', 'user-1', [
+          'admin',
+          'delegated_lead',
+        ]),
       ).resolves.toMatchObject({ role: 'admin' });
     });
 
@@ -68,7 +71,10 @@ describe('HierarchyAccessService', () => {
       });
 
       await expect(
-        service.assertGroupRole('group-1', 'user-1', ['admin', 'delegated_lead']),
+        service.assertGroupRole('group-1', 'user-1', [
+          'admin',
+          'delegated_lead',
+        ]),
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 

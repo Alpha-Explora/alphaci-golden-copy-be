@@ -24,6 +24,11 @@ export class AuditEventsService {
     await this.repository.create(input);
   }
 
+  /** Security-sensitive administrative events bypass the optional UI flag. */
+  async recordAlwaysOn(input: CreateAuditEventInput): Promise<void> {
+    await this.repository.create(input);
+  }
+
   async recordProjectEvent(input: CreateAuditEventInput): Promise<void> {
     try {
       await this.record(input);

@@ -8,6 +8,7 @@ import { AdminController } from './admin.controller';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
 import { PlatformAdminsRepository } from './platform-admins.repository';
+import { PlatformAdminAccessService } from './platform-admin-access.service';
 import { PlatformAdminGuard } from './guards/platform-admin.guard';
 import { SuperAdminGuard } from './guards/super-admin.guard';
 
@@ -18,11 +19,12 @@ import { SuperAdminGuard } from './guards/super-admin.guard';
     AdminService,
     AdminRepository,
     PlatformAdminsRepository,
+    PlatformAdminAccessService,
     PlatformAdminGuard,
     SuperAdminGuard,
     SessionAuthGuard,
   ],
-  // Exported so AuthModule can resolve the caller's platform role for /auth/me.
-  exports: [PlatformAdminsRepository],
+  // Exported as a policy service; the repository remains Admin infrastructure.
+  exports: [PlatformAdminAccessService],
 })
 export class AdminModule {}

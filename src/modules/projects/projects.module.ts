@@ -5,10 +5,7 @@ import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { AuditModule } from '../audit/audit.module.js';
 import { CatalogModule } from '../catalog/catalog.module.js';
 import { DatabaseModule } from '../../kernel/db/database.module';
-import {
-  HierarchyProjectLinkRepository,
-  HierarchyProjectLinkService,
-} from '../hierarchy/index.js';
+import { HierarchyProjectLinkModule } from '../hierarchy/project-link/index.js';
 import { GithubModule } from '../github/github.module.js';
 import { CiModule } from '../ci/ci.module.js';
 import { DeploymentsModule } from '../deployments/deployments.module.js';
@@ -24,6 +21,12 @@ import { ProjectCiRunsService } from './project-ci-runs.service';
 import { ProjectPreviewsService } from './project-previews.service';
 import { UrlEmbeddabilityProbe } from './url-embeddability.probe';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
+import { ProjectDashboardService } from './application/project-dashboard.service';
+import { ProjectDriftRepairApplicationService } from './application/project-drift-repair.service';
+import { ProjectLifecycleService } from './application/project-lifecycle.service';
+import { ProjectPreviewsApplicationService } from './application/project-previews.service';
+import { ProjectWorkflowsService } from './application/project-workflows.service';
+import { ProjectProvisioningService } from './application/project-provisioning.service';
 import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.repository';
 import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
 import { ProjectsRepository } from './projects.repository';
@@ -44,10 +47,17 @@ import { ProjectsService } from './projects.service';
     WorkspacesModule,
     NotificationsModule,
     WorkflowsModule,
+    HierarchyProjectLinkModule,
   ],
   controllers: [ProjectsController, ProjectWorkspaceController],
   providers: [
     ProjectsService,
+    ProjectLifecycleService,
+    ProjectDashboardService,
+    ProjectWorkflowsService,
+    ProjectPreviewsApplicationService,
+    ProjectDriftRepairApplicationService,
+    ProjectProvisioningService,
     ProjectWorkspaceService,
     ProjectCiRunsService,
     ProjectPreviewsService,
@@ -55,16 +65,12 @@ import { ProjectsService } from './projects.service';
     ProjectDriftRepairService,
     LocalCiRunsProvider,
     ProjectsRepository,
-    // Registered directly rather than by importing HierarchyModule — the same
-    // pattern HierarchyModule uses for ProjectsRepository, and for the same
-    // reason: it keeps Projects and Hierarchy from importing each other.
-    HierarchyProjectLinkRepository,
-    HierarchyProjectLinkService,
     ProjectDashboardSnapshotsRepository,
     ProjectWorkflowSettingsRepository,
     ProjectWorkflowUpdateRequestsRepository,
     SessionAuthGuard,
     SubscriptionGuard,
   ],
+  exports: [ProjectProvisioningService],
 })
 export class ProjectsModule {}

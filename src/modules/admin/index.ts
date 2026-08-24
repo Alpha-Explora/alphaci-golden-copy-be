@@ -1,6 +1,9 @@
+export { AdminModule } from './admin.module';
 export {
-  PlatformAdminsRepository,
+  PlatformAdminAccessService,
   type AppRole,
-} from './platform-admins.repository';
+  type AppRoleSource,
+  type PlatformRole,
+} from './platform-admin-access.service';
 export { PlatformAdminGuard } from './guards/platform-admin.guard';
 export { SuperAdminGuard } from './guards/super-admin.guard';

@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { PlatformAdminsRepository } from '../platform-admins.repository';
+import { PlatformAdminAccessService } from '../platform-admin-access.service';
 
 /**
  * PlatformAdminGuard — gates the Admin Console on the GLOBAL admin tier.
@@ -30,7 +30,7 @@ import { PlatformAdminsRepository } from '../platform-admins.repository';
 @Injectable()
 export class PlatformAdminGuard implements CanActivate {
   constructor(
-    private readonly platformAdminsRepository: PlatformAdminsRepository,
+    private readonly platformAdminAccessService: PlatformAdminAccessService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -41,12 +41,12 @@ export class PlatformAdminGuard implements CanActivate {
     }
 
     // The permanent super-admin always has access.
-    const platformRole = await this.platformAdminsRepository.findRole(userId);
+    const platformRole = await this.platformAdminAccessService.findRole(userId);
     if (platformRole === 'super_admin') {
       return true;
     }
 
-    const appRole = await this.platformAdminsRepository.findAppRole(userId);
+    const appRole = await this.platformAdminAccessService.findAppRole(userId);
     if (appRole === 'admin') {
       return true;
     }

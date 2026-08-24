@@ -17,7 +17,8 @@ module.exports = {
       comment:
         'Import a module through its index.ts, never one of its internal files. ' +
         'If you need something that is not exported, export it deliberately — ' +
-        'that is the decision this rule is asking you to make consciously.',
+        'that is the decision this rule is asking you to make consciously. ' +
+        'Nest *.module.ts composition files are the sole wiring exception.',
       from: { path: '^src/modules/([^/]+)/' },
       to: {
         path: '^src/modules/([^/]+)/(?!index\\.ts$).+',
@@ -28,6 +29,9 @@ module.exports = {
           // concrete module class directly so a public service barrel does
           // not pull every provider into a circular dependency.
           '^src/modules/[^/]+/[^/]+\\.module\\.ts$',
+          // A cohesive sub-area (for example hierarchy/project-link) may
+          // publish its own narrow index without exposing private adapters.
+          '^src/modules/[^/]+/.+/index\\.ts$',
         ],
       },
     },

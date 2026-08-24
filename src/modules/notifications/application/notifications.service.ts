@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
-import {
-  NotificationsRepository,
-  type NotificationPreferences,
-  type NotificationsResponse,
-} from '../infra/notifications.repository';
+import { NotificationsRepository } from '../infra/notifications.repository';
+import type {
+  NotificationPreferences,
+  NotificationsResponse,
+} from '../notifications.types';
 
 @Injectable()
 export class NotificationsService {

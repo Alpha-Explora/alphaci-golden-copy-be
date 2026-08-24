@@ -9,7 +9,7 @@ import { DatabaseModule } from '../../kernel/db/database.module';
 import { EventsModule } from '../../kernel/events/events.module';
 import { AuthIdentityModule } from '../auth/auth-identity.module.js';
 import { GithubModule } from '../github/github.module.js';
-import { ProjectsRepository } from '../projects/index.js';
+import { ProjectsModule } from '../projects/projects.module.js';
 
 import { AssignmentsController } from './assignments/assignments.controller';
 import { AssignmentsRepository } from './assignments/assignments.repository';
@@ -50,6 +50,7 @@ import { SystemsService } from './systems/systems.service';
     AuditModule,
     GithubModule, // GithubService (repo creation, installation tokens, Actions secrets)
     AdminModule, // PlatformAdminsRepository, PlatformAdminGuard (global-role overrides, transfer endpoint)
+    ProjectsModule, // ProjectProvisioningService (link creation without ProjectsRepository access)
   ],
   controllers: [
     GroupsController,
@@ -62,10 +63,6 @@ import { SystemsService } from './systems/systems.service';
   ],
   providers: [
     SessionAuthGuard,
-    // ProjectsRepository is registered directly here (not via ProjectsModule,
-    // which exports nothing) — same pattern already used by
-    // deployments.module.ts for the same class.
-    ProjectsRepository,
     HierarchyAccessService,
     GroupsRepository,
     GroupsService,
@@ -95,7 +92,11 @@ import { SystemsService } from './systems/systems.service';
         const config = configService.getOrThrow<AppConfig>('app');
         return config.hierarchy.githubSyncMode === 'live' ? live : stub;
       },
-      inject: [ConfigService, GithubTeamAccessStubProvider, GithubTeamAccessLiveProvider],
+      inject: [
+        ConfigService,
+        GithubTeamAccessStubProvider,
+        GithubTeamAccessLiveProvider,
+      ],
     },
     RepoConfigurationChangesRepository,
     GithubSecretsProvider,

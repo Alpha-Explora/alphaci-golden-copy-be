@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
 import { AdminService } from './admin.service';
 import type { AdminRepository } from './admin.repository';
-import type { AuditEventsRepository } from '../audit/audit-events.repository';
+import type { AuditEventsService } from '../audit/audit-events.service';
 import type { FeedbackService } from '../feedback/feedback.service';
 import type {
   AppRole,
@@ -41,8 +41,8 @@ function build(options: {
     adminRepository,
     platformAdminsRepository,
     {
-      create: jest.fn(() => Promise.resolve()),
-    } as unknown as AuditEventsRepository,
+      recordAlwaysOn: jest.fn(() => Promise.resolve()),
+    } as unknown as AuditEventsService,
     {} as unknown as FeedbackService,
   );
 

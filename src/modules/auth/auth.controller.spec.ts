@@ -5,7 +5,7 @@ import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { SubscriptionService } from '../subscription/subscription.service.js';
 import { ConfigService } from '@nestjs/config';
-import { PlatformAdminsRepository } from '../admin/platform-admins.repository.js';
+import { PlatformAdminAccessService } from '../admin/platform-admin-access.service.js';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard.js';
 import type { Request, Response } from 'express';
 import type {
@@ -78,14 +78,14 @@ const makeConfigService = () =>
       .mockReturnValue({ session: { name: 'cicd_workflow_sid' } }),
   }) as unknown as ConfigService;
 
-const makePlatformAdminsRepository = () =>
+const makePlatformAdminAccessService = () =>
   ({
     findRole: jest.fn().mockResolvedValue(null),
     findAppRole: jest.fn().mockResolvedValue('member'),
     findAppRoleWithSource: jest
       .fn()
       .mockResolvedValue({ role: 'member', source: 'github_team' }),
-  }) as unknown as PlatformAdminsRepository;
+  }) as unknown as PlatformAdminAccessService;
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -102,8 +102,8 @@ describe('AuthController', () => {
         { provide: AuthService, useValue: authService },
         { provide: SubscriptionService, useValue: subscriptionService },
         {
-          provide: PlatformAdminsRepository,
-          useValue: makePlatformAdminsRepository(),
+          provide: PlatformAdminAccessService,
+          useValue: makePlatformAdminAccessService(),
         },
         { provide: ConfigService, useValue: makeConfigService() },
       ],

@@ -1,30 +1,20 @@
 import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../../kernel/db/database.service';
-
-export type FeedbackCategory =
-  | 'general'
-  | 'bug'
-  | 'feature_request'
-  | 'billing'
-  | 'other';
-
-export type FeedbackStatus = 'open' | 'in_review' | 'resolved' | 'dismissed';
-
-export interface FeedbackRecord {
-  id: string;
-  userId: string;
-  userLogin: string | null;
-  category: FeedbackCategory;
-  subject: string;
-  body: string;
-  status: FeedbackStatus;
-  adminResponse: string | null;
-  respondedBy: string | null;
-  respondedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+import type {
+  CreateFeedbackInput,
+  FeedbackCategory,
+  FeedbackRecord,
+  FeedbackStatus,
+  UpdateFeedbackInput,
+} from './feedback.types';
+export type {
+  CreateFeedbackInput,
+  FeedbackCategory,
+  FeedbackRecord,
+  FeedbackStatus,
+  UpdateFeedbackInput,
+} from './feedback.types';
 
 interface FeedbackRow {
   id: string;
@@ -39,19 +29,6 @@ interface FeedbackRow {
   responded_at: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface CreateFeedbackInput {
-  userId: string;
-  category: FeedbackCategory;
-  subject: string;
-  body: string;
-}
-
-export interface UpdateFeedbackInput {
-  status?: FeedbackStatus;
-  adminResponse?: string;
-  respondedBy: string;
 }
 
 @Injectable()

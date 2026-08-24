@@ -43,7 +43,7 @@ import {
   type RepositoryDeletedEvent,
 } from '../github/index.js';
 import { CatalogService } from '../catalog/index.js';
-import { HierarchyProjectLinkService } from '../hierarchy/index.js';
+import { HierarchyProjectLinkService } from '../hierarchy/project-link/index.js';
 import {
   WORKFLOW_HISTORY_QUERY,
   ALPHACI_REPORT_URL,
@@ -917,8 +917,7 @@ export class ProjectsService {
 
       // 7. Push frontend workflow file to main (wrapped: failure should not block backend)
       let frontendPushResult:
-        | { commitSha: string; commitUrl: string | null }
-        | undefined;
+        { commitSha: string; commitUrl: string | null } | undefined;
       try {
         frontendPushResult = await this.pushWorkflowFiles(
           provisioningToken,
@@ -1699,8 +1698,7 @@ export class ProjectsService {
 
     let githubRepoDeleted = false;
     let githubRepoDeleteError:
-      | { code: GithubRepoDeleteErrorCode; message: string }
-      | undefined;
+      { code: GithubRepoDeleteErrorCode; message: string } | undefined;
 
     if (deleteGithubRepo) {
       // Role-scoped fetch: this is the SQL-level enforcement point. If the
@@ -2555,11 +2553,15 @@ export class ProjectsService {
     }
 
     const existingSecrets = preserveExisting
-      ? await this.githubService.listActionsSecretNames(accessToken, owner, repo)
+      ? await this.githubService.listActionsSecretNames(
+          accessToken,
+          owner,
+          repo,
+        )
       : new Set<string>();
 
-    const alreadyConfigured = ['SONAR_TOKEN', 'SONAR_PROJECT_KEY'].some((name) =>
-      existingSecrets.has(name),
+    const alreadyConfigured = ['SONAR_TOKEN', 'SONAR_PROJECT_KEY'].some(
+      (name) => existingSecrets.has(name),
     );
 
     if (alreadyConfigured) {
@@ -2873,9 +2875,7 @@ export class ProjectsService {
   private resolveRenderDeploymentStrategy(
     target: DeploymentProvisioningTargetDto,
   ):
-    | 'render_image_pushed'
-    | 'render_git_connected'
-    | 'render_existing_service' {
+    'render_image_pushed' | 'render_git_connected' | 'render_existing_service' {
     if (target.renderDeployMethod === 'existing_service') {
       return 'render_existing_service';
     }
