@@ -1,7 +1,13 @@
-import type { EnvEnvironment, EnvVarInput } from '../env-provisioning.types';
+import type { EnvLane, EnvVarInput } from '../env-provisioning.types';
 
 export interface ProvisionEnvVarsDto {
   deploymentTargetId: string;
-  environment: EnvEnvironment;
+  lane: EnvLane;
+  /**
+   * Branch these values apply to. Required for the preview lane, rejected for
+   * production — see EnvVarsService.resolveScope, which is the single place
+   * that pairing is validated.
+   */
+  gitBranch?: string | null;
   vars: EnvVarInput[];
 }

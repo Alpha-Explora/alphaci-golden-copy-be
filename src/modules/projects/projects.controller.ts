@@ -21,6 +21,7 @@ import { SetupProjectDto } from './dto/setup-project.dto';
 import { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import { ProjectCiRunsService } from './project-ci-runs.service';
 import { ProjectDeploymentsService } from './project-deployments.service';
+import { ProjectPreviewsService } from './project-previews.service';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
 import type { ProjectDriftRepairAction } from './project-drift.types';
 import { ProjectDriftService } from './project-drift.service';
@@ -32,6 +33,7 @@ export class ProjectsController {
     private readonly projectsService: ProjectsService,
     private readonly projectCiRunsService: ProjectCiRunsService,
     private readonly projectDeploymentsService: ProjectDeploymentsService,
+    private readonly projectPreviewsService: ProjectPreviewsService,
     private readonly projectDriftService: ProjectDriftService,
     private readonly projectDriftRepairService: ProjectDriftRepairService,
   ) {}
@@ -281,6 +283,21 @@ export class ProjectsController {
     }
 
     return this.projectDeploymentsService.listDeployments(id, userId);
+  }
+
+  @Get(':id/previews')
+  @UseGuards(SessionAuthGuard)
+  async listPreviews(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectPreviewsService.listPreviews(id, userId);
   }
 
   @Get(':id/drift')

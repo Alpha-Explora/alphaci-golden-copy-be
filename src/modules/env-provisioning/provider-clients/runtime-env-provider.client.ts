@@ -1,8 +1,8 @@
 import type {
   DeploymentStrategy,
-  EnvEnvironment,
   EnvProvider,
   EnvVarInput,
+  EnvVarScope,
   RenderEnvironmentName,
   RenderRuntime,
   RenderServiceType,
@@ -48,17 +48,15 @@ export interface CreateProviderTargetInput {
   vercelTeamSlug?: string;
 }
 
-export interface UpsertProviderEnvInput {
+export interface UpsertProviderEnvInput extends EnvVarScope {
   token: string;
   targetId: string;
-  environment: EnvEnvironment;
   vars: EnvVarInput[];
 }
 
-export interface DeleteProviderEnvInput {
+export interface DeleteProviderEnvInput extends EnvVarScope {
   token: string;
   targetId: string;
-  environment: EnvEnvironment;
   key: string;
 }
 
@@ -93,6 +91,14 @@ export interface DeleteProviderTargetResult {
   deleted: boolean;
 }
 
+/**
+ * Which lane a deployment belongs to. Vercel reports `target: 'production'`
+ * for production and `null` for the per-PR previews it creates automatically
+ * on git-connected projects; providers that don't distinguish the two report
+ * null and callers fall back to the target's own environment name.
+ */
+export type ProviderDeployEnvironment = 'production' | 'preview';
+
 export interface ProviderDeployEvent {
   id: string;
   status: string;
@@ -101,6 +107,20 @@ export interface ProviderDeployEvent {
   commitSha: string | null;
   commitMessage: string | null;
   trigger: string | null;
+  // The URL this one deployment answers on, for providers that give every
+  // deployment its own hostname. Render reuses a single stable service URL
+  // per service, so it returns null and callers fall back to the target's
+  // public URL.
+  deploymentUrl: string | null;
+  environment: ProviderDeployEnvironment | null;
+  // Set only when the deployment was built for a pull request. A preview can
+  // exist without one (a push to a non-production branch with no PR open).
+  pullRequestNumber: number | null;
+  // Git ref the deployment was built from.
+  commitRef: string | null;
+  // Provider console URL for this single deployment, as opposed to the
+  // project-level console link the caller derives from the target.
+  inspectorUrl: string | null;
 }
 
 export interface ProviderLogEntry {

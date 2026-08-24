@@ -203,7 +203,7 @@ export class ProjectDriftService {
         severity: 'warning',
         code: 'provider_env_key_failed',
         message: `Environment key ${env.key} last failed to provision.`,
-        details: { key: env.key, environment: env.environment },
+        details: { key: env.key, lane: env.lane, gitBranch: env.gitBranch },
       });
     }
 

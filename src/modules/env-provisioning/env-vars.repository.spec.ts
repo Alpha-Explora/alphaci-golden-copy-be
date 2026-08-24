@@ -19,7 +19,8 @@ describe('EnvVarsRepository', () => {
     await repository.upsertEnvMetadataBatch({
       projectId: 'project-1',
       deploymentTargetId: 'target-1',
-      environment: 'test',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
       provider: 'render',
       provisionedBy: 'user-1',
       entries: [
@@ -110,14 +111,20 @@ describe('EnvVarsRepository', () => {
     await expect(
       repository.countExistingActiveKeys({
         deploymentTargetId: 'target-1',
-        environment: 'test',
+        lane: 'preview',
+        gitBranch: 'feat/checkout',
         keys: ['API_URL', 'DATABASE_URL', 'NEW_KEY'],
       }),
     ).resolves.toBe(2);
 
     expect(database.query).toHaveBeenCalledWith(
-      expect.stringContaining('key = ANY($3::text[])'),
-      ['target-1', 'test', ['API_URL', 'DATABASE_URL', 'NEW_KEY']],
+      expect.stringContaining('key = ANY($4::text[])'),
+      [
+        'target-1',
+        'preview',
+        'feat/checkout',
+        ['API_URL', 'DATABASE_URL', 'NEW_KEY'],
+      ],
     );
   });
 

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import type { DeploymentTargetSummary } from '../env-provisioning/env-provisioning.types';
+import { providerPublicUrl } from '../env-provisioning/index.js';
 import type {
   DeploymentHistoryStatus,
   ProjectDeploymentHistoryItem,
@@ -44,10 +45,17 @@ export class LocalDeploymentHistoryProvider {
         environment: target.renderEnvironmentName ?? null,
         branch: target.branchName,
         commitSha: null,
+        commitMessage: null,
         status: 'ready' as const,
         createdAt: now,
         readyAt: now,
-        providerUrl: this.providerUrl(target),
+        deploymentUrl: providerPublicUrl(target),
+        // The fixture feed stands in for provider history that hasn't been
+        // connected yet, so it has no pull request or per-deployment console
+        // to point at.
+        pullRequestNumber: null,
+        inspectorUrl: null,
+        dashboardUrl: this.dashboardUrl(target),
         consoleUrl: this.consoleUrl(target),
       }),
     );
@@ -74,7 +82,7 @@ export class LocalDeploymentHistoryProvider {
     return 'unknown';
   }
 
-  providerUrl(target: DeploymentTargetSummary): string {
+  dashboardUrl(target: DeploymentTargetSummary): string {
     if (target.provider === 'vercel') {
       const teamSlug =
         typeof target.providerMetadata['vercelTeamSlug'] === 'string'

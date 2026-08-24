@@ -12,7 +12,7 @@ describe('ProjectDeploymentsService', () => {
     normalizeStatus: jest.fn((status: string) =>
       status === 'live' ? 'ready' : 'unknown',
     ),
-    providerUrl: jest.fn(() => 'https://dashboard.render.com/web/srv-1'),
+    dashboardUrl: jest.fn(() => 'https://dashboard.render.com/web/srv-1'),
     consoleUrl: jest.fn(
       () => 'https://dashboard.render.com/web/srv-1/logs',
     ),
@@ -86,7 +86,7 @@ describe('ProjectDeploymentsService', () => {
         status: 'ready',
         createdAt: '2026-06-12T00:00:00.000Z',
         readyAt: '2026-06-12T00:05:00.000Z',
-        providerUrl: 'https://dashboard.render.com/web/srv-1',
+        dashboardUrl: 'https://dashboard.render.com/web/srv-1',
         consoleUrl: 'https://dashboard.render.com/web/srv-1/logs',
       },
     ]);
@@ -215,6 +215,11 @@ describe('ProjectDeploymentsService', () => {
           commitSha: 'ea73844',
           commitMessage: 'feat: add logs endpoint',
           trigger: 'auto_deploy',
+          deploymentUrl: null,
+          environment: null,
+          pullRequestNumber: null,
+          commitRef: null,
+          inspectorUrl: null,
         },
       ]);
 
@@ -229,10 +234,73 @@ describe('ProjectDeploymentsService', () => {
             provider: 'render',
             status: 'ready',
             commitSha: 'ea73844',
+            commitMessage: 'feat: add logs endpoint',
+            // Render reports none of these per deploy, so each one falls
+            // back to what the target itself knows.
+            deploymentUrl: 'https://orders-api-test.onrender.com',
+            environment: 'test',
+            branch: 'test',
+            pullRequestNumber: null,
+            inspectorUrl: null,
           },
         ],
       });
       expect(provider.listDeployments).not.toHaveBeenCalled();
+    });
+
+    it('prefers the per-deployment lane, branch, and URL a Vercel preview reports over the target defaults', async () => {
+      const vercelClient = { getDeployHistory: jest.fn() };
+      clientRegistry.getClient.mockReturnValue(vercelClient);
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([
+        {
+          id: 'target-vercel',
+          provider: 'vercel',
+          ownershipMode: 'flowci_managed',
+          providerProjectId: 'prj-1',
+          providerProjectName: 'web-app',
+          branchName: 'main',
+          renderEnvironmentName: null,
+          providerMetadata: {},
+        },
+      ]);
+      configService.getOrThrow.mockReturnValue({
+        deploymentHistory: { enabled: true, liveProvidersEnabled: true },
+        envProvisioning: { flowciManaged: { vercelToken: 'vc_secret' } },
+      });
+      vercelClient.getDeployHistory.mockResolvedValueOnce([
+        {
+          id: 'dpl_1',
+          status: 'READY',
+          createdAt: '2026-07-12T11:45:00.000Z',
+          readyAt: '2026-07-12T11:48:00.000Z',
+          commitSha: 'ea73844',
+          commitMessage: 'feat: checkout',
+          trigger: 'git',
+          deploymentUrl: 'https://web-app-git-feat-checkout.vercel.app',
+          environment: 'preview',
+          pullRequestNumber: 42,
+          commitRef: 'feat/checkout',
+          inspectorUrl: 'https://vercel.com/tone/web-app/dpl_1',
+        },
+      ]);
+
+      await expect(
+        createLiveService().listDeployments('project-1', 'user-1'),
+      ).resolves.toMatchObject({
+        mode: 'live',
+        deployments: [
+          {
+            id: 'dpl_1',
+            provider: 'vercel',
+            deploymentUrl: 'https://web-app-git-feat-checkout.vercel.app',
+            environment: 'preview',
+            // Not the target's 'main' — the deployment's own ref.
+            branch: 'feat/checkout',
+            pullRequestNumber: 42,
+            inspectorUrl: 'https://vercel.com/tone/web-app/dpl_1',
+          },
+        ],
+      });
     });
 
     it('falls back to local mock when no target has a resolvable live connection', async () => {

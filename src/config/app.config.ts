@@ -154,6 +154,11 @@ export interface AppConfig {
     enabled: boolean;
     liveProvidersEnabled: boolean;
   };
+  // Per-branch preview cards. Reads the same provider history as
+  // deploymentHistory, so it is only useful with that enabled too.
+  previewDeployments: {
+    enabled: boolean;
+  };
   driftDetection: {
     enabled: boolean;
   };
@@ -395,6 +400,9 @@ export const appConfig = registerAs('app', (): AppConfig => {
       enabled: env['DEPLOYMENT_HISTORY_ENABLED'] === 'true',
       liveProvidersEnabled:
         env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] !== 'false',
+    },
+    previewDeployments: {
+      enabled: env['PREVIEW_DEPLOYMENTS_ENABLED'] === 'true',
     },
     driftDetection: {
       enabled: env['DRIFT_DETECTION_ENABLED'] === 'true',

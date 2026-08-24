@@ -2,17 +2,19 @@ import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
 import type {
-  EnvEnvironment,
+  EnvLane,
   EnvProvider,
   EnvVarMetadata,
   EnvVarProvisionStatus,
+  EnvVarScope,
 } from './env-provisioning.types';
 
 interface EnvVarMetadataRow {
   id: string;
   project_id: string;
   deployment_target_id: string;
-  environment: EnvEnvironment;
+  environment: EnvLane;
+  git_branch: string | null;
   key: string;
   provider: EnvProvider;
   value_stored: false;
@@ -23,10 +25,9 @@ interface EnvVarMetadataRow {
   removed_at: string | null;
 }
 
-export interface UpsertEnvMetadataBatchInput {
+export interface UpsertEnvMetadataBatchInput extends EnvVarScope {
   projectId: string;
   deploymentTargetId: string;
-  environment: EnvEnvironment;
   provider: EnvProvider;
   provisionedBy: string;
   entries: Array<{
@@ -36,9 +37,8 @@ export interface UpsertEnvMetadataBatchInput {
   }>;
 }
 
-export interface CountExistingActiveKeysInput {
+export interface CountExistingActiveKeysInput extends EnvVarScope {
   deploymentTargetId: string;
-  environment: EnvEnvironment;
   keys: string[];
 }
 
@@ -53,7 +53,7 @@ export class EnvVarsRepository {
         FROM env_provisioning.project_env_var_metadata
         WHERE project_id = $1
           AND removed_at IS NULL
-        ORDER BY deployment_target_id, environment, key;
+        ORDER BY deployment_target_id, environment, git_branch NULLS FIRST, key;
       `,
       [projectId],
     );
@@ -83,7 +83,7 @@ export class EnvVarsRepository {
             )
           )
           AND metadata.removed_at IS NULL
-        ORDER BY metadata.deployment_target_id, metadata.environment, metadata.key;
+        ORDER BY metadata.deployment_target_id, metadata.environment, metadata.git_branch NULLS FIRST, metadata.key;
       `,
       [projectId, userId],
     );
@@ -101,18 +101,19 @@ export class EnvVarsRepository {
     const values: unknown[] = [];
     const placeholders = input.entries
       .map((entry, index) => {
-        const offset = index * 8;
+        const offset = index * 9;
         values.push(
           input.projectId,
           input.deploymentTargetId,
-          input.environment,
+          input.lane,
+          input.gitBranch,
           entry.key,
           input.provider,
           input.provisionedBy,
           entry.status,
           entry.errorSummary,
         );
-        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, false, NOW(), $${offset + 6}, $${offset + 7}, $${offset + 8})`;
+        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, false, NOW(), $${offset + 7}, $${offset + 8}, $${offset + 9})`;
       })
       .join(', ');
 
@@ -122,6 +123,7 @@ export class EnvVarsRepository {
           project_id,
           deployment_target_id,
           environment,
+          git_branch,
           key,
           provider,
           value_stored,
@@ -131,7 +133,10 @@ export class EnvVarsRepository {
           error_summary
         )
         VALUES ${placeholders}
-        ON CONFLICT (deployment_target_id, environment, key)
+        -- Matches project_env_var_metadata_target_lane_branch_key_key, which is
+        -- declared NULLS NOT DISTINCT so the branchless production rows still
+        -- conflict with each other on (target, key).
+        ON CONFLICT (deployment_target_id, environment, git_branch, key)
         DO UPDATE SET
           provider = EXCLUDED.provider,
           value_stored = false,
@@ -161,10 +166,14 @@ export class EnvVarsRepository {
         FROM env_provisioning.project_env_var_metadata
         WHERE deployment_target_id = $1
           AND environment = $2
-          AND key = ANY($3::text[])
+          -- IS NOT DISTINCT FROM, not '=': the production lane stores NULL,
+          -- and '= NULL' is never true, so plain equality would count zero
+          -- existing production keys and charge quota for every re-provision.
+          AND git_branch IS NOT DISTINCT FROM $3
+          AND key = ANY($4::text[])
           AND removed_at IS NULL;
       `,
-      [input.deploymentTargetId, input.environment, input.keys],
+      [input.deploymentTargetId, input.lane, input.gitBranch, input.keys],
     );
 
     return Number(result.rows[0]?.existing_count ?? 0);
@@ -239,7 +248,8 @@ export class EnvVarsRepository {
       id: row.id,
       projectId: row.project_id,
       deploymentTargetId: row.deployment_target_id,
-      environment: row.environment,
+      lane: row.environment,
+      gitBranch: row.git_branch,
       key: row.key,
       provider: row.provider,
       valueStored: row.value_stored,

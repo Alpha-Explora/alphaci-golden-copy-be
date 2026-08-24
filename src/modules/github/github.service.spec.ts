@@ -95,6 +95,7 @@ const appConfig: AppConfig = {
   projectTargetManagement: { enabled: false },
   ciRunTracking: { enabled: false, liveGithubEnabled: false },
   deploymentHistory: { enabled: false, liveProvidersEnabled: false },
+  previewDeployments: { enabled: false },
   driftDetection: { enabled: false },
   driftRepair: { enabled: false, liveRepairEnabled: false },
   driftLiveChecks: { enabled: false },

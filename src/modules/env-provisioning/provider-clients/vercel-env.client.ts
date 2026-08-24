@@ -21,11 +21,6 @@ import type {
 } from './runtime-env-provider.client';
 
 const VERCEL_API_URL = 'https://api.vercel.com';
-const VERCEL_TARGET_BY_ENV = {
-  test: 'preview',
-  uat: 'preview',
-  production: 'production',
-} as const;
 
 @Injectable()
 export class VercelEnvClient implements RuntimeEnvProviderClient {
@@ -165,7 +160,14 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
             key: variable.key,
             value: variable.value,
             type: 'sensitive',
-            target: [VERCEL_TARGET_BY_ENV[input.environment]],
+            target: [input.lane],
+            // Vercel's upsert key is (key, target, gitBranch). Sending the
+            // branch is what gives each branch its own set of values —
+            // without it every preview branch shares one record, which is how
+            // the old test/uat pair silently overwrote each other.
+            ...(input.lane === 'preview' && input.gitBranch
+              ? { gitBranch: input.gitBranch }
+              : {}),
           }),
         },
       );
@@ -184,10 +186,9 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
   async deleteEnvironmentVariable(
     input: DeleteProviderEnvInput,
   ): Promise<{ key: string; status: 'removed' }> {
-    const target = VERCEL_TARGET_BY_ENV[input.environment];
     const listResponse = await fetch(
       this.withScope(
-        `${VERCEL_API_URL}/v9/projects/${input.targetId}/env?key=${encodeURIComponent(input.key)}&target=${target}`,
+        `${VERCEL_API_URL}/v9/projects/${input.targetId}/env?key=${encodeURIComponent(input.key)}&target=${input.lane}`,
       ),
       {
         headers: this.headers(input.token),
@@ -195,9 +196,26 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     );
     await this.assertOk(listResponse, 'Vercel env vars could not be loaded');
     const payload = (await listResponse.json()) as {
-      envs?: Array<{ id?: string; key?: string; target?: string[] }>;
+      envs?: Array<{
+        id?: string;
+        key?: string;
+        target?: string[];
+        gitBranch?: string | null;
+      }>;
     };
-    const envId = (payload.envs ?? []).find((env) => env.key === input.key)?.id;
+    // Match the branch as well as the key.
+    //
+    // Filtered here rather than by query parameter so the branch is compared
+    // against what Vercel actually returned. Matching on key alone deleted the
+    // first preview record Vercel happened to list — which is how removing one
+    // branch's variable used to remove another branch's.
+    const envId = (payload.envs ?? []).find(
+      (env) =>
+        env.key === input.key &&
+        (input.lane === 'production'
+          ? !env.gitBranch
+          : env.gitBranch === input.gitBranch),
+    )?.id;
     if (!envId) {
       return { key: input.key, status: 'removed' };
     }
@@ -276,6 +294,9 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     const payload = (await response.json()) as {
       deployments?: Array<{
         uid?: string;
+        url?: string;
+        target?: string | null;
+        inspectorUrl?: string | null;
         state?: string;
         readyState?: string;
         source?: string;
@@ -284,6 +305,8 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
         meta?: {
           githubCommitSha?: string;
           githubCommitMessage?: string;
+          githubCommitRef?: string;
+          githubPrId?: string;
         };
       }>;
     };
@@ -304,6 +327,18 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
         commitSha: deployment.meta?.githubCommitSha ?? null,
         commitMessage: deployment.meta?.githubCommitMessage ?? null,
         trigger: deployment.source ?? null,
+        deploymentUrl: normalizeDeploymentUrl(deployment.url),
+        // Anything that is not the production lane is a preview as far as
+        // Vercel's own UI is concerned — including the custom environments
+        // it reports as `staging` — so only an explicit 'production' maps
+        // to production.
+        environment:
+          deployment.target === 'production'
+            ? ('production' as const)
+            : ('preview' as const),
+        pullRequestNumber: parsePullRequestNumber(deployment.meta?.githubPrId),
+        commitRef: deployment.meta?.githubCommitRef ?? null,
+        inspectorUrl: deployment.inspectorUrl ?? null,
       }));
   }
 
@@ -558,4 +593,33 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
       'Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.'
     );
   }
+}
+
+/**
+ * Vercel reports a deployment's hostname without a scheme
+ * (`my-app-abc123-team.vercel.app`), so it has to be prefixed before it is
+ * usable as a link. Tolerates an already-absolute URL in case Vercel ever
+ * starts returning one.
+ */
+function normalizeDeploymentUrl(url: string | undefined): string | null {
+  const trimmed = url?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+/**
+ * `meta.githubPrId` arrives as a string. Anything that is not a positive
+ * integer is treated as absent rather than surfaced as NaN.
+ */
+function parsePullRequestNumber(value: string | undefined): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }

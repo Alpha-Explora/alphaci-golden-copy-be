@@ -29,7 +29,8 @@ describe('VercelEnvClient', () => {
     await client.upsertEnvironmentVariables({
       token: 'vercel',
       targetId: 'prj-1',
-      environment: 'production',
+      lane: 'production',
+      gitBranch: null,
       vars: [{ key: 'NEXT_PUBLIC_API_URL', value: 'https://api.example.com' }],
     });
 
@@ -47,6 +48,55 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  it('sends the branch on a preview upsert, so each branch keeps its own value', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await new VercelEnvClient().upsertEnvironmentVariables({
+      token: 'vercel',
+      targetId: 'prj-1',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
+      vars: [{ key: 'API_URL', value: 'https://api.example.com' }],
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        body: JSON.stringify({
+          key: 'API_URL',
+          value: 'https://api.example.com',
+          type: 'sensitive',
+          target: ['preview'],
+          gitBranch: 'feat/checkout',
+        }),
+      }),
+    );
+  });
+
+  /* Vercel's upsert key is (key, target, gitBranch). A production write must
+   * not carry a branch, or it lands as a preview record and the production
+   * value appears not to have been set. */
+  it('sends no branch on a production upsert', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await new VercelEnvClient().upsertEnvironmentVariables({
+      token: 'vercel',
+      targetId: 'prj-1',
+      lane: 'production',
+      gitBranch: null,
+      vars: [{ key: 'API_URL', value: 'https://api.example.com' }],
+    });
+
+    const body = (jest.mocked(fetch).mock.calls[0]?.[1]?.body ?? '') as string;
+    expect(body).not.toContain('gitBranch');
+  });
+
   it('scopes env upserts to the configured Vercel team id', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -59,7 +109,8 @@ describe('VercelEnvClient', () => {
     await client.upsertEnvironmentVariables({
       token: 'vercel',
       targetId: 'prj-1',
-      environment: 'test',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
       vars: [{ key: 'NEXT_PUBLIC_API_URL', value: 'https://api.example.com' }],
     });
 
@@ -149,7 +200,8 @@ describe('VercelEnvClient', () => {
       client.deleteEnvironmentVariable({
         token: 'vercel',
         targetId: 'prj-1',
-        environment: 'production',
+        lane: 'production',
+        gitBranch: null,
         key: 'DATABASE_URL',
       }),
     ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
@@ -170,6 +222,78 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  /* The regression this model change exists to fix. Vercel lists every preview
+   * record for a key; matching on the key alone deleted whichever it returned
+   * first, so removing one branch's variable removed another branch's. */
+  it('deletes only the requested branch when several branches share a key', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            envs: [
+              {
+                id: 'env_main',
+                key: 'DATABASE_URL',
+                target: ['preview'],
+                gitBranch: 'main',
+              },
+              {
+                id: 'env_checkout',
+                key: 'DATABASE_URL',
+                target: ['preview'],
+                gitBranch: 'feat/checkout',
+              },
+            ],
+          }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+
+    await new VercelEnvClient().deleteEnvironmentVariable({
+      token: 'vercel',
+      targetId: 'prj-1',
+      lane: 'preview',
+      gitBranch: 'feat/checkout',
+      key: 'DATABASE_URL',
+    });
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.vercel.com/v9/projects/prj-1/env/env_checkout',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
+  it('leaves a branch-scoped record alone when deleting from production', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          envs: [
+            {
+              id: 'env_branch',
+              key: 'DATABASE_URL',
+              target: ['preview'],
+              gitBranch: 'feat/checkout',
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().deleteEnvironmentVariable({
+        token: 'vercel',
+        targetId: 'prj-1',
+        lane: 'production',
+        gitBranch: null,
+        key: 'DATABASE_URL',
+      }),
+    ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
+    // Nothing matched, so no DELETE was issued.
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('treats missing Vercel env vars as already removed', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
@@ -180,7 +304,8 @@ describe('VercelEnvClient', () => {
       new VercelEnvClient().deleteEnvironmentVariable({
         token: 'vercel',
         targetId: 'prj-1',
-        environment: 'test',
+        lane: 'preview',
+        gitBranch: 'feat/checkout',
         key: 'DATABASE_URL',
       }),
     ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
@@ -582,6 +707,9 @@ describe('VercelEnvClient', () => {
           deployments: [
             {
               uid: 'dpl_2',
+              url: 'web-app-git-main-tone.vercel.app',
+              target: 'production',
+              inspectorUrl: 'https://vercel.com/tone/web-app/dpl_2',
               readyState: 'READY',
               source: 'git',
               createdAt: 1752313500000,
@@ -589,6 +717,7 @@ describe('VercelEnvClient', () => {
               meta: {
                 githubCommitSha: 'ea73844',
                 githubCommitMessage: 'feat: add logs endpoint',
+                githubCommitRef: 'main',
               },
             },
             {
@@ -614,6 +743,11 @@ describe('VercelEnvClient', () => {
         commitSha: 'ea73844',
         commitMessage: 'feat: add logs endpoint',
         trigger: 'git',
+        deploymentUrl: 'https://web-app-git-main-tone.vercel.app',
+        environment: 'production',
+        pullRequestNumber: null,
+        commitRef: 'main',
+        inspectorUrl: 'https://vercel.com/tone/web-app/dpl_2',
       },
       {
         id: 'dpl_1',
@@ -623,6 +757,13 @@ describe('VercelEnvClient', () => {
         commitSha: null,
         commitMessage: null,
         trigger: null,
+        deploymentUrl: null,
+        // A deployment with no `target` is a preview as far as Vercel's own
+        // UI is concerned, so it must not be reported as production.
+        environment: 'preview',
+        pullRequestNumber: null,
+        commitRef: null,
+        inspectorUrl: null,
       },
     ]);
     expect(fetch).toHaveBeenCalledWith(
@@ -648,6 +789,125 @@ describe('VercelEnvClient', () => {
         targetId: 'prj_missing',
       }),
     ).resolves.toEqual([]);
+  });
+
+  it('maps a pull request preview deployment to its own hostname and PR number', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          deployments: [
+            {
+              uid: 'dpl_pr',
+              url: 'web-app-git-feat-checkout-tone.vercel.app',
+              target: null,
+              readyState: 'READY',
+              createdAt: 1752313500000,
+              meta: {
+                githubCommitRef: 'feat/checkout',
+                githubPrId: '42',
+              },
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toMatchObject([
+      {
+        id: 'dpl_pr',
+        deploymentUrl: 'https://web-app-git-feat-checkout-tone.vercel.app',
+        environment: 'preview',
+        pullRequestNumber: 42,
+        commitRef: 'feat/checkout',
+      },
+    ]);
+  });
+
+  it('treats a Vercel custom environment as a preview rather than production', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          deployments: [
+            {
+              uid: 'dpl_staging',
+              target: 'staging',
+              readyState: 'READY',
+              createdAt: 1752313500000,
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toMatchObject([{ environment: 'preview' }]);
+  });
+
+  it.each([
+    ['an empty string', '', null],
+    ['whitespace', '   ', null],
+    ['a non-numeric id', 'not-a-number', null],
+    ['zero', '0', null],
+    ['a negative number', '-3', null],
+    ['a numeric string', '7', 7],
+  ])(
+    'reads %s as a pull request number of %p',
+    async (_label, githubPrId, expected) => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            deployments: [
+              {
+                uid: 'dpl_1',
+                readyState: 'READY',
+                createdAt: 1752313500000,
+                meta: { githubPrId },
+              },
+            ],
+          }),
+      });
+
+      await expect(
+        new VercelEnvClient().getDeployHistory({
+          token: 'vercel',
+          targetId: 'prj_1',
+        }),
+      ).resolves.toMatchObject([{ pullRequestNumber: expected }]);
+    },
+  );
+
+  it('leaves an already-absolute deployment URL untouched', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          deployments: [
+            {
+              uid: 'dpl_1',
+              url: 'https://web-app.vercel.app',
+              readyState: 'READY',
+              createdAt: 1752313500000,
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toMatchObject([{ deploymentUrl: 'https://web-app.vercel.app' }]);
   });
 
   it('deletes the Vercel project', async () => {

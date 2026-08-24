@@ -21,6 +21,8 @@ import { LocalCiRunsProvider } from './local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';
 import { ProjectCiRunsService } from './project-ci-runs.service';
 import { ProjectDeploymentsService } from './project-deployments.service';
+import { ProjectPreviewsService } from './project-previews.service';
+import { UrlEmbeddabilityProbe } from './url-embeddability.probe';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
 import { ProjectDriftService } from './project-drift.service';
 import { ProjectSyncFindingsRepository } from './project-sync-findings.repository';
@@ -51,6 +53,8 @@ import { ProjectsService } from './projects.service';
     ProjectWorkspaceService,
     ProjectCiRunsService,
     ProjectDeploymentsService,
+    ProjectPreviewsService,
+    UrlEmbeddabilityProbe,
     ProjectDriftRepairService,
     ProjectDriftService,
     LocalCiRunsProvider,

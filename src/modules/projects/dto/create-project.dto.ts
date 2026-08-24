@@ -28,8 +28,23 @@ export class DeploymentProvisioningEnvVarDto {
 }
 
 export class DeploymentProvisioningEnvSetDto {
-  @IsIn(['test', 'uat', 'production'])
-  environment!: 'test' | 'uat' | 'production';
+  /**
+   * Deployment lane these values apply to. `preview` is always scoped to one
+   * branch; `production` carries none, because the provider resolves it from
+   * the project's own production branch.
+   */
+  @IsIn(['production', 'preview'])
+  lane!: 'production' | 'preview';
+
+  /**
+   * Branch for the preview lane. Omitted means "the branch this target
+   * tracks", which is what the create-project wizard wants — it is configuring
+   * the branch it just set up.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  gitBranch?: string;
 
   @IsArray()
   @ValidateNested({ each: true })
