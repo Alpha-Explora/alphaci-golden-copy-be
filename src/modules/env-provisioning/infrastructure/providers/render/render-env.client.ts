@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../../config/app.config';
-import { fetchWithRetry } from './fetch-with-retry';
+import type { AppConfig } from '../../../../../config/app.config';
+import { fetchWithRetry } from '../core/fetch-with-retry';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
@@ -16,14 +16,14 @@ import type {
   ProviderProvisionResult,
   ProviderTargetStatus,
   ProviderTargetStatusInput,
-  RuntimeEnvProviderClient,
   UpsertProviderEnvInput,
-} from './runtime-env-provider.client';
+} from '../core/runtime-env-provider.client';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
 const RENDER_API_URL = 'https://api.render.com/v1';
 
 @Injectable()
-export class RenderEnvClient implements RuntimeEnvProviderClient {
+export class RenderEnvClient implements DeploymentProvider {
   readonly provider = 'render' as const;
 
   constructor(private readonly configService?: ConfigService) {}

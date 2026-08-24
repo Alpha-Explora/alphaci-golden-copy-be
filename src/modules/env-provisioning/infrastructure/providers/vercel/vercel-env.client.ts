@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../../config/app.config';
-import { fetchWithRetry } from './fetch-with-retry';
+import type { AppConfig } from '../../../../../config/app.config';
+import { fetchWithRetry } from '../core/fetch-with-retry';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
@@ -16,14 +16,14 @@ import type {
   ProviderProvisionResult,
   ProviderTargetStatus,
   ProviderTargetStatusInput,
-  RuntimeEnvProviderClient,
   UpsertProviderEnvInput,
-} from './runtime-env-provider.client';
+} from '../core/runtime-env-provider.client';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
 const VERCEL_API_URL = 'https://api.vercel.com';
 
 @Injectable()
-export class VercelEnvClient implements RuntimeEnvProviderClient {
+export class VercelEnvClient implements DeploymentProvider {
   readonly provider = 'vercel' as const;
 
   constructor(private readonly configService?: ConfigService) {}

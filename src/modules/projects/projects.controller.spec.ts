@@ -3,15 +3,25 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import type { Request } from 'express';
 
+import {
+  DEPLOYMENT_DRIFT_QUERY,
+  DEPLOYMENT_HISTORY_QUERY,
+  type DeploymentDriftQuery,
+  type DeploymentHistoryQuery,
+  type DeploymentProjectReference,
+} from '../env-provisioning/index.js';
 import { ProjectsController } from './projects.controller.js';
 import { ProjectCiRunsService } from './project-ci-runs.service.js';
-import { ProjectDeploymentsService } from './project-deployments.service.js';
 import { ProjectPreviewsService } from './project-previews.service.js';
 import { ProjectDriftRepairService } from './project-drift-repair.service.js';
-import { ProjectDriftService } from './project-drift.service.js';
 import { ProjectsService } from './projects.service.js';
 
 const fakeUser = { id: 'user-1', login: 'testuser' };
+const projectReference: DeploymentProjectReference = {
+  projectId: 'project-1',
+  userId: 'user-1',
+  repoFullName: 'testuser/orders-api',
+};
 
 const makeRequest = (
   user: typeof fakeUser | undefined = fakeUser,
@@ -29,6 +39,7 @@ const makeUnauthRequest = () => ({ session: {} }) as unknown as Request;
 
 const makeProjectsService = () =>
   ({
+    getProjectReference: jest.fn().mockResolvedValue(projectReference),
     createProject: jest.fn().mockResolvedValue({
       id: 'project-1',
       repoFullName: 'testuser/orders-api',
@@ -163,7 +174,7 @@ const makeProjectDeploymentsService = () =>
       liveProvidersEnabled: false,
       deployments: [],
     }),
-  }) as unknown as ProjectDeploymentsService;
+  }) as unknown as DeploymentHistoryQuery;
 
 const makeProjectPreviewsService = () =>
   ({
@@ -186,7 +197,7 @@ const makeProjectDriftService = () =>
       mode: 'local_snapshot',
       findings: [],
     }),
-  }) as unknown as ProjectDriftService;
+  }) as unknown as DeploymentDriftQuery;
 
 const makeProjectDriftRepairService = () =>
   ({
@@ -204,9 +215,9 @@ describe('ProjectsController', () => {
   let controller: ProjectsController;
   let service: ProjectsService;
   let ciRunsService: ProjectCiRunsService;
-  let deploymentsService: ProjectDeploymentsService;
+  let deploymentsService: DeploymentHistoryQuery;
   let previewsService: ProjectPreviewsService;
-  let driftService: ProjectDriftService;
+  let driftService: DeploymentDriftQuery;
   let driftRepairService: ProjectDriftRepairService;
 
   beforeEach(async () => {
@@ -222,9 +233,9 @@ describe('ProjectsController', () => {
       providers: [
         { provide: ProjectsService, useValue: service },
         { provide: ProjectCiRunsService, useValue: ciRunsService },
-        { provide: ProjectDeploymentsService, useValue: deploymentsService },
+        { provide: DEPLOYMENT_HISTORY_QUERY, useValue: deploymentsService },
         { provide: ProjectPreviewsService, useValue: previewsService },
-        { provide: ProjectDriftService, useValue: driftService },
+        { provide: DEPLOYMENT_DRIFT_QUERY, useValue: driftService },
         { provide: ProjectDriftRepairService, useValue: driftRepairService },
       ],
     })
@@ -495,8 +506,7 @@ describe('ProjectsController', () => {
     );
 
     expect(deploymentsService.listDeployments).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
+      projectReference,
     );
     expect(result).toMatchObject({
       mode: 'local_mock',
@@ -512,8 +522,7 @@ describe('ProjectsController', () => {
     );
 
     expect(previewsService.listPreviews).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
+      projectReference,
     );
     expect(result).toMatchObject({
       enabled: true,
@@ -541,8 +550,7 @@ describe('ProjectsController', () => {
     );
 
     expect(driftService.listFindings).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
+      projectReference,
     );
     expect(result).toMatchObject({
       mode: 'local_snapshot',
@@ -557,8 +565,7 @@ describe('ProjectsController', () => {
     );
 
     expect(driftService.runDetection).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
+      projectReference,
     );
     expect(result).toMatchObject({
       mode: 'local_snapshot',

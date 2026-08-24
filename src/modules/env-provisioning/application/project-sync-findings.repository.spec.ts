@@ -1,4 +1,4 @@
-import type { DatabaseService } from '../../kernel/db/database.service';
+import type { DatabaseService } from '../../../kernel/db/database.service';
 import { ProjectSyncFindingsRepository } from './project-sync-findings.repository';
 
 const makeDatabaseService = (query: jest.Mock) =>

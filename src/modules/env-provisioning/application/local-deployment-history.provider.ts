@@ -1,11 +1,9 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
-import type { DeploymentTargetSummary } from '../env-provisioning/env-provisioning.types';
-import { providerPublicUrl } from '../env-provisioning/index.js';
-import type {
-  DeploymentHistoryStatus,
-  ProjectDeploymentHistoryItem,
-} from './project-deployments.types';
+import type { DeploymentTargetSummary } from '../env-provisioning.types';
+import { providerPublicUrl } from '../provider-public-url';
+import type { DeploymentHistoryStatus } from '../deployment-provisioning.contract';
+import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
 
 export const LOCAL_DEPLOYMENT_HISTORY_OPTIONS =
   'LOCAL_DEPLOYMENT_HISTORY_OPTIONS';

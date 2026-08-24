@@ -24,17 +24,18 @@ import {
   type ProjectTokenStatus,
 } from '../ci/index.js';
 import { AuditEventsService } from '../audit/audit-events.service';
-import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
-import { EnvVarsRepository } from '../env-provisioning/env-vars.repository';
 import {
+  DEPLOYMENT_ENV_METADATA_QUERY,
   DEPLOYMENT_PROVISIONING_FACADE,
+  DEPLOYMENT_TARGETS_QUERY,
   type DeploymentProvisioningFacade,
+  type DeploymentProjectReference,
   type DeploymentProvisioningResult,
+  type DeploymentEnvMetadataQuery,
+  type DeploymentTargetsQuery,
+  type DeploymentTargetSummary,
+  type EnvVarMetadata,
 } from '../env-provisioning/index.js';
-import type {
-  DeploymentTargetSummary,
-  EnvVarMetadata,
-} from '../env-provisioning/env-provisioning.types';
 import {
   GithubRepoDeleteError,
   GithubService,
@@ -363,9 +364,11 @@ export class ProjectsService {
     @Inject(CI_TOKEN_STATUS_LOOKUP)
     private readonly ciTokensRepository?: CiTokenStatusLookup,
     @Optional()
-    private readonly deploymentTargetsRepository?: DeploymentTargetsRepository,
+    @Inject(DEPLOYMENT_TARGETS_QUERY)
+    private readonly deploymentTargetsRepository?: DeploymentTargetsQuery,
     @Optional()
-    private readonly envVarsRepository?: EnvVarsRepository,
+    @Inject(DEPLOYMENT_ENV_METADATA_QUERY)
+    private readonly envVarsRepository?: DeploymentEnvMetadataQuery,
     @Optional()
     @Inject(WORKFLOW_HISTORY_QUERY)
     private readonly workflowHistoryRepository?: WorkflowHistoryQuery,
@@ -412,6 +415,33 @@ export class ProjectsService {
         });
       },
     );
+  }
+
+  /**
+   * Resolves the small, viewer-authorized project reference that deployment
+   * queries are allowed to consume. Deployment services never receive the
+   * Projects repository row or perform this authorization themselves.
+   */
+  async getProjectReference(
+    projectId: string,
+    userId: string,
+  ): Promise<DeploymentProjectReference> {
+    const project = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return {
+      projectId: project.id,
+      userId,
+      repoFullName: project.repo_full_name,
+      repoUrl: project.repo_url,
+      workflowPath: project.workflow_path,
+      projectOptions: project.project_options,
+    };
   }
 
   /**

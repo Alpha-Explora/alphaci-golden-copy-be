@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
-import type { EnvProvider } from '../env-provisioning.types';
-import { RenderEnvClient } from './render-env.client';
-import type { RuntimeEnvProviderClient } from './runtime-env-provider.client';
-import { VercelEnvClient } from './vercel-env.client';
+import type { EnvProvider } from '../../../env-provisioning.types';
+import type { DeploymentProvider } from './deployment-provider.contract';
+import { RenderEnvClient } from '../render/render-env.client';
+import { VercelEnvClient } from '../vercel/vercel-env.client';
 
 @Injectable()
 export class ProviderClientRegistry {
@@ -12,7 +12,7 @@ export class ProviderClientRegistry {
     private readonly vercelClient: VercelEnvClient,
   ) {}
 
-  getClient(provider: EnvProvider): RuntimeEnvProviderClient {
+  getClient(provider: EnvProvider): DeploymentProvider {
     if (provider === 'render') {
       return this.renderClient;
     }

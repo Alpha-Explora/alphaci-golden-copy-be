@@ -1,40 +1,20 @@
-import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
-import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
-import type { DeploymentTargetSummary } from '../env-provisioning/env-provisioning.types';
-import { providerPublicUrl } from '../env-provisioning/index.js';
-import { EnvTokenEncryptionService } from '../env-provisioning/encryption.service';
-import { ProviderClientRegistry } from '../env-provisioning/provider-clients/provider-client.registry';
-import { ProviderConnectionsRepository } from '../env-provisioning/provider-connections.repository';
+import type { AppConfig } from '../../../config/app.config';
+import { DeploymentTargetsRepository } from '../deployment-targets.repository';
+import type { DeploymentTargetSummary } from '../env-provisioning.types';
+import { providerPublicUrl } from '../provider-public-url';
+import { EnvTokenEncryptionService } from '../encryption.service';
+import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';
+import { ProviderConnectionsRepository } from '../provider-connections.repository';
+import {
+  type DeploymentHistoryQuery,
+  type DeploymentHistoryResponse,
+  type DeploymentProjectReference,
+} from '../deployment-provisioning.contract';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
-import { ProjectsRepository } from './projects.repository';
-
-/**
- * Where the listed deployments came from.
- *
- * `unavailable` is distinct from `local_mock` on purpose: the first means the
- * provider was asked and did not answer, the second that there was nothing to
- * ask. Collapsing them told the reader their integration was not connected
- * while it was connected and merely failing.
- */
-export type DeploymentHistoryMode = 'local_mock' | 'live' | 'unavailable';
-
-export interface ProjectDeploymentsResponse {
-  enabled: boolean;
-  mode: DeploymentHistoryMode;
-  liveProvidersEnabled: boolean;
-  deployments: ProjectDeploymentHistoryItem[];
-  /**
-   * Safe message naming the providers that could not be reached, or null.
-   *
-   * Set in `live` mode too, where some targets answered and others did not —
-   * a partial list is worth showing, but not worth presenting as complete.
-   */
-  providerError: string | null;
-}
 
 /** One target's contribution to the live fetch. */
 interface TargetFetchOutcome {
@@ -46,11 +26,10 @@ interface TargetFetchOutcome {
 }
 
 @Injectable()
-export class ProjectDeploymentsService {
+export class ProjectDeploymentsService implements DeploymentHistoryQuery {
   private readonly logger = new Logger(ProjectDeploymentsService.name);
 
   constructor(
-    private readonly projectsRepository: ProjectsRepository,
     private readonly deploymentTargetsRepository: DeploymentTargetsRepository,
     private readonly provider: LocalDeploymentHistoryProvider = new LocalDeploymentHistoryProvider(),
     @Optional()
@@ -64,17 +43,9 @@ export class ProjectDeploymentsService {
   ) {}
 
   async listDeployments(
-    projectId: string,
-    userId: string,
-  ): Promise<ProjectDeploymentsResponse> {
-    const project = await this.projectsRepository.findByIdAndUser(
-      projectId,
-      userId,
-    );
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentHistoryResponse> {
+    const { projectId, userId } = project;
     if (!this.enabled()) {
       return {
         enabled: false,

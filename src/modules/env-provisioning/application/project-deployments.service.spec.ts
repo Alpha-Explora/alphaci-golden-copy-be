@@ -1,8 +1,10 @@
 import { ProjectDeploymentsService } from './project-deployments.service';
 
 describe('ProjectDeploymentsService', () => {
-  const projectsRepository = {
-    findByIdAndUser: jest.fn(),
+  const projectReference = {
+    projectId: 'project-1',
+    userId: 'user-1',
+    repoFullName: 'tone/orders-api',
   };
   const deploymentTargetsRepository = {
     listDeploymentTargets: jest.fn(),
@@ -23,10 +25,6 @@ describe('ProjectDeploymentsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    projectsRepository.findByIdAndUser.mockResolvedValue({
-      id: 'project-1',
-      repo_full_name: 'tone/orders-api',
-    });
     deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([]);
     provider.listDeployments.mockResolvedValue([]);
     configService.getOrThrow.mockReturnValue({
@@ -39,7 +37,6 @@ describe('ProjectDeploymentsService', () => {
 
   function createService() {
     return new ProjectDeploymentsService(
-      projectsRepository as never,
       deploymentTargetsRepository as never,
       provider as never,
       configService as never,
@@ -48,7 +45,7 @@ describe('ProjectDeploymentsService', () => {
 
   it('handles empty deployment history without provider credentials', async () => {
     await expect(
-      createService().listDeployments('project-1', 'user-1'),
+      createService().listDeployments(projectReference),
     ).resolves.toEqual({
       enabled: true,
       mode: 'local_mock',
@@ -93,7 +90,7 @@ describe('ProjectDeploymentsService', () => {
     ]);
 
     await expect(
-      createService().listDeployments('project-1', 'user-1'),
+      createService().listDeployments(projectReference),
     ).resolves.toMatchObject({
       deployments: [
         {
@@ -115,7 +112,7 @@ describe('ProjectDeploymentsService', () => {
     });
 
     await expect(
-      createService().listDeployments('project-1', 'user-1'),
+      createService().listDeployments(projectReference),
     ).resolves.toMatchObject({
       enabled: false,
       deployments: [],
@@ -132,7 +129,7 @@ describe('ProjectDeploymentsService', () => {
     });
 
     await expect(
-      createService().listDeployments('project-1', 'user-1'),
+      createService().listDeployments(projectReference),
     ).resolves.toMatchObject({
       liveProvidersEnabled: true,
     });
@@ -147,7 +144,7 @@ describe('ProjectDeploymentsService', () => {
     });
 
     await expect(
-      createService().listDeployments('project-1', 'user-1'),
+      createService().listDeployments(projectReference),
     ).resolves.toMatchObject({
       liveProvidersEnabled: false,
     });
@@ -155,13 +152,12 @@ describe('ProjectDeploymentsService', () => {
 
   it('defaults liveProvidersEnabled to true when configService is absent', async () => {
     const service = new ProjectDeploymentsService(
-      projectsRepository as never,
       deploymentTargetsRepository as never,
       provider as never,
     );
 
     await expect(
-      service.listDeployments('project-1', 'user-1'),
+      service.listDeployments(projectReference),
     ).resolves.toMatchObject({
       liveProvidersEnabled: true,
     });
@@ -177,7 +173,6 @@ describe('ProjectDeploymentsService', () => {
 
     function createLiveService() {
       return new ProjectDeploymentsService(
-        projectsRepository as never,
         deploymentTargetsRepository as never,
         provider as never,
         configService as never,
@@ -225,7 +220,7 @@ describe('ProjectDeploymentsService', () => {
       ]);
 
       await expect(
-        createLiveService().listDeployments('project-1', 'user-1'),
+        createLiveService().listDeployments(projectReference),
       ).resolves.toMatchObject({
         mode: 'live',
         deployments: [
@@ -286,7 +281,7 @@ describe('ProjectDeploymentsService', () => {
       ]);
 
       await expect(
-        createLiveService().listDeployments('project-1', 'user-1'),
+        createLiveService().listDeployments(projectReference),
       ).resolves.toMatchObject({
         mode: 'live',
         deployments: [
@@ -329,10 +324,7 @@ describe('ProjectDeploymentsService', () => {
         new Error('Render API is unavailable'),
       );
 
-      const result = await createLiveService().listDeployments(
-        'project-1',
-        'user-1',
-      );
+      const result = await createLiveService().listDeployments(projectReference);
 
       expect(result.mode).toBe('unavailable');
       expect(result.deployments).toEqual([]);
@@ -387,10 +379,7 @@ describe('ProjectDeploymentsService', () => {
         ])
         .mockRejectedValueOnce(new Error('rate limited'));
 
-      const result = await createLiveService().listDeployments(
-        'project-1',
-        'user-1',
-      );
+      const result = await createLiveService().listDeployments(projectReference);
 
       expect(result.mode).toBe('live');
       expect(result.deployments).toHaveLength(1);
@@ -418,10 +407,7 @@ describe('ProjectDeploymentsService', () => {
       });
       renderClient.getDeployHistory.mockResolvedValueOnce([]);
 
-      const result = await createLiveService().listDeployments(
-        'project-1',
-        'user-1',
-      );
+      const result = await createLiveService().listDeployments(projectReference);
 
       expect(result.mode).toBe('live');
       expect(result.deployments).toEqual([]);
@@ -447,7 +433,7 @@ describe('ProjectDeploymentsService', () => {
       });
 
       await expect(
-        createLiveService().listDeployments('project-1', 'user-1'),
+        createLiveService().listDeployments(projectReference),
       ).resolves.toMatchObject({ mode: 'local_mock' });
       expect(renderClient.getDeployHistory).not.toHaveBeenCalled();
       expect(provider.listDeployments).toHaveBeenCalled();

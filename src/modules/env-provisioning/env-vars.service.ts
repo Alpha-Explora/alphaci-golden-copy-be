@@ -20,7 +20,7 @@ import type {
   EnvVarInput,
   EnvVarScope,
 } from './env-provisioning.types';
-import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
+import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { UsageQuotaService } from '../usage/usage-quota.service';
 import type { UsageLimitCode } from '../usage/usage.types';

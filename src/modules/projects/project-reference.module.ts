@@ -27,6 +27,9 @@ class ProjectReferenceLookupAdapter
           projectId: project.id,
           userId,
           repoFullName: project.repo_full_name,
+          repoUrl: project.repo_url,
+          workflowPath: project.workflow_path,
+          projectOptions: project.project_options,
         }
       : null;
   }

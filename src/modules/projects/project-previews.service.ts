@@ -1,9 +1,13 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
-import { ProjectDeploymentsService } from './project-deployments.service';
-import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
+import {
+  DEPLOYMENT_HISTORY_QUERY,
+  type DeploymentHistoryItem,
+  type DeploymentHistoryQuery,
+  type DeploymentProjectReference,
+} from '../env-provisioning/index.js';
 import type {
   ProjectBranchPreview,
   ProjectPreviewsResponse,
@@ -13,7 +17,8 @@ import { UrlEmbeddabilityProbe } from './url-embeddability.probe';
 @Injectable()
 export class ProjectPreviewsService {
   constructor(
-    private readonly deploymentsService: ProjectDeploymentsService,
+    @Inject(DEPLOYMENT_HISTORY_QUERY)
+    private readonly deploymentsService: DeploymentHistoryQuery,
     private readonly embeddabilityProbe: UrlEmbeddabilityProbe,
     @Optional()
     private readonly configService?: ConfigService,
@@ -28,8 +33,7 @@ export class ProjectPreviewsService {
    * fetch would double the request count for the same screen.
    */
   async listPreviews(
-    projectId: string,
-    userId: string,
+    project: DeploymentProjectReference,
   ): Promise<ProjectPreviewsResponse> {
     if (!this.enabled()) {
       return {
@@ -40,10 +44,7 @@ export class ProjectPreviewsService {
       };
     }
 
-    const history = await this.deploymentsService.listDeployments(
-      projectId,
-      userId,
-    );
+    const history = await this.deploymentsService.listDeployments(project);
 
     const newestPerBranch = this.newestPerBranch(history.deployments);
     const branches = await Promise.all(
@@ -66,9 +67,9 @@ export class ProjectPreviewsService {
    * genuinely different previews, so the target is part of the key.
    */
   private newestPerBranch(
-    deployments: ProjectDeploymentHistoryItem[],
-  ): ProjectDeploymentHistoryItem[] {
-    const newest = new Map<string, ProjectDeploymentHistoryItem>();
+    deployments: DeploymentHistoryItem[],
+  ): DeploymentHistoryItem[] {
+    const newest = new Map<string, DeploymentHistoryItem>();
 
     for (const deployment of deployments) {
       if (!deployment.branch) {
@@ -88,7 +89,7 @@ export class ProjectPreviewsService {
   }
 
   private async toBranchPreview(
-    deployment: ProjectDeploymentHistoryItem,
+    deployment: DeploymentHistoryItem,
   ): Promise<ProjectBranchPreview> {
     // Only probe something worth framing. A build that failed or is still
     // running has no page to show yet, and probing it would spend a request
@@ -125,8 +126,8 @@ export class ProjectPreviewsService {
 }
 
 function isNewer(
-  candidate: ProjectDeploymentHistoryItem,
-  incumbent: ProjectDeploymentHistoryItem,
+  candidate: DeploymentHistoryItem,
+  incumbent: DeploymentHistoryItem,
 ): boolean {
   return Date.parse(candidate.createdAt) > Date.parse(incumbent.createdAt);
 }

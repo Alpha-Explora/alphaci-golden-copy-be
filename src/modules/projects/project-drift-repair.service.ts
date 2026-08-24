@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
   Optional,
@@ -9,14 +10,16 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import { AuditEventsService } from '../audit/audit-events.service';
 import { CiService } from '../ci/ci.service';
-import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
+import {
+  DEPLOYMENT_DRIFT_FINDINGS_STORE,
+  DEPLOYMENT_TARGET_DELETION,
+  type DeploymentDriftFindingsStore,
+  type DeploymentTargetDeletion,
+  type ProjectDriftFinding,
+  type ProjectDriftRepairAction,
+  type ProjectDriftRepairResponse,
+} from '../env-provisioning/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
-import type {
-  ProjectDriftFinding,
-  ProjectDriftRepairAction,
-  ProjectDriftRepairResponse,
-} from './project-drift.types';
-import { ProjectSyncFindingsRepository } from './project-sync-findings.repository';
 import { ProjectsRepository } from './projects.repository';
 import { ProjectsService } from './projects.service';
 
@@ -24,10 +27,12 @@ import { ProjectsService } from './projects.service';
 export class ProjectDriftRepairService {
   constructor(
     private readonly projectsRepository: ProjectsRepository,
-    private readonly findingsRepository: ProjectSyncFindingsRepository,
+    @Inject(DEPLOYMENT_DRIFT_FINDINGS_STORE)
+    private readonly findingsRepository: DeploymentDriftFindingsStore,
     private readonly ciService: CiService,
     @Optional()
-    private readonly deploymentTargetsRepository?: DeploymentTargetsRepository,
+    @Inject(DEPLOYMENT_TARGET_DELETION)
+    private readonly deploymentTargetsRepository?: DeploymentTargetDeletion,
     @Optional()
     private readonly projectsService?: ProjectsService,
     @Optional()

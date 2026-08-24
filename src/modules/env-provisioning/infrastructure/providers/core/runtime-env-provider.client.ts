@@ -6,7 +6,7 @@ import type {
   RenderEnvironmentName,
   RenderRuntime,
   RenderServiceType,
-} from '../env-provisioning.types';
+} from '../../../env-provisioning.types';
 
 export interface ProviderAccountSummary {
   id: string;

@@ -1,8 +1,19 @@
 import { ProjectDriftService } from './project-drift.service';
 
 describe('ProjectDriftService', () => {
-  const projectsRepository = {
-    findByIdAndUser: jest.fn(),
+  const projectReference = {
+    projectId: 'project-1',
+    userId: 'user-1',
+    repoFullName: 'tone/orders-api',
+    repoUrl: 'https://github.com/tone/orders-api',
+    workflowPath: '.github/workflows/00-alphaci-access.yml',
+    projectOptions: { workflowFiles: [] },
+  };
+  const incompleteProjectReference = {
+    ...projectReference,
+    repoUrl: null,
+    workflowPath: '',
+    projectOptions: {},
   };
   const findingsRepository = {
     findActiveByProject: jest.fn(),
@@ -23,13 +34,6 @@ describe('ProjectDriftService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    projectsRepository.findByIdAndUser.mockResolvedValue({
-      id: 'project-1',
-      repo_full_name: 'tone/orders-api',
-      repo_url: 'https://github.com/tone/orders-api',
-      workflow_path: '.github/workflows/00-alphaci-access.yml',
-      project_options: { workflowFiles: [] },
-    });
     findingsRepository.findActiveByProject.mockResolvedValue([]);
     findingsRepository.replaceActiveFindings.mockImplementation(
       async (_projectId: string, findings: Array<{ code: string }>) =>
@@ -55,7 +59,6 @@ describe('ProjectDriftService', () => {
 
   function createService() {
     return new ProjectDriftService(
-      projectsRepository as never,
       findingsRepository as never,
       deploymentTargetsRepository as never,
       envVarsRepository as never,
@@ -70,7 +73,7 @@ describe('ProjectDriftService', () => {
     ]);
 
     await expect(
-      createService().listFindings('project-1', 'user-1'),
+      createService().listFindings(projectReference),
     ).resolves.toMatchObject({
       enabled: true,
       mode: 'local_snapshot',
@@ -85,7 +88,7 @@ describe('ProjectDriftService', () => {
     });
 
     await expect(
-      createService().runDetection('project-1', 'user-1'),
+      createService().runDetection(projectReference),
     ).resolves.toEqual({
       enabled: false,
       mode: 'local_snapshot',
@@ -98,13 +101,6 @@ describe('ProjectDriftService', () => {
   });
 
   it('produces stable local findings without live provider calls', async () => {
-    projectsRepository.findByIdAndUser.mockResolvedValueOnce({
-      id: 'project-1',
-      repo_full_name: 'tone/orders-api',
-      repo_url: null,
-      workflow_path: '',
-      project_options: {},
-    });
     ciTokensRepository.findProjectTokenStatus.mockResolvedValueOnce(null);
     deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([
       {
@@ -126,7 +122,9 @@ describe('ProjectDriftService', () => {
       },
     ]);
 
-    const response = await createService().runDetection('project-1', 'user-1');
+    const response = await createService().runDetection(
+      incompleteProjectReference,
+    );
     const codes = response.findings.map((finding) => finding.code);
 
     expect(codes).toEqual(

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../../kernel/db/database.service';
+import { DatabaseService } from '../../../kernel/db/database.service';
+import type { DeploymentDriftFindingsStore } from '../deployment-provisioning.contract';
 import type {
   ProjectDriftFinding,
   ProjectDriftFindingInput,
@@ -24,7 +25,7 @@ interface ProjectSyncFindingRow {
 }
 
 @Injectable()
-export class ProjectSyncFindingsRepository {
+export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsStore {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async findActiveByProject(projectId: string): Promise<ProjectDriftFinding[]> {

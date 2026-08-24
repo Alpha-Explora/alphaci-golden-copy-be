@@ -5,7 +5,7 @@ import { EnvTokenEncryptionService } from './encryption.service';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import { EnvVarsRepository } from './env-vars.repository';
 import { EnvVarsService } from './env-vars.service';
-import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
+import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { AuditEventsService } from '../audit/audit-events.service';
 import { NotificationEventsService } from '../notifications/index.js';

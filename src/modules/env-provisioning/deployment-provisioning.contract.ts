@@ -1,3 +1,8 @@
+import type {
+  DeploymentTargetSummary,
+  EnvVarMetadata,
+} from './env-provisioning.types';
+
 /**
  * Public deployment-provisioning contract.
  *
@@ -97,6 +102,10 @@ export interface DeploymentProjectReference {
   projectId: string;
   userId: string;
   repoFullName: string;
+  /** Optional project metadata needed by deployment-owned drift analysis. */
+  repoUrl?: string | null;
+  workflowPath?: string | null;
+  projectOptions?: Record<string, unknown> | null;
 }
 
 export interface DeploymentProjectReferenceLookup {
@@ -109,6 +118,141 @@ export interface DeploymentProjectReferenceLookup {
 export const DEPLOYMENT_PROJECT_REFERENCE_LOOKUP = Symbol(
   'DEPLOYMENT_PROJECT_REFERENCE_LOOKUP',
 );
+
+export type DeploymentHistoryStatus =
+  | 'queued'
+  | 'building'
+  | 'ready'
+  | 'failed'
+  | 'canceled'
+  | 'unknown';
+
+export type DeploymentHistoryMode = 'local_mock' | 'live' | 'unavailable';
+
+export interface DeploymentHistoryItem {
+  id: string;
+  targetId: string;
+  targetName: string;
+  provider: DeploymentProvider;
+  environment: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  commitMessage: string | null;
+  status: DeploymentHistoryStatus;
+  createdAt: string;
+  readyAt: string | null;
+  deploymentUrl: string | null;
+  pullRequestNumber: number | null;
+  inspectorUrl: string | null;
+  dashboardUrl: string;
+  consoleUrl: string;
+}
+
+export interface DeploymentHistoryResponse {
+  enabled: boolean;
+  mode: DeploymentHistoryMode;
+  liveProvidersEnabled: boolean;
+  deployments: DeploymentHistoryItem[];
+  providerError: string | null;
+}
+
+export interface DeploymentHistoryQuery {
+  listDeployments(
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentHistoryResponse>;
+}
+
+export const DEPLOYMENT_HISTORY_QUERY = Symbol('DEPLOYMENT_HISTORY_QUERY');
+
+export type DeploymentDriftSeverity = 'info' | 'warning' | 'error';
+export type DeploymentDriftStatus = 'active' | 'resolved' | 'ignored';
+export type DeploymentDriftSource = 'local_snapshot';
+
+export interface DeploymentDriftFinding {
+  id: string;
+  projectId: string;
+  targetId: string | null;
+  source: DeploymentDriftSource;
+  severity: DeploymentDriftSeverity;
+  code: string;
+  message: string;
+  details: Record<string, unknown>;
+  status: DeploymentDriftStatus;
+  detectedAt: string;
+  resolvedAt: string | null;
+}
+
+export interface DeploymentDriftFindingInput {
+  projectId: string;
+  targetId?: string | null;
+  source: DeploymentDriftSource;
+  severity: DeploymentDriftSeverity;
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export interface DeploymentDriftResponse {
+  enabled: boolean;
+  mode: 'local_snapshot';
+  findings: DeploymentDriftFinding[];
+}
+
+export interface DeploymentDriftQuery {
+  listFindings(
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentDriftResponse>;
+  runDetection(
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentDriftResponse>;
+}
+
+export const DEPLOYMENT_DRIFT_QUERY = Symbol('DEPLOYMENT_DRIFT_QUERY');
+
+/** Narrow persistence port used by drift detection and the project repair flow. */
+export interface DeploymentDriftFindingsStore {
+  findActiveByProject(projectId: string): Promise<DeploymentDriftFinding[]>;
+  findByIdForProject(
+    projectId: string,
+    findingId: string,
+  ): Promise<DeploymentDriftFinding | null>;
+  markStatus(
+    findingId: string,
+    status: 'resolved' | 'ignored',
+  ): Promise<void>;
+  replaceActiveFindings(
+    projectId: string,
+    findings: DeploymentDriftFindingInput[],
+  ): Promise<DeploymentDriftFinding[]>;
+}
+
+export const DEPLOYMENT_DRIFT_FINDINGS_STORE = Symbol(
+  'DEPLOYMENT_DRIFT_FINDINGS_STORE',
+);
+
+export interface DeploymentTargetsQuery {
+  listDeploymentTargets(projectId: string): Promise<DeploymentTargetSummary[]>;
+}
+
+export const DEPLOYMENT_TARGETS_QUERY = Symbol('DEPLOYMENT_TARGETS_QUERY');
+
+export interface DeploymentEnvMetadataQuery {
+  listEnvMetadata(projectId: string): Promise<EnvVarMetadata[]>;
+}
+
+export const DEPLOYMENT_ENV_METADATA_QUERY = Symbol(
+  'DEPLOYMENT_ENV_METADATA_QUERY',
+);
+
+export interface DeploymentTargetDeletion {
+  deleteDeploymentTargetForUser(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<boolean>;
+}
+
+export const DEPLOYMENT_TARGET_DELETION = Symbol('DEPLOYMENT_TARGET_DELETION');
 
 export type DeploymentProvisioningResult = {
   status: 'skipped' | 'completed' | 'partial' | 'failed';

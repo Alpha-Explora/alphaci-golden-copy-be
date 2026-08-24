@@ -1,5 +1,7 @@
-import type { EnvProvider } from '../env-provisioning/index.js';
-import type { DeploymentHistoryStatus } from './project-deployments.types';
+import type {
+  DeploymentHistoryStatus,
+  EnvProvider,
+} from '../env-provisioning/index.js';
 
 /**
  * One branch's current deployment.

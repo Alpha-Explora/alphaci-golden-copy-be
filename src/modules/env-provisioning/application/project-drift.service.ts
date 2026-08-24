@@ -1,37 +1,37 @@
 import {
   Inject,
   Injectable,
-  NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
+import type { AppConfig } from '../../../config/app.config';
 import {
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
-} from '../ci/index.js';
-import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
-import { EnvVarsRepository } from '../env-provisioning/env-vars.repository';
+} from '../../ci/index.js';
+import { DeploymentTargetsRepository } from '../deployment-targets.repository';
+import { EnvVarsRepository } from '../env-vars.repository';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
-} from '../env-provisioning/env-provisioning.types';
+} from '../env-provisioning.types';
+import {
+  DEPLOYMENT_DRIFT_FINDINGS_STORE,
+  type DeploymentDriftFindingsStore,
+  type DeploymentDriftQuery,
+  type DeploymentDriftResponse,
+  type DeploymentProjectReference,
+} from '../deployment-provisioning.contract';
 import type {
   ProjectDriftFindingInput,
-  ProjectDriftResponse,
 } from './project-drift.types';
-import { ProjectSyncFindingsRepository } from './project-sync-findings.repository';
-import {
-  ProjectsRepository,
-  type ProvisionedProjectRow,
-} from './projects.repository';
 
 @Injectable()
-export class ProjectDriftService {
+export class ProjectDriftService implements DeploymentDriftQuery {
   constructor(
-    private readonly projectsRepository: ProjectsRepository,
-    private readonly findingsRepository: ProjectSyncFindingsRepository,
+    @Inject(DEPLOYMENT_DRIFT_FINDINGS_STORE)
+    private readonly findingsRepository: DeploymentDriftFindingsStore,
     @Optional()
     private readonly deploymentTargetsRepository?: DeploymentTargetsRepository,
     @Optional()
@@ -44,10 +44,9 @@ export class ProjectDriftService {
   ) {}
 
   async listFindings(
-    projectId: string,
-    userId: string,
-  ): Promise<ProjectDriftResponse> {
-    await this.getOwnedProject(projectId, userId);
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentDriftResponse> {
+    const { projectId } = project;
     if (!this.enabled()) {
       return { enabled: false, mode: 'local_snapshot', findings: [] };
     }
@@ -60,10 +59,9 @@ export class ProjectDriftService {
   }
 
   async runDetection(
-    projectId: string,
-    userId: string,
-  ): Promise<ProjectDriftResponse> {
-    const project = await this.getOwnedProject(projectId, userId);
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentDriftResponse> {
+    const { projectId } = project;
     if (!this.enabled()) {
       return { enabled: false, mode: 'local_snapshot', findings: [] };
     }
@@ -89,22 +87,8 @@ export class ProjectDriftService {
     };
   }
 
-  private async getOwnedProject(
-    projectId: string,
-    userId: string,
-  ): Promise<ProvisionedProjectRow> {
-    const project = await this.projectsRepository.findByIdAndUser(
-      projectId,
-      userId,
-    );
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-    return project;
-  }
-
   private buildFindings(
-    project: ProvisionedProjectRow,
+    project: DeploymentProjectReference,
     targets: DeploymentTargetSummary[],
     envMetadata: EnvVarMetadata[],
     ciToken: Awaited<
@@ -112,10 +96,10 @@ export class ProjectDriftService {
     >,
   ): ProjectDriftFindingInput[] {
     const findings: ProjectDriftFindingInput[] = [];
-    const projectId = project.id;
-    const workflowFiles = project.project_options?.['workflowFiles'];
+    const projectId = project.projectId;
+    const workflowFiles = project.projectOptions?.['workflowFiles'];
 
-    if (!project.repo_full_name || !project.repo_url) {
+    if (!project.repoFullName || !project.repoUrl) {
       findings.push({
         projectId,
         source: 'local_snapshot',
@@ -123,14 +107,14 @@ export class ProjectDriftService {
         code: 'project_repo_metadata_missing',
         message: 'Project repository metadata is incomplete.',
         details: {
-          repoFullName: project.repo_full_name,
-          repoUrl: project.repo_url,
+          repoFullName: project.repoFullName,
+          repoUrl: project.repoUrl ?? null,
         },
       });
     }
 
     if (
-      !project.workflow_path &&
+      !project.workflowPath &&
       (!Array.isArray(workflowFiles) || workflowFiles.length === 0)
     ) {
       findings.push({

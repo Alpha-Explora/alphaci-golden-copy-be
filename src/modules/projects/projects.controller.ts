@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   NotFoundException,
   Param,
   Post,
@@ -16,15 +17,19 @@ import type { Request } from 'express';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
+import {
+  DEPLOYMENT_DRIFT_QUERY,
+  DEPLOYMENT_HISTORY_QUERY,
+  type DeploymentDriftQuery,
+  type DeploymentHistoryQuery,
+  type ProjectDriftRepairAction,
+} from '../env-provisioning/index.js';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { SetupProjectDto } from './dto/setup-project.dto';
 import { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import { ProjectCiRunsService } from './project-ci-runs.service';
-import { ProjectDeploymentsService } from './project-deployments.service';
 import { ProjectPreviewsService } from './project-previews.service';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
-import type { ProjectDriftRepairAction } from './project-drift.types';
-import { ProjectDriftService } from './project-drift.service';
 import { ProjectsService } from './projects.service';
 
 @Controller('projects')
@@ -32,9 +37,11 @@ export class ProjectsController {
   constructor(
     private readonly projectsService: ProjectsService,
     private readonly projectCiRunsService: ProjectCiRunsService,
-    private readonly projectDeploymentsService: ProjectDeploymentsService,
+    @Inject(DEPLOYMENT_HISTORY_QUERY)
+    private readonly deploymentHistoryQuery: DeploymentHistoryQuery,
     private readonly projectPreviewsService: ProjectPreviewsService,
-    private readonly projectDriftService: ProjectDriftService,
+    @Inject(DEPLOYMENT_DRIFT_QUERY)
+    private readonly deploymentDriftQuery: DeploymentDriftQuery,
     private readonly projectDriftRepairService: ProjectDriftRepairService,
   ) {}
 
@@ -282,7 +289,8 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectDeploymentsService.listDeployments(id, userId);
+    const project = await this.projectsService.getProjectReference(id, userId);
+    return this.deploymentHistoryQuery.listDeployments(project);
   }
 
   @Get(':id/previews')
@@ -297,7 +305,8 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectPreviewsService.listPreviews(id, userId);
+    const project = await this.projectsService.getProjectReference(id, userId);
+    return this.projectPreviewsService.listPreviews(project);
   }
 
   @Get(':id/drift')
@@ -312,7 +321,8 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectDriftService.listFindings(id, userId);
+    const project = await this.projectsService.getProjectReference(id, userId);
+    return this.deploymentDriftQuery.listFindings(project);
   }
 
   @Post(':id/drift/run')
@@ -327,7 +337,8 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    return this.projectDriftService.runDetection(id, userId);
+    const project = await this.projectsService.getProjectReference(id, userId);
+    return this.deploymentDriftQuery.runDetection(project);
   }
 
   @Post(':id/drift/:findingId/repair')

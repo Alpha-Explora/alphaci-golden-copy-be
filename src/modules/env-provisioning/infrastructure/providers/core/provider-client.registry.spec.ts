@@ -1,7 +1,7 @@
 import { ProviderClientRegistry } from './provider-client.registry';
-import type { RenderEnvClient } from './render-env.client';
+import type { RenderEnvClient } from '../render/render-env.client';
 import type { RuntimeEnvProviderClient } from './runtime-env-provider.client';
-import type { VercelEnvClient } from './vercel-env.client';
+import type { VercelEnvClient } from '../vercel/vercel-env.client';
 
 describe('ProviderClientRegistry', () => {
   it('returns the Render client for render provider targets', () => {

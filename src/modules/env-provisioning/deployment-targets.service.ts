@@ -25,7 +25,7 @@ import type {
   EnvTargetSlot,
   RenderEnvironmentName,
 } from './env-provisioning.types';
-import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
+import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { providerPublicUrl } from './provider-public-url';
 import { RenderCostPolicyService } from './render-cost-policy.service';
@@ -37,7 +37,7 @@ import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
-} from './index.js';
+} from './deployment-provisioning.contract';
 
 export interface DeploymentTargetLogEntry {
   timestamp: string;

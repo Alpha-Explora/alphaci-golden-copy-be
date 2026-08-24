@@ -1,5 +1,14 @@
 import { ProjectPreviewsService } from './project-previews.service';
-import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
+import type {
+  DeploymentHistoryItem as ProjectDeploymentHistoryItem,
+  DeploymentProjectReference,
+} from '../env-provisioning/index.js';
+
+const projectReference: DeploymentProjectReference = {
+  projectId: 'project-1',
+  userId: 'user-1',
+  repoFullName: 'tone/orders-api',
+};
 
 function deployment(
   overrides: Partial<ProjectDeploymentHistoryItem> = {},
@@ -61,7 +70,7 @@ describe('ProjectPreviewsService', () => {
     });
 
     await expect(
-      createService().listPreviews('project-1', 'user-1'),
+      createService().listPreviews(projectReference),
     ).resolves.toEqual({
       enabled: false,
       liveProvidersEnabled: false,
@@ -80,7 +89,7 @@ describe('ProjectPreviewsService', () => {
     });
 
     await expect(
-      createService().listPreviews('project-1', 'user-1'),
+      createService().listPreviews(projectReference),
     ).resolves.toMatchObject({
       enabled: true,
       liveProvidersEnabled: true,
@@ -116,7 +125,7 @@ describe('ProjectPreviewsService', () => {
       ],
     });
 
-    const result = await createService().listPreviews('project-1', 'user-1');
+    const result = await createService().listPreviews(projectReference);
 
     expect(result.branches).toHaveLength(1);
     expect(result.branches[0]).toMatchObject({
@@ -136,7 +145,7 @@ describe('ProjectPreviewsService', () => {
       ],
     });
 
-    const result = await createService().listPreviews('project-1', 'user-1');
+    const result = await createService().listPreviews(projectReference);
 
     expect(result.branches).toHaveLength(2);
     expect(result.branches.map((b) => b.targetId).sort()).toEqual([
@@ -166,7 +175,7 @@ describe('ProjectPreviewsService', () => {
       ],
     });
 
-    const result = await createService().listPreviews('project-1', 'user-1');
+    const result = await createService().listPreviews(projectReference);
 
     // Production leads even though the preview is newer.
     expect(result.branches.map((b) => b.branch)).toEqual([
@@ -187,7 +196,7 @@ describe('ProjectPreviewsService', () => {
       ],
     });
 
-    const result = await createService().listPreviews('project-1', 'user-1');
+    const result = await createService().listPreviews(projectReference);
 
     expect(result.branches.map((b) => b.branch)).toEqual(['newer', 'older']);
   });
@@ -201,7 +210,7 @@ describe('ProjectPreviewsService', () => {
     });
 
     await expect(
-      createService().listPreviews('project-1', 'user-1'),
+      createService().listPreviews(projectReference),
     ).resolves.toMatchObject({ branches: [] });
   });
 
@@ -215,7 +224,7 @@ describe('ProjectPreviewsService', () => {
         deployments: [deployment({ status })],
       });
 
-      const result = await createService().listPreviews('project-1', 'user-1');
+      const result = await createService().listPreviews(projectReference);
 
       expect(embeddabilityProbe.check).not.toHaveBeenCalled();
       expect(result.branches[0]).toMatchObject({
@@ -237,7 +246,7 @@ describe('ProjectPreviewsService', () => {
       deployments: [deployment()],
     });
 
-    const result = await createService().listPreviews('project-1', 'user-1');
+    const result = await createService().listPreviews(projectReference);
 
     expect(result.branches[0]).toMatchObject({
       embeddable: false,
@@ -254,7 +263,7 @@ describe('ProjectPreviewsService', () => {
     });
 
     await expect(
-      createService().listPreviews('project-1', 'user-1'),
+      createService().listPreviews(projectReference),
     ).resolves.toMatchObject({ liveProvidersEnabled: false });
   });
 });
