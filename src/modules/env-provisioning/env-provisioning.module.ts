@@ -11,7 +11,7 @@ import { ProjectsRepository } from '../projects/projects.repository';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { UsageModule } from '../usage/usage.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
-import { LegacyDeploymentProvidersModule } from '../deployments/providers/legacy/legacy-deployment-providers.module';
+import { LegacyDeploymentProvidersModule } from '../deployments';
 import { DeploymentTargetsController } from './deployment-targets.controller';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';

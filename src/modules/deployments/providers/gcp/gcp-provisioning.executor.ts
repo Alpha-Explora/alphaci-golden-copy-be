@@ -101,21 +101,19 @@ export class GcpProvisioningExecutor {
     job: ClaimedProvisioningJob,
   ): ExecuteGcpProvisioningInput {
     const payload = job.payload;
-    const required = [
-      'gcpProjectId',
-      'region',
+    const gcpProjectId = this.requiredPayloadString(payload, 'gcpProjectId');
+    const region = this.requiredPayloadString(payload, 'region');
+    const artifactRegistryRepository = this.requiredPayloadString(
+      payload,
       'artifactRegistryRepository',
-      'serviceName',
-      'imageName',
+    );
+    const serviceName = this.requiredPayloadString(payload, 'serviceName');
+    const imageName = this.requiredPayloadString(payload, 'imageName');
+    const runtimeServiceAccount = this.requiredPayloadString(
+      payload,
       'runtimeServiceAccount',
-      'environment',
-    ] as const;
-    for (const key of required) {
-      if (typeof payload[key] !== 'string' || !payload[key].trim()) {
-        throw new Error(`Claimed GCP provisioning job is missing ${key}`);
-      }
-    }
-    const environment = payload.environment;
+    );
+    const environment = this.requiredPayloadString(payload, 'environment');
     if (
       environment !== 'dev' &&
       environment !== 'stg' &&
@@ -130,14 +128,25 @@ export class GcpProvisioningExecutor {
       workspaceId: job.workspaceId,
       projectId: job.projectId,
       deploymentTargetId: job.deploymentTargetId!,
-      gcpProjectId: payload.gcpProjectId,
-      region: payload.region,
-      artifactRegistryRepository: payload.artifactRegistryRepository,
-      serviceName: payload.serviceName,
-      imageName: payload.imageName,
-      runtimeServiceAccount: payload.runtimeServiceAccount,
+      gcpProjectId,
+      region,
+      artifactRegistryRepository,
+      serviceName,
+      imageName,
+      runtimeServiceAccount,
       environment,
     };
+  }
+
+  private requiredPayloadString(
+    payload: Record<string, unknown>,
+    key: string,
+  ): string {
+    const value = payload[key];
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`Claimed GCP provisioning job is missing ${key}`);
+    }
+    return value;
   }
 
   private toSafeFailure(error: unknown): {

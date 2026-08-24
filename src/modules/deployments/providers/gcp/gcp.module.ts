@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../../../config/app.config';
-import { DatabaseModule } from '../../../database/database.module';
+import { DatabaseModule } from '../../../database';
 import { DeploymentsCoreModule } from '../../core/deployments-core.module';
 import { DeploymentProviderRegistry } from '../../core/deployment-provider.registry';
 import {
