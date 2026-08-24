@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import type {
-  DeploymentProvisioningEnvSetDto,
-  DeploymentProvisioningRequestDto,
-  DeploymentProvisioningTargetDto,
-} from '../projects/dto/create-project.dto';
-import type { DeploymentProvisioningResult } from '../projects/projects.service';
+  DeploymentProvisioningEnvSet as DeploymentProvisioningEnvSetDto,
+  DeploymentProvisioningInput,
+  DeploymentProvisioningRequest as DeploymentProvisioningRequestDto,
+  DeploymentProvisioningResult,
+  DeploymentProvisioningTarget as DeploymentProvisioningTargetDto,
+  DeploymentProvisioningFacade,
+} from './deployment-provisioning.contract';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import type { EnvLane, EnvVarScope } from './env-provisioning.types';
@@ -13,13 +15,7 @@ import { EnvVarsService } from './env-vars.service';
 import { RenderCiSecretsService } from './render-ci-secrets.service';
 import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 
-interface ProvisionForProjectInput {
-  projectId: string;
-  userId: string;
-  repoFullName: string;
-  githubAccessToken?: string;
-  request: DeploymentProvisioningRequestDto | undefined;
-}
+type ProvisionForProjectInput = DeploymentProvisioningInput;
 
 /**
  * One project's provisioning outcome, paired with its project id so the
@@ -71,7 +67,9 @@ function previewScope(branch: string | null | undefined): EnvVarScope {
 type ProvisionedTarget = DeploymentProvisioningResult['targets'][number];
 
 @Injectable()
-export class ProjectDeploymentProvisioningService {
+export class ProjectDeploymentProvisioningService
+  implements DeploymentProvisioningFacade
+{
   private readonly logger = new Logger(
     ProjectDeploymentProvisioningService.name,
   );

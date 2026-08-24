@@ -14,6 +14,7 @@ import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { DeploymentTargetsController } from './deployment-targets.controller';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
+import { DEPLOYMENT_PROVISIONING_FACADE } from './deployment-provisioning.contract';
 import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import { EnvTokenEncryptionService } from './encryption.service';
 import { EnvFeatureGuard } from './env-feature.guard';
@@ -61,6 +62,10 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     VercelEnvClient,
     ProviderClientRegistry,
     ProjectDeploymentProvisioningService,
+    {
+      provide: DEPLOYMENT_PROVISIONING_FACADE,
+      useExisting: ProjectDeploymentProvisioningService,
+    },
     RenderCiSecretsService,
     RenderCostPolicyService,
     VercelCiSecretsService,
@@ -69,7 +74,7 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     SubscriptionGuard,
   ],
   exports: [
-    ProjectDeploymentProvisioningService,
+    DEPLOYMENT_PROVISIONING_FACADE,
     DeploymentTargetsRepository,
     EnvVarsRepository,
     ProviderConnectionsRepository,

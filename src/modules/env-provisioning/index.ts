@@ -22,3 +22,14 @@ export { providerPublicUrl } from './provider-public-url';
 // is stamped on every deployment and preview payload the projects module
 // returns, so it is part of this module's public vocabulary.
 export type { EnvProvider } from './env-provisioning.types';
+
+// Deployment provisioning is consumed by Projects through this facade.  The
+// implementation remains private to this module so Projects cannot couple to
+// provider orchestration details.
+export {
+  DEPLOYMENT_PROVISIONING_FACADE,
+  type DeploymentProvisioningFacade,
+  type DeploymentProvisioningInput,
+  type DeploymentProvisioningRequest,
+  type DeploymentProvisioningResult,
+} from './deployment-provisioning.contract';

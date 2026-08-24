@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -24,6 +25,11 @@ import {
 import { AuditEventsService } from '../audit/audit-events.service';
 import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
 import { EnvVarsRepository } from '../env-provisioning/env-vars.repository';
+import {
+  DEPLOYMENT_PROVISIONING_FACADE,
+  type DeploymentProvisioningFacade,
+  type DeploymentProvisioningResult,
+} from '../env-provisioning/index.js';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
@@ -35,7 +41,6 @@ import {
   type GithubRepoDeleteErrorCode,
   type RepositoryDeletedEvent,
 } from '../github/github.service';
-import { ProjectDeploymentProvisioningService } from '../env-provisioning/project-deployment-provisioning.service';
 import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
 import {
   WorkflowHistoryRepository,
@@ -120,47 +125,7 @@ export interface SetupProjectResponse {
   deploymentProvisioning: DeploymentProvisioningResult;
 }
 
-export interface DeploymentProvisioningResult {
-  status: 'skipped' | 'completed' | 'partial' | 'failed';
-  targets: Array<{
-    slot: 'backend' | 'frontend' | 'standalone';
-    provider: 'render' | 'vercel';
-    ownershipMode: 'byo' | 'flowci_managed';
-    deploymentStrategy:
-      | 'provider_native'
-      | 'vercel_git_connected'
-      | 'vercel_ci_pushed'
-      | 'render_git_connected'
-      | 'render_image_pushed'
-      | 'render_existing_service'
-      | null;
-    status: 'created' | 'registered' | 'failed';
-    deploymentTargetId: string | null;
-    providerProjectId: string | null;
-    providerProjectName: string | null;
-    providerMetadata: Record<string, unknown>;
-    renderServiceType?: string | null;
-    renderRuntime?: string | null;
-    renderInstanceType?: string | null;
-    renderRegion?: string | null;
-    renderEnvironmentName?: 'test' | 'uat' | 'production' | null;
-    dockerContext?: string | null;
-    dockerfilePath?: string | null;
-    imageUrl?: string | null;
-    /**
-     * Branch this target tracks. Needed by the cross-link pass, which has to
-     * name the branch to write a preview-lane variable or build a preview URL.
-     */
-    branchName?: string | null;
-    errorSummary: string | null;
-    env: Array<{
-      lane: 'production' | 'preview';
-      gitBranch: string | null;
-      provisioned: Array<{ key: string; status: 'provisioned' }>;
-      failed: Array<{ key: string; status: 'failed'; errorSummary: string }>;
-    }>;
-  }>;
-}
+export type { DeploymentProvisioningResult } from '../env-provisioning/index.js';
 
 export interface ProvisionedProject {
   id: string;
@@ -390,7 +355,8 @@ export class ProjectsService {
     private readonly githubService: GithubService,
     private readonly projectsRepository: ProjectsRepository,
     private readonly ciService: CiService,
-    private readonly projectDeploymentProvisioningService: ProjectDeploymentProvisioningService,
+    @Inject(DEPLOYMENT_PROVISIONING_FACADE)
+    private readonly projectDeploymentProvisioningService: DeploymentProvisioningFacade,
     @Optional()
     private readonly ciTokensRepository?: CiTokensRepository,
     @Optional()
