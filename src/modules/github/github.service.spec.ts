@@ -1029,6 +1029,29 @@ describe('GithubService', () => {
       },
     );
 
+    /* GitHub names the actual cause in the 403 body — "OAuth App access
+     * restrictions", "Resource not accessible by integration". Dropping it
+     * left only generic advice pointing at settings that were already
+     * correct, which is what turned one 403 into an investigation. */
+    it.each([403, 401])(
+      'includes the GitHub response body in the %s message',
+      async (status) => {
+        fetchMock.mockResolvedValueOnce({
+          ok: false,
+          status,
+          text: async () =>
+            '{"message":"Although you appear to have the correct authorization credentials, the `Alphaexplora-Sandbox` organization has an IP allow list enabled"}',
+        } as unknown as Response);
+
+        await expect(
+          service.createRepo('gh-token', {
+            repoName: 'orders-api',
+            private: true,
+          }),
+        ).rejects.toThrow('IP allow list enabled');
+      },
+    );
+
     it('refuses to create a repository when no enforced org is configured', async () => {
       // There is no fallback org on purpose. A hardcoded one would turn a config
       // failure into a silent write to whichever org it named — and on a

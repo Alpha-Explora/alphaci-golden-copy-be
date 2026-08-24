@@ -391,7 +391,7 @@ jobs:
     );
   });
 
-  it('uses OAuth to create an organization repository and the installation token to configure it', async () => {
+  it('uses the selected installation to create and configure an organization repository', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-api',
       visibility: 'private',
@@ -406,7 +406,7 @@ jobs:
       githubServiceMock.getOrganizationProvisioningContext,
     ).toHaveBeenCalledWith('user-1', 12345);
     expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
-      'oauth-token',
+      'installation-token',
       expect.objectContaining({ repoName: 'orders-api' }),
       'tone',
     );
@@ -419,7 +419,31 @@ jobs:
     );
   });
 
-  it('rejects organization repository creation without a user OAuth token', async () => {
+  it('creates an organization repository without any user OAuth token', async () => {
+    await service.createProject('user-1', 'tone', null, {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      ownerType: 'organization',
+      installationId: 12345,
+    });
+
+    expect(
+      githubServiceMock.getOrganizationProvisioningContext,
+    ).toHaveBeenCalledWith('user-1', 12345);
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
+      'installation-token',
+      expect.objectContaining({ repoName: 'orders-api' }),
+      'tone',
+    );
+  });
+
+  /* installationId is still required: without it there is no installation to
+   * create through, and silently falling back to some other one would write to
+   * an org the caller did not name. */
+  it('still rejects an organization request with no installationId', async () => {
     await expect(
       service.createProject('user-1', 'tone', null, {
         repoName: 'orders-api',
@@ -428,14 +452,8 @@ jobs:
         workflowRecipeId: 'backend-api-ci',
         serviceName: 'orders-api',
         ownerType: 'organization',
-        installationId: 12345,
       }),
-    ).rejects.toThrow(
-      'A GitHub OAuth token with the repo scope is required to create a repository in an organization.',
-    );
-    expect(
-      githubServiceMock.getOrganizationProvisioningContext,
-    ).not.toHaveBeenCalled();
+    ).rejects.toThrow('installationId is required');
     expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
   });
 
@@ -459,30 +477,36 @@ jobs:
       githubServiceMock.getOrganizationProvisioningContext,
     ).not.toHaveBeenCalled();
     expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
-      'oauth-token',
+      'installation-token',
       expect.objectContaining({ repoName: 'orders-api' }),
       'Alpha-Explora',
     );
   });
 
-  it('rejects enforced-org creation when the session has no OAuth token', async () => {
+  /* Creation runs entirely on the org's GitHub App installation, so a session
+   * with no OAuth token is not a failure. This used to throw, which meant a
+   * user outside the enforced org — or one whose OAuth App was unapproved
+   * under the org's third-party access policy — could not create a project
+   * even though the App had `administration: write` on that org all along. */
+  it('creates in the enforced org without any user OAuth token', async () => {
     githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
 
-    await expect(
-      service.createProject('user-1', 'tone', null, {
-        repoName: 'orders-api',
-        visibility: 'private',
-        projectTypeId: 'nestjs-api',
-        workflowRecipeId: 'backend-api-ci',
-        serviceName: 'orders-api',
-      }),
-    ).rejects.toThrow(
-      'required to create a repository in the Alpha-Explora organization',
-    );
+    await service.createProject('user-1', 'tone', null, {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
     expect(
       githubServiceMock.getOrganizationProvisioningContextByLogin,
-    ).not.toHaveBeenCalled();
-    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+    ).toHaveBeenCalledWith('Alpha-Explora');
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
+      'installation-token',
+      expect.objectContaining({ repoName: 'orders-api' }),
+      'Alpha-Explora',
+    );
   });
 
   it('records audit and notification events after project creation', async () => {

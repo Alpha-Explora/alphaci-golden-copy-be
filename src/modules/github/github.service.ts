@@ -1251,9 +1251,14 @@ export class GithubService extends EventEmitter {
     if (!response.ok) {
       const body = await response.text();
       if (response.status === 401 || response.status === 403) {
+        // GitHub says exactly why here — "OAuth App access restrictions",
+        // "Resource not accessible by integration", "must be a member" — and
+        // dropping it left only generic advice that sent people to check
+        // things that were already correct. The 422 and 5xx branches below
+        // always included the body; this one is why a 403 took an
+        // investigation to read.
         throw new ForbiddenException(
-          `GitHub denied repository creation in organization ${orgLogin} (${String(response.status)}). ` +
-            "Confirm the signed-in user's OAuth token has the 'repo' scope and that the user and organization policy allow repository creation.",
+          `GitHub denied repository creation in organization ${orgLogin} (${String(response.status)}): ${body}`,
         );
       }
       if (response.status === 404) {
