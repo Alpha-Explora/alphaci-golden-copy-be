@@ -11,7 +11,7 @@ import type {
   RenderEnvironmentName,
   RenderRuntime,
   RenderServiceType,
-} from './env-provisioning.types';
+} from './deployments.types';
 
 interface DeploymentTargetRow {
   id: string;

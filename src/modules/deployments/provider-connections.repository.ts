@@ -6,7 +6,7 @@ import type {
   ProviderConnectionStatus,
   ProviderConnectionSummary,
   ProviderConnectionWithToken,
-} from './env-provisioning.types';
+} from './deployments.types';
 
 interface ProviderConnectionRow {
   id: string;

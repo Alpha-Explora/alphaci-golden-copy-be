@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { EnvProvider } from '../../../env-provisioning.types';
+import type { EnvProvider } from '../../../deployments.types';
 import type { DeploymentProvider } from './deployment-provider.contract';
 import { RenderEnvClient } from '../render/render-env.client';
 import { VercelEnvClient } from '../vercel/vercel-env.client';

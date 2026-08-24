@@ -19,7 +19,7 @@ import type {
   EnvProvider,
   EnvVarInput,
   EnvVarScope,
-} from './env-provisioning.types';
+} from './deployments.types';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { UsageQuotaService } from '../usage/usage-quota.service';

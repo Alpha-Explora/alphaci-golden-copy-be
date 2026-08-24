@@ -5,7 +5,7 @@ import type {
   EnvOwnershipMode,
   EnvProvider,
   RenderDeployMethod,
-} from './env-provisioning.types';
+} from './deployments.types';
 
 export interface ResolveDeploymentStrategyInput {
   provider: EnvProvider;

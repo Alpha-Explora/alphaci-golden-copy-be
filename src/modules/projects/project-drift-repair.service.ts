@@ -18,7 +18,7 @@ import {
   type ProjectDriftFinding,
   type ProjectDriftRepairAction,
   type ProjectDriftRepairResponse,
-} from '../env-provisioning/index.js';
+} from '../deployments/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
 import { ProjectsRepository } from './projects.repository';
 import { ProjectsService } from './projects.service';

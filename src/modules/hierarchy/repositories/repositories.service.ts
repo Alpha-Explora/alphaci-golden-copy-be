@@ -32,7 +32,7 @@ export class RepositoriesService {
    * Creates the GitHub repository (reuses GithubService.createRepo — does
    * not reimplement GitHub repo creation, plan §1.5), the hierarchy record,
    * and a projects.provisioned_projects row wired to it so the repository
-   * immediately gets dashboard/CI/env-provisioning functionality for free.
+   * immediately gets dashboard/CI/deployment functionality for free.
    */
   async createRepository(
     deliveryProjectId: string,

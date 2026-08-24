@@ -15,7 +15,7 @@ import { EnvVarsRepository } from '../env-vars.repository';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
-} from '../env-provisioning.types';
+} from '../deployments.types';
 import {
   DEPLOYMENT_DRIFT_FINDINGS_STORE,
   type DeploymentDriftFindingsStore,

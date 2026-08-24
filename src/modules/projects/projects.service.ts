@@ -35,7 +35,7 @@ import {
   type DeploymentTargetsQuery,
   type DeploymentTargetSummary,
   type EnvVarMetadata,
-} from '../env-provisioning/index.js';
+} from '../deployments/index.js';
 import {
   GithubRepoDeleteError,
   GithubService,
@@ -128,7 +128,7 @@ export interface SetupProjectResponse {
   deploymentProvisioning: DeploymentProvisioningResult;
 }
 
-export type { DeploymentProvisioningResult } from '../env-provisioning/index.js';
+export type { DeploymentProvisioningResult } from '../deployments/index.js';
 
 export interface ProvisionedProject {
   id: string;

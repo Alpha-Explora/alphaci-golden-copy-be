@@ -6,7 +6,7 @@ import type {
   RenderEnvironmentName,
   RenderRuntime,
   RenderServiceType,
-} from '../env-provisioning.types';
+} from '../deployments.types';
 
 export interface CreateDeploymentTargetDto {
   action: 'create' | 'register_existing';

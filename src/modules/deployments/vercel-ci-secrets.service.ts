@@ -12,7 +12,7 @@ import { EnvTokenEncryptionService } from './encryption.service';
 import type {
   DeploymentTargetSummary,
   EnvTargetSlot,
-} from './env-provisioning.types';
+} from './deployments.types';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 
 export interface InstallVercelCiSecretsInput {

@@ -1,7 +1,7 @@
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
-} from './env-provisioning.types';
+} from './deployments.types';
 
 /**
  * Public deployment-provisioning contract.

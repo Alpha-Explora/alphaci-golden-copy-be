@@ -7,7 +7,7 @@ import {
   type DeploymentHistoryItem,
   type DeploymentHistoryQuery,
   type DeploymentProjectReference,
-} from '../env-provisioning/index.js';
+} from '../deployments/index.js';
 import type {
   ProjectBranchPreview,
   ProjectPreviewsResponse,

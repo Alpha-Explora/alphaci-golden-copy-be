@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-import type { DeploymentTargetSummary } from './env-provisioning.types';
+import type { DeploymentTargetSummary } from './deployments.types';
 import { RenderCiSecretsService } from './render-ci-secrets.service';
 
 describe('RenderCiSecretsService', () => {

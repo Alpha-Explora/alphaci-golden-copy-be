@@ -24,7 +24,7 @@ import type {
   EnvProvider,
   EnvTargetSlot,
   RenderEnvironmentName,
-} from './env-provisioning.types';
+} from './deployments.types';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { providerPublicUrl } from './provider-public-url';

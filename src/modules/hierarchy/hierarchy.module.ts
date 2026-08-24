@@ -64,7 +64,7 @@ import { SystemsService } from './systems/systems.service';
     SessionAuthGuard,
     // ProjectsRepository is registered directly here (not via ProjectsModule,
     // which exports nothing) — same pattern already used by
-    // env-provisioning.module.ts for the same class.
+    // deployments.module.ts for the same class.
     ProjectsRepository,
     HierarchyAccessService,
     GroupsRepository,

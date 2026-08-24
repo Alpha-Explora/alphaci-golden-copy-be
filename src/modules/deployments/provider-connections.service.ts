@@ -8,7 +8,7 @@ import {
 
 import { EnvTokenEncryptionService } from './encryption.service';
 import type { CreateProviderConnectionDto } from './dto/create-provider-connection.dto';
-import type { EnvProvider } from './env-provisioning.types';
+import type { EnvProvider } from './deployments.types';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { WorkspacesService } from '../workspaces/workspaces.service';

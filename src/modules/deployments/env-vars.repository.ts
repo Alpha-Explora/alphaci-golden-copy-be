@@ -7,7 +7,7 @@ import type {
   EnvVarMetadata,
   EnvVarProvisionStatus,
   EnvVarScope,
-} from './env-provisioning.types';
+} from './deployments.types';
 
 interface EnvVarMetadataRow {
   id: string;

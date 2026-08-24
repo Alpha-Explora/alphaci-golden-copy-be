@@ -1,4 +1,4 @@
-import type { DeploymentTargetSummary } from './env-provisioning.types';
+import type { DeploymentTargetSummary } from './deployments.types';
 
 /**
  * The public URL the deployed service answers on.

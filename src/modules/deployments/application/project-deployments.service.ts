@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../../config/app.config';
 import { DeploymentTargetsRepository } from '../deployment-targets.repository';
-import type { DeploymentTargetSummary } from '../env-provisioning.types';
+import type { DeploymentTargetSummary } from '../deployments.types';
 import { providerPublicUrl } from '../provider-public-url';
 import { EnvTokenEncryptionService } from '../encryption.service';
 import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';

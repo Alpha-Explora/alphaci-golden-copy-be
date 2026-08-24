@@ -2,7 +2,7 @@ import { ProjectPreviewsService } from './project-previews.service';
 import type {
   DeploymentHistoryItem as ProjectDeploymentHistoryItem,
   DeploymentProjectReference,
-} from '../env-provisioning/index.js';
+} from '../deployments/index.js';
 
 const projectReference: DeploymentProjectReference = {
   projectId: 'project-1',

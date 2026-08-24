@@ -9,7 +9,7 @@ import { HierarchyProjectLinkRepository } from '../hierarchy/project-link/hierar
 import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
 import { GithubModule } from '../github/github.module';
 import { CiModule } from '../ci/index.js';
-import { EnvProvisioningModule } from '../env-provisioning/index.js';
+import { DeploymentsModule } from '../deployments/index.js';
 import { NotificationsModule } from '../notifications/index.js';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { UsageModule } from '../usage/usage.module';
@@ -35,7 +35,7 @@ import { ProjectsService } from './projects.service';
     CatalogModule, // CatalogService
     GithubModule, // GithubService
     CiModule, // CiService
-    EnvProvisioningModule, // ProjectDeploymentProvisioningService
+    DeploymentsModule, // ProjectDeploymentProvisioningService
     SubscriptionModule, // SubscriptionService (needed by SubscriptionGuard)
     UsageModule,
     AuditModule,

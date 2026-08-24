@@ -227,7 +227,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/deployment-targets.service.ts",
+    "from": "src/modules/deployments/deployment-targets.service.ts",
     "to": "src/modules/audit/audit-events.service.ts",
     "unresolvedTo": "../audit/audit-events.service",
     "dependencyTypes": [
@@ -241,7 +241,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/deployment-targets.service.ts",
+    "from": "src/modules/deployments/deployment-targets.service.ts",
     "to": "src/modules/usage/usage-quota.service.ts",
     "unresolvedTo": "../usage/usage-quota.service",
     "dependencyTypes": [
@@ -255,7 +255,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/deployment-targets.service.ts",
+    "from": "src/modules/deployments/deployment-targets.service.ts",
     "to": "src/modules/usage/usage.types.ts",
     "unresolvedTo": "../usage/usage.types",
     "dependencyTypes": [
@@ -270,7 +270,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/deployment-targets.service.ts",
+    "from": "src/modules/deployments/deployment-targets.service.ts",
     "to": "src/modules/workspaces/workspace-access.service.ts",
     "unresolvedTo": "../workspaces/workspace-access.service",
     "dependencyTypes": [
@@ -284,7 +284,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/deployment-targets.service.ts",
+    "from": "src/modules/deployments/deployment-targets.service.ts",
     "to": "src/modules/workspaces/workspaces.repository.ts",
     "unresolvedTo": "../workspaces/workspaces.repository",
     "dependencyTypes": [
@@ -299,7 +299,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-provisioning.module.ts",
+    "from": "src/modules/deployments/deployments.module.ts",
     "to": "src/modules/audit/audit.module.ts",
     "unresolvedTo": "../audit/audit.module",
     "dependencyTypes": [
@@ -313,7 +313,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-provisioning.module.ts",
+    "from": "src/modules/deployments/deployments.module.ts",
     "to": "src/modules/github/github.module.ts",
     "unresolvedTo": "../github/github.module",
     "dependencyTypes": [
@@ -327,7 +327,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-provisioning.module.ts",
+    "from": "src/modules/deployments/deployments.module.ts",
     "to": "src/modules/subscription/subscription.module.ts",
     "unresolvedTo": "../subscription/subscription.module",
     "dependencyTypes": [
@@ -341,7 +341,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-provisioning.module.ts",
+    "from": "src/modules/deployments/deployments.module.ts",
     "to": "src/modules/usage/usage.module.ts",
     "unresolvedTo": "../usage/usage.module",
     "dependencyTypes": [
@@ -355,7 +355,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-provisioning.module.ts",
+    "from": "src/modules/deployments/deployments.module.ts",
     "to": "src/modules/workspaces/workspaces.module.ts",
     "unresolvedTo": "../workspaces/workspaces.module",
     "dependencyTypes": [
@@ -369,7 +369,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-vars.service.ts",
+    "from": "src/modules/deployments/env-vars.service.ts",
     "to": "src/modules/audit/audit-events.service.ts",
     "unresolvedTo": "../audit/audit-events.service",
     "dependencyTypes": [
@@ -383,7 +383,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-vars.service.ts",
+    "from": "src/modules/deployments/env-vars.service.ts",
     "to": "src/modules/usage/usage-quota.service.ts",
     "unresolvedTo": "../usage/usage-quota.service",
     "dependencyTypes": [
@@ -397,7 +397,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-vars.service.ts",
+    "from": "src/modules/deployments/env-vars.service.ts",
     "to": "src/modules/usage/usage.types.ts",
     "unresolvedTo": "../usage/usage.types",
     "dependencyTypes": [
@@ -412,7 +412,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/env-vars.service.ts",
+    "from": "src/modules/deployments/env-vars.service.ts",
     "to": "src/modules/workspaces/workspace-access.service.ts",
     "unresolvedTo": "../workspaces/workspace-access.service",
     "dependencyTypes": [
@@ -426,37 +426,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/project-deployment-provisioning.service.ts",
-    "to": "src/modules/projects/dto/create-project.dto.ts",
-    "unresolvedTo": "../projects/dto/create-project.dto",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/env-provisioning/project-deployment-provisioning.service.ts",
-    "to": "src/modules/projects/projects.service.ts",
-    "unresolvedTo": "../projects/projects.service",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/env-provisioning/provider-connections.service.ts",
+    "from": "src/modules/deployments/provider-connections.service.ts",
     "to": "src/modules/workspaces/workspaces.service.ts",
     "unresolvedTo": "../workspaces/workspaces.service",
     "dependencyTypes": [
@@ -470,7 +440,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/render-ci-secrets.service.ts",
+    "from": "src/modules/deployments/render-ci-secrets.service.ts",
     "to": "src/modules/github/github.service.ts",
     "unresolvedTo": "../github/github.service",
     "dependencyTypes": [
@@ -484,7 +454,7 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/env-provisioning/vercel-ci-secrets.service.ts",
+    "from": "src/modules/deployments/vercel-ci-secrets.service.ts",
     "to": "src/modules/github/github.service.ts",
     "unresolvedTo": "../github/github.service",
     "dependencyTypes": [
@@ -919,21 +889,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/projects/local-deployment-history.provider.ts",
-    "to": "src/modules/env-provisioning/env-provisioning.types.ts",
-    "unresolvedTo": "../env-provisioning/env-provisioning.types",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/modules/projects/project-ci-runs.service.ts",
     "to": "src/modules/workflows/staged-workflow.builder.ts",
     "unresolvedTo": "../workflows/staged-workflow.builder",
@@ -964,92 +919,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/projects/project-deployments.service.ts",
-    "to": "src/modules/env-provisioning/deployment-targets.repository.ts",
-    "unresolvedTo": "../env-provisioning/deployment-targets.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-deployments.service.ts",
-    "to": "src/modules/env-provisioning/encryption.service.ts",
-    "unresolvedTo": "../env-provisioning/encryption.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-deployments.service.ts",
-    "to": "src/modules/env-provisioning/env-provisioning.types.ts",
-    "unresolvedTo": "../env-provisioning/env-provisioning.types",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-deployments.service.ts",
-    "to": "src/modules/env-provisioning/provider-clients/provider-client.registry.ts",
-    "unresolvedTo": "../env-provisioning/provider-clients/provider-client.registry",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-deployments.service.ts",
-    "to": "src/modules/env-provisioning/provider-connections.repository.ts",
-    "unresolvedTo": "../env-provisioning/provider-connections.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-deployments.types.ts",
-    "to": "src/modules/env-provisioning/env-provisioning.types.ts",
-    "unresolvedTo": "../env-provisioning/env-provisioning.types",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/modules/projects/project-drift-repair.service.ts",
     "to": "src/modules/audit/audit-events.service.ts",
     "unresolvedTo": "../audit/audit-events.service",
@@ -1067,63 +936,6 @@
     "from": "src/modules/projects/project-drift-repair.service.ts",
     "to": "src/modules/ci/ci.service.ts",
     "unresolvedTo": "../ci/ci.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-drift-repair.service.ts",
-    "to": "src/modules/env-provisioning/deployment-targets.repository.ts",
-    "unresolvedTo": "../env-provisioning/deployment-targets.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-drift.service.ts",
-    "to": "src/modules/env-provisioning/deployment-targets.repository.ts",
-    "unresolvedTo": "../env-provisioning/deployment-targets.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-drift.service.ts",
-    "to": "src/modules/env-provisioning/env-provisioning.types.ts",
-    "unresolvedTo": "../env-provisioning/env-provisioning.types",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/project-drift.service.ts",
-    "to": "src/modules/env-provisioning/env-vars.repository.ts",
-    "unresolvedTo": "../env-provisioning/env-vars.repository",
     "dependencyTypes": [
       "local",
       "import"
@@ -1195,20 +1007,6 @@
     "from": "src/modules/projects/projects.module.ts",
     "to": "src/modules/ci/ci.module.ts",
     "unresolvedTo": "../ci/ci.module",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.module.ts",
-    "to": "src/modules/env-provisioning/env-provisioning.module.ts",
-    "unresolvedTo": "../env-provisioning/env-provisioning.module",
     "dependencyTypes": [
       "local",
       "import"
@@ -1335,63 +1133,6 @@
     "from": "src/modules/projects/projects.service.ts",
     "to": "src/modules/ci/ci.service.ts",
     "unresolvedTo": "../ci/ci.service",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.service.ts",
-    "to": "src/modules/env-provisioning/deployment-targets.repository.ts",
-    "unresolvedTo": "../env-provisioning/deployment-targets.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.service.ts",
-    "to": "src/modules/env-provisioning/env-provisioning.types.ts",
-    "unresolvedTo": "../env-provisioning/env-provisioning.types",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.service.ts",
-    "to": "src/modules/env-provisioning/env-vars.repository.ts",
-    "unresolvedTo": "../env-provisioning/env-vars.repository",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-deep-module-imports"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/modules/projects/projects.service.ts",
-    "to": "src/modules/env-provisioning/project-deployment-provisioning.service.ts",
-    "unresolvedTo": "../env-provisioning/project-deployment-provisioning.service",
     "dependencyTypes": [
       "local",
       "import"

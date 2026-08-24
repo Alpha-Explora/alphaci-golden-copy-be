@@ -5,7 +5,7 @@ import {
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
-} from '../env-provisioning/index.js';
+} from '../deployments/index.js';
 import { ProjectsRepository } from './projects.repository';
 
 @Injectable()

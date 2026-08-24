@@ -126,4 +126,4 @@ import { ProjectSyncFindingsRepository } from './application/project-sync-findin
     ProviderClientRegistry,
   ],
 })
-export class EnvProvisioningModule {}
+export class DeploymentsModule {}

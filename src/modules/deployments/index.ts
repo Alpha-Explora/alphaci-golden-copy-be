@@ -1,5 +1,5 @@
 /**
- * Env provisioning — public API.
+ * Deployments — public API.
  *
  * This is the only cross-module surface for deployment behavior. Repositories,
  * provider clients, and HTTP DTOs remain private to the deployment module.
@@ -21,8 +21,8 @@ export type {
   DeploymentTargetSummary,
   EnvProvider,
   EnvVarMetadata,
-} from './env-provisioning.types';
-export { EnvProvisioningModule } from './env-provisioning.module';
+} from './deployments.types';
+export { DeploymentsModule } from './deployments.module';
 
 // Deployment provisioning is consumed by Projects through this facade.  The
 // implementation remains private to this module so Projects cannot couple to

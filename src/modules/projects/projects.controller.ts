@@ -23,7 +23,7 @@ import {
   type DeploymentDriftQuery,
   type DeploymentHistoryQuery,
   type ProjectDriftRepairAction,
-} from '../env-provisioning/index.js';
+} from '../deployments/index.js';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { SetupProjectDto } from './dto/setup-project.dto';
 import { DisconnectProjectDto } from './dto/disconnect-project.dto';

@@ -25,7 +25,7 @@ import { ProjectReferenceModule } from './modules/projects/project-reference.mod
 import { CiModule } from './modules/ci/ci.module.js';
 import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
 import { CapabilitiesModule } from './modules/capabilities/capabilities.module.js';
-import { EnvProvisioningModule } from './modules/env-provisioning/env-provisioning.module.js';
+import { DeploymentsModule } from './modules/deployments/deployments.module.js';
 import { UsageModule } from './modules/usage/usage.module.js';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module.js';
 import { NotificationsModule } from './modules/notifications/index.js';
@@ -60,7 +60,7 @@ import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';
     ProjectReferenceModule,
     ExistingReposModule,
     CapabilitiesModule,
-    EnvProvisioningModule,
+    DeploymentsModule,
     UsageModule,
     WorkspacesModule,
     NotificationsModule,
