@@ -1,5 +1,6 @@
 import type {
   DeploymentStrategy,
+  DomainVerificationChallenge,
   EnvProvider,
   EnvVarInput,
   EnvVarScope,
@@ -140,6 +141,29 @@ export interface ProviderLogsInput extends ProviderTargetStatusInput {
   renderOwnerId?: string;
 }
 
+export interface AddProviderDomainInput extends ProviderTargetStatusInput {
+  hostname: string;
+  /** Pins the hostname to one branch. Omitted means the production domain. */
+  gitBranch?: string | null;
+}
+
+export interface ProviderDomainInput extends ProviderTargetStatusInput {
+  hostname: string;
+}
+
+export interface ProviderDomainResult {
+  hostname: string;
+  apexDomain: string | null;
+  verified: boolean;
+  /** The provider's own challenges. Empty once nothing further is required. */
+  verification: DomainVerificationChallenge[];
+  /**
+   * Whether DNS points at the provider, when the provider reports it
+   * separately from ownership. Null when unknown.
+   */
+  misconfigured: boolean | null;
+}
+
 export interface RuntimeEnvProviderClient {
   provider: EnvProvider;
   validateConnection(token: string): Promise<ProviderAccountSummary>;
@@ -171,4 +195,14 @@ export interface RuntimeEnvProviderClient {
   // Optional: not every client can fetch runtime logs. Callers must check
   // for its presence before calling.
   getLogs?(input: ProviderLogsInput): Promise<ProviderLogEntry[]>;
+
+  /*
+   * Custom domains. Optional as a group: a provider that cannot attach a
+   * hostname simply omits them, and the service reports the capability as
+   * unavailable rather than failing a call. Callers must check for presence.
+   */
+  addDomain?(input: AddProviderDomainInput): Promise<ProviderDomainResult>;
+  listDomains?(input: ProviderTargetStatusInput): Promise<ProviderDomainResult[]>;
+  verifyDomain?(input: ProviderDomainInput): Promise<ProviderDomainResult>;
+  removeDomain?(input: ProviderDomainInput): Promise<{ removed: true }>;
 }

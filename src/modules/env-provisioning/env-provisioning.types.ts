@@ -120,6 +120,44 @@ export interface DeploymentTargetSummary {
   status: DeploymentTargetStatus;
 }
 
+/**
+ * One DNS record the provider says must exist before a hostname will serve.
+ *
+ * Copied verbatim from the provider's response. Nothing here is derived: an
+ * apex A-record address or a CNAME target invented locally goes stale the day
+ * the provider changes it, and the user follows instructions that quietly stop
+ * being true.
+ */
+export interface DomainVerificationChallenge {
+  type: string;
+  domain: string;
+  value: string;
+  reason: string;
+}
+
+export interface CustomDomainSummary {
+  id: string;
+  projectId: string;
+  deploymentTargetId: string;
+  provider: EnvProvider;
+  hostname: string;
+  apexDomain: string | null;
+  /** Branch this hostname serves. Null for the production domain. */
+  gitBranch: string | null;
+  verified: boolean;
+  verification: DomainVerificationChallenge[];
+  /**
+   * Whether DNS currently points at the provider. Null until checked once —
+   * and reported separately from `verified`, because a domain can be verified
+   * as owned while still not pointed at the deployment.
+   */
+  misconfigured: boolean | null;
+  lastCheckedAt: string | null;
+  lastErrorSafeMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface EnvVarMetadata {
   id: string;
   projectId: string;

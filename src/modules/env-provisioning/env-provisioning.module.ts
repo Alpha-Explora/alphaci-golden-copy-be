@@ -12,6 +12,9 @@ import { SubscriptionModule } from '../subscription/subscription.module';
 import { UsageModule } from '../usage/usage.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { LegacyDeploymentProvidersModule } from '../deployments';
+import { CustomDomainsController } from './custom-domains.controller';
+import { CustomDomainsRepository } from './custom-domains.repository';
+import { CustomDomainsService } from './custom-domains.service';
 import { DeploymentTargetsController } from './deployment-targets.controller';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
@@ -48,12 +51,15 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     ProviderConnectionsController,
     DeploymentTargetsController,
     EnvVarsController,
+    CustomDomainsController,
   ],
   providers: [
     ProjectsRepository,
     ProviderConnectionsRepository,
     DeploymentTargetsRepository,
     EnvVarsRepository,
+    CustomDomainsRepository,
+    CustomDomainsService,
     ProviderConnectionsService,
     DeploymentTargetsService,
     DeploymentStrategyResolver,
