@@ -76,6 +76,33 @@ import {
 } from './project-workflow-update-requests.repository';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import { ProjectWorkflowsService } from './application/project-workflows.service';
+import {
+  combineDeploymentProvisioningResults,
+  extractDeploymentProvider,
+  filterDeploymentProvisioningRequest,
+  forceManagedProvisioning,
+  resolveSingleRepoDeploymentSlots,
+  skippedDeploymentProvisioning,
+  withDefaultCreateDeploymentProvisioning,
+} from './application/deployment-provisioning.policy';
+import { resolveDeploymentWorkflowTargets } from './application/deployment-workflow-targets';
+import { buildGeneratedRepoReadme } from './application/generated-repo-readme';
+import {
+  SonarCloudSetupService,
+  sonarProjectKeyFor,
+} from './application/sonar-cloud-setup.service';
+import { ProvisioningTokenService } from './application/provisioning-token.service';
+import { SetupBranchService } from './application/setup-branch.service';
+import { WorkspaceGateService } from './application/workspace-gate.service';
+import { ProductEventsService } from './application/product-events.service';
+import {
+  buildLocalSnapshotFindings,
+  buildOverviewHealth,
+  toCiAuthOverview,
+  toProvisionedProject,
+  workflowFileMetadata,
+} from './application/project-overview.view';
+import { ProjectWorkflowFilesService } from './application/project-workflow-files.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
@@ -95,253 +122,25 @@ import type {
   DeploymentProvisioningRequestDto,
   DeploymentProvisioningTargetDto,
 } from './dto/create-project.dto';
+import type {
+  CreateProjectResponse,
+  DisconnectProjectResponse,
+  ProjectAuditEventsResponse,
+  ProvisionedProject,
+  ProjectOverviewResponse,
+  ProjectSyncSnapshotResponse,
+  ProvisionedProjectsResponse,
+  ReconcileDeletedReposResult,
+  SetupProjectResponse,
+  SyncProjectsResponse,
+  WorkflowSettingsPreviewRequest,
+  WorkflowSettingsPreviewResponse,
+  WorkflowSettingsResponse,
+  WorkflowUpdatePullRequestResponse,
+} from './projects.service.types';
 
+export type * from './projects.service.types';
 
-// ─── Response shapes (match FE contracts exactly) ────────────────────────────
-
-export interface CreateProjectResponse {
-  id: string;
-  repoFullName: string;
-  repoUrl: string;
-  status: 'provisioned';
-  workflowPath: string;
-  workflowFiles: WorkflowFileMetadata[];
-  githubCommitSha: string;
-  githubCommitUrl: string | null;
-  projectTypeId: string;
-  workflowRecipeId: string;
-  additionalWorkflowPaths?: string[];
-  secondaryRepoFullName?: string;
-  secondaryRepoUrl?: string;
-  deploymentProvisioning: DeploymentProvisioningResult;
-}
-
-export interface SetupProjectResponse {
-  id: string;
-  repoFullName: string;
-  status: 'provisioned';
-  workflowPath: string;
-  workflowFiles: WorkflowFileMetadata[];
-  githubCommitSha: string;
-  githubCommitUrl: string | null;
-  deploymentProvisioning: DeploymentProvisioningResult;
-}
-
-export type { DeploymentProvisioningResult } from '../deployments/index.js';
-
-export interface ProvisionedProject {
-  id: string;
-  repoFullName: string;
-  templateId: string;
-  serviceName: string;
-  workflowPath: string;
-  workflowFiles?: WorkflowFileMetadata[] | null;
-  status: ProvisionedProjectStatus;
-  githubCommitSha: string | null;
-  githubCommitUrl: string | null;
-  failureReason: string | null;
-  repoUrl?: string | null;
-  visibility?: string | null;
-  repoShape?: string | null;
-  projectTypeId?: string | null;
-  workflowRecipeId?: string | null;
-  projectOptions?: Record<string, unknown> | null;
-  /**
-   * Owning workspace (orgs.workspaces.id). For hierarchy-managed repositories
-   * this is the GROUP id — the FE Projects screen groups the list by it.
-   */
-  workspaceId?: string | null;
-  /**
-   * Viewer-relative: true only when the authenticated user is the actual
-   * project creator, not just able to see it via admin/manager visibility.
-   * Only populated by `listByUser`-backed reads (currently `listProjects`) —
-   * undefined elsewhere (e.g. `findByIdAndUser`-backed reads).
-   */
-  isOwner?: boolean | undefined;
-}
-
-export interface SyncProjectsResponse {
-  orphaned: number;
-  reachable: number;
-  total: number;
-}
-
-export interface ReconcileDeletedReposResult {
-  /** Total tracked projects fetched for this reconciliation pass. */
-  total: number;
-  /** Rows actually checked against GitHub — `total` minus `outOfScope`. */
-  checked: number;
-  /** Rows hard-deleted after a confirmed 404 from GitHub. */
-  deleted: number;
-  /** Rows left untouched because the GitHub check was inconclusive
-   *  (401/403/5xx/network error) — never treated as "confirmed gone". */
-  skipped: number;
-  /** Rows never checked at all because their repo doesn't belong to the
-   *  enforced org — the org-scoped installation token can't reliably tell
-   *  "deleted" apart from "not accessible to this token" for those repos
-   *  (e.g. projects added via the "import an existing repo" flow, which can
-   *  point at a personal account or a different org). See the method doc
-   *  on reconcileDeletedRepos() for the full reasoning. */
-  outOfScope: number;
-}
-
-export interface DisconnectProjectResponse {
-  ok: true;
-  githubRepoDeleted: boolean;
-  githubRepoDeleteError?: {
-    code: GithubRepoDeleteErrorCode;
-    message: string;
-  };
-}
-
-export interface ProvisionedProjectsResponse {
-  items: ProvisionedProject[];
-}
-
-export type ProjectOverviewHealthStatus = 'ok' | 'warning' | 'error';
-
-export interface ProjectOverviewResponse {
-  project: ProvisionedProject & {
-    createdAt: string;
-    updatedAt: string;
-  };
-  workflow: {
-    path: string;
-    files: WorkflowFileMetadata[];
-    stageCount: number;
-    history: WorkflowHistoryEntry[];
-  };
-  deploymentTargets: {
-    items: DeploymentTargetSummary[];
-    count: number;
-  };
-  environment: {
-    items: EnvVarMetadata[];
-    count: number;
-    failedCount: number;
-  };
-  ciAuth: {
-    status: 'active' | 'revoked' | 'missing';
-    tokenPresent: boolean;
-    tokenPrefix: string | null;
-    createdAt: string | null;
-    updatedAt: string | null;
-    revokedAt: string | null;
-  };
-  health: {
-    summary: ProjectOverviewHealthStatus;
-    checks: Array<{
-      key: string;
-      label: string;
-      status: ProjectOverviewHealthStatus;
-      message: string;
-    }>;
-  };
-  syncSnapshot: {
-    enabled: boolean;
-    mode: 'local_snapshot';
-    latest: ProjectDashboardSnapshot | null;
-  };
-  capabilities: {
-    envProvisioning: boolean;
-    workflowSettings: boolean;
-    syncSnapshots: boolean;
-    ciRunTracking: boolean;
-    deploymentHistory: boolean;
-    driftDetection: boolean;
-  };
-  /**
-   * The hierarchy.repositories id this project is linked to, or null.
-   *
-   * Developer assignments hang off hierarchy.repositories, not off
-   * provisioned_projects, so without this id the project page has no way to
-   * address its own access panel. Null means "no assignment surface for this
-   * project" — a personal-workspace project, or one created before the link
-   * existed — and the UI hides the entry point rather than guessing a URL.
-   */
-  hierarchyRepositoryId: string | null;
-}
-
-export interface ProjectSyncSnapshotResponse {
-  snapshot: ProjectDashboardSnapshot;
-  overview: ProjectOverviewResponse;
-}
-
-export interface ProjectAuditEventsResponse {
-  enabled: boolean;
-  items: Array<{
-    id: string;
-    eventCode: string;
-    message: string;
-    actorUserId: string | null;
-    createdAt: string;
-  }>;
-}
-
-export interface WorkflowSettings {
-  projectId: string;
-  templateId: string;
-  projectTypeId: string | null;
-  workflowRecipeId: string | null;
-  serviceName: string;
-  servicePath: string;
-  nodeVersion: string;
-  packageManager: 'npm';
-  coverageThreshold: number;
-  centralWorkflowRef: string;
-  checks: {
-    lint: boolean;
-    unit: boolean;
-    build: boolean;
-    security: boolean;
-  };
-}
-
-export interface WorkflowSettingsResponse {
-  enabled: boolean;
-  source: 'stored' | 'project_options';
-  settings: WorkflowSettings;
-}
-
-export interface WorkflowSettingsPreviewRequest {
-  templateId?: string;
-  projectTypeId?: string | null;
-  workflowRecipeId?: string | null;
-  serviceName?: string;
-  servicePath?: string;
-  nodeVersion?: string;
-  packageManager?: 'npm';
-  coverageThreshold?: number;
-  centralWorkflowRef?: string;
-  checks?: Partial<WorkflowSettings['checks']>;
-}
-
-export interface WorkflowSettingsPreviewResponse {
-  settings: WorkflowSettings;
-  workflowFiles: StagedWorkflowFile[];
-  diffSummary: Array<{
-    path: string;
-    status: 'new' | 'changed' | 'unchanged';
-  }>;
-  validationWarnings: Array<{
-    field: string;
-    message: string;
-  }>;
-}
-
-export interface WorkflowUpdatePullRequestResponse {
-  projectId: string;
-  repoFullName: string;
-  branchName: string;
-  workflowPath: string;
-  workflowFiles: WorkflowFileMetadata[];
-  pullRequestNumber: number;
-  pullRequestUrl: string;
-  status: 'created';
-  request: WorkflowUpdateRequestRecord | null;
-}
-
-// ─── GitHub Contents API response ────────────────────────────────────────────
 
 interface GitHubContentsResponse {
   content: { html_url?: string };
@@ -351,6 +150,15 @@ interface GitHubContentsResponse {
 @Injectable()
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
+
+  /** Lazily-created SonarCloud delegate for direct constructions (tests). */
+  private sonarSetupLazy?: SonarCloudSetupService;
+  private get sonar(): SonarCloudSetupService {
+    return (this.sonarSetupLazy ??= new SonarCloudSetupService(
+      this.githubService,
+      this.configService as ConfigService,
+    ));
+  }
 
   /** Lazily-created workflow delegate for direct constructions (tests). */
   private workflowsServiceLazy?: ProjectWorkflowsService;
@@ -367,6 +175,148 @@ export class ProjectsService {
       this.notificationEventsService,
     ));
   }
+
+  /** Lazily-created workflow-files delegate for direct constructions (tests). */
+  private workflowFilesLazy?: ProjectWorkflowFilesService;
+  private get workflowFiles(): ProjectWorkflowFilesService {
+    return (this.workflowFilesLazy ??= new ProjectWorkflowFilesService(
+      this.catalogService,
+    ));
+  }
+
+  /** Lazily-created token-resolution delegate for direct constructions. */
+  private tokensLazy?: ProvisioningTokenService;
+  private get tokens(): ProvisioningTokenService {
+    return (this.tokensLazy ??= new ProvisioningTokenService(
+      this.githubService,
+    ));
+  }
+
+  /** Lazily-created setup-branch delegate for direct constructions. */
+  private setupBranchLazy?: SetupBranchService;
+  private get setupBranch(): SetupBranchService {
+    return (this.setupBranchLazy ??= new SetupBranchService(
+      this.githubService,
+    ));
+  }
+
+  /** Lazily-created workspace-gate delegate for direct constructions. */
+  private workspaceGateLazy?: WorkspaceGateService;
+  private get workspaceGate(): WorkspaceGateService {
+    return (this.workspaceGateLazy ??= new WorkspaceGateService(
+      this.projectsRepository,
+      this.workspacesService,
+    ));
+  }
+
+  /** Lazily-created product-events delegate for direct constructions. */
+  private productEventsLazy?: ProductEventsService;
+  private get productEvents(): ProductEventsService {
+    return (this.productEventsLazy ??= new ProductEventsService(
+      this.auditEventsService,
+      this.notificationEventsService,
+    ));
+  }
+
+  /**
+   * Spy/seam retained for the existing spec suite: tests stub file pushes at
+   * this boundary rather than constructing a full ProjectWorkflowFilesService.
+   */
+  private async pushWorkflowFile(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    filePath: string,
+    content: string,
+    commitMessage = 'ci: add ALPHACI workflow',
+    branch = 'main',
+  ): Promise<{ commitSha: string; commitUrl: string | null }> {
+    return this.workflowFiles.pushWorkflowFile(
+      accessToken,
+      owner,
+      repo,
+      filePath,
+      content,
+      commitMessage,
+      branch,
+    );
+  }
+
+  /** Spy/seam for workflow-file batch pushes (see pushWorkflowFile note). */
+  private async pushWorkflowFiles(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    workflowFiles: StagedWorkflowFile[],
+    branch = 'main',
+  ): Promise<{ commitSha: string; commitUrl: string | null }> {
+    let latest: { commitSha: string; commitUrl: string | null } | null = null;
+
+    for (const file of workflowFiles) {
+      latest = await this.pushWorkflowFile(
+        accessToken,
+        owner,
+        repo,
+        file.path,
+        file.yaml,
+        undefined,
+        branch,
+      );
+    }
+
+    if (!latest) {
+      throw new UnprocessableEntityException(
+        'No workflow files were generated',
+      );
+    }
+
+    return latest;
+  }
+
+
+  /** Spy/seam for bundle assembly (see pushWorkflowFile note). */
+  private async buildWorkflowBundle(options: {
+    templateId: string;
+    serviceName: string;
+    servicePath?: string | undefined;
+    nodeVersion?: string | undefined;
+    coverageThreshold?: number | undefined;
+    customOutputFileName?: string | undefined;
+    enhancements?:
+      | Array<
+          | 'strictProductionApproval'
+          | 'enableUatApproval'
+          | 'disablePlaywright'
+          | 'disableK6'
+        >
+        | undefined;
+    deploymentProvider?: 'render' | 'vercel' | undefined;
+    deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
+    workflowVariant?: 'backend' | 'frontend' | undefined;
+    centralWorkflowRef?: string | undefined;
+    hasTestsDirectory?: boolean | undefined;
+  }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
+    return this.workflowFiles.buildWorkflowBundle(options);
+  }
+
+  /** Spy/seam for direct YAML building (see pushWorkflowFile note). */
+  private async buildWorkflowYaml(
+    templateId: string,
+    serviceName: string,
+    servicePath?: string,
+    nodeVersion?: string,
+    coverageThreshold?: number,
+    customOutputFileName?: string,
+    enhancements?: Array<
+      | 'strictProductionApproval'
+      | 'enableUatApproval'
+      | 'disablePlaywright'
+      | 'disableK6'
+    >,
+  ): Promise<{ generatedYaml: string; outputFileName: string }> {
+    return this.workflowFiles.buildWorkflowYaml(templateId, serviceName, servicePath, nodeVersion, coverageThreshold, customOutputFileName, enhancements);
+  }
+
 
   constructor(
     private readonly catalogService: CatalogService,
@@ -524,12 +474,12 @@ export class ProjectsService {
     // the repository exists and the workflow is pushed, so discovering there that
     // the caller named no resolvable team would leave a real repository behind
     // for a request that never had anywhere to put it.
-    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+    await this.workspaceGate.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
     const {
       repositoryCreationToken,
       provisioningToken,
       provisioningOwnerLogin,
-    } = await this.resolveRepositoryProvisioning(userId, accessToken, dto);
+    } = await this.tokens.resolveRepositoryProvisioning(userId, accessToken, dto);
 
     // The catalog publishes the shape IDs 'mono' and 'multi'; normalize so
     // the flow dispatch never silently falls back to the standalone path.
@@ -563,7 +513,7 @@ export class ProjectsService {
       dto.workflowRecipeId,
     );
     const effectiveDeploymentProvisioning =
-      this.withDefaultCreateDeploymentProvisioning({
+      withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: dto.projectTypeId,
         serviceName: dto.serviceName,
@@ -582,11 +532,11 @@ export class ProjectsService {
       // The standalone scaffold ships tests/ at the repo root; the monorepo
       // keeps tests under packages/*, so the root-level guard stays off.
       hasTestsDirectory: repoShape === 'standalone',
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['standalone', 'backend', 'frontend'],
         dto.servicePath,
@@ -633,7 +583,7 @@ export class ProjectsService {
       // whose pipelines can never authenticate.
       row = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -650,7 +600,7 @@ export class ProjectsService {
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
-          workflowFiles: this.workflowFileMetadata(workflowFiles),
+          workflowFiles: workflowFileMetadata(workflowFiles),
         },
       });
 
@@ -669,7 +619,7 @@ export class ProjectsService {
         'ALPHACI_REPORT_URL',
         ALPHACI_REPORT_URL,
       );
-      await this.installSonarSecrets(provisioningToken, ownerLogin, repoName);
+      await this.sonar.installSecrets(provisioningToken, ownerLogin, repoName);
 
       // 5. Push workflow YAML to main now that the secrets exist, then record
       // the resulting commit on the project row.
@@ -719,7 +669,7 @@ export class ProjectsService {
         repoFullName,
         githubAccessToken: provisioningToken,
         request: effectiveDeploymentProvisioning,
-        slots: this.resolveSingleRepoDeploymentSlots(
+        slots: resolveSingleRepoDeploymentSlots(
           effectiveDeploymentProvisioning,
         ),
       });
@@ -743,7 +693,7 @@ export class ProjectsService {
         repoUrl,
         status: 'provisioned',
         workflowPath,
-        workflowFiles: this.workflowFileMetadata(workflowFiles),
+        workflowFiles: workflowFileMetadata(workflowFiles),
         githubCommitSha: commitSha,
         githubCommitUrl: commitUrl,
         projectTypeId: dto.projectTypeId,
@@ -782,7 +732,7 @@ export class ProjectsService {
 
     const { backend, frontend } = dto.microservicesConfig;
     const effectiveDeploymentProvisioning =
-      this.withDefaultCreateDeploymentProvisioning({
+      withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: backend.projectTypeId,
         serviceName: backend.serviceName,
@@ -816,11 +766,11 @@ export class ProjectsService {
       // The scaffold seeds tests/ only inside its own backend/ dir; a custom
       // servicePath points at a layout the scaffold does not control.
       hasTestsDirectory: (backend.servicePath ?? 'backend') === 'backend',
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['backend'],
         backend.servicePath ?? 'backend',
@@ -838,7 +788,7 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'frontend',
       hasTestsDirectory: (frontend.servicePath ?? 'frontend') === 'frontend',
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['frontend'],
         frontend.servicePath ?? 'frontend',
@@ -887,7 +837,7 @@ export class ProjectsService {
       // access-gate runs as soon as a workflow file is pushed.
       backendRow = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -904,7 +854,7 @@ export class ProjectsService {
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
-          workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+          workflowFiles: workflowFileMetadata(backendWorkflowFiles),
         },
       });
 
@@ -923,7 +873,7 @@ export class ProjectsService {
         'ALPHACI_REPORT_URL',
         ALPHACI_REPORT_URL,
       );
-      await this.installSonarSecrets(provisioningToken, ownerLogin, repoName);
+      await this.sonar.installSecrets(provisioningToken, ownerLogin, repoName);
 
       // 6. Push backend workflow file to main, then record the commit.
       const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
@@ -988,7 +938,7 @@ export class ProjectsService {
         try {
           await this.createProjectRow({
             userId,
-            workspaceId: await this.resolveWorkspaceIdForCreate(
+            workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
               userId,
               dto.workspaceId,
             ),
@@ -1006,7 +956,7 @@ export class ProjectsService {
             workflowRecipeId: frontend.workflowRecipeId ?? null,
             projectOptions: {
               ...this.repositoryOwnershipMetadata(dto, ownerLogin),
-              workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
+              workflowFiles: workflowFileMetadata(frontendWorkflowFiles),
             },
           });
         } catch (err) {
@@ -1047,7 +997,7 @@ export class ProjectsService {
         repoUrl,
         status: 'provisioned',
         workflowPath: backendWorkflowPath,
-        workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+        workflowFiles: workflowFileMetadata(backendWorkflowFiles),
         githubCommitSha: backendCommitSha,
         githubCommitUrl: backendCommitUrl,
         projectTypeId: backend.projectTypeId,
@@ -1079,7 +1029,7 @@ export class ProjectsService {
     // Settle the owning team first - this path mutates an existing repository
     // (branches, secrets, a workflow commit) before the row is written, and none
     // of that should happen for a request with nowhere to put the project.
-    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+    await this.workspaceGate.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
 
     // 1. Build workflow YAML from the given templateId
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
@@ -1090,11 +1040,11 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
       enhancements: dto.enhancements,
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         dto.deploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
         ['standalone', 'backend', 'frontend'],
         dto.servicePath,
@@ -1118,7 +1068,7 @@ export class ProjectsService {
       );
     }
 
-    const accessToken = await this.resolveSetupProvisioningToken(
+    const accessToken = await this.tokens.resolveSetupProvisioningToken(
       userId,
       oauthAccessToken,
       dto.repoFullName,
@@ -1131,7 +1081,7 @@ export class ProjectsService {
      * on `master` or `develop` failed — after its secrets had already been
      * written. The repository is the authority on its own default branch.
      */
-    const targetBranch = await this.resolveSetupBranch(
+    const targetBranch = await this.setupBranch.resolveSetupBranch(
       accessToken,
       owner,
       repo,
@@ -1146,7 +1096,7 @@ export class ProjectsService {
 
     const row = await this.createProjectRow({
       userId,
-      workspaceId: await this.resolveWorkspaceIdForCreate(
+      workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
         userId,
         dto.workspaceId,
       ),
@@ -1156,7 +1106,7 @@ export class ProjectsService {
       workflowPath,
       status: 'provisioned',
       projectOptions: {
-        workflowFiles: this.workflowFileMetadata(workflowFiles),
+        workflowFiles: workflowFileMetadata(workflowFiles),
       },
     });
 
@@ -1180,7 +1130,7 @@ export class ProjectsService {
       );
       // preserveExisting: this is somebody's existing repository, and it may
       // already be wired to its own SonarCloud project.
-      await this.installSonarSecrets(accessToken, owner, repo, true);
+      await this.sonar.installSecrets(accessToken, owner, repo, true);
 
       // 4. Push the workflow files to the repository's OWN default branch now
       // that the secrets exist, then record the commit.
@@ -1203,7 +1153,7 @@ export class ProjectsService {
        * see. Best-effort: a repo that cannot take the branch still has a
        * working main-branch pipeline, which is better than failing the setup.
        */
-      await this.ensureUatBranch(accessToken, owner, repo, targetBranch);
+      await this.setupBranch.ensureUatBranch(accessToken, owner, repo, targetBranch);
       await this.projectsRepository.updateStatus(
         row.id,
         'provisioned',
@@ -1228,7 +1178,7 @@ export class ProjectsService {
           `setupProject: failed to delete project row ${row.id}: ${String(cleanupError)}`,
         );
       }
-      await this.removeSetupSecrets(accessToken, owner, repo);
+      await this.setupBranch.removeSetupSecrets(accessToken, owner, repo);
       throw error;
     }
 
@@ -1238,7 +1188,7 @@ export class ProjectsService {
       repoFullName: dto.repoFullName,
       githubAccessToken: accessToken,
       request: dto.deploymentProvisioning,
-      slots: this.resolveSingleRepoDeploymentSlots(dto.deploymentProvisioning),
+      slots: resolveSingleRepoDeploymentSlots(dto.deploymentProvisioning),
     });
 
     await this.recordProductEvent({
@@ -1259,7 +1209,7 @@ export class ProjectsService {
       repoFullName: dto.repoFullName,
       status: 'provisioned',
       workflowPath,
-      workflowFiles: this.workflowFileMetadata(workflowFiles),
+      workflowFiles: workflowFileMetadata(workflowFiles),
       githubCommitSha: commitSha,
       githubCommitUrl: commitUrl,
       deploymentProvisioning,
@@ -1279,7 +1229,7 @@ export class ProjectsService {
       workspaceId,
     );
     return {
-      items: rows.map((row) => this.toProvisionedProject(row)),
+      items: rows.map((row) => toProvisionedProject(row)),
     };
   }
 
@@ -1319,10 +1269,10 @@ export class ProjectsService {
         Promise.resolve(null),
     ]);
 
-    const project = this.toProvisionedProject(row);
+    const project = toProvisionedProject(row);
     const workflowFiles = project.workflowFiles ?? [];
     const matchingHistory = workflowHistory;
-    const ciAuth = this.toCiAuthOverview(ciToken);
+    const ciAuth = toCiAuthOverview(ciToken);
     const failedEnvCount = envMetadata.filter(
       (metadata) => metadata.status === 'failed',
     ).length;
@@ -1349,7 +1299,7 @@ export class ProjectsService {
         failedCount: failedEnvCount,
       },
       ciAuth,
-      health: this.buildOverviewHealth({
+      health: buildOverviewHealth({
         project,
         workflowFiles,
         ciAuth,
@@ -1397,7 +1347,7 @@ export class ProjectsService {
 
     const startedAt = new Date().toISOString();
     const overview = await this.getProjectOverview(projectId, userId);
-    const findings = this.buildLocalSnapshotFindings(overview);
+    const findings = buildLocalSnapshotFindings(overview);
     const completedAt = new Date().toISOString();
     const snapshot = await this.dashboardSnapshotsRepository.createSnapshot({
       projectId,
@@ -1898,137 +1848,6 @@ export class ProjectsService {
 
   // ─── Private helpers ───────────────────────────────────────────────────────
 
-  /**
-   * Resolve the catalog templateId from projectTypeId + optional workflowRecipeId.
-   * Uses the recipe's templateByProjectType mapping. Falls back to
-   * "{projectTypeId}-standard" when no recipe is supplied.
-   */
-  private async resolveProvisioningToken(
-    userId: string,
-    oauthAccessToken: string | null | undefined,
-  ): Promise<string> {
-    // Repository creation for personal accounts requires a user OAuth token.
-    // GitHub App installation tokens cannot call POST /user/repos, so only use
-    // one as a fallback when the session has no OAuth token.
-    if (oauthAccessToken) {
-      return oauthAccessToken;
-    }
-
-    const installationToken =
-      await this.githubService.getInstallationAccessTokenForUser(userId);
-
-    if (installationToken) {
-      return installationToken;
-    }
-
-    throw new UnauthorizedException(
-      'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
-    );
-  }
-
-  private async resolveSetupProvisioningToken(
-    userId: string,
-    oauthAccessToken: string | null | undefined,
-    repoFullName: string,
-  ): Promise<string> {
-    const installationToken =
-      await this.githubService.getInstallationAccessTokenForUserRepo(
-        userId,
-        repoFullName,
-      );
-
-    if (installationToken) {
-      return installationToken;
-    }
-
-    if (oauthAccessToken) {
-      return oauthAccessToken;
-    }
-
-    throw new UnauthorizedException(
-      'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
-    );
-  }
-
-  private async resolveRepositoryProvisioning(
-    userId: string,
-    oauthAccessToken: string | null | undefined,
-    dto: CreateProjectDto,
-  ): Promise<{
-    repositoryCreationToken: string;
-    provisioningToken: string;
-    provisioningOwnerLogin: string | undefined;
-  }> {
-    // When the deployment enforces a destination org, every repository is
-    // created there regardless of the request's ownerType/installationId, and
-    // the org's own GitHub App installation token does the creating.
-    //
-    // This used to use the signed-in user's OAuth token, on the belief that
-    // GitHub forbids a server-to-server installation token from creating org
-    // repositories. It does not: POST /orgs/{org}/repos is available to a
-    // GitHub App holding organization `administration: write`. Going through
-    // the App instead removes three failure modes that had nothing to do with
-    // the product — an OAuth App unapproved under the org's third-party access
-    // policy, a signed-in user who is not a member of the enforced org, and a
-    // session minted before the current GITHUB_SCOPE — each of which surfaced
-    // as an unexplained 403 at repository creation.
-    const enforcedOrg = this.githubService.getEnforcedOrg();
-    if (enforcedOrg) {
-      const context =
-        await this.githubService.getOrganizationProvisioningContextByLogin(
-          enforcedOrg,
-        );
-
-      return {
-        repositoryCreationToken: context.accessToken,
-        provisioningToken: context.accessToken,
-        provisioningOwnerLogin: context.ownerLogin,
-      };
-    }
-
-    const ownerType = dto.ownerType ?? 'personal';
-
-    if (ownerType === 'organization') {
-      if (!dto.installationId) {
-        throw new UnprocessableEntityException(
-          'installationId is required when creating a repository in an organization.',
-        );
-      }
-
-      const context =
-        await this.githubService.getOrganizationProvisioningContext(
-          userId,
-          dto.installationId,
-        );
-      // Same reasoning as the enforced-org branch above: the selected
-      // installation creates the repository as well as provisioning it. Fixed
-      // together so the corrected premise cannot survive in one branch and not
-      // the other.
-      return {
-        repositoryCreationToken: context.accessToken,
-        provisioningToken: context.accessToken,
-        provisioningOwnerLogin: context.ownerLogin,
-      };
-    }
-
-    if (dto.installationId) {
-      throw new UnprocessableEntityException(
-        'installationId can only be used with an organization repository owner.',
-      );
-    }
-    if (!oauthAccessToken) {
-      throw new UnauthorizedException(
-        'A GitHub OAuth token is required to create a personal repository. Sign out and sign back in with GitHub.',
-      );
-    }
-
-    return {
-      repositoryCreationToken: oauthAccessToken,
-      provisioningToken: oauthAccessToken,
-      provisioningOwnerLogin: undefined,
-    };
-  }
-
   private repositoryOwnershipMetadata(
     dto: CreateProjectDto,
     ownerLogin: string,
@@ -2061,152 +1880,6 @@ export class ProjectsService {
     return `${projectTypeId}-${recipeId}`;
   }
 
-  private filterDeploymentProvisioningRequest(
-    request: DeploymentProvisioningRequestDto | undefined,
-    slots: DeploymentProvisioningTargetDto['slot'][],
-  ): DeploymentProvisioningRequestDto | undefined {
-    if (!request) {
-      return undefined;
-    }
-
-    return {
-      enabled: request.enabled,
-      ...(request.variableGroups
-        ? { variableGroups: request.variableGroups }
-        : {}),
-      ...(request.sharedEnv ? { sharedEnv: request.sharedEnv } : {}),
-      targets: request.targets.filter((target) => slots.includes(target.slot)),
-    };
-  }
-
-  private combineDeploymentProvisioningResults(
-    results: DeploymentProvisioningResult[],
-  ): DeploymentProvisioningResult {
-    const targets = results.flatMap((result) => result.targets);
-    if (targets.length === 0) {
-      return { status: 'skipped', targets: [] };
-    }
-
-    const failedCount = targets.filter(
-      (target) => target.status === 'failed',
-    ).length;
-
-    return {
-      status:
-        failedCount === 0
-          ? 'completed'
-          : failedCount === targets.length
-            ? 'failed'
-            : 'partial',
-      targets,
-    };
-  }
-
-  private skippedDeploymentProvisioning(): DeploymentProvisioningResult {
-    return { status: 'skipped', targets: [] };
-  }
-
-  private withDefaultCreateDeploymentProvisioning(input: {
-    request: DeploymentProvisioningRequestDto | undefined;
-    projectTypeId: string;
-    serviceName: string;
-    repoName: string;
-    servicePath?: string | undefined;
-  }): DeploymentProvisioningRequestDto | undefined {
-    if (!this.isBackendProjectType(input.projectTypeId)) {
-      return input.request;
-    }
-
-    const existingTargets = input.request?.targets ?? [];
-    const hasBackendRenderTarget = existingTargets.some(
-      (target) =>
-        ['backend', 'standalone'].includes(target.slot) &&
-        target.provider === 'render',
-    );
-    if (hasBackendRenderTarget) {
-      return {
-        ...input.request,
-        enabled: true,
-        targets: existingTargets,
-      };
-    }
-
-    return {
-      enabled: true,
-      ...(input.request?.variableGroups
-        ? { variableGroups: input.request.variableGroups }
-        : {}),
-      ...(input.request?.sharedEnv
-        ? { sharedEnv: input.request.sharedEnv }
-        : {}),
-      targets: [
-        ...existingTargets,
-        {
-          slot: 'backend',
-          provider: 'render',
-          ownershipMode: 'flowci_managed',
-          projectName: this.defaultManagedRenderProjectName(
-            input.serviceName,
-            input.repoName,
-          ),
-          branchName: 'uat',
-          rootDirectory: input.servicePath?.trim() || '.',
-          buildCommand: 'npm ci && npm run build',
-          startCommand: 'npm run start:prod',
-          renderDeployMethod: 'managed_image',
-          renderServiceType: 'web_service',
-          renderRuntime: 'docker',
-          renderInstanceType: 'free',
-          renderRegion: 'singapore',
-          dockerContext: input.servicePath?.trim() || '.',
-          dockerfilePath: 'Dockerfile',
-          env: [],
-        },
-      ],
-    };
-  }
-
-  private isBackendProjectType(projectTypeId: string): boolean {
-    return !/(react|next|frontend|web|ui)/i.test(projectTypeId);
-  }
-
-  private defaultManagedRenderProjectName(
-    serviceName: string,
-    repoName: string,
-  ): string {
-    const base = (serviceName || repoName || 'backend')
-      .trim()
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '');
-    return `${base || 'backend'}-uat`;
-  }
-
-  /**
-   * BYO hosting is archived: every deployment target is forced onto the
-   * platform's centralized Render/Vercel credentials regardless of what the
-   * client sent, and any BYO provider-connection reference is dropped.
-   */
-  private forceManagedProvisioning(
-    request: DeploymentProvisioningRequestDto | undefined,
-  ): DeploymentProvisioningRequestDto | undefined {
-    if (!request) {
-      return undefined;
-    }
-
-    return {
-      ...request,
-      targets: request.targets.map((target) => {
-        const managedTarget = {
-          ...target,
-          ownershipMode: 'flowci_managed' as const,
-        };
-        delete managedTarget.providerConnectionId;
-        return managedTarget;
-      }),
-    };
-  }
-
   /**
    * Create the requested hosting targets and install their Render/Vercel
    * GitHub Actions secrets as part of project creation. Provisioning is
@@ -2221,12 +1894,12 @@ export class ProjectsService {
     request: DeploymentProvisioningRequestDto | undefined;
     slots: DeploymentProvisioningTargetDto['slot'][];
   }): Promise<DeploymentProvisioningResult> {
-    const request = this.filterDeploymentProvisioningRequest(
-      this.forceManagedProvisioning(input.request),
+    const request = filterDeploymentProvisioningRequest(
+      forceManagedProvisioning(input.request),
       input.slots,
     );
     if (!request?.enabled || request.targets.length === 0) {
-      return this.skippedDeploymentProvisioning();
+      return skippedDeploymentProvisioning();
     }
 
     try {
@@ -2267,873 +1940,7 @@ export class ProjectsService {
    * (the quality-scan job only runs when all three are present). Best-effort:
    * a missing central Sonar configuration or a secret-write hiccup must not
    * fail repository creation.
-   */
-  /**
-   * The branch an onboarded repository's workflows belong on.
-   *
-   * Asks GitHub for the repository's own default branch and falls back to
-   * 'main' only when that cannot be read — a fallback, never an assumption.
-   */
-  private async resolveSetupBranch(
-    accessToken: string,
-    owner: string,
-    repo: string,
-  ): Promise<string> {
-    try {
-      const repository = await this.githubService.getRepo(
-        accessToken,
-        owner,
-        repo,
-      );
-      const branch = repository.defaultBranch?.trim();
-      if (branch) return branch;
-    } catch (error) {
-      this.logger.warn(
-        `setupProject: could not read the default branch for ${owner}/${repo}, assuming 'main': ${String(error)}`,
-      );
     }
-    return 'main';
-  }
-
-  /**
-   * Creates `uat` from the repository's default branch when it is missing.
-   *
-   * Best-effort by design. A repository that cannot take the branch — no
-   * permission, a protection rule, a name already used by a tag — still ends
-   * up with a working default-branch pipeline, and failing the whole
-   * onboarding over the staging half would be the worse trade.
-   */
-  private async ensureUatBranch(
-    accessToken: string,
-    owner: string,
-    repo: string,
-    fromBranch: string,
-  ): Promise<void> {
-    try {
-      if (
-        await this.githubService.branchExists(accessToken, owner, repo, 'uat')
-      ) {
-        return;
-      }
-      await this.githubService.createBranch(
-        accessToken,
-        owner,
-        repo,
-        'uat',
-        fromBranch,
-      );
-      this.logger.log(
-        `setupProject: created uat from ${fromBranch} on ${owner}/${repo}`,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `setupProject: could not create uat on ${owner}/${repo}; the staging half of the pipeline will not run until it exists: ${String(error)}`,
-      );
-    }
-  }
-
-  /**
-   * Undoes the secrets written during a failed setup.
-   *
-   * Only ever removes the two secrets THIS product owns. SONAR_* is deliberately
-   * excluded: installSonarSecrets leaves a repository's own Sonar configuration
-   * alone, so deleting those here could destroy something we never wrote.
-   *
-   * Never throws — this runs inside a catch block, and losing the original
-   * error to a cleanup failure would hide the reason setup failed.
-   */
-  private async removeSetupSecrets(
-    accessToken: string,
-    owner: string,
-    repo: string,
-  ): Promise<void> {
-    for (const name of ['ALPHACI_TOKEN', 'ALPHACI_REPORT_URL']) {
-      try {
-        await this.githubService.deleteActionsSecret(
-          accessToken,
-          owner,
-          repo,
-          name,
-        );
-      } catch (error) {
-        this.logger.warn(
-          `setupProject: could not remove ${name} from ${owner}/${repo} after a failed setup: ${String(error)}`,
-        );
-      }
-    }
-  }
-
-  /**
-   * Installs the SonarCloud secrets this product's Quality stage reads.
-   *
-   * `preserveExisting` is for ONBOARDING an existing repository. A repo that
-   * already uses SonarCloud has its own SONAR_TOKEN and SONAR_PROJECT_KEY
-   * pointing at its own project with its own history; silently replacing them
-   * would redirect analysis to a new key and is not undoable from this UI. On
-   * a repository this product just created there is nothing to preserve, so
-   * that path keeps overwriting.
-   */
-  private async installSonarSecrets(
-    accessToken: string,
-    owner: string,
-    repo: string,
-    preserveExisting = false,
-  ): Promise<void> {
-    const managed =
-      this.configService?.getOrThrow<AppConfig>('app')?.envProvisioning
-        ?.flowciManaged;
-    const sonarToken = managed?.sonarToken?.trim();
-    const sonarOrganization = managed?.sonarOrganization?.trim();
-    if (!sonarToken || !sonarOrganization) {
-      this.logger.warn(
-        `SonarCloud secrets not installed for ${owner}/${repo}: ALPHACI_SONAR_TOKEN / ALPHACI_SONAR_ORGANIZATION are not configured`,
-      );
-      return;
-    }
-
-    const existingSecrets = preserveExisting
-      ? await this.githubService.listActionsSecretNames(
-          accessToken,
-          owner,
-          repo,
-        )
-      : new Set<string>();
-
-    const alreadyConfigured = ['SONAR_TOKEN', 'SONAR_PROJECT_KEY'].some(
-      (name) => existingSecrets.has(name),
-    );
-
-    if (alreadyConfigured) {
-      this.logger.log(
-        `SonarCloud secrets left untouched for ${owner}/${repo}: the repository already defines its own.`,
-      );
-      return;
-    }
-
-    // SonarCloud's GitHub-import convention for project keys is `${owner}_${repo}`.
-    const sonarProjectKey = this.sonarProjectKey(owner, repo);
-    await this.ensureSonarCloudProject({
-      sonarToken,
-      sonarOrganization,
-      sonarProjectKey,
-      projectName: repo,
-      repoFullName: `${owner}/${repo}`,
-    });
-    await this.githubService.setActionsSecret(
-      accessToken,
-      owner,
-      repo,
-      'SONAR_TOKEN',
-      sonarToken,
-    );
-    await this.githubService.setActionsSecret(
-      accessToken,
-      owner,
-      repo,
-      'SONAR_ORGANIZATION',
-      sonarOrganization,
-    );
-    await this.githubService.setActionsSecret(
-      accessToken,
-      owner,
-      repo,
-      'SONAR_PROJECT_KEY',
-      sonarProjectKey,
-    );
-  }
-
-  private sonarProjectKey(owner: string, repo: string): string {
-    return `${owner}_${repo}`;
-  }
-
-  private async ensureSonarCloudProject(input: {
-    sonarToken: string;
-    sonarOrganization: string;
-    sonarProjectKey: string;
-    projectName: string;
-    repoFullName: string;
-  }): Promise<void> {
-    try {
-      const body = new URLSearchParams({
-        organization: input.sonarOrganization,
-        project: input.sonarProjectKey,
-        name: input.projectName,
-      });
-      const response = await fetch(
-        'https://sonarcloud.io/api/projects/create',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${Buffer.from(
-              `${input.sonarToken}:`,
-            ).toString('base64')}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body,
-        },
-      );
-
-      if (response.ok) {
-        this.logger.log(
-          `SonarCloud project ensured for ${input.repoFullName} (${input.sonarProjectKey})`,
-        );
-        return;
-      }
-
-      const responseBody = await response.text();
-      if (response.status === 400 && /already|exist|key/i.test(responseBody)) {
-        this.logger.log(
-          `SonarCloud project already exists for ${input.repoFullName} (${input.sonarProjectKey})`,
-        );
-        return;
-      }
-
-      this.logger.warn(
-        `SonarCloud project was not created for ${input.repoFullName} (${String(response.status)}): ${responseBody.slice(0, 500)}`,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `SonarCloud project was not created for ${input.repoFullName}: ${String(error)}`,
-      );
-    } finally {
-      await this.ensureSonarCloudProjectLink(input);
-    }
-  }
-
-  private async ensureSonarCloudProjectLink(input: {
-    sonarToken: string;
-    sonarProjectKey: string;
-    repoFullName: string;
-  }): Promise<void> {
-    try {
-      const body = new URLSearchParams({
-        projectKey: input.sonarProjectKey,
-        name: 'GitHub',
-        url: `https://github.com/${input.repoFullName}`,
-      });
-      const response = await fetch(
-        'https://sonarcloud.io/api/project_links/create',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${Buffer.from(
-              `${input.sonarToken}:`,
-            ).toString('base64')}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body,
-        },
-      );
-
-      if (response.ok) {
-        return;
-      }
-
-      const responseBody = await response.text();
-      if (
-        response.status === 400 &&
-        /already|exist|duplicate/i.test(responseBody)
-      ) {
-        return;
-      }
-
-      this.logger.warn(
-        `SonarCloud GitHub link was not created for ${input.repoFullName} (${String(response.status)}): ${responseBody.slice(0, 500)}`,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `SonarCloud GitHub link was not created for ${input.repoFullName}: ${String(error)}`,
-      );
-    }
-  }
-
-  /**
-   * Load the template from the catalog, apply substitutions, and return the
-   * generated YAML string plus the derived output file name.
-   */
-  private async buildWorkflowYaml(
-    templateId: string,
-    serviceName: string,
-    servicePath?: string,
-    nodeVersion?: string,
-    coverageThreshold?: number,
-    customOutputFileName?: string,
-    enhancements?: Array<
-      | 'strictProductionApproval'
-      | 'enableUatApproval'
-      | 'disablePlaywright'
-      | 'disableK6'
-    >,
-  ): Promise<{ generatedYaml: string; outputFileName: string }> {
-    const template = await this.catalogService.getTemplateById(templateId);
-    if (!template) {
-      throw new NotFoundException(`Template '${templateId}' not found`);
-    }
-
-    const source = await readFile(template.workflowPath, 'utf8');
-
-    // Use DEFAULT_SCHEMA (the js-yaml default) explicitly to document that no
-    // unsafe tag constructors (!!js/function, !!js/regexp, etc.) are permitted.
-    // This is equivalent to yaml.load() with no schema option, but makes the
-    // intent clear and is resilient to any future js-yaml API drift.
-    const parsed = yaml.load(source, { schema: yaml.DEFAULT_SCHEMA }) as Record<
-      string,
-      unknown
-    > | null;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new UnprocessableEntityException(
-        'Workflow template could not be parsed',
-      );
-    }
-
-    parsed.name = `${serviceName} - ${template.name}`;
-
-    const onConfig = this.ensureObject(parsed, 'on');
-    const dispatchConfig = this.ensureObject(onConfig, 'workflow_dispatch');
-    const inputConfig = this.ensureObject(dispatchConfig, 'inputs');
-
-    this.setInputDefault(inputConfig, 'service_name', serviceName, 'string');
-
-    if (servicePath !== undefined) {
-      this.setInputDefault(inputConfig, 'service_path', servicePath, 'string');
-    }
-
-    if (nodeVersion !== undefined) {
-      this.setInputDefault(inputConfig, 'node_version', nodeVersion, 'string');
-    }
-
-    if (coverageThreshold !== undefined) {
-      this.setInputDefault(
-        inputConfig,
-        'coverage_threshold',
-        coverageThreshold,
-        'number',
-      );
-    }
-
-    if (enhancements && enhancements.length > 0) {
-      const pipelineConfig = this.ensureObject(
-        this.ensureObject(parsed, 'jobs'),
-        'pipeline',
-      );
-      const withConfig = this.ensureObject(pipelineConfig, 'with');
-      this.applyEnhancements(withConfig, enhancements);
-    }
-
-    const generatedYaml = yaml.dump(parsed, {
-      lineWidth: -1,
-      noRefs: true,
-      sortKeys: false,
-    });
-
-    const outputFileName =
-      customOutputFileName ??
-      this.deriveOutputFileName(serviceName, template.id);
-
-    return { generatedYaml, outputFileName };
-  }
-
-  private extractDeploymentProvider(
-    request: DeploymentProvisioningRequestDto | undefined,
-    slot: DeploymentProvisioningTargetDto['slot'],
-  ): DeploymentProvider | undefined {
-    if (!request?.enabled || !request.targets?.length) return undefined;
-    const provider = request.targets.find(
-      (t) => t.slot === slot && t.provider === 'render' && slot === 'backend',
-    )?.provider;
-    return provider === 'render' ? provider : undefined;
-  }
-
-  private resolveDeploymentWorkflowTargets(
-    request: DeploymentProvisioningRequestDto | undefined,
-    slots: DeploymentProvisioningTargetDto['slot'][],
-    fallbackRootDirectory?: string,
-  ): DeploymentWorkflowTarget[] {
-    if (!request?.enabled || !request.targets?.length) {
-      return [];
-    }
-
-    return request.targets
-      .filter((target) => slots.includes(target.slot))
-      .filter(
-        (target) =>
-          (target.provider === 'vercel' && target.slot === 'frontend') ||
-          (target.provider === 'render' &&
-            target.slot === 'backend' &&
-            (target.renderInstanceType?.trim() || 'free') === 'free' &&
-            (target.renderServiceType ?? 'web_service') === 'web_service' &&
-            this.resolveRenderDeploymentStrategy(target) ===
-              'render_image_pushed'),
-      )
-      .flatMap((target) => {
-        const rootDirectory = this.resolveWorkflowRootDirectory(
-          target,
-          fallbackRootDirectory,
-        );
-        if (target.provider === 'render') {
-          return this.renderDeploymentBranches().map((branchName) => {
-            const descriptor: DeploymentWorkflowTarget = {
-              slot: target.slot,
-              provider: 'render',
-              branchName,
-              deploymentStrategy: 'render_image_pushed',
-              secretNames: this.renderSecretNames(target.slot, branchName),
-              dockerContext:
-                target.dockerContext?.trim() || rootDirectory || '.',
-              dockerfilePath: target.dockerfilePath?.trim() || 'Dockerfile',
-              imageName: this.renderImageName(target, branchName),
-              renderServiceType: target.renderServiceType ?? 'web_service',
-              renderInstanceType: target.renderInstanceType ?? 'free',
-            };
-            if (rootDirectory) {
-              descriptor.rootDirectory = rootDirectory;
-            }
-
-            return descriptor;
-          });
-        }
-
-        const descriptor: DeploymentWorkflowTarget = {
-          slot: target.slot,
-          provider: 'vercel',
-          deploymentStrategy: 'vercel_ci_pushed',
-          secretNames: this.vercelSecretNames(target.slot),
-        };
-        if (rootDirectory) {
-          descriptor.rootDirectory = rootDirectory;
-        }
-
-        return descriptor;
-      });
-  }
-
-  private renderDeploymentBranches(): Array<'uat' | 'main'> {
-    return ['uat', 'main'];
-  }
-
-  private resolveRenderDeploymentStrategy(
-    target: DeploymentProvisioningTargetDto,
-  ):
-    'render_image_pushed' | 'render_git_connected' | 'render_existing_service' {
-    if (target.renderDeployMethod === 'existing_service') {
-      return 'render_existing_service';
-    }
-    if (
-      target.ownershipMode === 'flowci_managed' ||
-      target.renderDeployMethod === 'byo_image'
-    ) {
-      return 'render_image_pushed';
-    }
-
-    return 'render_git_connected';
-  }
-
-  private resolveWorkflowRootDirectory(
-    target: DeploymentProvisioningTargetDto,
-    fallbackRootDirectory?: string,
-  ): string | undefined {
-    const rootDirectory = target.rootDirectory?.trim();
-    if (rootDirectory) {
-      return rootDirectory;
-    }
-
-    return fallbackRootDirectory?.trim() || undefined;
-  }
-
-  private vercelSecretNames(
-    slot: DeploymentProvisioningTargetDto['slot'],
-  ): NonNullable<DeploymentWorkflowTarget['secretNames']> {
-    const prefix = `VERCEL_${slot.toUpperCase()}`;
-    return {
-      token: `${prefix}_TOKEN`,
-      orgId: `${prefix}_ORG_ID`,
-      projectId: `${prefix}_PROJECT_ID`,
-    };
-  }
-
-  private renderSecretNames(
-    slot: DeploymentProvisioningTargetDto['slot'],
-    branchName: 'uat' | 'main' = 'uat',
-  ): NonNullable<DeploymentWorkflowTarget['secretNames']> {
-    const prefix = `RENDER_${slot.toUpperCase()}_${branchName.toUpperCase()}`;
-    const branchSuffix = branchName.toUpperCase();
-    return {
-      apiKey: `${prefix}_API_KEY`,
-      serviceId: `${prefix}_SERVICE_ID`,
-      ownerId: `${prefix}_OWNER_ID`,
-      registryCredentialId: `${prefix}_REGISTRY_CREDENTIAL_ID`,
-      deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchSuffix}`,
-      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchSuffix}`,
-    };
-  }
-
-  private renderImageName(
-    target: DeploymentProvisioningTargetDto,
-    branchName: string = target.branchName ?? 'uat',
-  ): string {
-    const raw = `alphaci-${target.slot}-${branchName}-${target.projectName ?? target.slot}`;
-    return raw
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '');
-  }
-
-  private resolveSingleRepoDeploymentSlots(
-    request: DeploymentProvisioningRequestDto | undefined,
-  ): DeploymentProvisioningTargetDto['slot'][] {
-    if (!request?.enabled || !request.targets?.length) {
-      return ['standalone'];
-    }
-
-    const slots = request.targets
-      .map((target) => target.slot)
-      .filter((slot): slot is DeploymentProvisioningTargetDto['slot'] =>
-        ['standalone', 'frontend', 'backend'].includes(slot),
-      );
-
-    return slots.length > 0 ? Array.from(new Set(slots)) : ['standalone'];
-  }
-
-  private async buildWorkflowBundle(options: {
-    templateId: string;
-    serviceName: string;
-    servicePath?: string | undefined;
-    nodeVersion?: string | undefined;
-    coverageThreshold?: number | undefined;
-    customOutputFileName?: string | undefined;
-    enhancements?:
-      | Array<
-          | 'strictProductionApproval'
-          | 'enableUatApproval'
-          | 'disablePlaywright'
-          | 'disableK6'
-        >
-      | undefined;
-    deploymentProvider?: DeploymentProvider | undefined;
-    deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
-    workflowVariant?: 'backend' | 'frontend' | undefined;
-    centralWorkflowRef?: string | undefined;
-    /**
-     * True when the workflow targets a service path that carries the
-     * scaffold's tests/ directory (product-created repos). Leave unset for
-     * BYO/setup repos and monorepo roots (their tests live under packages/).
-     */
-    hasTestsDirectory?: boolean | undefined;
-  }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
-    const {
-      templateId,
-      serviceName,
-      servicePath,
-      nodeVersion,
-      coverageThreshold,
-      customOutputFileName,
-      enhancements,
-      deploymentProvider,
-      deploymentTargets = [],
-      workflowVariant,
-      centralWorkflowRef,
-      hasTestsDirectory,
-    } = options;
-
-    const template = await this.catalogService.getTemplateById(templateId);
-    if (!template) {
-      throw new NotFoundException(`Template '${templateId}' not found`);
-    }
-
-    const bundle = buildStagedWorkflowBundle(template, {
-      templateId,
-      serviceName,
-      ...(servicePath !== undefined && { servicePath }),
-      ...(nodeVersion !== undefined && { nodeVersion }),
-      ...(coverageThreshold !== undefined && { coverageThreshold }),
-      ...(enhancements !== undefined && { enhancements }),
-      ...(deploymentProvider !== undefined && { deploymentProvider }),
-      ...(deploymentTargets.length > 0 && { deploymentTargets }),
-      ...(workflowVariant !== undefined && { workflowVariant }),
-      ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
-      ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
-    });
-
-    const outputFileName = customOutputFileName ?? '00-alphaci-access.yml';
-    return {
-      workflowFiles: bundle.workflowFiles,
-      outputFileName,
-    };
-  }
-
-  private async pushWorkflowFiles(
-    accessToken: string,
-    owner: string,
-    repo: string,
-    workflowFiles: StagedWorkflowFile[],
-    branch = 'main',
-  ): Promise<{ commitSha: string; commitUrl: string | null }> {
-    let latest: { commitSha: string; commitUrl: string | null } | null = null;
-
-    for (const file of workflowFiles) {
-      latest = await this.pushWorkflowFile(
-        accessToken,
-        owner,
-        repo,
-        file.path,
-        file.yaml,
-        undefined,
-        branch,
-      );
-    }
-
-    if (!latest) {
-      throw new UnprocessableEntityException(
-        'No workflow files were generated',
-      );
-    }
-
-    return latest;
-  }
-
-  /**
-   * Push a file to a GitHub repository via the Contents API.
-   * If the file already exists (sha required), this will overwrite it.
-   * Returns the commit SHA and HTML URL.
-   */
-  private async pushWorkflowFile(
-    accessToken: string,
-    owner: string,
-    repo: string,
-    filePath: string,
-    content: string,
-    commitMessage = 'ci: add ALPHACI workflow',
-    /*
-     * The branch to commit to.
-     *
-     * Defaulted rather than required so the new-repository flows — which build
-     * `main` themselves moments earlier — stay unchanged. It exists for
-     * ONBOARDING: an existing repository's default branch is whatever its
-     * owner chose, and this was previously hardcoded to 'main', so every repo
-     * on `master` or `develop` failed the push after its secrets had already
-     * been written.
-     */
-    branch = 'main',
-  ): Promise<{ commitSha: string; commitUrl: string | null }> {
-    const encodedContent = Buffer.from(content, 'utf8').toString('base64');
-
-    // Check whether the file already exists so we can supply its sha (required for updates)
-    let existingSha: string | undefined;
-    try {
-      // Read the sha FROM THE TARGET BRANCH. Without ?ref this asked the
-      // default branch, so updating a file on any other branch would send a
-      // sha that does not belong there and GitHub would reject the write.
-      const checkRes = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(branch)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: 'application/vnd.github+json',
-            'User-Agent': 'cicd-workflow-product',
-          },
-        },
-      );
-
-      if (checkRes.ok) {
-        const existing = (await checkRes.json()) as { sha?: string };
-        existingSha = existing.sha;
-      }
-    } catch {
-      // Not critical — proceed without sha; GitHub will reject if required
-    }
-
-    const body: Record<string, unknown> = {
-      message: commitMessage,
-      content: encodedContent,
-      branch,
-    };
-
-    if (existingSha) {
-      body['sha'] = existingSha;
-    }
-
-    const putRes = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      },
-    );
-
-    if (!putRes.ok) {
-      const err = await putRes.text();
-      throw new UnprocessableEntityException(
-        `GitHub file push failed (${String(putRes.status)}): ${err}`,
-      );
-    }
-
-    const response = (await putRes.json()) as GitHubContentsResponse;
-    const commitSha = response.commit?.sha ?? '';
-    const commitUrl = response.commit?.html_url ?? null;
-
-    return { commitSha, commitUrl };
-  }
-
-  private describeGeneratedStack(stack: string | undefined): string {
-    switch (normalizeProjectStack(stack)) {
-      case 'nestjs':
-        return 'NestJS API';
-      case 'nextjs':
-        return 'Next.js app';
-      case 'react':
-        return 'React app';
-      case 'nodejs':
-      default:
-        return 'Node.js service';
-    }
-  }
-
-  private generatedStructureLines(opts: {
-    projectName: string;
-    stack: string;
-    repoShape?: string;
-    frontendStack?: string;
-    frontendServiceName?: string;
-    backendServiceName?: string;
-  }): string[] {
-    const stack = normalizeProjectStack(opts.stack);
-    const repoShape = normalizeRepoShape(opts.repoShape);
-
-    if (repoShape === 'monorepo') {
-      return [
-        '- `package.json`, `tsconfig.json`, `jest.config.ts`, and `eslint.config.mjs` define the workspace-level toolchain.',
-        `- \`packages/core/\` contains the ${this.describeGeneratedStack(opts.stack)} starter package and tests.`,
-        '- Add more packages under `packages/` when the project grows beyond the initial core package.',
-      ];
-    }
-
-    if (repoShape === 'microservices') {
-      return [
-        `- \`backend/\` contains ${opts.backendServiceName ?? opts.projectName} as a ${this.describeGeneratedStack(opts.stack)}.`,
-        `- \`frontend/\` contains ${opts.frontendServiceName ?? `${opts.projectName}-fe`} as a ${this.describeGeneratedStack(opts.frontendStack ?? 'nextjs')}.`,
-        '- Each service owns its own `package.json`, TypeScript config, Jest config, ESLint config, source folder, and `tests/` folder.',
-        '- `docker-compose.yml` is included when Docker scaffolding is enabled for the backend service.',
-      ];
-    }
-
-    if (stack === 'nestjs') {
-      return [
-        '- `src/main.ts` boots the NestJS app.',
-        '- `src/app.module.ts` is the initial application module.',
-        '- `tests/unit/` holds the unit test suites; the starter spec verifies the exported service name.',
-      ];
-    }
-
-    if (stack === 'nextjs') {
-      return [
-        '- `src/app/layout.tsx` provides the App Router root layout.',
-        '- `src/app/page.tsx` is the starter page.',
-        '- `tests/unit/` holds the unit test suites; CI verifies this folder exists.',
-        '- `next.config.ts` and the shared TypeScript/Jest/ESLint configs are ready for the generated workflow.',
-      ];
-    }
-
-    if (stack === 'react') {
-      return [
-        '- `src/App.tsx` contains the starter React component.',
-        '- `tests/unit/App.spec.tsx` renders the component with `react-dom/server` so unit tests pass without choosing a bundler for you.',
-        '- Add Vite, Next.js, or another bundler when you are ready to build the real app shell.',
-      ];
-    }
-
-    return [
-      '- `src/index.ts` is the starter Node.js entrypoint.',
-      '- `tests/unit/index.spec.ts` verifies the exported service name.',
-      '- Docker scaffolding starts `dist/index.js`, matching the TypeScript build output.',
-    ];
-  }
-
-  private gettingStartedCommands(repoShape?: string): string[] {
-    if (normalizeRepoShape(repoShape) === 'microservices') {
-      return [
-        '```bash',
-        'cd backend',
-        'npm install',
-        'npm run lint',
-        'npm test',
-        'npm run build',
-        '',
-        'cd ../frontend',
-        'npm install',
-        'npm run lint',
-        'npm test',
-        'npm run build',
-        '```',
-      ];
-    }
-
-    return [
-      '```bash',
-      'npm install',
-      'npm run lint',
-      'npm test',
-      'npm run build',
-      '```',
-    ];
-  }
-
-  private repoShapeLabel(repoShape?: string): string {
-    switch (normalizeRepoShape(repoShape)) {
-      case 'monorepo':
-        return 'monorepo workspace';
-      case 'microservices':
-        return 'microservices repository';
-      case 'multi-repo':
-        return 'single-service repository in a multi-repo project';
-      case 'standalone':
-      default:
-        return 'standalone repository';
-    }
-  }
-
-  private buildGeneratedRepoReadme(opts: {
-    projectName: string;
-    stack: string;
-    repoShape?: string;
-    frontendStack?: string;
-    frontendServiceName?: string;
-    backendServiceName?: string;
-  }): string {
-    return [
-      `# ${opts.projectName}`,
-      '',
-      `Created by ALPHACI as a ${this.describeGeneratedStack(opts.stack)} ${this.repoShapeLabel(opts.repoShape)}.`,
-      '',
-      'This starter already includes source files, package scripts, TypeScript, ESLint, Jest coverage, SonarQube metadata, branch protections, and ALPHACI workflow files that match the selected stack. Use it as the first working baseline, then replace the starter code with your application code.',
-      '',
-      '## Project structure',
-      '',
-      ...this.generatedStructureLines(opts),
-      '',
-      '## Branch strategy',
-      '',
-      '| Branch  | Purpose |',
-      '|---------|---------|',
-      '| main    | Production - protected |',
-      '| uat     | Integration and test - protected |',
-      '| develop | Development integration - unprotected, no CI pipeline |',
-      '',
-      '## CI/CD',
-      '',
-      'Workflow files live in `.github/workflows/`. The CI pipeline runs on `uat` and `main` only. `develop` and user-created branches do not trigger workflows. Push to `uat` to trigger your first run.',
-      '',
-      '## Getting started',
-      '',
-      ...this.gettingStartedCommands(opts.repoShape),
-      '',
-      'Create a feature branch, open a pull request into `uat`, and let ALPHACI promote green changes to `main`.',
-    ].join('\n');
   }
 
   /**
@@ -3173,7 +1980,7 @@ export class ProjectsService {
       serviceName: projectName,
       stack,
       includeDocker: opts.includeDocker ?? defaultIncludeDocker(stack),
-      sonarProjectKey: this.sonarProjectKey(owner, repo),
+      sonarProjectKey: sonarProjectKeyFor(owner, repo),
       ...(repoShape ? { repoShape } : {}),
       ...(frontendStack ? { frontendStack } : {}),
       ...(frontendServiceName ? { frontendServiceName } : {}),
@@ -3184,7 +1991,7 @@ export class ProjectsService {
 
     // Scaffold pushes are strict on purpose: a repo missing package.json,
     // jest.config.ts, or eslint.config.mjs is born with permanently red
-    // checks. Failing here lets the caller's compensation path delete the
+    // checks. Failing here lets the caller compensation path delete the
     // half-created repo so every repo that survives provisioning starts with
     // a fully green pipeline.
     for (const file of scaffoldFiles) {
@@ -3199,7 +2006,7 @@ export class ProjectsService {
     }
 
     // Always push README.md (.gitignore is included in the scaffold above)
-    const readmeContent = this.buildGeneratedRepoReadme({
+    const readmeContent = buildGeneratedRepoReadme({
       projectName,
       stack,
       ...(repoShape ? { repoShape } : {}),
@@ -3244,7 +2051,7 @@ export class ProjectsService {
       : `${dto.repoName}-be`;
     const feRepoName = beRepoName.replace(/-be$/, '-fe');
     const effectiveDeploymentProvisioning =
-      this.withDefaultCreateDeploymentProvisioning({
+      withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: backend.projectTypeId,
         serviceName: backend.serviceName,
@@ -3273,11 +2080,11 @@ export class ProjectsService {
       // Each multi-repo repository carries the standalone scaffold, tests/
       // included, at its root.
       hasTestsDirectory: true,
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['backend', 'standalone'],
         '.',
@@ -3325,7 +2132,7 @@ export class ProjectsService {
       // access-gate run can authenticate (see createProject for rationale).
       backendRow = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -3342,7 +2149,7 @@ export class ProjectsService {
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
-          workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+          workflowFiles: workflowFileMetadata(backendWorkflowFiles),
         },
       });
 
@@ -3363,7 +2170,7 @@ export class ProjectsService {
         'ALPHACI_REPORT_URL',
         ALPHACI_REPORT_URL,
       );
-      await this.installSonarSecrets(
+      await this.sonar.installSecrets(
         provisioningToken,
         ownerLogin,
         actualBeRepoName,
@@ -3447,7 +2254,7 @@ export class ProjectsService {
         nodeVersion: dto.nodeVersion,
         coverageThreshold: dto.coverageThreshold,
         hasTestsDirectory: true,
-        deploymentTargets: this.resolveDeploymentWorkflowTargets(
+        deploymentTargets: resolveDeploymentWorkflowTargets(
           effectiveDeploymentProvisioning,
           ['frontend'],
           '.',
@@ -3491,7 +2298,7 @@ export class ProjectsService {
 
       feRow = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -3507,7 +2314,7 @@ export class ProjectsService {
         workflowRecipeId: frontend.workflowRecipeId ?? null,
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, feOwnerLogin),
-          workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
+          workflowFiles: workflowFileMetadata(frontendWorkflowFiles),
         },
       });
 
@@ -3526,7 +2333,7 @@ export class ProjectsService {
         'ALPHACI_REPORT_URL',
         ALPHACI_REPORT_URL,
       );
-      await this.installSonarSecrets(
+      await this.sonar.installSecrets(
         provisioningToken,
         feOwnerLogin,
         actualFeRepoName,
@@ -3636,7 +2443,7 @@ export class ProjectsService {
       repoUrl: beRepoUrl,
       status: 'provisioned',
       workflowPath: backendWorkflowPath,
-      workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+      workflowFiles: workflowFileMetadata(backendWorkflowFiles),
       githubCommitSha: backendCommitSha,
       githubCommitUrl: backendCommitUrl,
       projectTypeId: backend.projectTypeId,
@@ -3647,7 +2454,7 @@ export class ProjectsService {
       }),
       ...(feRepoUrl !== undefined && { secondaryRepoUrl: feRepoUrl }),
       deploymentProvisioning:
-        this.combineDeploymentProvisioningResults(provisioningResults),
+        combineDeploymentProvisioningResults(provisioningResults),
     };
   }
 
@@ -3764,89 +2571,8 @@ export class ProjectsService {
 
     return {
       row,
-      project: this.toProvisionedProject(row),
+      project: toProvisionedProject(row),
     };
-  }
-
-  /**
-   * Creating a project is a Lead/Admin action, not a Developer one.
-   *
-   * This is the same standard HierarchyAccessService.assertGlobalCreatorRole
-   * applies to systems, delivery projects and repositories - a project is the
-   * same kind of act, and having two different answers to "who may create
-   * things here" is how a product ends up with a role model nobody can predict.
-   *
-   * Deliberately keyed on the GLOBAL app_role rather than the workspace role: a
-   * workspace delegated_lead whose app_role is member is a Developer with
-   * extra rights inside one team, not someone who may provision repositories.
-   */
-  private async assertCanCreateProjects(userId: string): Promise<void> {
-    if (await this.projectsRepository.isGlobalProjectCreator(userId)) {
-      return;
-    }
-    throw new ForbiddenException(
-      'Only a Lead or Admin can create projects. Ask a team lead to create it for you.',
-    );
-  }
-
-  /**
-   * Workspace for a create that did not name one.
-   *
-   * This deliberately does NOT fall back to items[0]. That silently picked
-   * the caller's oldest workspace by created_at, which - while personal
-   * workspaces were auto-created on first read - was reliably the personal one,
-   * so projects created outside a team landed somewhere no teammate could see
-   * them. With one team the choice is unambiguous; with several it belongs to
-   * the caller, not to a sort order.
-   */
-  private async resolveImplicitWorkspaceId(userId: string): Promise<string> {
-    const items =
-      (await this.workspacesService?.getMyWorkspaces(userId))?.items ?? [];
-
-    const only = items.length === 1 ? items[0] : undefined;
-    if (only) {
-      return only.id;
-    }
-    if (items.length === 0) {
-      throw new ForbiddenException(
-        'Every project belongs to a team. Ask a team admin to add you to one before creating a project.',
-      );
-    }
-    throw new BadRequestException(
-      'Select which team this project belongs to before creating it.',
-    );
-  }
-  /**
-   * Workspace a newly-created project belongs to. When the caller creates from
-   * inside a group (the "Create project" form passes that group's id), the
-   * project is owned by that group — but only if the caller actually belongs to
-   * it (or is a global admin), so a project can't be smuggled into a group the
-   * caller has no access to. Otherwise it falls back to the caller's default
-   * (personal) workspace.
-   */
-  private async resolveWorkspaceIdForCreate(
-    userId: string,
-    workspaceId?: string | null,
-  ): Promise<string | null> {
-    await this.assertCanCreateProjects(userId);
-    if (!workspaceId) {
-      // Workspaces disabled entirely: leave the project unscoped as before
-      // rather than blocking creation on a module that isn't running.
-      if (!this.workspacesService) {
-        return null;
-      }
-      return this.resolveImplicitWorkspaceId(userId);
-    }
-    const allowed = await this.projectsRepository.canCreateInWorkspace(
-      userId,
-      workspaceId,
-    );
-    if (!allowed) {
-      throw new ForbiddenException(
-        'You are not a member of the selected group.',
-      );
-    }
-    return workspaceId;
   }
 
   /**
@@ -3965,20 +2691,7 @@ export class ProjectsService {
     body: string;
     metadata: Record<string, unknown>;
   }): Promise<void> {
-    await this.auditEventsService?.recordProjectEvent({
-      actorUserId: input.userId,
-      projectId: input.projectId,
-      eventCode: input.eventCode,
-      message: input.title,
-      metadata: input.metadata,
-    });
-    await this.notificationEventsService?.record({
-      userId: input.userId,
-      projectId: input.projectId,
-      eventCode: input.eventCode,
-      title: input.title,
-      body: input.body,
-    });
+    await this.productEvents.record(input);
   }
 
   private projectSyncSnapshotsEnabled(): boolean {
@@ -4016,205 +2729,4 @@ export class ProjectsService {
     return config?.auditEvents?.enabled ?? false;
   }
 
-  private timestampForBranch(date = new Date()): string {
-    return date.toISOString().replaceAll(/\D/g, '').slice(0, 14);
-  }
-
-  private buildLocalSnapshotFindings(
-    overview: ProjectOverviewResponse,
-  ): ProjectDashboardSnapshotFinding[] {
-    const findings: ProjectDashboardSnapshotFinding[] = [];
-
-    if (overview.workflow.stageCount === 0) {
-      findings.push({
-        code: 'workflow_files_missing',
-        severity: 'warning',
-        message: 'No workflow file metadata is tracked yet.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.deploymentTargets.count === 0) {
-      findings.push({
-        code: 'deployment_target_not_provisioned',
-        severity: 'warning',
-        message: 'No deployment targets are configured.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.ciAuth.status === 'missing') {
-      findings.push({
-        code: 'ci_token_missing',
-        severity: 'warning',
-        message: 'No project CI token is tracked.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.ciAuth.status === 'revoked') {
-      findings.push({
-        code: 'ci_token_revoked',
-        severity: 'warning',
-        message: 'Project CI token is revoked.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.environment.count === 0) {
-      findings.push({
-        code: 'env_metadata_empty',
-        severity: 'warning',
-        message: 'No env var metadata is tracked yet.',
-        source: 'local_snapshot',
-      });
-    }
-
-    for (const check of overview.health.checks) {
-      if (check.status === 'error') {
-        findings.push({
-          code: check.key,
-          severity: 'error',
-          message: check.message,
-          source: 'local_snapshot',
-        });
-      }
-    }
-
-    return findings;
-  }
-
-  private toCiAuthOverview(token: ProjectTokenStatus | null): {
-    status: 'active' | 'revoked' | 'missing';
-    tokenPresent: boolean;
-    tokenPrefix: string | null;
-    createdAt: string | null;
-    updatedAt: string | null;
-    revokedAt: string | null;
-  } {
-    if (!token) {
-      return {
-        status: 'missing',
-        tokenPresent: false,
-        tokenPrefix: null,
-        createdAt: null,
-        updatedAt: null,
-        revokedAt: null,
-      };
-    }
-
-    return {
-      status: token.status,
-      tokenPresent: true,
-      tokenPrefix: token.tokenPrefix,
-      createdAt: token.createdAt,
-      updatedAt: token.updatedAt,
-      revokedAt: token.revokedAt,
-    };
-  }
-
-  private buildOverviewHealth(input: {
-    project: ProvisionedProject;
-    workflowFiles: WorkflowFileMetadata[];
-    ciAuth: ProjectOverviewResponse['ciAuth'];
-    deploymentTargets: DeploymentTargetSummary[];
-    envMetadata: EnvVarMetadata[];
-  }): ProjectOverviewResponse['health'] {
-    const checks: ProjectOverviewResponse['health']['checks'] = [
-      {
-        key: 'project_status',
-        label: 'Project status',
-        status: input.project.status === 'failed' ? 'error' : 'ok',
-        message:
-          input.project.status === 'failed'
-            ? (input.project.failureReason ?? 'Project provisioning failed.')
-            : `Project is ${input.project.status}.`,
-      },
-      {
-        key: 'workflow_bundle',
-        label: 'Workflow bundle',
-        status: input.workflowFiles.length > 0 ? 'ok' : 'warning',
-        message:
-          input.workflowFiles.length > 0
-            ? `${input.workflowFiles.length} workflow file${input.workflowFiles.length === 1 ? '' : 's'} tracked.`
-            : 'No workflow file metadata is tracked yet.',
-      },
-      {
-        key: 'ci_token',
-        label: 'CI token',
-        status: input.ciAuth.status === 'active' ? 'ok' : 'warning',
-        message:
-          input.ciAuth.status === 'active'
-            ? 'Project CI token is active.'
-            : input.ciAuth.status === 'revoked'
-              ? 'Project CI token is revoked.'
-              : 'No project CI token is tracked.',
-      },
-      {
-        key: 'deployment_targets',
-        label: 'Deployment targets',
-        status: input.deploymentTargets.length > 0 ? 'ok' : 'warning',
-        message:
-          input.deploymentTargets.length > 0
-            ? `${input.deploymentTargets.length} deployment target${input.deploymentTargets.length === 1 ? '' : 's'} tracked.`
-            : 'No deployment targets are configured.',
-      },
-      {
-        key: 'env_metadata',
-        label: 'Environment metadata',
-        status: input.envMetadata.some((item) => item.status === 'failed')
-          ? 'warning'
-          : 'ok',
-        message:
-          input.envMetadata.length > 0
-            ? `${input.envMetadata.length} env var key${input.envMetadata.length === 1 ? '' : 's'} tracked.`
-            : 'No env var metadata is tracked yet.',
-      },
-    ];
-    const summary = checks.some((check) => check.status === 'error')
-      ? 'error'
-      : checks.some((check) => check.status === 'warning')
-        ? 'warning'
-        : 'ok';
-
-    return { summary, checks };
-  }
-
-  private toProvisionedProject(row: ProvisionedProjectRow): ProvisionedProject {
-    const workflowFiles = Array.isArray(row.project_options?.['workflowFiles'])
-      ? (row.project_options['workflowFiles'] as WorkflowFileMetadata[])
-      : null;
-
-    return {
-      id: row.id,
-      repoFullName: row.repo_full_name,
-      templateId: row.template_id,
-      serviceName: row.service_name,
-      workflowPath: row.workflow_path,
-      workflowFiles,
-      status: row.status,
-      githubCommitSha: row.github_commit_sha,
-      githubCommitUrl: row.github_commit_url,
-      failureReason: row.failure_reason,
-      repoUrl: row.repo_url,
-      visibility: row.visibility,
-      repoShape: row.repo_shape,
-      projectTypeId: row.project_type_id,
-      workflowRecipeId: row.workflow_recipe_id,
-      projectOptions: row.project_options,
-      workspaceId: row.workspace_id ?? null,
-      isOwner: row.is_owner,
-    };
-  }
-
-  private workflowFileMetadata(
-    workflowFiles: StagedWorkflowFile[],
-  ): WorkflowFileMetadata[] {
-    return workflowFiles.map((file) => ({
-      stage: file.stage,
-      name: file.name,
-      path: file.path,
-      gated: file.gated,
-    }));
-  }
 }
