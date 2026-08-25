@@ -75,6 +75,10 @@ const makeProjectsRepository = () =>
     }),
     updateStatus: jest.fn().mockResolvedValue(undefined),
     deleteByIdAndUser: jest.fn().mockResolvedValue(true),
+    // Creating a project is a Lead/Admin action; these fixtures are about
+    // workflow authorization, so the caller is an authorized creator.
+    isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
+    canCreateInWorkspace: jest.fn().mockResolvedValue(true),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>

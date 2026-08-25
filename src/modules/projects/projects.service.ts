@@ -3943,6 +3943,27 @@ export class ProjectsService {
   }
 
   /**
+   * Creating a project is a Lead/Admin action, not a Developer one.
+   *
+   * This is the same standard `HierarchyAccessService.assertGlobalCreatorRole`
+   * applies to systems, delivery projects and repositories — a project is the
+   * same kind of act, and having two different answers to "who may create
+   * things here" is how a product ends up with a role model nobody can predict.
+   *
+   * Deliberately keyed on the GLOBAL app_role rather than the workspace role: a
+   * workspace `delegated_lead` whose app_role is `member` is a Developer with
+   * extra rights inside one team, not someone who may provision repositories.
+   */
+  private async assertCanCreateProjects(userId: string): Promise<void> {
+    if (await this.projectsRepository.isGlobalProjectCreator(userId)) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Only a Lead or Admin can create projects. Ask a team lead to create it for you.',
+    );
+  }
+
+  /**
    * Workspace for a create that did not name one.
    *
    * This deliberately does NOT fall back to `items[0]`. That silently picked
@@ -3984,6 +4005,12 @@ export class ProjectsService {
     userId: string,
     workspaceId?: string | null,
   ): Promise<string | null> {
+    // Role gate FIRST, and here rather than in canCreateInWorkspace, because
+    // the implicit path below never reaches that check — gating only the
+    // explicit branch would let a Developer with exactly one team create by
+    // simply not naming it.
+    await this.assertCanCreateProjects(userId);
+
     if (!workspaceId) {
       // Workspaces disabled entirely: leave the project unscoped as before
       // rather than blocking creation on a module that isn't running.

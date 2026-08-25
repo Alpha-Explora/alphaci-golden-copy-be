@@ -102,6 +102,10 @@ const makeProjectsRepository = () =>
       repo_full_name: 'tone/orders-api',
     }),
     listByUser: jest.fn().mockResolvedValue([]),
+    // Creating a project is a Lead/Admin action. These fixtures describe an
+    // authorized creator; the Developer case overrides this to false.
+    isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
+    canCreateInWorkspace: jest.fn().mockResolvedValue(true),
   }) as unknown as ProjectsRepository;
 
 const makeWorkspaceAccessService = (
@@ -748,6 +752,39 @@ jobs:
         }),
     };
   };
+
+  /* Creating a project is a Lead/Admin action — the same standard
+   * HierarchyAccessService applies to systems, delivery projects and
+   * repositories. A Developer is refused before anything is provisioned. */
+  it('refuses a Developer, before creating a repository', async () => {
+    const { create, projectsRepository } = await createWithTeams([
+      { id: 'workspace-1', name: 'Platform', kind: 'team', role: 'member' },
+    ]);
+    (
+      projectsRepository.isGlobalProjectCreator as jest.Mock
+    ).mockResolvedValue(false);
+
+    await expect(create()).rejects.toThrow('Only a Lead or Admin');
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+    expect(projectsRepository.create).not.toHaveBeenCalled();
+  });
+
+  /* The role gate sits above BOTH resolution paths. Gating only the branch
+   * that names a workspace would let a Developer with exactly one team create
+   * by simply omitting it, since that path never reaches
+   * canCreateInWorkspace. */
+  it('refuses a Developer who omits the team to dodge the workspace check', async () => {
+    const { create, projectsRepository } = await createWithTeams([
+      { id: 'workspace-1', name: 'Platform', kind: 'team', role: 'member' },
+    ]);
+    (
+      projectsRepository.isGlobalProjectCreator as jest.Mock
+    ).mockResolvedValue(false);
+
+    await expect(create()).rejects.toThrow('Only a Lead or Admin');
+    expect(projectsRepository.canCreateInWorkspace).not.toHaveBeenCalled();
+    expect(projectsRepository.create).not.toHaveBeenCalled();
+  });
 
   it('refuses to guess when the caller belongs to no team', async () => {
     const { create, projectsRepository } = await createWithTeams([]);
