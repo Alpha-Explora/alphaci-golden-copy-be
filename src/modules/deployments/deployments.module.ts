@@ -41,6 +41,7 @@ import { CustomDomainsController } from './custom-domains.controller';
 import { CustomDomainsRepository } from './custom-domains.repository';
 import { CustomDomainsService } from './custom-domains.service';
 import { VercelCiSecretsService } from './vercel-ci-secrets.service';
+import { LegacyDeploymentProvidersModule } from './infrastructure/providers/legacy/legacy-deployment-providers.module';
 import { LocalDeploymentHistoryProvider } from './application/local-deployment-history.provider';
 import { ProjectDeploymentsService } from './application/project-deployments.service';
 import { ProjectDriftService } from './application/project-drift.service';
@@ -56,6 +57,7 @@ import { ProjectSyncFindingsRepository } from './application/project-sync-findin
     UsageModule,
     WorkspacesModule,
     CiModule,
+    LegacyDeploymentProvidersModule,
   ],
   controllers: [
     ProviderConnectionsController,

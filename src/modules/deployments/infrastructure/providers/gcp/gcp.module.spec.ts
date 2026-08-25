@@ -1,9 +1,9 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
-import { DeploymentsCoreModule } from '../../core/deployments-core.module';
-import type { DeploymentProvider } from '../../core/deployment-provider.contract';
-import { DeploymentProviderRegistry } from '../../core/deployment-provider.registry';
+import { DeploymentsCoreModule } from '../../../core/deployments-core.module';
+import type { DeploymentProvider } from '../../../core/deployment-provider.contract';
+import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
 import { FakeGcpRuntimeAdapter } from './fake-gcp-runtime.adapter';
 import { GCP_RUNTIME_ADAPTER } from './gcp-runtime.port';
 import { GcpDeploymentModule } from './gcp.module';

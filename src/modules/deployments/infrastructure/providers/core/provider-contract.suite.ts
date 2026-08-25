@@ -1,4 +1,4 @@
-import type { DeploymentProvider } from './deployment-provider.contract';
+import type { DeploymentProvider } from '../../../core/deployment-provider-runtime.contract';
 import type { RuntimeEnvProviderClient } from './runtime-env-provider.client';
 
 /**

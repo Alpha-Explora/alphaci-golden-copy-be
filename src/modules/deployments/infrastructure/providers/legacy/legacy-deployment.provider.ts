@@ -4,8 +4,8 @@ import type {
   DeploymentProvider,
   ProviderCapabilities,
   ProviderFormSchema,
-} from '../../core/deployment-provider.contract';
-import { DeploymentProviderRegistry } from '../../core/deployment-provider.registry';
+} from '../../../core/deployment-provider.contract';
+import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
 
 export interface LegacyDeploymentProviderConfig {
   id: 'render' | 'vercel';

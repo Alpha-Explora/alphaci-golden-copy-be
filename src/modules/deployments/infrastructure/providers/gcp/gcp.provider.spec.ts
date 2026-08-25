@@ -1,4 +1,4 @@
-import { DeploymentProviderRegistry } from '../../core/deployment-provider.registry';
+import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
 import { GcpDeploymentProvider } from './gcp.provider';
 
 describe('GcpDeploymentProvider', () => {
