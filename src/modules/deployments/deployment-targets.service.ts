@@ -11,10 +11,8 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import { AuditEventsService } from '../audit/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
-import {
-  DeploymentTargetsRepository,
-  type UpdateDeploymentTargetMetadataInput,
-} from './deployments.types';
+import { DeploymentTargetsRepository } from './deployment-targets.repository';
+import type { UpdateDeploymentTargetMetadataInput } from './deployments.types';
 import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
