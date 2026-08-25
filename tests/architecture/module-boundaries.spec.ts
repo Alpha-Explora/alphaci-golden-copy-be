@@ -25,9 +25,17 @@ describe('module boundary policy', () => {
   it('passes dependency-cruiser with zero violations', () => {
     // Runs the actual analysis against source code. If a violation exists,
     // execSync throws and this test fails with depcruise's own output.
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    // Invoke the local depcruise binary directly (not via npm) so the gate
+    // works on machines where npm is not on PATH.
+    const nodeCmd = process.execPath;
+    const depcruiseJs = resolve(
+      repositoryRoot,
+      'node_modules/dependency-cruiser/bin/dependency-cruise.mjs',
+    );
     try {
-      execSync(`${npmCmd} run boundaries:new`, {
+      const quote = process.platform === 'win32' ? '"' : "'";
+      const q = (value: string) => `${quote}${value}${quote}`;
+      execSync(`${q(nodeCmd)} ${q(depcruiseJs)} src tests --config ${q(configPath)}`, {
         cwd: repositoryRoot,
         encoding: 'utf8',
         timeout: 120_000,
