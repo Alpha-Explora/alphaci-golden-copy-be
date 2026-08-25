@@ -93,6 +93,7 @@ import {
 } from './application/sonar-cloud-setup.service';
 import { ProvisioningTokenService } from './application/provisioning-token.service';
 import { SetupBranchService } from './application/setup-branch.service';
+import { WorkspaceGateService } from './application/workspace-gate.service';
 import { ProjectWorkflowFilesService } from './application/project-workflow-files.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
@@ -419,6 +420,15 @@ export class ProjectsService {
     ));
   }
 
+  /** Lazily-created workspace-gate delegate for direct constructions. */
+  private workspaceGateLazy?: WorkspaceGateService;
+  private get workspaceGate(): WorkspaceGateService {
+    return (this.workspaceGateLazy ??= new WorkspaceGateService(
+      this.projectsRepository,
+      this.workspacesService,
+    ));
+  }
+
   /**
    * Spy/seam retained for the existing spec suite: tests stub file pushes at
    * this boundary rather than constructing a full ProjectWorkflowFilesService.
@@ -675,7 +685,7 @@ export class ProjectsService {
     // the repository exists and the workflow is pushed, so discovering there that
     // the caller named no resolvable team would leave a real repository behind
     // for a request that never had anywhere to put it.
-    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+    await this.workspaceGate.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
     const {
       repositoryCreationToken,
       provisioningToken,
@@ -784,7 +794,7 @@ export class ProjectsService {
       // whose pipelines can never authenticate.
       row = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -1038,7 +1048,7 @@ export class ProjectsService {
       // access-gate runs as soon as a workflow file is pushed.
       backendRow = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -1139,7 +1149,7 @@ export class ProjectsService {
         try {
           await this.createProjectRow({
             userId,
-            workspaceId: await this.resolveWorkspaceIdForCreate(
+            workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
               userId,
               dto.workspaceId,
             ),
@@ -1230,7 +1240,7 @@ export class ProjectsService {
     // Settle the owning team first - this path mutates an existing repository
     // (branches, secrets, a workflow commit) before the row is written, and none
     // of that should happen for a request with nowhere to put the project.
-    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+    await this.workspaceGate.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
 
     // 1. Build workflow YAML from the given templateId
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
@@ -1297,7 +1307,7 @@ export class ProjectsService {
 
     const row = await this.createProjectRow({
       userId,
-      workspaceId: await this.resolveWorkspaceIdForCreate(
+      workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
         userId,
         dto.workspaceId,
       ),
@@ -2333,7 +2343,7 @@ export class ProjectsService {
       // access-gate run can authenticate (see createProject for rationale).
       backendRow = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -2499,7 +2509,7 @@ export class ProjectsService {
 
       feRow = await this.createProjectRow({
         userId,
-        workspaceId: await this.resolveWorkspaceIdForCreate(
+        workspaceId: await this.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         ),
@@ -2774,87 +2784,6 @@ export class ProjectsService {
       row,
       project: this.toProvisionedProject(row),
     };
-  }
-
-  /**
-   * Creating a project is a Lead/Admin action, not a Developer one.
-   *
-   * This is the same standard HierarchyAccessService.assertGlobalCreatorRole
-   * applies to systems, delivery projects and repositories - a project is the
-   * same kind of act, and having two different answers to "who may create
-   * things here" is how a product ends up with a role model nobody can predict.
-   *
-   * Deliberately keyed on the GLOBAL app_role rather than the workspace role: a
-   * workspace delegated_lead whose app_role is member is a Developer with
-   * extra rights inside one team, not someone who may provision repositories.
-   */
-  private async assertCanCreateProjects(userId: string): Promise<void> {
-    if (await this.projectsRepository.isGlobalProjectCreator(userId)) {
-      return;
-    }
-    throw new ForbiddenException(
-      'Only a Lead or Admin can create projects. Ask a team lead to create it for you.',
-    );
-  }
-
-  /**
-   * Workspace for a create that did not name one.
-   *
-   * This deliberately does NOT fall back to items[0]. That silently picked
-   * the caller's oldest workspace by created_at, which - while personal
-   * workspaces were auto-created on first read - was reliably the personal one,
-   * so projects created outside a team landed somewhere no teammate could see
-   * them. With one team the choice is unambiguous; with several it belongs to
-   * the caller, not to a sort order.
-   */
-  private async resolveImplicitWorkspaceId(userId: string): Promise<string> {
-    const items =
-      (await this.workspacesService?.getMyWorkspaces(userId))?.items ?? [];
-
-    const only = items.length === 1 ? items[0] : undefined;
-    if (only) {
-      return only.id;
-    }
-    if (items.length === 0) {
-      throw new ForbiddenException(
-        'Every project belongs to a team. Ask a team admin to add you to one before creating a project.',
-      );
-    }
-    throw new BadRequestException(
-      'Select which team this project belongs to before creating it.',
-    );
-  }
-  /**
-   * Workspace a newly-created project belongs to. When the caller creates from
-   * inside a group (the "Create project" form passes that group's id), the
-   * project is owned by that group — but only if the caller actually belongs to
-   * it (or is a global admin), so a project can't be smuggled into a group the
-   * caller has no access to. Otherwise it falls back to the caller's default
-   * (personal) workspace.
-   */
-  private async resolveWorkspaceIdForCreate(
-    userId: string,
-    workspaceId?: string | null,
-  ): Promise<string | null> {
-    await this.assertCanCreateProjects(userId);
-    if (!workspaceId) {
-      // Workspaces disabled entirely: leave the project unscoped as before
-      // rather than blocking creation on a module that isn't running.
-      if (!this.workspacesService) {
-        return null;
-      }
-      return this.resolveImplicitWorkspaceId(userId);
-    }
-    const allowed = await this.projectsRepository.canCreateInWorkspace(
-      userId,
-      workspaceId,
-    );
-    if (!allowed) {
-      throw new ForbiddenException(
-        'You are not a member of the selected group.',
-      );
-    }
-    return workspaceId;
   }
 
   /**
