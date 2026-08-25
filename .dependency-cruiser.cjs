@@ -20,7 +20,7 @@ module.exports = {
       "to": {
         "path": "^src/modules/([^/]+)/(?!index\\.ts$).+",
         "pathNot": [
-          "^src/modules/[^/]+/[^/]+\\.module\\.ts$",
+          "^src/modules/[^/]+/.*\\.module\\.ts$",
           "^src/modules/[^/]+/.+/index\\.ts$",
           "^src/app\\.module\\.ts$"
         ]
@@ -37,7 +37,7 @@ module.exports = {
         "path": "^src/modules/([^/]+)/(?!index\\.ts$).+",
         "pathNot": [
           "^src/modules/$1/",
-          "^src/modules/[^/]+/[^/]+\\.module\\.ts$",
+          "^src/modules/[^/]+/.*\\.module\\.ts$",
           "^src/modules/[^/]+/.+/index\\.ts$"
         ]
       }
