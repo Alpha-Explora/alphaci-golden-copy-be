@@ -94,6 +94,14 @@ import {
 import { ProvisioningTokenService } from './application/provisioning-token.service';
 import { SetupBranchService } from './application/setup-branch.service';
 import { WorkspaceGateService } from './application/workspace-gate.service';
+import { ProductEventsService } from './application/product-events.service';
+import {
+  buildLocalSnapshotFindings,
+  buildOverviewHealth,
+  toCiAuthOverview,
+  toProvisionedProject,
+  workflowFileMetadata,
+} from './application/project-overview.view';
 import { ProjectWorkflowFilesService } from './application/project-workflow-files.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
@@ -114,253 +122,25 @@ import type {
   DeploymentProvisioningRequestDto,
   DeploymentProvisioningTargetDto,
 } from './dto/create-project.dto';
+import type {
+  CreateProjectResponse,
+  DisconnectProjectResponse,
+  ProjectAuditEventsResponse,
+  ProvisionedProject,
+  ProjectOverviewResponse,
+  ProjectSyncSnapshotResponse,
+  ProvisionedProjectsResponse,
+  ReconcileDeletedReposResult,
+  SetupProjectResponse,
+  SyncProjectsResponse,
+  WorkflowSettingsPreviewRequest,
+  WorkflowSettingsPreviewResponse,
+  WorkflowSettingsResponse,
+  WorkflowUpdatePullRequestResponse,
+} from './projects.service.types';
 
+export type * from './projects.service.types';
 
-// ─── Response shapes (match FE contracts exactly) ────────────────────────────
-
-export interface CreateProjectResponse {
-  id: string;
-  repoFullName: string;
-  repoUrl: string;
-  status: 'provisioned';
-  workflowPath: string;
-  workflowFiles: WorkflowFileMetadata[];
-  githubCommitSha: string;
-  githubCommitUrl: string | null;
-  projectTypeId: string;
-  workflowRecipeId: string;
-  additionalWorkflowPaths?: string[];
-  secondaryRepoFullName?: string;
-  secondaryRepoUrl?: string;
-  deploymentProvisioning: DeploymentProvisioningResult;
-}
-
-export interface SetupProjectResponse {
-  id: string;
-  repoFullName: string;
-  status: 'provisioned';
-  workflowPath: string;
-  workflowFiles: WorkflowFileMetadata[];
-  githubCommitSha: string;
-  githubCommitUrl: string | null;
-  deploymentProvisioning: DeploymentProvisioningResult;
-}
-
-export type { DeploymentProvisioningResult } from '../deployments/index.js';
-
-export interface ProvisionedProject {
-  id: string;
-  repoFullName: string;
-  templateId: string;
-  serviceName: string;
-  workflowPath: string;
-  workflowFiles?: WorkflowFileMetadata[] | null;
-  status: ProvisionedProjectStatus;
-  githubCommitSha: string | null;
-  githubCommitUrl: string | null;
-  failureReason: string | null;
-  repoUrl?: string | null;
-  visibility?: string | null;
-  repoShape?: string | null;
-  projectTypeId?: string | null;
-  workflowRecipeId?: string | null;
-  projectOptions?: Record<string, unknown> | null;
-  /**
-   * Owning workspace (orgs.workspaces.id). For hierarchy-managed repositories
-   * this is the GROUP id — the FE Projects screen groups the list by it.
-   */
-  workspaceId?: string | null;
-  /**
-   * Viewer-relative: true only when the authenticated user is the actual
-   * project creator, not just able to see it via admin/manager visibility.
-   * Only populated by `listByUser`-backed reads (currently `listProjects`) —
-   * undefined elsewhere (e.g. `findByIdAndUser`-backed reads).
-   */
-  isOwner?: boolean | undefined;
-}
-
-export interface SyncProjectsResponse {
-  orphaned: number;
-  reachable: number;
-  total: number;
-}
-
-export interface ReconcileDeletedReposResult {
-  /** Total tracked projects fetched for this reconciliation pass. */
-  total: number;
-  /** Rows actually checked against GitHub — `total` minus `outOfScope`. */
-  checked: number;
-  /** Rows hard-deleted after a confirmed 404 from GitHub. */
-  deleted: number;
-  /** Rows left untouched because the GitHub check was inconclusive
-   *  (401/403/5xx/network error) — never treated as "confirmed gone". */
-  skipped: number;
-  /** Rows never checked at all because their repo doesn't belong to the
-   *  enforced org — the org-scoped installation token can't reliably tell
-   *  "deleted" apart from "not accessible to this token" for those repos
-   *  (e.g. projects added via the "import an existing repo" flow, which can
-   *  point at a personal account or a different org). See the method doc
-   *  on reconcileDeletedRepos() for the full reasoning. */
-  outOfScope: number;
-}
-
-export interface DisconnectProjectResponse {
-  ok: true;
-  githubRepoDeleted: boolean;
-  githubRepoDeleteError?: {
-    code: GithubRepoDeleteErrorCode;
-    message: string;
-  };
-}
-
-export interface ProvisionedProjectsResponse {
-  items: ProvisionedProject[];
-}
-
-export type ProjectOverviewHealthStatus = 'ok' | 'warning' | 'error';
-
-export interface ProjectOverviewResponse {
-  project: ProvisionedProject & {
-    createdAt: string;
-    updatedAt: string;
-  };
-  workflow: {
-    path: string;
-    files: WorkflowFileMetadata[];
-    stageCount: number;
-    history: WorkflowHistoryEntry[];
-  };
-  deploymentTargets: {
-    items: DeploymentTargetSummary[];
-    count: number;
-  };
-  environment: {
-    items: EnvVarMetadata[];
-    count: number;
-    failedCount: number;
-  };
-  ciAuth: {
-    status: 'active' | 'revoked' | 'missing';
-    tokenPresent: boolean;
-    tokenPrefix: string | null;
-    createdAt: string | null;
-    updatedAt: string | null;
-    revokedAt: string | null;
-  };
-  health: {
-    summary: ProjectOverviewHealthStatus;
-    checks: Array<{
-      key: string;
-      label: string;
-      status: ProjectOverviewHealthStatus;
-      message: string;
-    }>;
-  };
-  syncSnapshot: {
-    enabled: boolean;
-    mode: 'local_snapshot';
-    latest: ProjectDashboardSnapshot | null;
-  };
-  capabilities: {
-    envProvisioning: boolean;
-    workflowSettings: boolean;
-    syncSnapshots: boolean;
-    ciRunTracking: boolean;
-    deploymentHistory: boolean;
-    driftDetection: boolean;
-  };
-  /**
-   * The hierarchy.repositories id this project is linked to, or null.
-   *
-   * Developer assignments hang off hierarchy.repositories, not off
-   * provisioned_projects, so without this id the project page has no way to
-   * address its own access panel. Null means "no assignment surface for this
-   * project" — a personal-workspace project, or one created before the link
-   * existed — and the UI hides the entry point rather than guessing a URL.
-   */
-  hierarchyRepositoryId: string | null;
-}
-
-export interface ProjectSyncSnapshotResponse {
-  snapshot: ProjectDashboardSnapshot;
-  overview: ProjectOverviewResponse;
-}
-
-export interface ProjectAuditEventsResponse {
-  enabled: boolean;
-  items: Array<{
-    id: string;
-    eventCode: string;
-    message: string;
-    actorUserId: string | null;
-    createdAt: string;
-  }>;
-}
-
-export interface WorkflowSettings {
-  projectId: string;
-  templateId: string;
-  projectTypeId: string | null;
-  workflowRecipeId: string | null;
-  serviceName: string;
-  servicePath: string;
-  nodeVersion: string;
-  packageManager: 'npm';
-  coverageThreshold: number;
-  centralWorkflowRef: string;
-  checks: {
-    lint: boolean;
-    unit: boolean;
-    build: boolean;
-    security: boolean;
-  };
-}
-
-export interface WorkflowSettingsResponse {
-  enabled: boolean;
-  source: 'stored' | 'project_options';
-  settings: WorkflowSettings;
-}
-
-export interface WorkflowSettingsPreviewRequest {
-  templateId?: string;
-  projectTypeId?: string | null;
-  workflowRecipeId?: string | null;
-  serviceName?: string;
-  servicePath?: string;
-  nodeVersion?: string;
-  packageManager?: 'npm';
-  coverageThreshold?: number;
-  centralWorkflowRef?: string;
-  checks?: Partial<WorkflowSettings['checks']>;
-}
-
-export interface WorkflowSettingsPreviewResponse {
-  settings: WorkflowSettings;
-  workflowFiles: StagedWorkflowFile[];
-  diffSummary: Array<{
-    path: string;
-    status: 'new' | 'changed' | 'unchanged';
-  }>;
-  validationWarnings: Array<{
-    field: string;
-    message: string;
-  }>;
-}
-
-export interface WorkflowUpdatePullRequestResponse {
-  projectId: string;
-  repoFullName: string;
-  branchName: string;
-  workflowPath: string;
-  workflowFiles: WorkflowFileMetadata[];
-  pullRequestNumber: number;
-  pullRequestUrl: string;
-  status: 'created';
-  request: WorkflowUpdateRequestRecord | null;
-}
-
-// ─── GitHub Contents API response ────────────────────────────────────────────
 
 interface GitHubContentsResponse {
   content: { html_url?: string };
@@ -426,6 +206,15 @@ export class ProjectsService {
     return (this.workspaceGateLazy ??= new WorkspaceGateService(
       this.projectsRepository,
       this.workspacesService,
+    ));
+  }
+
+  /** Lazily-created product-events delegate for direct constructions. */
+  private productEventsLazy?: ProductEventsService;
+  private get productEvents(): ProductEventsService {
+    return (this.productEventsLazy ??= new ProductEventsService(
+      this.auditEventsService,
+      this.notificationEventsService,
     ));
   }
 
@@ -811,7 +600,7 @@ export class ProjectsService {
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
-          workflowFiles: this.workflowFileMetadata(workflowFiles),
+          workflowFiles: workflowFileMetadata(workflowFiles),
         },
       });
 
@@ -904,7 +693,7 @@ export class ProjectsService {
         repoUrl,
         status: 'provisioned',
         workflowPath,
-        workflowFiles: this.workflowFileMetadata(workflowFiles),
+        workflowFiles: workflowFileMetadata(workflowFiles),
         githubCommitSha: commitSha,
         githubCommitUrl: commitUrl,
         projectTypeId: dto.projectTypeId,
@@ -1065,7 +854,7 @@ export class ProjectsService {
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
-          workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+          workflowFiles: workflowFileMetadata(backendWorkflowFiles),
         },
       });
 
@@ -1167,7 +956,7 @@ export class ProjectsService {
             workflowRecipeId: frontend.workflowRecipeId ?? null,
             projectOptions: {
               ...this.repositoryOwnershipMetadata(dto, ownerLogin),
-              workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
+              workflowFiles: workflowFileMetadata(frontendWorkflowFiles),
             },
           });
         } catch (err) {
@@ -1208,7 +997,7 @@ export class ProjectsService {
         repoUrl,
         status: 'provisioned',
         workflowPath: backendWorkflowPath,
-        workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+        workflowFiles: workflowFileMetadata(backendWorkflowFiles),
         githubCommitSha: backendCommitSha,
         githubCommitUrl: backendCommitUrl,
         projectTypeId: backend.projectTypeId,
@@ -1317,7 +1106,7 @@ export class ProjectsService {
       workflowPath,
       status: 'provisioned',
       projectOptions: {
-        workflowFiles: this.workflowFileMetadata(workflowFiles),
+        workflowFiles: workflowFileMetadata(workflowFiles),
       },
     });
 
@@ -1420,7 +1209,7 @@ export class ProjectsService {
       repoFullName: dto.repoFullName,
       status: 'provisioned',
       workflowPath,
-      workflowFiles: this.workflowFileMetadata(workflowFiles),
+      workflowFiles: workflowFileMetadata(workflowFiles),
       githubCommitSha: commitSha,
       githubCommitUrl: commitUrl,
       deploymentProvisioning,
@@ -1440,7 +1229,7 @@ export class ProjectsService {
       workspaceId,
     );
     return {
-      items: rows.map((row) => this.toProvisionedProject(row)),
+      items: rows.map((row) => toProvisionedProject(row)),
     };
   }
 
@@ -1480,10 +1269,10 @@ export class ProjectsService {
         Promise.resolve(null),
     ]);
 
-    const project = this.toProvisionedProject(row);
+    const project = toProvisionedProject(row);
     const workflowFiles = project.workflowFiles ?? [];
     const matchingHistory = workflowHistory;
-    const ciAuth = this.toCiAuthOverview(ciToken);
+    const ciAuth = toCiAuthOverview(ciToken);
     const failedEnvCount = envMetadata.filter(
       (metadata) => metadata.status === 'failed',
     ).length;
@@ -1510,7 +1299,7 @@ export class ProjectsService {
         failedCount: failedEnvCount,
       },
       ciAuth,
-      health: this.buildOverviewHealth({
+      health: buildOverviewHealth({
         project,
         workflowFiles,
         ciAuth,
@@ -1558,7 +1347,7 @@ export class ProjectsService {
 
     const startedAt = new Date().toISOString();
     const overview = await this.getProjectOverview(projectId, userId);
-    const findings = this.buildLocalSnapshotFindings(overview);
+    const findings = buildLocalSnapshotFindings(overview);
     const completedAt = new Date().toISOString();
     const snapshot = await this.dashboardSnapshotsRepository.createSnapshot({
       projectId,
@@ -2360,7 +2149,7 @@ export class ProjectsService {
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
-          workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+          workflowFiles: workflowFileMetadata(backendWorkflowFiles),
         },
       });
 
@@ -2525,7 +2314,7 @@ export class ProjectsService {
         workflowRecipeId: frontend.workflowRecipeId ?? null,
         projectOptions: {
           ...this.repositoryOwnershipMetadata(dto, feOwnerLogin),
-          workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
+          workflowFiles: workflowFileMetadata(frontendWorkflowFiles),
         },
       });
 
@@ -2654,7 +2443,7 @@ export class ProjectsService {
       repoUrl: beRepoUrl,
       status: 'provisioned',
       workflowPath: backendWorkflowPath,
-      workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+      workflowFiles: workflowFileMetadata(backendWorkflowFiles),
       githubCommitSha: backendCommitSha,
       githubCommitUrl: backendCommitUrl,
       projectTypeId: backend.projectTypeId,
@@ -2782,7 +2571,7 @@ export class ProjectsService {
 
     return {
       row,
-      project: this.toProvisionedProject(row),
+      project: toProvisionedProject(row),
     };
   }
 
@@ -2902,20 +2691,7 @@ export class ProjectsService {
     body: string;
     metadata: Record<string, unknown>;
   }): Promise<void> {
-    await this.auditEventsService?.recordProjectEvent({
-      actorUserId: input.userId,
-      projectId: input.projectId,
-      eventCode: input.eventCode,
-      message: input.title,
-      metadata: input.metadata,
-    });
-    await this.notificationEventsService?.record({
-      userId: input.userId,
-      projectId: input.projectId,
-      eventCode: input.eventCode,
-      title: input.title,
-      body: input.body,
-    });
+    await this.productEvents.record(input);
   }
 
   private projectSyncSnapshotsEnabled(): boolean {
@@ -2953,205 +2729,4 @@ export class ProjectsService {
     return config?.auditEvents?.enabled ?? false;
   }
 
-  private timestampForBranch(date = new Date()): string {
-    return date.toISOString().replaceAll(/\D/g, '').slice(0, 14);
-  }
-
-  private buildLocalSnapshotFindings(
-    overview: ProjectOverviewResponse,
-  ): ProjectDashboardSnapshotFinding[] {
-    const findings: ProjectDashboardSnapshotFinding[] = [];
-
-    if (overview.workflow.stageCount === 0) {
-      findings.push({
-        code: 'workflow_files_missing',
-        severity: 'warning',
-        message: 'No workflow file metadata is tracked yet.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.deploymentTargets.count === 0) {
-      findings.push({
-        code: 'deployment_target_not_provisioned',
-        severity: 'warning',
-        message: 'No deployment targets are configured.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.ciAuth.status === 'missing') {
-      findings.push({
-        code: 'ci_token_missing',
-        severity: 'warning',
-        message: 'No project CI token is tracked.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.ciAuth.status === 'revoked') {
-      findings.push({
-        code: 'ci_token_revoked',
-        severity: 'warning',
-        message: 'Project CI token is revoked.',
-        source: 'local_snapshot',
-      });
-    }
-
-    if (overview.environment.count === 0) {
-      findings.push({
-        code: 'env_metadata_empty',
-        severity: 'warning',
-        message: 'No env var metadata is tracked yet.',
-        source: 'local_snapshot',
-      });
-    }
-
-    for (const check of overview.health.checks) {
-      if (check.status === 'error') {
-        findings.push({
-          code: check.key,
-          severity: 'error',
-          message: check.message,
-          source: 'local_snapshot',
-        });
-      }
-    }
-
-    return findings;
-  }
-
-  private toCiAuthOverview(token: ProjectTokenStatus | null): {
-    status: 'active' | 'revoked' | 'missing';
-    tokenPresent: boolean;
-    tokenPrefix: string | null;
-    createdAt: string | null;
-    updatedAt: string | null;
-    revokedAt: string | null;
-  } {
-    if (!token) {
-      return {
-        status: 'missing',
-        tokenPresent: false,
-        tokenPrefix: null,
-        createdAt: null,
-        updatedAt: null,
-        revokedAt: null,
-      };
-    }
-
-    return {
-      status: token.status,
-      tokenPresent: true,
-      tokenPrefix: token.tokenPrefix,
-      createdAt: token.createdAt,
-      updatedAt: token.updatedAt,
-      revokedAt: token.revokedAt,
-    };
-  }
-
-  private buildOverviewHealth(input: {
-    project: ProvisionedProject;
-    workflowFiles: WorkflowFileMetadata[];
-    ciAuth: ProjectOverviewResponse['ciAuth'];
-    deploymentTargets: DeploymentTargetSummary[];
-    envMetadata: EnvVarMetadata[];
-  }): ProjectOverviewResponse['health'] {
-    const checks: ProjectOverviewResponse['health']['checks'] = [
-      {
-        key: 'project_status',
-        label: 'Project status',
-        status: input.project.status === 'failed' ? 'error' : 'ok',
-        message:
-          input.project.status === 'failed'
-            ? (input.project.failureReason ?? 'Project provisioning failed.')
-            : `Project is ${input.project.status}.`,
-      },
-      {
-        key: 'workflow_bundle',
-        label: 'Workflow bundle',
-        status: input.workflowFiles.length > 0 ? 'ok' : 'warning',
-        message:
-          input.workflowFiles.length > 0
-            ? `${input.workflowFiles.length} workflow file${input.workflowFiles.length === 1 ? '' : 's'} tracked.`
-            : 'No workflow file metadata is tracked yet.',
-      },
-      {
-        key: 'ci_token',
-        label: 'CI token',
-        status: input.ciAuth.status === 'active' ? 'ok' : 'warning',
-        message:
-          input.ciAuth.status === 'active'
-            ? 'Project CI token is active.'
-            : input.ciAuth.status === 'revoked'
-              ? 'Project CI token is revoked.'
-              : 'No project CI token is tracked.',
-      },
-      {
-        key: 'deployment_targets',
-        label: 'Deployment targets',
-        status: input.deploymentTargets.length > 0 ? 'ok' : 'warning',
-        message:
-          input.deploymentTargets.length > 0
-            ? `${input.deploymentTargets.length} deployment target${input.deploymentTargets.length === 1 ? '' : 's'} tracked.`
-            : 'No deployment targets are configured.',
-      },
-      {
-        key: 'env_metadata',
-        label: 'Environment metadata',
-        status: input.envMetadata.some((item) => item.status === 'failed')
-          ? 'warning'
-          : 'ok',
-        message:
-          input.envMetadata.length > 0
-            ? `${input.envMetadata.length} env var key${input.envMetadata.length === 1 ? '' : 's'} tracked.`
-            : 'No env var metadata is tracked yet.',
-      },
-    ];
-    const summary = checks.some((check) => check.status === 'error')
-      ? 'error'
-      : checks.some((check) => check.status === 'warning')
-        ? 'warning'
-        : 'ok';
-
-    return { summary, checks };
-  }
-
-  private toProvisionedProject(row: ProvisionedProjectRow): ProvisionedProject {
-    const workflowFiles = Array.isArray(row.project_options?.['workflowFiles'])
-      ? (row.project_options['workflowFiles'] as WorkflowFileMetadata[])
-      : null;
-
-    return {
-      id: row.id,
-      repoFullName: row.repo_full_name,
-      templateId: row.template_id,
-      serviceName: row.service_name,
-      workflowPath: row.workflow_path,
-      workflowFiles,
-      status: row.status,
-      githubCommitSha: row.github_commit_sha,
-      githubCommitUrl: row.github_commit_url,
-      failureReason: row.failure_reason,
-      repoUrl: row.repo_url,
-      visibility: row.visibility,
-      repoShape: row.repo_shape,
-      projectTypeId: row.project_type_id,
-      workflowRecipeId: row.workflow_recipe_id,
-      projectOptions: row.project_options,
-      workspaceId: row.workspace_id ?? null,
-      isOwner: row.is_owner,
-    };
-  }
-
-  private workflowFileMetadata(
-    workflowFiles: StagedWorkflowFile[],
-  ): WorkflowFileMetadata[] {
-    return workflowFiles.map((file) => ({
-      stage: file.stage,
-      name: file.name,
-      path: file.path,
-      gated: file.gated,
-    }));
-  }
 }

@@ -2110,7 +2110,9 @@ jobs:
 
     expect(githubWithWrites.createBranch).not.toHaveBeenCalled();
     expect(githubWithWrites.pushWorkflowFile).not.toHaveBeenCalled();
-    expect(result.workflowFiles.map((file) => file.path)).toEqual([
+    expect(
+      result.workflowFiles.map((file: { path: string }) => file.path),
+    ).toEqual([
       '.github/workflows/00-alphaci-access.yml',
       '.github/workflows/10-alphaci-quality.yml',
       '.github/workflows/20-alphaci-package.yml',
