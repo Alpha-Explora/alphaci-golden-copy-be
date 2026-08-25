@@ -14,7 +14,7 @@ import { NotificationEventsService } from '../notifications/index.js';
 import {
   DeploymentTargetsRepository,
   type UpdateDeploymentTargetMetadataInput,
-} from './deployment-targets.repository';
+} from './deployments.types';
 import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
