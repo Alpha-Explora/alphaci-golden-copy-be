@@ -91,6 +91,8 @@ import {
   SonarCloudSetupService,
   sonarProjectKeyFor,
 } from './application/sonar-cloud-setup.service';
+import { ProvisioningTokenService } from './application/provisioning-token.service';
+import { SetupBranchService } from './application/setup-branch.service';
 import { ProjectWorkflowFilesService } from './application/project-workflow-files.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
@@ -401,6 +403,22 @@ export class ProjectsService {
     ));
   }
 
+  /** Lazily-created token-resolution delegate for direct constructions. */
+  private tokensLazy?: ProvisioningTokenService;
+  private get tokens(): ProvisioningTokenService {
+    return (this.tokensLazy ??= new ProvisioningTokenService(
+      this.githubService,
+    ));
+  }
+
+  /** Lazily-created setup-branch delegate for direct constructions. */
+  private setupBranchLazy?: SetupBranchService;
+  private get setupBranch(): SetupBranchService {
+    return (this.setupBranchLazy ??= new SetupBranchService(
+      this.githubService,
+    ));
+  }
+
   /**
    * Spy/seam retained for the existing spec suite: tests stub file pushes at
    * this boundary rather than constructing a full ProjectWorkflowFilesService.
@@ -662,7 +680,7 @@ export class ProjectsService {
       repositoryCreationToken,
       provisioningToken,
       provisioningOwnerLogin,
-    } = await this.resolveRepositoryProvisioning(userId, accessToken, dto);
+    } = await this.tokens.resolveRepositoryProvisioning(userId, accessToken, dto);
 
     // The catalog publishes the shape IDs 'mono' and 'multi'; normalize so
     // the flow dispatch never silently falls back to the standalone path.
@@ -1251,7 +1269,7 @@ export class ProjectsService {
       );
     }
 
-    const accessToken = await this.resolveSetupProvisioningToken(
+    const accessToken = await this.tokens.resolveSetupProvisioningToken(
       userId,
       oauthAccessToken,
       dto.repoFullName,
@@ -1264,7 +1282,7 @@ export class ProjectsService {
      * on `master` or `develop` failed — after its secrets had already been
      * written. The repository is the authority on its own default branch.
      */
-    const targetBranch = await this.resolveSetupBranch(
+    const targetBranch = await this.setupBranch.resolveSetupBranch(
       accessToken,
       owner,
       repo,
@@ -1336,7 +1354,7 @@ export class ProjectsService {
        * see. Best-effort: a repo that cannot take the branch still has a
        * working main-branch pipeline, which is better than failing the setup.
        */
-      await this.ensureUatBranch(accessToken, owner, repo, targetBranch);
+      await this.setupBranch.ensureUatBranch(accessToken, owner, repo, targetBranch);
       await this.projectsRepository.updateStatus(
         row.id,
         'provisioned',
@@ -1361,7 +1379,7 @@ export class ProjectsService {
           `setupProject: failed to delete project row ${row.id}: ${String(cleanupError)}`,
         );
       }
-      await this.removeSetupSecrets(accessToken, owner, repo);
+      await this.setupBranch.removeSetupSecrets(accessToken, owner, repo);
       throw error;
     }
 
@@ -2031,137 +2049,6 @@ export class ProjectsService {
 
   // ─── Private helpers ───────────────────────────────────────────────────────
 
-  /**
-   * Resolve the catalog templateId from projectTypeId + optional workflowRecipeId.
-   * Uses the recipe's templateByProjectType mapping. Falls back to
-   * "{projectTypeId}-standard" when no recipe is supplied.
-   */
-  private async resolveProvisioningToken(
-    userId: string,
-    oauthAccessToken: string | null | undefined,
-  ): Promise<string> {
-    // Repository creation for personal accounts requires a user OAuth token.
-    // GitHub App installation tokens cannot call POST /user/repos, so only use
-    // one as a fallback when the session has no OAuth token.
-    if (oauthAccessToken) {
-      return oauthAccessToken;
-    }
-
-    const installationToken =
-      await this.githubService.getInstallationAccessTokenForUser(userId);
-
-    if (installationToken) {
-      return installationToken;
-    }
-
-    throw new UnauthorizedException(
-      'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
-    );
-  }
-
-  private async resolveSetupProvisioningToken(
-    userId: string,
-    oauthAccessToken: string | null | undefined,
-    repoFullName: string,
-  ): Promise<string> {
-    const installationToken =
-      await this.githubService.getInstallationAccessTokenForUserRepo(
-        userId,
-        repoFullName,
-      );
-
-    if (installationToken) {
-      return installationToken;
-    }
-
-    if (oauthAccessToken) {
-      return oauthAccessToken;
-    }
-
-    throw new UnauthorizedException(
-      'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
-    );
-  }
-
-  private async resolveRepositoryProvisioning(
-    userId: string,
-    oauthAccessToken: string | null | undefined,
-    dto: CreateProjectDto,
-  ): Promise<{
-    repositoryCreationToken: string;
-    provisioningToken: string;
-    provisioningOwnerLogin: string | undefined;
-  }> {
-    // When the deployment enforces a destination org, every repository is
-    // created there regardless of the request's ownerType/installationId, and
-    // the org's own GitHub App installation token does the creating.
-    //
-    // This used to use the signed-in user's OAuth token, on the belief that
-    // GitHub forbids a server-to-server installation token from creating org
-    // repositories. It does not: POST /orgs/{org}/repos is available to a
-    // GitHub App holding organization `administration: write`. Going through
-    // the App instead removes three failure modes that had nothing to do with
-    // the product — an OAuth App unapproved under the org's third-party access
-    // policy, a signed-in user who is not a member of the enforced org, and a
-    // session minted before the current GITHUB_SCOPE — each of which surfaced
-    // as an unexplained 403 at repository creation.
-    const enforcedOrg = this.githubService.getEnforcedOrg();
-    if (enforcedOrg) {
-      const context =
-        await this.githubService.getOrganizationProvisioningContextByLogin(
-          enforcedOrg,
-        );
-
-      return {
-        repositoryCreationToken: context.accessToken,
-        provisioningToken: context.accessToken,
-        provisioningOwnerLogin: context.ownerLogin,
-      };
-    }
-
-    const ownerType = dto.ownerType ?? 'personal';
-
-    if (ownerType === 'organization') {
-      if (!dto.installationId) {
-        throw new UnprocessableEntityException(
-          'installationId is required when creating a repository in an organization.',
-        );
-      }
-
-      const context =
-        await this.githubService.getOrganizationProvisioningContext(
-          userId,
-          dto.installationId,
-        );
-      // Same reasoning as the enforced-org branch above: the selected
-      // installation creates the repository as well as provisioning it. Fixed
-      // together so the corrected premise cannot survive in one branch and not
-      // the other.
-      return {
-        repositoryCreationToken: context.accessToken,
-        provisioningToken: context.accessToken,
-        provisioningOwnerLogin: context.ownerLogin,
-      };
-    }
-
-    if (dto.installationId) {
-      throw new UnprocessableEntityException(
-        'installationId can only be used with an organization repository owner.',
-      );
-    }
-    if (!oauthAccessToken) {
-      throw new UnauthorizedException(
-        'A GitHub OAuth token is required to create a personal repository. Sign out and sign back in with GitHub.',
-      );
-    }
-
-    return {
-      repositoryCreationToken: oauthAccessToken,
-      provisioningToken: oauthAccessToken,
-      provisioningOwnerLogin: undefined,
-    };
-  }
-
   private repositoryOwnershipMetadata(
     dto: CreateProjectDto,
     ownerLogin: string,
@@ -2254,99 +2141,6 @@ export class ProjectsService {
    * (the quality-scan job only runs when all three are present). Best-effort:
    * a missing central Sonar configuration or a secret-write hiccup must not
    * fail repository creation.
-   */
-  /**
-   * The branch an onboarded repository's workflows belong on.
-   *
-   * Asks GitHub for the repository's own default branch and falls back to
-   * 'main' only when that cannot be read — a fallback, never an assumption.
-   */
-  private async resolveSetupBranch(
-    accessToken: string,
-    owner: string,
-    repo: string,
-  ): Promise<string> {
-    try {
-      const repository = await this.githubService.getRepo(
-        accessToken,
-        owner,
-        repo,
-      );
-      const branch = repository.defaultBranch?.trim();
-      if (branch) return branch;
-    } catch (error) {
-      this.logger.warn(
-        `setupProject: could not read the default branch for ${owner}/${repo}, assuming 'main': ${String(error)}`,
-      );
-    }
-    return 'main';
-  }
-
-  /**
-   * Creates `uat` from the repository's default branch when it is missing.
-   *
-   * Best-effort by design. A repository that cannot take the branch — no
-   * permission, a protection rule, a name already used by a tag — still ends
-   * up with a working default-branch pipeline, and failing the whole
-   * onboarding over the staging half would be the worse trade.
-   */
-  private async ensureUatBranch(
-    accessToken: string,
-    owner: string,
-    repo: string,
-    fromBranch: string,
-  ): Promise<void> {
-    try {
-      if (
-        await this.githubService.branchExists(accessToken, owner, repo, 'uat')
-      ) {
-        return;
-      }
-      await this.githubService.createBranch(
-        accessToken,
-        owner,
-        repo,
-        'uat',
-        fromBranch,
-      );
-      this.logger.log(
-        `setupProject: created uat from ${fromBranch} on ${owner}/${repo}`,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `setupProject: could not create uat on ${owner}/${repo}; the staging half of the pipeline will not run until it exists: ${String(error)}`,
-      );
-    }
-  }
-
-  /**
-   * Undoes the secrets written during a failed setup.
-   *
-   * Only ever removes the two secrets THIS product owns. SONAR_* is deliberately
-   * excluded: installSonarSecrets leaves a repository's own Sonar configuration
-   * alone, so deleting those here could destroy something we never wrote.
-   *
-   * Never throws — this runs inside a catch block, and losing the original
-   * error to a cleanup failure would hide the reason setup failed.
-   */
-  private async removeSetupSecrets(
-    accessToken: string,
-    owner: string,
-    repo: string,
-  ): Promise<void> {
-    for (const name of ['ALPHACI_TOKEN', 'ALPHACI_REPORT_URL']) {
-      try {
-        await this.githubService.deleteActionsSecret(
-          accessToken,
-          owner,
-          repo,
-          name,
-        );
-      } catch (error) {
-        this.logger.warn(
-          `setupProject: could not remove ${name} from ${owner}/${repo} after a failed setup: ${String(error)}`,
-        );
-      }
     }
   }
 
