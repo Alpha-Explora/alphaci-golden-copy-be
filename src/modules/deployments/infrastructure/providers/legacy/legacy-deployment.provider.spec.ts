@@ -1,4 +1,4 @@
-import { DeploymentProviderRegistry } from '../../core/deployment-provider.registry';
+import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
 import { LegacyDeploymentProvider } from './legacy-deployment.provider';
 
 describe('LegacyDeploymentProvider', () => {

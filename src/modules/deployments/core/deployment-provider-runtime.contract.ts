@@ -1,5 +1,5 @@
-import type { EnvProvider } from '../../../deployments.types';
-import type { RuntimeEnvProviderClient } from './runtime-env-provider.client';
+import type { EnvProvider } from '../deployments.types';
+import type { RuntimeEnvProviderClient } from '../infrastructure/providers/core/runtime-env-provider.client';
 
 /**
  * Provider-neutral contract implemented by every deployment provider adapter.

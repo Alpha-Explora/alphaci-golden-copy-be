@@ -1,8 +1,8 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
-import { DeploymentsCoreModule } from '../../core/deployments-core.module';
-import { DeploymentProviderRegistry } from '../../core/deployment-provider.registry';
+import { DeploymentsCoreModule } from '../../../core/deployments-core.module';
+import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
 import { LegacyDeploymentProvidersModule } from './legacy-deployment-providers.module';
 
 describe('LegacyDeploymentProvidersModule', () => {

@@ -18,7 +18,7 @@ import type {
   ProviderTargetStatusInput,
   UpsertProviderEnvInput,
 } from '../core/runtime-env-provider.client';
-import type { DeploymentProvider } from '../core/deployment-provider.contract';
+import type { DeploymentProvider } from '../../../core/deployment-provider-runtime.contract';
 
 const RENDER_API_URL = 'https://api.render.com/v1';
 

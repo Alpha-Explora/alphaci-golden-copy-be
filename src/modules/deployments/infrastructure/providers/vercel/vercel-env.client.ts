@@ -21,7 +21,7 @@ import type {
   ProviderDomainInput,
   ProviderDomainResult,
 } from '../core/runtime-env-provider.client';
-import type { DeploymentProvider } from '../core/deployment-provider.contract';
+import type { DeploymentProvider } from '../../../core/deployment-provider-runtime.contract';
 
 const VERCEL_API_URL = 'https://api.vercel.com';
 

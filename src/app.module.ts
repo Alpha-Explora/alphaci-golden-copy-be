@@ -12,7 +12,7 @@ import { AppService } from './app.service.js';
 import { validateEnv } from './common/config/env.validation.js';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware.js';
 import { HealthModule } from './health/health.module.js';
-import { SupabaseModule } from './supabase/supabase.module.js';
+import { SupabaseModule } from './kernel/db/supabase/supabase.module.js';
 
 // Ported Modules
 import { AuthModule } from './modules/auth/auth.module.js';
@@ -33,7 +33,7 @@ import { FeedbackModule } from './modules/feedback/feedback.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';
 import { DeploymentsCoreModule } from './modules/deployments/core/deployments-core.module.js';
-import { GcpDeploymentModule } from './modules/deployments/providers/gcp/gcp.module.js';
+import { GcpDeploymentModule } from './modules/deployments/infrastructure/providers/gcp/gcp.module.js';
 
 @Module({
   imports: [
