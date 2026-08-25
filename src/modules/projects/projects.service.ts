@@ -76,6 +76,16 @@ import {
 } from './project-workflow-update-requests.repository';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import { ProjectWorkflowsService } from './application/project-workflows.service';
+import {
+  combineDeploymentProvisioningResults,
+  extractDeploymentProvider,
+  filterDeploymentProvisioningRequest,
+  forceManagedProvisioning,
+  resolveSingleRepoDeploymentSlots,
+  skippedDeploymentProvisioning,
+  withDefaultCreateDeploymentProvisioning,
+} from './application/deployment-provisioning.policy';
+import { resolveDeploymentWorkflowTargets } from './application/deployment-workflow-targets';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
@@ -563,7 +573,7 @@ export class ProjectsService {
       dto.workflowRecipeId,
     );
     const effectiveDeploymentProvisioning =
-      this.withDefaultCreateDeploymentProvisioning({
+      withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: dto.projectTypeId,
         serviceName: dto.serviceName,
@@ -582,11 +592,11 @@ export class ProjectsService {
       // The standalone scaffold ships tests/ at the repo root; the monorepo
       // keeps tests under packages/*, so the root-level guard stays off.
       hasTestsDirectory: repoShape === 'standalone',
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['standalone', 'backend', 'frontend'],
         dto.servicePath,
@@ -719,7 +729,7 @@ export class ProjectsService {
         repoFullName,
         githubAccessToken: provisioningToken,
         request: effectiveDeploymentProvisioning,
-        slots: this.resolveSingleRepoDeploymentSlots(
+        slots: resolveSingleRepoDeploymentSlots(
           effectiveDeploymentProvisioning,
         ),
       });
@@ -782,7 +792,7 @@ export class ProjectsService {
 
     const { backend, frontend } = dto.microservicesConfig;
     const effectiveDeploymentProvisioning =
-      this.withDefaultCreateDeploymentProvisioning({
+      withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: backend.projectTypeId,
         serviceName: backend.serviceName,
@@ -816,11 +826,11 @@ export class ProjectsService {
       // The scaffold seeds tests/ only inside its own backend/ dir; a custom
       // servicePath points at a layout the scaffold does not control.
       hasTestsDirectory: (backend.servicePath ?? 'backend') === 'backend',
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['backend'],
         backend.servicePath ?? 'backend',
@@ -838,7 +848,7 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'frontend',
       hasTestsDirectory: (frontend.servicePath ?? 'frontend') === 'frontend',
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['frontend'],
         frontend.servicePath ?? 'frontend',
@@ -1090,11 +1100,11 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
       enhancements: dto.enhancements,
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         dto.deploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
         ['standalone', 'backend', 'frontend'],
         dto.servicePath,
@@ -1238,7 +1248,7 @@ export class ProjectsService {
       repoFullName: dto.repoFullName,
       githubAccessToken: accessToken,
       request: dto.deploymentProvisioning,
-      slots: this.resolveSingleRepoDeploymentSlots(dto.deploymentProvisioning),
+      slots: resolveSingleRepoDeploymentSlots(dto.deploymentProvisioning),
     });
 
     await this.recordProductEvent({
@@ -2061,152 +2071,6 @@ export class ProjectsService {
     return `${projectTypeId}-${recipeId}`;
   }
 
-  private filterDeploymentProvisioningRequest(
-    request: DeploymentProvisioningRequestDto | undefined,
-    slots: DeploymentProvisioningTargetDto['slot'][],
-  ): DeploymentProvisioningRequestDto | undefined {
-    if (!request) {
-      return undefined;
-    }
-
-    return {
-      enabled: request.enabled,
-      ...(request.variableGroups
-        ? { variableGroups: request.variableGroups }
-        : {}),
-      ...(request.sharedEnv ? { sharedEnv: request.sharedEnv } : {}),
-      targets: request.targets.filter((target) => slots.includes(target.slot)),
-    };
-  }
-
-  private combineDeploymentProvisioningResults(
-    results: DeploymentProvisioningResult[],
-  ): DeploymentProvisioningResult {
-    const targets = results.flatMap((result) => result.targets);
-    if (targets.length === 0) {
-      return { status: 'skipped', targets: [] };
-    }
-
-    const failedCount = targets.filter(
-      (target) => target.status === 'failed',
-    ).length;
-
-    return {
-      status:
-        failedCount === 0
-          ? 'completed'
-          : failedCount === targets.length
-            ? 'failed'
-            : 'partial',
-      targets,
-    };
-  }
-
-  private skippedDeploymentProvisioning(): DeploymentProvisioningResult {
-    return { status: 'skipped', targets: [] };
-  }
-
-  private withDefaultCreateDeploymentProvisioning(input: {
-    request: DeploymentProvisioningRequestDto | undefined;
-    projectTypeId: string;
-    serviceName: string;
-    repoName: string;
-    servicePath?: string | undefined;
-  }): DeploymentProvisioningRequestDto | undefined {
-    if (!this.isBackendProjectType(input.projectTypeId)) {
-      return input.request;
-    }
-
-    const existingTargets = input.request?.targets ?? [];
-    const hasBackendRenderTarget = existingTargets.some(
-      (target) =>
-        ['backend', 'standalone'].includes(target.slot) &&
-        target.provider === 'render',
-    );
-    if (hasBackendRenderTarget) {
-      return {
-        ...input.request,
-        enabled: true,
-        targets: existingTargets,
-      };
-    }
-
-    return {
-      enabled: true,
-      ...(input.request?.variableGroups
-        ? { variableGroups: input.request.variableGroups }
-        : {}),
-      ...(input.request?.sharedEnv
-        ? { sharedEnv: input.request.sharedEnv }
-        : {}),
-      targets: [
-        ...existingTargets,
-        {
-          slot: 'backend',
-          provider: 'render',
-          ownershipMode: 'flowci_managed',
-          projectName: this.defaultManagedRenderProjectName(
-            input.serviceName,
-            input.repoName,
-          ),
-          branchName: 'uat',
-          rootDirectory: input.servicePath?.trim() || '.',
-          buildCommand: 'npm ci && npm run build',
-          startCommand: 'npm run start:prod',
-          renderDeployMethod: 'managed_image',
-          renderServiceType: 'web_service',
-          renderRuntime: 'docker',
-          renderInstanceType: 'free',
-          renderRegion: 'singapore',
-          dockerContext: input.servicePath?.trim() || '.',
-          dockerfilePath: 'Dockerfile',
-          env: [],
-        },
-      ],
-    };
-  }
-
-  private isBackendProjectType(projectTypeId: string): boolean {
-    return !/(react|next|frontend|web|ui)/i.test(projectTypeId);
-  }
-
-  private defaultManagedRenderProjectName(
-    serviceName: string,
-    repoName: string,
-  ): string {
-    const base = (serviceName || repoName || 'backend')
-      .trim()
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '');
-    return `${base || 'backend'}-uat`;
-  }
-
-  /**
-   * BYO hosting is archived: every deployment target is forced onto the
-   * platform's centralized Render/Vercel credentials regardless of what the
-   * client sent, and any BYO provider-connection reference is dropped.
-   */
-  private forceManagedProvisioning(
-    request: DeploymentProvisioningRequestDto | undefined,
-  ): DeploymentProvisioningRequestDto | undefined {
-    if (!request) {
-      return undefined;
-    }
-
-    return {
-      ...request,
-      targets: request.targets.map((target) => {
-        const managedTarget = {
-          ...target,
-          ownershipMode: 'flowci_managed' as const,
-        };
-        delete managedTarget.providerConnectionId;
-        return managedTarget;
-      }),
-    };
-  }
-
   /**
    * Create the requested hosting targets and install their Render/Vercel
    * GitHub Actions secrets as part of project creation. Provisioning is
@@ -2221,12 +2085,12 @@ export class ProjectsService {
     request: DeploymentProvisioningRequestDto | undefined;
     slots: DeploymentProvisioningTargetDto['slot'][];
   }): Promise<DeploymentProvisioningResult> {
-    const request = this.filterDeploymentProvisioningRequest(
-      this.forceManagedProvisioning(input.request),
+    const request = filterDeploymentProvisioningRequest(
+      forceManagedProvisioning(input.request),
       input.slots,
     );
     if (!request?.enabled || request.targets.length === 0) {
-      return this.skippedDeploymentProvisioning();
+      return skippedDeploymentProvisioning();
     }
 
     try {
@@ -2631,167 +2495,6 @@ export class ProjectsService {
       this.deriveOutputFileName(serviceName, template.id);
 
     return { generatedYaml, outputFileName };
-  }
-
-  private extractDeploymentProvider(
-    request: DeploymentProvisioningRequestDto | undefined,
-    slot: DeploymentProvisioningTargetDto['slot'],
-  ): DeploymentProvider | undefined {
-    if (!request?.enabled || !request.targets?.length) return undefined;
-    const provider = request.targets.find(
-      (t) => t.slot === slot && t.provider === 'render' && slot === 'backend',
-    )?.provider;
-    return provider === 'render' ? provider : undefined;
-  }
-
-  private resolveDeploymentWorkflowTargets(
-    request: DeploymentProvisioningRequestDto | undefined,
-    slots: DeploymentProvisioningTargetDto['slot'][],
-    fallbackRootDirectory?: string,
-  ): DeploymentWorkflowTarget[] {
-    if (!request?.enabled || !request.targets?.length) {
-      return [];
-    }
-
-    return request.targets
-      .filter((target) => slots.includes(target.slot))
-      .filter(
-        (target) =>
-          (target.provider === 'vercel' && target.slot === 'frontend') ||
-          (target.provider === 'render' &&
-            target.slot === 'backend' &&
-            (target.renderInstanceType?.trim() || 'free') === 'free' &&
-            (target.renderServiceType ?? 'web_service') === 'web_service' &&
-            this.resolveRenderDeploymentStrategy(target) ===
-              'render_image_pushed'),
-      )
-      .flatMap((target) => {
-        const rootDirectory = this.resolveWorkflowRootDirectory(
-          target,
-          fallbackRootDirectory,
-        );
-        if (target.provider === 'render') {
-          return this.renderDeploymentBranches().map((branchName) => {
-            const descriptor: DeploymentWorkflowTarget = {
-              slot: target.slot,
-              provider: 'render',
-              branchName,
-              deploymentStrategy: 'render_image_pushed',
-              secretNames: this.renderSecretNames(target.slot, branchName),
-              dockerContext:
-                target.dockerContext?.trim() || rootDirectory || '.',
-              dockerfilePath: target.dockerfilePath?.trim() || 'Dockerfile',
-              imageName: this.renderImageName(target, branchName),
-              renderServiceType: target.renderServiceType ?? 'web_service',
-              renderInstanceType: target.renderInstanceType ?? 'free',
-            };
-            if (rootDirectory) {
-              descriptor.rootDirectory = rootDirectory;
-            }
-
-            return descriptor;
-          });
-        }
-
-        const descriptor: DeploymentWorkflowTarget = {
-          slot: target.slot,
-          provider: 'vercel',
-          deploymentStrategy: 'vercel_ci_pushed',
-          secretNames: this.vercelSecretNames(target.slot),
-        };
-        if (rootDirectory) {
-          descriptor.rootDirectory = rootDirectory;
-        }
-
-        return descriptor;
-      });
-  }
-
-  private renderDeploymentBranches(): Array<'uat' | 'main'> {
-    return ['uat', 'main'];
-  }
-
-  private resolveRenderDeploymentStrategy(
-    target: DeploymentProvisioningTargetDto,
-  ):
-    'render_image_pushed' | 'render_git_connected' | 'render_existing_service' {
-    if (target.renderDeployMethod === 'existing_service') {
-      return 'render_existing_service';
-    }
-    if (
-      target.ownershipMode === 'flowci_managed' ||
-      target.renderDeployMethod === 'byo_image'
-    ) {
-      return 'render_image_pushed';
-    }
-
-    return 'render_git_connected';
-  }
-
-  private resolveWorkflowRootDirectory(
-    target: DeploymentProvisioningTargetDto,
-    fallbackRootDirectory?: string,
-  ): string | undefined {
-    const rootDirectory = target.rootDirectory?.trim();
-    if (rootDirectory) {
-      return rootDirectory;
-    }
-
-    return fallbackRootDirectory?.trim() || undefined;
-  }
-
-  private vercelSecretNames(
-    slot: DeploymentProvisioningTargetDto['slot'],
-  ): NonNullable<DeploymentWorkflowTarget['secretNames']> {
-    const prefix = `VERCEL_${slot.toUpperCase()}`;
-    return {
-      token: `${prefix}_TOKEN`,
-      orgId: `${prefix}_ORG_ID`,
-      projectId: `${prefix}_PROJECT_ID`,
-    };
-  }
-
-  private renderSecretNames(
-    slot: DeploymentProvisioningTargetDto['slot'],
-    branchName: 'uat' | 'main' = 'uat',
-  ): NonNullable<DeploymentWorkflowTarget['secretNames']> {
-    const prefix = `RENDER_${slot.toUpperCase()}_${branchName.toUpperCase()}`;
-    const branchSuffix = branchName.toUpperCase();
-    return {
-      apiKey: `${prefix}_API_KEY`,
-      serviceId: `${prefix}_SERVICE_ID`,
-      ownerId: `${prefix}_OWNER_ID`,
-      registryCredentialId: `${prefix}_REGISTRY_CREDENTIAL_ID`,
-      deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchSuffix}`,
-      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchSuffix}`,
-    };
-  }
-
-  private renderImageName(
-    target: DeploymentProvisioningTargetDto,
-    branchName: string = target.branchName ?? 'uat',
-  ): string {
-    const raw = `alphaci-${target.slot}-${branchName}-${target.projectName ?? target.slot}`;
-    return raw
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '');
-  }
-
-  private resolveSingleRepoDeploymentSlots(
-    request: DeploymentProvisioningRequestDto | undefined,
-  ): DeploymentProvisioningTargetDto['slot'][] {
-    if (!request?.enabled || !request.targets?.length) {
-      return ['standalone'];
-    }
-
-    const slots = request.targets
-      .map((target) => target.slot)
-      .filter((slot): slot is DeploymentProvisioningTargetDto['slot'] =>
-        ['standalone', 'frontend', 'backend'].includes(slot),
-      );
-
-    return slots.length > 0 ? Array.from(new Set(slots)) : ['standalone'];
   }
 
   private async buildWorkflowBundle(options: {
@@ -3244,7 +2947,7 @@ export class ProjectsService {
       : `${dto.repoName}-be`;
     const feRepoName = beRepoName.replace(/-be$/, '-fe');
     const effectiveDeploymentProvisioning =
-      this.withDefaultCreateDeploymentProvisioning({
+      withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: backend.projectTypeId,
         serviceName: backend.serviceName,
@@ -3273,11 +2976,11 @@ export class ProjectsService {
       // Each multi-repo repository carries the standalone scaffold, tests/
       // included, at its root.
       hasTestsDirectory: true,
-      deploymentProvider: this.extractDeploymentProvider(
+      deploymentProvider: extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
       ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['backend', 'standalone'],
         '.',
@@ -3447,7 +3150,7 @@ export class ProjectsService {
         nodeVersion: dto.nodeVersion,
         coverageThreshold: dto.coverageThreshold,
         hasTestsDirectory: true,
-        deploymentTargets: this.resolveDeploymentWorkflowTargets(
+        deploymentTargets: resolveDeploymentWorkflowTargets(
           effectiveDeploymentProvisioning,
           ['frontend'],
           '.',
@@ -3647,7 +3350,7 @@ export class ProjectsService {
       }),
       ...(feRepoUrl !== undefined && { secondaryRepoUrl: feRepoUrl }),
       deploymentProvisioning:
-        this.combineDeploymentProvisioningResults(provisioningResults),
+        combineDeploymentProvisioningResults(provisioningResults),
     };
   }
 
