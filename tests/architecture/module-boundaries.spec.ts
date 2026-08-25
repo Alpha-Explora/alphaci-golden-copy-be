@@ -1,19 +1,48 @@
+import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+jest.setTimeout(120_000);
+
 describe('module boundary policy', () => {
   const repositoryRoot = resolve(__dirname, '../..');
+  const configPath = resolve(repositoryRoot, '.dependency-cruiser.cjs');
 
-  it('keeps the public-entry and kernel rules enabled', () => {
-    const config = readFileSync(
-      resolve(repositoryRoot, '.dependency-cruiser.cjs'),
-      'utf8',
-    );
+  it('keeps the required rules enabled in the dependency-cruiser config', () => {
+    const config: { forbidden: Array<{ name: string }> } = require(configPath);
 
-    expect(config).toContain("name: 'no-deep-module-imports'");
-    expect(config).toContain("name: 'kernel-must-not-know-features'");
-    expect(config).toContain("name: 'no-circular'");
-    expect(config).toContain("name: 'no-test-imports-in-src'");
+    const ruleNames = config.forbidden.map((rule) => rule.name);
+    expect(ruleNames).toContain('no-deep-module-imports');
+    expect(ruleNames).toContain('no-cross-module-deep-imports');
+    expect(ruleNames).toContain('kernel-must-not-know-features');
+    expect(ruleNames).toContain('no-circular');
+    expect(ruleNames).toContain('deployments-domain-is-framework-free');
+    expect(ruleNames).toContain('deployments-api-cannot-reach-infrastructure');
+    expect(ruleNames).toContain('deployment-providers-are-isolated');
+    expect(ruleNames).toContain('no-test-imports-in-src');
+  });
+
+  it('passes dependency-cruiser with zero violations', () => {
+    // Runs the actual analysis against source code. If a violation exists,
+    // execSync throws and this test fails with depcruise's own output.
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    try {
+      execSync(`${npmCmd} run boundaries:new`, {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        timeout: 120_000,
+        stdio: 'pipe',
+      });
+      // Reaching here means exit code 0 (zero violations).
+    } catch (error: unknown) {
+      const output =
+        error instanceof Error && 'stdout' in error
+          ? String((error as { stdout?: unknown }).stdout)
+          : '';
+      throw new Error(
+        `dependency-cruiser found violations:\n${output || String(error)}`,
+      );
+    }
   });
 
   it('keeps the known baseline structurally valid', () => {
@@ -25,17 +54,6 @@ describe('module boundary policy', () => {
     ) as Array<{ from: string; to?: string; rule?: { name?: string } }>;
 
     expect(Array.isArray(baseline)).toBe(true);
-    // An empty baseline is the desired end state. Keep the shape assertion so
-    // a future exception, if one is temporarily justified, cannot be added as
-    // an arbitrary JSON blob.
-    expect(baseline.length).toBeGreaterThanOrEqual(0);
-    expect(
-      baseline.every(
-        (finding) =>
-          typeof finding.from === 'string' &&
-          (finding.to === undefined || typeof finding.to === 'string') &&
-          typeof finding.rule?.name === 'string',
-      ),
-    ).toBe(true);
+    expect(baseline.length).toBe(0);
   });
 });

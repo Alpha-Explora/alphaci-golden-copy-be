@@ -14,9 +14,9 @@ name: Boundaries
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/modular-monolith-trunk]
   push:
-    branches: [main]
+    branches: [main, codex/modular-monolith-trunk]
 
 permissions:
   contents: read
