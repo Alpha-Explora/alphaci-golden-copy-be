@@ -132,6 +132,7 @@
     "testEnvironment": "node",
     "roots": [
       "<rootDir>/src",
+      "<rootDir>/tests/architecture",
       "<rootDir>/tests/unit",
       "<rootDir>/tests/integration"
     ]
