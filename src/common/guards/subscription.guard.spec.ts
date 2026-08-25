@@ -2,7 +2,7 @@ import { HttpStatus, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { SubscriptionGuard } from './subscription.guard.js';
-import { SubscriptionService } from '../../modules/subscription/subscription.service.js';
+import { SubscriptionService } from '../../modules/subscription/index.js';
 import type { ExecutionContext } from '@nestjs/common';
 import type {
   SessionUser,

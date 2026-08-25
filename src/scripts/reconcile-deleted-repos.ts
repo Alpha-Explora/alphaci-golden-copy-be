@@ -67,7 +67,7 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../app.module.js';
-import { ProjectsService } from '../modules/projects/projects.service.js';
+import { ProjectsService } from '../modules/projects/index.js';
 
 async function run(): Promise<void> {
   const logger = new Logger('ReconcileDeletedRepos');

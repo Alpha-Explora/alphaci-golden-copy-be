@@ -44,6 +44,32 @@ These are the only rules that justify the initial Deployments domain layer:
 4. A preview EnvironmentScope must include a non-empty branch; production has
    no branch.
 5. Provider-specific configuration is validated by the owning provider adapter
+## Implementation status (2026-08-25)
+
+The Deployments domain layer now exists at src/modules/deployments/domain/:
+
+- deployment-target.policy.ts holds the provider/slot compatibility rule and
+  the EnvironmentScope lane/branch validation as pure, framework-free
+  functions that throw DeploymentPolicyViolation. The owning services catch
+  these violations where they cross into application code.
+- Project lifecycle rules remain embedded in ProjectsService methods; they
+  have not been promoted to a domain layer yet because no second consumer or
+  independently testable invariant has justified it.
+- Lifecycle transition state for targets is still tracked ad hoc from provider
+  query results rather than a formal state machine.
+## Implementation status (2026-08-25)
+
+The Deployments domain layer now exists at src/modules/deployments/domain/:
+
+- deployment-target.policy.ts holds the provider/slot compatibility rule and
+  the EnvironmentScope lane/branch validation as pure, framework-free
+  functions that throw DeploymentPolicyViolation. The owning services catch
+  these violations where they cross into application code.
+- Project lifecycle rules remain embedded in ProjectsService methods; they
+  have not been promoted to a domain layer yet because no second consumer or
+  independently testable invariant has justified it.
+- Lifecycle transition state for targets is still tracked ad hoc from provider
+  query results rather than a formal state machine.
    and does not leak into the shared domain vocabulary.
 
 ## Anti-corruption boundaries

@@ -11,6 +11,7 @@ import type {
   RenderEnvironmentName,
   RenderRuntime,
   RenderServiceType,
+  UpdateDeploymentTargetMetadataInput,
 } from './deployments.types';
 
 interface DeploymentTargetRow {
@@ -63,16 +64,6 @@ export interface CreateDeploymentTargetInput {
   environmentMap?: Record<string, unknown>;
   deploymentStrategy?: DeploymentStrategy;
   providerMetadata?: Record<string, unknown>;
-}
-
-export interface UpdateDeploymentTargetMetadataInput {
-  slot?: EnvTargetSlot;
-  providerProjectName?: string;
-  branchName?: string;
-  rootDirectory?: string | null;
-  buildCommand?: string | null;
-  startCommand?: string | null;
-  renderEnvironmentName?: RenderEnvironmentName | null;
 }
 
 @Injectable()

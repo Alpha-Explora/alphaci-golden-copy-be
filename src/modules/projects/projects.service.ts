@@ -75,6 +75,7 @@ import {
   type WorkflowUpdateRequestRecord,
 } from './project-workflow-update-requests.repository';
 import type { CreateProjectDto } from './dto/create-project.dto';
+import { ProjectWorkflowsService } from './application/project-workflows.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
@@ -94,6 +95,7 @@ import type {
   DeploymentProvisioningRequestDto,
   DeploymentProvisioningTargetDto,
 } from './dto/create-project.dto';
+
 
 // ─── Response shapes (match FE contracts exactly) ────────────────────────────
 
@@ -350,6 +352,22 @@ interface GitHubContentsResponse {
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
 
+  /** Lazily-created workflow delegate for direct constructions (tests). */
+  private workflowsServiceLazy?: ProjectWorkflowsService;
+  private get workflows(): ProjectWorkflowsService {
+    return (this.workflowsServiceLazy ??= new ProjectWorkflowsService(
+      this.projectsRepository,
+      this.githubService,
+      this.catalogService,
+      this.configService,
+      this.workflowSettingsRepository,
+      this.workflowUpdateRequestsRepository,
+      this.usageQuotaService,
+      this.auditEventsService,
+      this.notificationEventsService,
+    ));
+  }
+
   constructor(
     private readonly catalogService: CatalogService,
     private readonly githubService: GithubService,
@@ -392,6 +410,8 @@ export class ProjectsService {
     // means group projects are not linked (the migration backfill still is).
     @Optional()
     private readonly hierarchyProjectLinkService?: HierarchyProjectLinkService,
+    @Optional()
+    private readonly workflowsService?: ProjectWorkflowsService,
   ) {
     // GithubModule cannot import ProjectsModule (that would create a
     // Projects → Github → Projects cycle), so GithubService can't inject
@@ -1434,232 +1454,41 @@ export class ProjectsService {
     );
   }
 
+  /** Delegates to ProjectWorkflowsService (owns workflow settings behavior). */
   async getWorkflowSettings(
     projectId: string,
     userId: string,
   ): Promise<WorkflowSettingsResponse> {
-    if (!this.workflowSettingsPreviewEnabled()) {
-      throw new BadRequestException('Workflow settings preview is disabled');
-    }
-
-    const { row } = await this.loadOwnedProjectForWorkflowSettings(
-      projectId,
-      userId,
-    );
-    const storedSettings =
-      await this.workflowSettingsRepository?.findByProject(projectId);
-
-    if (storedSettings) {
-      return {
-        enabled: true,
-        source: 'stored',
-        settings: this.normalizeWorkflowSettings(row, storedSettings),
-      };
-    }
-
-    return {
-      enabled: true,
-      source: 'project_options',
-      settings: this.normalizeWorkflowSettings(row, null),
-    };
+    return this.workflows.getWorkflowSettings(projectId, userId);
   }
 
+  /** Delegates to ProjectWorkflowsService. */
   async previewWorkflowSettings(
     projectId: string,
     userId: string,
     request: WorkflowSettingsPreviewRequest,
   ): Promise<WorkflowSettingsPreviewResponse> {
-    if (!this.workflowSettingsPreviewEnabled()) {
-      throw new BadRequestException('Workflow settings preview is disabled');
-    }
-
-    const { row, project } = await this.loadOwnedProjectForWorkflowSettings(
+    return this.workflows.previewWorkflowSettings(
       projectId,
       userId,
-    );
-    const storedSettings =
-      await this.workflowSettingsRepository?.findByProject(projectId);
-    const settings = this.mergeWorkflowSettings(
-      this.normalizeWorkflowSettings(row, storedSettings ?? null),
       request,
     );
-    const validationWarnings = this.validateWorkflowSettingsPreview(
-      settings,
-      request,
-    );
-
-    if (validationWarnings.length > 0) {
-      return {
-        settings,
-        workflowFiles: [],
-        diffSummary: [],
-        validationWarnings,
-      };
-    }
-
-    const { workflowFiles } = await this.buildWorkflowBundle({
-      templateId: settings.templateId,
-      serviceName: settings.serviceName,
-      servicePath: settings.servicePath,
-      nodeVersion: settings.nodeVersion,
-      coverageThreshold: settings.coverageThreshold,
-      centralWorkflowRef: settings.centralWorkflowRef,
-    });
-
-    return {
-      settings,
-      workflowFiles,
-      diffSummary: this.buildWorkflowPreviewDiff(
-        project.workflowFiles ?? [],
-        workflowFiles,
-      ),
-      validationWarnings: [],
-    };
   }
 
+  /** Delegates to ProjectWorkflowsService. */
   async createWorkflowUpdatePullRequest(
     projectId: string,
     userId: string,
     oauthAccessToken: string | null | undefined,
     request: WorkflowSettingsPreviewRequest,
   ): Promise<WorkflowUpdatePullRequestResponse> {
-    if (!this.workflowUpdatePrEnabled()) {
-      throw new BadRequestException(
-        'Workflow update pull requests are disabled',
-      );
-    }
-    await this.assertWithinQuota(userId, 'workflow_prs', 1, projectId);
-
-    const { row, project } = await this.loadOwnedProjectForWorkflowSettings(
+    return this.workflows.createWorkflowUpdatePullRequest(
       projectId,
       userId,
-    );
-    const token = await this.resolveProvisioningToken(userId, oauthAccessToken);
-    const [owner, repo] = this.parseRepoFullName(row.repo_full_name);
-    const preview = await this.previewWorkflowSettings(
-      projectId,
-      userId,
+      oauthAccessToken,
       request,
     );
-
-    if (preview.validationWarnings.length > 0) {
-      throw new BadRequestException(
-        preview.validationWarnings.map((warning) => warning.message).join(' '),
-      );
-    }
-
-    const repoInfo = await this.githubService.getRepo(token, owner, repo);
-    const baseBranch = repoInfo.defaultBranch || 'main';
-    const branchName = `alphaci/workflow-update-${this.timestampForBranch()}`;
-    await this.githubService.createBranch(
-      token,
-      owner,
-      repo,
-      branchName,
-      baseBranch,
-    );
-
-    for (const file of preview.workflowFiles) {
-      await this.githubService.putFileContent(
-        token,
-        owner,
-        repo,
-        file.path,
-        file.yaml,
-        branchName,
-        'ci: update ALPHACI workflow configuration',
-      );
-    }
-
-    let pullRequest: { number: number; htmlUrl: string };
-    try {
-      pullRequest = await this.githubService.createPullRequest(
-        token,
-        owner,
-        repo,
-        {
-          title: 'Update ALPHACI workflow configuration',
-          head: branchName,
-          base: baseBranch,
-          body: this.buildWorkflowUpdatePullRequestBody(preview),
-        },
-      );
-    } catch (error) {
-      throw new BadRequestException(
-        'GitHub could not create the workflow update pull request. Check repository permissions and whether an update PR already exists.',
-        { cause: error },
-      );
-    }
-
-    const workflowFiles = preview.workflowFiles.map((file) => ({
-      stage: file.stage,
-      name: file.name,
-      path: file.path,
-      gated: file.gated,
-    }));
-    const persistedRequest =
-      (await this.workflowUpdateRequestsRepository?.createRequest({
-        projectId,
-        requestedBy: userId,
-        branchName,
-        baseBranch,
-        pullRequestNumber: pullRequest.number,
-        pullRequestUrl: pullRequest.htmlUrl,
-        status: 'created',
-        settings: preview.settings as unknown as Record<string, unknown>,
-        workflowFiles,
-      })) ?? null;
-
-    await this.auditEventsService?.recordProjectEvent({
-      actorUserId: userId,
-      projectId,
-      eventCode: 'workflow_pr_created',
-      message: 'Workflow update PR created',
-      metadata: {
-        pullRequestNumber: pullRequest.number,
-        pullRequestUrl: pullRequest.htmlUrl,
-        branchName,
-        baseBranch,
-      },
-    });
-
-    await this.notificationEventsService?.record({
-      userId,
-      projectId,
-      eventCode: 'workflow_pr_created',
-      title: 'Workflow update PR created',
-      body: `Workflow update PR #${pullRequest.number} was created for ${project.repoFullName}.`,
-    });
-
-    return {
-      projectId,
-      repoFullName: project.repoFullName,
-      branchName,
-      workflowPath: preview.workflowFiles[0]?.path ?? row.workflow_path,
-      workflowFiles,
-      pullRequestNumber: pullRequest.number,
-      pullRequestUrl: pullRequest.htmlUrl,
-      status: 'created',
-      request: persistedRequest,
-    };
   }
-
-  /**
-   * DELETE /api/v1/projects/:id.
-   *
-   * Default (options.deleteGithubRepo not true): unchanged plain DB-only
-   * disconnect at the existing permissive role set (owner/admin/developer,
-   * enforced by deleteByIdAndUser's SQL) — the GitHub repository is never
-   * touched.
-   *
-   * Opt-in (options.deleteGithubRepo === true): tightens the required role
-   * to owner/admin only, re-validates options.confirmRepoName server-side
-   * against the project's actual repo_full_name (never trusting the client
-   * alone), and attempts to delete the GitHub repository. A GitHub failure
-   * (including a missing delete_repo OAuth scope) is reported back in
-   * githubRepoDeleteError but never blocks the local ALPHACI disconnect —
-   * the project row is still removed either way.
-   */
   async disconnectProject(
     projectId: string,
     userId: string,
@@ -4132,217 +3961,6 @@ export class ProjectsService {
 
   private timestampForBranch(date = new Date()): string {
     return date.toISOString().replaceAll(/\D/g, '').slice(0, 14);
-  }
-
-  private buildWorkflowUpdatePullRequestBody(
-    preview: WorkflowSettingsPreviewResponse,
-  ): string {
-    const fileList = preview.workflowFiles
-      .map((file) => `- ${file.path}`)
-      .join('\n');
-    const changedSettings = [
-      `Node version: ${preview.settings.nodeVersion}`,
-      `Coverage threshold: ${String(preview.settings.coverageThreshold)}`,
-      `Service path: ${preview.settings.servicePath}`,
-      `Central workflow ref: ${preview.settings.centralWorkflowRef}`,
-    ].join('\n');
-
-    return [
-      'This PR updates the ALPHACI workflow configuration for this project.',
-      '',
-      'Changed settings:',
-      changedSettings,
-      '',
-      'Generated workflow files:',
-      fileList,
-      '',
-      'Runtime environment values are not included.',
-    ].join('\n');
-  }
-
-  private normalizeWorkflowSettings(
-    row: ProvisionedProjectRow,
-    stored: ProjectWorkflowSettingsRowValue | null,
-  ): WorkflowSettings {
-    const storedSettings = stored?.settings ?? {};
-    const projectOptions = row.project_options ?? {};
-    const checks = this.readChecks(projectOptions, storedSettings);
-
-    return {
-      projectId: row.id,
-      templateId:
-        this.readString(storedSettings['templateId']) ?? row.template_id,
-      projectTypeId:
-        this.readNullableString(storedSettings['projectTypeId']) ??
-        row.project_type_id,
-      workflowRecipeId:
-        this.readNullableString(storedSettings['workflowRecipeId']) ??
-        row.workflow_recipe_id,
-      serviceName:
-        this.readString(storedSettings['serviceName']) ?? row.service_name,
-      servicePath:
-        this.readString(storedSettings['servicePath']) ??
-        this.readString(projectOptions['servicePath']) ??
-        '.',
-      nodeVersion:
-        this.readString(storedSettings['nodeVersion']) ??
-        this.readString(projectOptions['nodeVersion']) ??
-        '24',
-      packageManager: 'npm',
-      coverageThreshold:
-        this.readNumber(storedSettings['coverageThreshold']) ??
-        this.readNumber(projectOptions['coverageThreshold']) ??
-        80,
-      centralWorkflowRef:
-        this.readString(storedSettings['centralWorkflowRef']) ??
-        resolveDefaultCentralWorkflowRef(),
-      checks,
-    };
-  }
-
-  private mergeWorkflowSettings(
-    base: WorkflowSettings,
-    request: WorkflowSettingsPreviewRequest,
-  ): WorkflowSettings {
-    return {
-      ...base,
-      ...(request.templateId !== undefined && {
-        templateId: request.templateId,
-      }),
-      ...(request.projectTypeId !== undefined && {
-        projectTypeId: request.projectTypeId,
-      }),
-      ...(request.workflowRecipeId !== undefined && {
-        workflowRecipeId: request.workflowRecipeId,
-      }),
-      ...(request.serviceName !== undefined && {
-        serviceName: request.serviceName,
-      }),
-      ...(request.servicePath !== undefined && {
-        servicePath: request.servicePath,
-      }),
-      ...(request.nodeVersion !== undefined && {
-        nodeVersion: request.nodeVersion,
-      }),
-      packageManager: 'npm',
-      ...(request.coverageThreshold !== undefined && {
-        coverageThreshold: request.coverageThreshold,
-      }),
-      ...(request.centralWorkflowRef !== undefined && {
-        centralWorkflowRef: request.centralWorkflowRef,
-      }),
-      checks: {
-        ...base.checks,
-        ...(request.checks ?? {}),
-      },
-    };
-  }
-
-  private validateWorkflowSettingsPreview(
-    settings: WorkflowSettings,
-    request: WorkflowSettingsPreviewRequest,
-  ): WorkflowSettingsPreviewResponse['validationWarnings'] {
-    const warnings: WorkflowSettingsPreviewResponse['validationWarnings'] = [];
-
-    if (
-      !Number.isInteger(settings.coverageThreshold) ||
-      settings.coverageThreshold < 0 ||
-      settings.coverageThreshold > 100
-    ) {
-      warnings.push({
-        field: 'coverageThreshold',
-        message: 'Coverage threshold must be between 0 and 100.',
-      });
-    }
-
-    if (
-      request.packageManager !== undefined &&
-      request.packageManager !== 'npm'
-    ) {
-      warnings.push({
-        field: 'packageManager',
-        message: 'Only npm workflow previews are supported in this phase.',
-      });
-    }
-
-    if (!/^[0-9]{2}$/.test(settings.nodeVersion)) {
-      warnings.push({
-        field: 'nodeVersion',
-        message: 'Node version must be a two-digit major version.',
-      });
-    }
-
-    return warnings;
-  }
-
-  private buildWorkflowPreviewDiff(
-    currentFiles: WorkflowFileMetadata[],
-    previewFiles: StagedWorkflowFile[],
-  ): WorkflowSettingsPreviewResponse['diffSummary'] {
-    const currentPaths = new Set(currentFiles.map((file) => file.path));
-
-    return previewFiles.map((file) => ({
-      path: file.path,
-      status:
-        currentPaths.size === 0
-          ? 'new'
-          : currentPaths.has(file.path)
-            ? 'changed'
-            : 'new',
-    }));
-  }
-
-  private readChecks(
-    projectOptions: Record<string, unknown>,
-    storedSettings: Record<string, unknown>,
-  ): WorkflowSettings['checks'] {
-    const storedChecks =
-      typeof storedSettings['checks'] === 'object' &&
-      storedSettings['checks'] !== null &&
-      !Array.isArray(storedSettings['checks'])
-        ? (storedSettings['checks'] as Record<string, unknown>)
-        : {};
-    const optionTests =
-      typeof projectOptions['tests'] === 'object' &&
-      projectOptions['tests'] !== null &&
-      !Array.isArray(projectOptions['tests'])
-        ? (projectOptions['tests'] as Record<string, unknown>)
-        : {};
-
-    return {
-      lint:
-        this.readBoolean(storedChecks['lint']) ??
-        this.readBoolean(optionTests['lint']) ??
-        true,
-      unit:
-        this.readBoolean(storedChecks['unit']) ??
-        this.readBoolean(optionTests['unit']) ??
-        true,
-      build:
-        this.readBoolean(storedChecks['build']) ??
-        this.readBoolean(optionTests['build']) ??
-        true,
-      security:
-        this.readBoolean(storedChecks['security']) ??
-        this.readBoolean(optionTests['security']) ??
-        true,
-    };
-  }
-
-  private readString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim() ? value : null;
-  }
-
-  private readNullableString(value: unknown): string | null {
-    return typeof value === 'string' ? value : null;
-  }
-
-  private readNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
-  }
-
-  private readBoolean(value: unknown): boolean | null {
-    return typeof value === 'boolean' ? value : null;
   }
 
   private buildLocalSnapshotFindings(

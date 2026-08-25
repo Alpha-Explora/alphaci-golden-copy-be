@@ -20,7 +20,7 @@ import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
 import { DeploymentTargetsService } from './deployment-targets.service';
-import type { UpdateDeploymentTargetMetadataInput } from './deployment-targets.repository';
+import type { UpdateDeploymentTargetMetadataInput } from './deployments.types';
 import { EnvFeatureGuard } from './env-feature.guard';
 
 const LOG_STREAM_POLL_INTERVAL_MS = 5_000;

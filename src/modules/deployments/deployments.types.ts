@@ -136,3 +136,14 @@ export interface EnvVarMetadata {
   errorSummary: string | null;
   removedAt?: string | null;
 }
+
+export interface UpdateDeploymentTargetMetadataInput {
+  slot?: EnvTargetSlot;
+  providerProjectName?: string;
+  branchName?: string;
+  rootDirectory?: string | null;
+  buildCommand?: string | null;
+  startCommand?: string | null;
+  renderEnvironmentName?: RenderEnvironmentName | null;
+}
+
