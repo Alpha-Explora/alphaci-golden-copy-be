@@ -1,5 +1,5 @@
 import { ProviderConnectionsController } from './provider-connections.controller';
-import type { ProviderConnectionsService } from './provider-connections.service';
+import type { ProviderConnectionsService } from '../application/provider-connections.service';
 
 describe('ProviderConnectionsController', () => {
   const makeService = () =>

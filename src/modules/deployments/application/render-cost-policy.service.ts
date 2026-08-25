@@ -1,11 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
+import type { AppConfig } from '../../../config/app.config';
 import type {
   EnvOwnershipMode,
   RenderServiceType,
-} from './deployments.types';
+} from '../core/deployments.types';
 
 const FREE_SUPPORTED_SERVICE_TYPES: RenderServiceType[] = ['web_service'];
 

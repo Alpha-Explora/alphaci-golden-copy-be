@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 
-import { DatabaseService } from '../../kernel/db/database.service';
-import { EnvVarsRepository } from './env-vars.repository';
+import { DatabaseService } from '../../../kernel/db/database.service';
+import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
 
 describe('EnvVarsRepository', () => {
   it('persists env metadata without env values', async () => {

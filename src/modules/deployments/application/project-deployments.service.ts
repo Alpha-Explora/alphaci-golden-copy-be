@@ -2,17 +2,17 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../../config/app.config';
-import { DeploymentTargetsRepository } from '../deployment-targets.repository';
-import type { DeploymentTargetSummary } from '../deployments.types';
-import { providerPublicUrl } from '../provider-public-url';
-import { EnvTokenEncryptionService } from '../encryption.service';
+import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
+import type { DeploymentTargetSummary } from '../core/deployments.types';
+import { providerPublicUrl } from '../core/provider-public-url';
+import { EnvTokenEncryptionService } from '../application/encryption.service';
 import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';
-import { ProviderConnectionsRepository } from '../provider-connections.repository';
+import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
 import {
   type DeploymentHistoryQuery,
   type DeploymentHistoryResponse,
   type DeploymentProjectReference,
-} from '../deployment-provisioning.contract';
+} from '../core/deployment-provisioning.contract';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
 

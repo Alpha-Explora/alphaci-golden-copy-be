@@ -10,11 +10,11 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { SubscriptionGuard } from '../../common/guards/subscription.guard';
-import type { CreateProviderConnectionDto } from './dto/create-provider-connection.dto';
+import { SessionAuthGuard } from '../../../common/guards/session-auth.guard';
+import { SubscriptionGuard } from '../../../common/guards/subscription.guard';
+import type { CreateProviderConnectionDto } from '../dto/create-provider-connection.dto';
 import { EnvFeatureGuard } from './env-feature.guard';
-import { ProviderConnectionsService } from './provider-connections.service';
+import { ProviderConnectionsService } from '../application/provider-connections.service';
 
 @Controller('provider-connections')
 @UseGuards(SessionAuthGuard, SubscriptionGuard, EnvFeatureGuard)

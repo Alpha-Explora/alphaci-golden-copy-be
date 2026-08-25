@@ -1,7 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
 
 import { EnvVarsController } from './env-vars.controller';
-import type { EnvVarsService } from './env-vars.service';
+import type { EnvVarsService } from '../application/env-vars.service';
 
 describe('EnvVarsController', () => {
   const makeService = () =>

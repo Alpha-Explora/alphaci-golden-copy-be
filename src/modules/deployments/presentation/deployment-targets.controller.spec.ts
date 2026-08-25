@@ -1,7 +1,7 @@
 import { firstValueFrom } from 'rxjs';
 
 import { DeploymentTargetsController } from './deployment-targets.controller';
-import type { DeploymentTargetsService } from './deployment-targets.service';
+import type { DeploymentTargetsService } from '../application/deployment-targets.service';
 
 describe('DeploymentTargetsController', () => {
   const makeService = () =>

@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
+import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
 import { DeploymentTargetsService } from './deployment-targets.service';
 
 describe('DeploymentTargetsService', () => {

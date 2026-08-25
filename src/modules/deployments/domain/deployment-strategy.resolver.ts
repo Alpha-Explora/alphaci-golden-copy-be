@@ -1,11 +1,9 @@
-import { Injectable } from '@nestjs/common';
-
 import type {
   DeploymentStrategy,
   EnvOwnershipMode,
   EnvProvider,
   RenderDeployMethod,
-} from './deployments.types';
+} from '../core/deployments.types';
 
 export interface ResolveDeploymentStrategyInput {
   provider: EnvProvider;
@@ -14,7 +12,6 @@ export interface ResolveDeploymentStrategyInput {
   renderDeployMethod?: RenderDeployMethod | undefined;
 }
 
-@Injectable()
 export class DeploymentStrategyResolver {
   resolve(input: ResolveDeploymentStrategyInput): DeploymentStrategy {
     if (input.provider === 'vercel') {

@@ -12,7 +12,7 @@
 // has exactly one answer in the backend — the target listing and the
 // deployment history both need it, and a provider changing its hostname
 // format should be a one-line edit.
-export { providerPublicUrl } from './provider-public-url';
+export { providerPublicUrl } from './core/provider-public-url';
 
 // Contracts: the shapes crossing this boundary. Which provider hosts a thing
 // is stamped on every deployment and preview payload the projects module
@@ -21,7 +21,7 @@ export type {
   DeploymentTargetSummary,
   EnvProvider,
   EnvVarMetadata,
-} from './deployments.types';
+} from './core/deployments.types';
 // Deployment provisioning is consumed by Projects through this facade.  The
 // implementation remains private to this module so Projects cannot couple to
 // provider orchestration details.
@@ -53,7 +53,7 @@ export {
   type DeploymentTargetsQuery,
   type DeploymentEnvMetadataQuery,
   type DeploymentTargetDeletion,
-} from './deployment-provisioning.contract';
+} from './core/deployment-provisioning.contract';
 
 export type {
   ProjectDriftFinding,

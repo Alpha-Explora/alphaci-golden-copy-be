@@ -1,13 +1,13 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../../kernel/db/database.service';
+import { DatabaseService } from '../../../kernel/db/database.service';
 import type {
   EnvLane,
   EnvProvider,
   EnvVarMetadata,
   EnvVarProvisionStatus,
   EnvVarScope,
-} from './deployments.types';
+} from '../core/deployments.types';
 
 interface EnvVarMetadataRow {
   id: string;

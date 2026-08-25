@@ -4,4 +4,4 @@ export type {
   DeploymentHistoryMode,
   DeploymentHistoryResponse as ProjectDeploymentsResponse,
   DeploymentHistoryStatus,
-} from '../deployment-provisioning.contract';
+} from '../core/deployment-provisioning.contract';

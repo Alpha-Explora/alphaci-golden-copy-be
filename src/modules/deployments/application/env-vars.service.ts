@@ -6,28 +6,28 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
-import { AuditEventsService } from '../audit/index.js';
-import { NotificationEventsService } from '../notifications/index.js';
+import type { AppConfig } from '../../../config/app.config';
+import { AuditEventsService } from '../../audit/index.js';
+import { NotificationEventsService } from '../../notifications/index.js';
 import {
   DeploymentPolicyViolation,
   validateEnvironmentScope,
-} from './domain/deployment-target.policy';
-import { DeploymentTargetsRepository } from './deployment-targets.repository';
-import type { ProvisionEnvVarsDto } from './dto/provision-env-vars.dto';
+} from '../domain/deployment-target.policy';
+import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
+import type { ProvisionEnvVarsDto } from '../dto/provision-env-vars.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
-import { EnvVarsRepository } from './env-vars.repository';
+import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
 import type {
   DeploymentTargetSummary,
   EnvLane,
   EnvProvider,
   EnvVarInput,
   EnvVarScope,
-} from './deployments.types';
-import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
-import { ProviderConnectionsRepository } from './provider-connections.repository';
-import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
-import { WorkspaceAccessService } from '../workspaces/index.js';
+} from '../core/deployments.types';
+import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';
+import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import { UsageQuotaService, type UsageLimitCode } from '../../usage/index.js';
+import { WorkspaceAccessService } from '../../workspaces/index.js';
 
 const LANES: EnvLane[] = ['production', 'preview'];
 const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{1,127}$/;

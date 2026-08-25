@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 
-import { DatabaseService } from '../../kernel/db/database.service';
-import { ProviderConnectionsRepository } from './provider-connections.repository';
+import { DatabaseService } from '../../../kernel/db/database.service';
+import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
 
 const row = {
   id: 'connection-1',

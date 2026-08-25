@@ -8,36 +8,36 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
-import { AuditEventsService } from '../audit/index.js';
-import { NotificationEventsService } from '../notifications/index.js';
-import { DeploymentTargetsRepository } from './deployment-targets.repository';
-import type { UpdateDeploymentTargetMetadataInput } from './deployments.types';
+import type { AppConfig } from '../../../config/app.config';
+import { AuditEventsService } from '../../audit/index.js';
+import { NotificationEventsService } from '../../notifications/index.js';
+import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
+import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import {
   assertProviderSlotAllowed,
   DeploymentPolicyViolation,
-} from './domain/deployment-target.policy';
-import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
-import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
-import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
+} from '../domain/deployment-target.policy';
+import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
+import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
+import type { DetachDeploymentTargetDto } from '../dto/detach-deployment-target.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type {
   DeploymentTargetSummary,
   EnvProvider,
   EnvTargetSlot,
   RenderEnvironmentName,
-} from './deployments.types';
-import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
-import { ProviderConnectionsRepository } from './provider-connections.repository';
-import { providerPublicUrl } from './provider-public-url';
+} from '../core/deployments.types';
+import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';
+import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import { providerPublicUrl } from '../core/provider-public-url';
 import { RenderCostPolicyService } from './render-cost-policy.service';
-import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
-import { WorkspaceAccessService, type WorkspaceRole } from '../workspaces/index.js';
+import { UsageQuotaService, type UsageLimitCode } from '../../usage/index.js';
+import { WorkspaceAccessService, type WorkspaceRole } from '../../workspaces/index.js';
 import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
-} from './deployment-provisioning.contract';
+} from '../core/deployment-provisioning.contract';
 
 export interface DeploymentTargetLogEntry {
   timestamp: string;
