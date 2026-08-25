@@ -5,12 +5,13 @@ from here; **this directory may never import from `src/modules/`.**
 
 | Folder    | Holds                                                        |
 |-----------|--------------------------------------------------------------|
-| `config/` | `app.config.ts`, `env.validation.ts`                          |
-| `db/`     | `database.service`, `postgres-ssl.config`, Supabase client    |
-| `http/`   | exception filters, correlation-id middleware                  |
-| `auth/`   | `SessionAuthGuard`, session/user interfaces                   |
+| `db/`     | `database.service`, `postgres-ssl.config`, Supabase client (`db/supabase/`) |
 | `events/` | `outbox.repository` — the only genuinely shared repository    |
-| `types/`  | ambient and shared type declarations                          |
+| `auth/`   | session-user lookup contract                                  |
+
+`config/` (app config, env validation) and `http/` (guards, filters,
+correlation middleware) remain in `src/common/` and `src/config/` until a
+second module needs them — see the admission rule below.
 
 ## Admission rule
 
@@ -18,4 +19,5 @@ Something belongs here only when a **second** module needs it. One consumer
 means it lives inside that module. This rule is what stops `kernel/` becoming
 the next `persistence/`.
 
-Migration status: skeleton only — see `docs/restructure.md` phase 03.
+Migration status: db + events + auth contract landed; the rest of the old plan
+lives in `docs/architecture/FUTURE_STATE.md`.

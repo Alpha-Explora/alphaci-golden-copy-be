@@ -186,3 +186,6 @@ caught automatically next time.
 6. Everything else from the plan is done and verified; no other action needed
    before continuing feature work (e.g. the GCP provider) on top of this
    branch.
+> **Status note (2026-08-26):** the split-services topology discussed in some
+> planning docs was rejected. `FUTURE_STATE.md` is the adopted direction:
+> hexagonal-clean modular monolith. This file remains as a point-in-time report.
