@@ -42,9 +42,10 @@ export class HierarchyProjectLinkService {
    * The assignment UI lives on hierarchy.repositories, but every other surface
    * addresses a project by its provisioned_projects id. This is the one hop
    * between them, so the project page can offer a route into the assignment
-   * panel. Returns null when the project has no link (personal workspace, or
-   * created before the link existed) — the caller then hides the entry point
-   * rather than offering a URL that would 404. Never throws.
+   * panel. Returns null when the project has no link — one created before the
+   * link existed, or one whose best-effort link failed — and the caller then
+   * hides the entry point rather than offering a URL that would 404. Never
+   * throws.
    */
   async getLinkedRepositoryId(projectId: string): Promise<string | null> {
     try {
@@ -64,8 +65,9 @@ export class HierarchyProjectLinkService {
    * possible. Never throws.
    */
   async ensureLink(input: EnsureProjectLinkInput): Promise<string | null> {
-    // Personal workspace (or none) — there is no hierarchy tree to attach to,
-    // and inventing one would put private work inside a group structure.
+    // No workspace at all — nothing to attach a hierarchy tree to. Since
+    // personal workspaces were removed every workspace is a team, so the
+    // isTeamWorkspace() guard below now only screens out a stale or deleted id.
     if (!input.workspaceId) return null;
 
     try {

@@ -18,7 +18,7 @@ describe('WorkspacesController', () => {
           {
             id: 'workspace-1',
             name: "tone's workspace",
-            kind: 'personal',
+            kind: 'team',
             role: 'admin',
           },
         ],
@@ -71,7 +71,7 @@ describe('WorkspacesController', () => {
         {
           id: 'workspace-1',
           name: "tone's workspace",
-          kind: 'personal',
+          kind: 'team',
           role: 'admin',
         },
       ],

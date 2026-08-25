@@ -18,8 +18,8 @@ describe('WorkspacesRepository', () => {
       rows: [
         {
           id: 'workspace-1',
-          name: 'Personal workspace',
-          kind: 'personal',
+          name: 'Team workspace',
+          kind: 'team',
           role: 'admin',
         },
       ],
@@ -28,8 +28,8 @@ describe('WorkspacesRepository', () => {
     await expect(repository.listForUser('user-1')).resolves.toEqual([
       {
         id: 'workspace-1',
-        name: 'Personal workspace',
-        kind: 'personal',
+        name: 'Team workspace',
+        kind: 'team',
         role: 'admin',
       },
     ]);
@@ -39,46 +39,14 @@ describe('WorkspacesRepository', () => {
     );
   });
 
-  it('creates a personal workspace and owner membership', async () => {
-    query
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'workspace-1',
-            name: 'Personal workspace',
-            kind: 'personal',
-            role: 'admin',
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
-
-    await expect(repository.createPersonalWorkspace('user-1')).resolves.toEqual(
-      {
-        id: 'workspace-1',
-        name: 'Personal workspace',
-        kind: 'personal',
-        role: 'admin',
-      },
-    );
-    expect(query).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('INSERT INTO orgs.workspaces'),
-      ['user-1'],
-    );
-    expect(query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('INSERT INTO orgs.workspace_members'),
-      ['workspace-1', 'user-1'],
-    );
-  });
-
-  it('throws when workspace insert does not return a row', async () => {
-    query.mockResolvedValueOnce({ rows: [] });
-
-    await expect(repository.createPersonalWorkspace('user-1')).rejects.toThrow(
-      'Workspace insert did not return a row',
-    );
+  /* Personal workspaces were removed: a workspace IS a team, and the only way
+   * into one is being added as a member. Nothing in the repository may create
+   * a workspace on a caller's behalf. */
+  it('exposes no way to create a workspace implicitly', () => {
+    expect(
+      (repository as unknown as Record<string, unknown>)
+        .createPersonalWorkspace,
+    ).toBeUndefined();
   });
 
   it('lists workspace members with user profile fields', async () => {

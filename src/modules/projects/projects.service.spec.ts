@@ -126,8 +126,8 @@ const makeWorkspacesService = () =>
       items: [
         {
           id: 'workspace-1',
-          name: 'Personal workspace',
-          kind: 'personal',
+          name: 'Team workspace',
+          kind: 'team',
           role: 'admin',
         },
       ],
@@ -645,7 +645,7 @@ jobs:
     );
   });
 
-  it('attaches created projects to the default workspace when available', async () => {
+  it('attaches created projects to the caller’s only team', async () => {
     const projectsRepository =
       makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
     const workspacesService =
@@ -699,6 +699,83 @@ jobs:
     expect(projectsRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceId: 'workspace-1' }),
     );
+  });
+
+  /* Every project belongs to a team, and a create that names no team is only
+   * unambiguous when the caller has exactly one. These two cases used to fall
+   * through to `items[0]` — the caller's oldest workspace by created_at, which
+   * while personal workspaces existed was reliably the personal one. Projects
+   * landed there invisible to every teammate, which is the bug being closed.
+   * Neither may silently pick for the caller. */
+  const createWithTeams = async (items: unknown[]) => {
+    const projectsRepository =
+      makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
+    const workspacesService =
+      makeWorkspacesService() as jest.Mocked<WorkspacesService>;
+    workspacesService.getMyWorkspaces.mockResolvedValue({
+      enabled: true,
+      items,
+    } as never);
+
+    const workspaceService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      projectsRepository,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workspacesService,
+    );
+
+    return {
+      projectsRepository,
+      create: () =>
+        workspaceService.createProject('user-1', 'tone', 'oauth-token', {
+          repoName: 'orders-api',
+          visibility: 'private',
+          projectTypeId: 'nestjs-api',
+          workflowRecipeId: 'backend-api-ci',
+          serviceName: 'orders-api',
+        }),
+    };
+  };
+
+  it('refuses to guess when the caller belongs to no team', async () => {
+    const { create, projectsRepository } = await createWithTeams([]);
+
+    await expect(create()).rejects.toThrow(
+      'Ask a team admin to add you to one',
+    );
+    expect(projectsRepository.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to guess when the caller belongs to several teams', async () => {
+    const { create, projectsRepository } = await createWithTeams([
+      { id: 'workspace-1', name: 'Platform', kind: 'team', role: 'admin' },
+      { id: 'workspace-2', name: 'Payments', kind: 'team', role: 'member' },
+    ]);
+
+    await expect(create()).rejects.toThrow('Select which team');
+    expect(projectsRepository.create).not.toHaveBeenCalled();
+  });
+
+  /* The team is settled before any GitHub call: the row is written long after
+   * the repository exists, so a rejection at that point would strand a real
+   * repository for a request that never had anywhere to put the project. */
+  it('rejects before creating a repository when no team can be resolved', async () => {
+    const { create } = await createWithTeams([]);
+
+    await expect(create()).rejects.toThrow();
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
   });
 
   it('falls back to the OAuth token when no installation token is available', async () => {

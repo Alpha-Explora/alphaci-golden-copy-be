@@ -503,6 +503,11 @@ export class ProjectsService {
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
     await this.assertWithinQuota(userId, 'projects', 1, null);
+    // Settle the owning team BEFORE any GitHub call. The row is written at
+    // step 5, long after the repository exists and the workflow is pushed, so
+    // discovering there that the caller named no resolvable team would leave a
+    // real repository behind for a request that never had anywhere to put it.
+    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
     const {
       repositoryCreationToken,
       provisioningToken,
@@ -1055,6 +1060,11 @@ export class ProjectsService {
     oauthAccessToken: string | null | undefined,
     dto: SetupProjectDto,
   ): Promise<SetupProjectResponse> {
+    // Settle the owning team first — this path mutates an existing repository
+    // (branches, secrets, a workflow commit) before the row is written, and
+    // none of that should happen for a request with nowhere to put the project.
+    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+
     // 1. Build workflow YAML from the given templateId
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
       templateId: dto.templateId,
@@ -3932,11 +3942,32 @@ export class ProjectsService {
     };
   }
 
-  private async resolveDefaultWorkspaceId(
-    userId: string,
-  ): Promise<string | null> {
-    const workspaces = await this.workspacesService?.getMyWorkspaces(userId);
-    return workspaces?.items[0]?.id ?? null;
+  /**
+   * Workspace for a create that did not name one.
+   *
+   * This deliberately does NOT fall back to `items[0]`. That silently picked
+   * the caller's oldest workspace by `created_at`, which — while personal
+   * workspaces were auto-created on first read — was reliably the personal one,
+   * so projects created outside a team landed somewhere no teammate could see
+   * them. With one team the choice is unambiguous; with several it belongs to
+   * the caller, not to a sort order.
+   */
+  private async resolveImplicitWorkspaceId(userId: string): Promise<string> {
+    const items =
+      (await this.workspacesService?.getMyWorkspaces(userId))?.items ?? [];
+
+    const only = items.length === 1 ? items[0] : undefined;
+    if (only) {
+      return only.id;
+    }
+    if (items.length === 0) {
+      throw new ForbiddenException(
+        'Every project belongs to a team. Ask a team admin to add you to one before creating a project.',
+      );
+    }
+    throw new BadRequestException(
+      'Select which team this project belongs to before creating it.',
+    );
   }
 
   /**
@@ -3944,15 +3975,22 @@ export class ProjectsService {
    * inside a group (the "Create project" form passes that group's id), the
    * project is owned by that group — but only if the caller actually belongs to
    * it (or is a global admin), so a project can't be smuggled into a group the
-   * caller has no access to. Otherwise it falls back to the caller's default
-   * (personal) workspace.
+   * caller has no access to.
+   *
+   * A workspace IS a team, and every project lives in one, so a null result
+   * only ever means the workspaces module is not wired in at all.
    */
   private async resolveWorkspaceIdForCreate(
     userId: string,
     workspaceId?: string | null,
   ): Promise<string | null> {
     if (!workspaceId) {
-      return this.resolveDefaultWorkspaceId(userId);
+      // Workspaces disabled entirely: leave the project unscoped as before
+      // rather than blocking creation on a module that isn't running.
+      if (!this.workspacesService) {
+        return null;
+      }
+      return this.resolveImplicitWorkspaceId(userId);
     }
     const allowed = await this.projectsRepository.canCreateInWorkspace(
       userId,

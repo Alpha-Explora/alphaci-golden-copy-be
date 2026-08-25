@@ -29,7 +29,11 @@ export interface LinkProjectInput {
 export class HierarchyProjectLinkRepository {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  /** True when the workspace is a Group (team), not a personal workspace. */
+  /**
+   * True when the workspace exists and is a team. Every workspace is a team
+   * since personal workspaces were removed, so this now only screens out an id
+   * that is stale or already deleted.
+   */
   async isTeamWorkspace(workspaceId: string): Promise<boolean> {
     const result = await this.databaseService.query<{ exists: boolean }>(
       `SELECT TRUE AS exists FROM orgs.workspaces WHERE id = $1 AND kind = 'team' LIMIT 1;`,
