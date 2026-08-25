@@ -6,12 +6,6 @@ describe('WorkspacesService', () => {
   const makeRepository = () =>
     ({
       listForUser: jest.fn().mockResolvedValue([]),
-      createPersonalWorkspace: jest.fn().mockResolvedValue({
-        id: 'workspace-1',
-        name: 'Personal workspace',
-        kind: 'personal',
-        role: 'admin',
-      }),
       listMembers: jest.fn().mockResolvedValue([]),
       addMemberByLoginOrEmail: jest.fn(),
       findMemberById: jest.fn(),
@@ -29,7 +23,7 @@ describe('WorkspacesService', () => {
       assertCanRemoveMember: jest.fn().mockResolvedValue(undefined),
     }) as unknown as jest.Mocked<WorkspaceAccessService>;
 
-  it('returns existing workspaces without creating a personal workspace', async () => {
+  it('returns the teams the caller belongs to', async () => {
     const repository = makeRepository();
     repository.listForUser.mockResolvedValueOnce([
       {
@@ -52,25 +46,16 @@ describe('WorkspacesService', () => {
         },
       ],
     });
-    expect(repository.createPersonalWorkspace).not.toHaveBeenCalled();
   });
 
-  it('creates a personal workspace when the user has none', async () => {
+  it('returns nothing for a caller who belongs to no team', async () => {
     const repository = makeRepository();
     const service = new WorkspacesService(repository, makeAccessService());
 
     await expect(service.getMyWorkspaces('user-1')).resolves.toEqual({
       enabled: true,
-      items: [
-        {
-          id: 'workspace-1',
-          name: 'Personal workspace',
-          kind: 'personal',
-          role: 'admin',
-        },
-      ],
+      items: [],
     });
-    expect(repository.createPersonalWorkspace).toHaveBeenCalledWith('user-1');
   });
 
   it('lists members after read access is verified', async () => {

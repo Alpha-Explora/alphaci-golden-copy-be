@@ -10,11 +10,18 @@ import { DatabaseService } from '../../kernel/db/database.service';
  * string, two different systems — do not conflate them.
  */
 export type WorkspaceRole = 'admin' | 'delegated_lead' | 'member' | 'viewer';
+/**
+ * `kind` is retained as a single-member union rather than dropped because the
+ * column still exists and is still selected. Every workspace is a team - a
+ * workspace IS a team - and the CHECK constraint enforces that as of the
+ * personal-workspace removal migration.
+ */
+export type WorkspaceKind = 'team';
 
 export interface WorkspaceSummary {
   id: string;
   name: string;
-  kind: 'personal' | 'team';
+  kind: WorkspaceKind;
   role: WorkspaceRole;
 }
 
@@ -39,7 +46,7 @@ export interface WorkspaceMembership {
 interface WorkspaceRow {
   id: string;
   name: string;
-  kind: 'personal' | 'team';
+  kind: WorkspaceKind;
   role: WorkspaceRole;
 }
 
@@ -77,34 +84,6 @@ export class WorkspacesRepository {
     );
 
     return result.rows.map((row) => this.toSummary(row));
-  }
-
-  async createPersonalWorkspace(userId: string): Promise<WorkspaceSummary> {
-    const workspaceResult = await this.databaseService.query<WorkspaceRow>(
-      `
-        INSERT INTO orgs.workspaces (owner_user_id, name, kind)
-        VALUES ($1, 'Personal workspace', 'personal')
-        ON CONFLICT (owner_user_id) WHERE kind = 'personal'
-        DO UPDATE SET updated_at = orgs.workspaces.updated_at
-        RETURNING id, name, kind, 'admin'::text AS role;
-      `,
-      [userId],
-    );
-    const workspace = workspaceResult.rows[0];
-    if (!workspace) {
-      throw new Error('Workspace insert did not return a row');
-    }
-
-    await this.databaseService.query(
-      `
-        INSERT INTO orgs.workspace_members (workspace_id, user_id, role)
-        VALUES ($1, $2, 'admin')
-        ON CONFLICT (workspace_id, user_id) DO NOTHING;
-      `,
-      [workspace.id, userId],
-    );
-
-    return this.toSummary(workspace);
   }
 
   async listMembers(workspaceId: string): Promise<WorkspaceMemberSummary[]> {

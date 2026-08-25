@@ -102,6 +102,7 @@ const makeProjectsRepository = () =>
       repo_full_name: 'tone/orders-api',
     }),
     listByUser: jest.fn().mockResolvedValue([]),
+    isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
   }) as unknown as ProjectsRepository;
 
 const makeWorkspaceAccessService = (
