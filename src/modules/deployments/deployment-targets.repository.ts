@@ -65,16 +65,6 @@ export interface CreateDeploymentTargetInput {
   providerMetadata?: Record<string, unknown>;
 }
 
-export interface UpdateDeploymentTargetMetadataInput {
-  slot?: EnvTargetSlot;
-  providerProjectName?: string;
-  branchName?: string;
-  rootDirectory?: string | null;
-  buildCommand?: string | null;
-  startCommand?: string | null;
-  renderEnvironmentName?: RenderEnvironmentName | null;
-}
-
 @Injectable()
 export class DeploymentTargetsRepository {
   constructor(private readonly databaseService: DatabaseService) {}

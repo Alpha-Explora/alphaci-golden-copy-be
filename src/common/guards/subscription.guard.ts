@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { SubscriptionService } from '../../modules/subscription/subscription.service';
+import { SubscriptionService } from '../../modules/subscription/index.js';
 
 @Injectable()
 export class SubscriptionGuard implements CanActivate {
