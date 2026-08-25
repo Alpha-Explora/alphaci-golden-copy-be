@@ -9,6 +9,10 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import { AuditEventsService } from '../audit/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
+import {
+  DeploymentPolicyViolation,
+  validateEnvironmentScope,
+} from './domain/deployment-target.policy';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import type { ProvisionEnvVarsDto } from './dto/provision-env-vars.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
@@ -202,33 +206,14 @@ export class EnvVarsService {
     lane: EnvLane;
     gitBranch?: string | null;
   }): EnvVarScope {
-    if (!LANES.includes(input.lane)) {
-      throw new BadRequestException(
-        'lane must be either production or preview',
-      );
-    }
-
-    const branch = input.gitBranch?.trim() ?? '';
-
-    if (input.lane === 'production') {
-      if (branch) {
-        throw new BadRequestException(
-          'The production lane takes no branch — the provider resolves it from the project’s production branch.',
-        );
+    try {
+      return validateEnvironmentScope(input);
+    } catch (error) {
+      if (error instanceof DeploymentPolicyViolation) {
+        throw new BadRequestException(error.policyError.message);
       }
-      return { lane: 'production', gitBranch: null };
+      throw error;
     }
-
-    if (!branch) {
-      throw new BadRequestException(
-        'gitBranch is required for the preview lane, so the values apply to one branch.',
-      );
-    }
-    if (!GIT_BRANCH_PATTERN.test(branch)) {
-      throw new BadRequestException('gitBranch is not a valid branch name');
-    }
-
-    return { lane: 'preview', gitBranch: branch };
   }
 
   async deleteEnvMetadata(

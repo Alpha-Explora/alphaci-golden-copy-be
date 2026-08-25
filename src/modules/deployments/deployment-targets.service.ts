@@ -13,6 +13,10 @@ import { AuditEventsService } from '../audit/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import type { UpdateDeploymentTargetMetadataInput } from './deployments.types';
+import {
+  assertProviderSlotAllowed,
+  DeploymentPolicyViolation,
+} from './domain/deployment-target.policy';
 import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
@@ -92,7 +96,14 @@ export class DeploymentTargetsService {
     const project = await this.getProjectOrThrow(projectId, userId);
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     this.assertOwnershipModeAllowed(dto);
-    this.assertProviderSlotAllowed(dto.provider, dto.slot);
+    try {
+      assertProviderSlotAllowed(dto.provider, dto.slot);
+    } catch (error) {
+      if (error instanceof DeploymentPolicyViolation) {
+        throw new BadRequestException(error.policyError.message);
+      }
+      throw error;
+    }
     if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
       await this.assertWithinQuota(
         userId,
@@ -274,7 +285,14 @@ export class DeploymentTargetsService {
       userId,
     );
     if (input.slot !== undefined) {
-      this.assertProviderSlotAllowed(existingTarget.provider, input.slot);
+      try {
+        assertProviderSlotAllowed(existingTarget.provider, input.slot);
+      } catch (error) {
+        if (error instanceof DeploymentPolicyViolation) {
+          throw new BadRequestException(error.policyError.message);
+        }
+        throw error;
+      }
     }
     const target =
       await this.deploymentTargetsRepository.updateDeploymentTargetMetadataForUser(
@@ -644,22 +662,6 @@ export class DeploymentTargetsService {
     }
   }
 
-  private assertProviderSlotAllowed(
-    provider: EnvProvider,
-    slot: EnvTargetSlot,
-  ): void {
-    if (provider === 'render' && slot !== 'backend') {
-      throw new BadRequestException(
-        'Render deployment targets are backend-only. Choose the backend slot for Render.',
-      );
-    }
-
-    if (provider === 'vercel' && slot !== 'frontend') {
-      throw new BadRequestException(
-        'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
-      );
-    }
-  }
 
   private async recordTargetEvent(input: {
     userId: string;
