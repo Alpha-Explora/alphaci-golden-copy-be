@@ -5,11 +5,8 @@ import type {
   AppConfig,
   GithubTeamRoleSyncMode,
 } from '../../config/app.config';
-import { AuditEventsService } from '../audit/audit-events.service';
-import {
-  PlatformAdminsRepository,
-  type AppRole,
-} from '../admin/platform-admins.repository';
+import { AuditEventsService } from '../audit/index.js';
+import { PlatformAdminAccessService, type AppRole } from '../admin/index.js';
 import { GithubInstallationsRepository } from './github-installations.repository';
 import {
   GithubService,
@@ -63,7 +60,7 @@ export class GithubTeamRoleService {
   constructor(
     private readonly configService: ConfigService,
     private readonly githubService: GithubService,
-    private readonly platformAdminsRepository: PlatformAdminsRepository,
+    private readonly platformAdminAccessService: PlatformAdminAccessService,
     private readonly auditEventsService: AuditEventsService,
     private readonly installationsRepository: GithubInstallationsRepository,
   ) {
@@ -170,7 +167,7 @@ export class GithubTeamRoleService {
     if (this.mode !== 'enforce') return { status: 'disabled' };
 
     const { role: currentRole, source } =
-      await this.platformAdminsRepository.findAppRoleWithSource(input.userId);
+      await this.platformAdminAccessService.findAppRoleWithSource(input.userId);
 
     // Rule 1 — a deliberate Console decision wins until explicitly reset.
     if (source === 'manual') return { status: 'pinned', role: currentRole };
@@ -194,7 +191,7 @@ export class GithubTeamRoleService {
 
     if (derived === currentRole) return { status: 'unchanged', role: derived };
 
-    await this.platformAdminsRepository.setAppRole(
+    await this.platformAdminAccessService.setAppRole(
       input.userId,
       derived,
       'github_team',
@@ -243,9 +240,10 @@ export class GithubTeamRoleService {
   }): Promise<RoleSyncOutcome> {
     if (this.mode !== 'enforce') return { status: 'disabled' };
 
-    const userId = await this.platformAdminsRepository.findUserIdByGithubLogin(
-      input.login,
-    );
+    const userId =
+      await this.platformAdminAccessService.findUserIdByGithubLogin(
+        input.login,
+      );
     if (!userId) {
       // Org member who has never signed into AlphaCI — nothing to update. They
       // pick up the right role from the seed on their first login.
@@ -330,7 +328,7 @@ export class GithubTeamRoleService {
 
     const leads = new Set(leadMembers.map((login) => login.toLowerCase()));
     const users =
-      await this.platformAdminsRepository.listGithubTeamSyncedUsers();
+      await this.platformAdminAccessService.listGithubTeamSyncedUsers();
 
     let updated = 0;
     for (const user of users) {
@@ -342,7 +340,7 @@ export class GithubTeamRoleService {
         : 'member';
       if (derived === user.appRole) continue;
 
-      await this.platformAdminsRepository.setAppRole(
+      await this.platformAdminAccessService.setAppRole(
         user.id,
         derived,
         'github_team',

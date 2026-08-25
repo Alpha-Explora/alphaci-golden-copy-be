@@ -4,10 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import {
-  type AppRole,
-  PlatformAdminsRepository,
-} from '../admin/platform-admins.repository';
+import { type AppRole, PlatformAdminAccessService } from '../admin/index.js';
 import {
   AssignmentsRepository,
   type AssignmentRecord,
@@ -56,22 +53,22 @@ export class HierarchyAccessService {
     private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
     private readonly repositoriesRepository: RepositoriesRepository,
     private readonly assignmentsRepository: AssignmentsRepository,
-    private readonly platformAdminsRepository: PlatformAdminsRepository,
+    private readonly platformAdminAccessService: PlatformAdminAccessService,
   ) {}
 
   async isPlatformAdmin(userId: string): Promise<boolean> {
-    const role = await this.platformAdminsRepository.findRole(userId);
+    const role = await this.platformAdminAccessService.findRole(userId);
     if (role !== null) return true;
     // A global 'admin' app_role is also a full override in the single-role
     // model, even without a platform_admins row.
     return (
-      (await this.platformAdminsRepository.findAppRole(userId)) === 'admin'
+      (await this.platformAdminAccessService.findAppRole(userId)) === 'admin'
     );
   }
 
   /** The user's global hierarchy role (admin | lead | member). */
   async getAppRole(userId: string): Promise<AppRole> {
-    return this.platformAdminsRepository.findAppRole(userId);
+    return this.platformAdminAccessService.findAppRole(userId);
   }
 
   // ─── Global create capability (single-role model) ─────────────────────

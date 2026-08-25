@@ -8,8 +8,8 @@ import {
 } from '@nestjs/common';
 import yaml from 'js-yaml';
 
-import { CatalogService } from '../catalog/catalog.service';
-import { GithubService } from '../github/github.service';
+import { CatalogService } from '../catalog/index.js';
+import { GithubService } from '../github/index.js';
 import type { DiscoverExistingRepoDto } from './dto/discover-existing-repo.dto';
 import type { SetupExistingRepoPrDto } from './dto/setup-existing-repo-pr.dto';
 

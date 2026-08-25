@@ -3,17 +3,18 @@ import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
-import { UsersRepository } from '../persistence/users.repository.js';
-import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
-import { OutboxRepository } from '../persistence/outbox.repository.js';
-import { OAuthStateRepository } from '../persistence/oauth-state.repository.js';
+import { UsersRepository } from './infra/users.repository.js';
+import { SubscriptionsRepository } from '../subscription/infra/subscriptions.repository.js';
+import { OutboxRepository } from '../../kernel/events/outbox.repository.js';
+import { OAuthStateRepository } from './infra/oauth-state.repository.js';
+import { SUBSCRIPTION_BOOTSTRAP } from '../subscription/subscription.contracts.js';
 import { GithubTeamRoleService } from '../github/github-team-role.service.js';
 import type { Request } from 'express';
 import type {
   SessionUser,
   SubscriptionState,
 } from '../../common/interfaces/session-user.interface.js';
-import type { ArchivedUserLookup } from '../persistence/users.repository.js';
+import type { ArchivedUserLookup } from './infra/users.repository.js';
 
 const fakeUser: SessionUser = {
   id: 'user-1',
@@ -136,6 +137,7 @@ async function createService(
       { provide: ConfigService, useValue: makeConfig(withGitHub, internalOrg) },
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
+      { provide: SUBSCRIPTION_BOOTSTRAP, useValue: subsRepo },
       { provide: OutboxRepository, useValue: outboxRepo },
       { provide: OAuthStateRepository, useValue: oauthStateRepo },
       // Sync disabled by default so these tests continue to exercise the

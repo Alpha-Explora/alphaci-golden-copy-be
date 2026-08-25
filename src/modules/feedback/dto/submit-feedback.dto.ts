@@ -6,7 +6,7 @@ import {
   MinLength,
 } from 'class-validator';
 
-import type { FeedbackCategory } from '../feedback.repository';
+import type { FeedbackCategory } from '../feedback.types';
 
 export class SubmitFeedbackDto {
   @IsOptional()

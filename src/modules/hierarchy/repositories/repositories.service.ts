@@ -4,9 +4,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { AuditEventsService } from '../../audit/audit-events.service';
-import { GithubService } from '../../github/github.service';
-import { ProjectsRepository } from '../../projects/projects.repository';
+import { AuditEventsService } from '../../audit/index.js';
+import { GithubService } from '../../github/index.js';
+import { ProjectProvisioningService } from '../../projects/index.js';
 import { DeliveryProjectsRepository } from '../delivery-projects/delivery-projects.repository';
 import { HierarchyAccessService } from '../hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../hierarchy.types';
@@ -24,7 +24,7 @@ export class RepositoriesService {
     private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
     private readonly accessService: HierarchyAccessService,
     private readonly githubService: GithubService,
-    private readonly projectsRepository: ProjectsRepository,
+    private readonly projectProvisioningService: ProjectProvisioningService,
     private readonly auditEventsService: AuditEventsService,
   ) {}
 
@@ -32,7 +32,7 @@ export class RepositoriesService {
    * Creates the GitHub repository (reuses GithubService.createRepo — does
    * not reimplement GitHub repo creation, plan §1.5), the hierarchy record,
    * and a projects.provisioned_projects row wired to it so the repository
-   * immediately gets dashboard/CI/env-provisioning functionality for free.
+   * immediately gets dashboard/CI/deployment functionality for free.
    */
   async createRepository(
     deliveryProjectId: string,
@@ -58,17 +58,14 @@ export class RepositoriesService {
       });
     const repoFullName = `${ownerLogin}/${repoName}`;
 
-    const provisionedProject = await this.projectsRepository.create({
-      userId,
-      repoFullName,
-      templateId: 'hierarchy-managed',
-      serviceName: repoName,
-      workflowPath: '',
-      status: 'provisioned',
-      repoUrl,
-      visibility: 'private',
-      workspaceId: groupId,
-    });
+    const provisionedProject =
+      await this.projectProvisioningService.createHierarchyManagedProject({
+        userId,
+        repoFullName,
+        serviceName: repoName,
+        repoUrl,
+        workspaceId: groupId,
+      });
 
     const repository = await this.repositoriesRepository.create({
       deliveryProjectId,

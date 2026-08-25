@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../kernel/db/database.service';
 import type { FriendlyMessage } from './translate-results';
 
 export type CiRunStatus = 'success' | 'failure' | 'running' | 'cancelled';

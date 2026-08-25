@@ -1,11 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
-import {
+import { FeedbackRepository } from './feedback.repository';
+import type {
   FeedbackRecord,
-  FeedbackRepository,
-  type FeedbackStatus,
-  type UpdateFeedbackInput,
-} from './feedback.repository';
+  FeedbackStatus,
+  UpdateFeedbackInput,
+} from './feedback.types';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 
 @Injectable()

@@ -4,7 +4,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import { GithubService } from '../github/github.service';
+import { GithubService } from '../github/index.js';
 import type {
   GitHubBranchSummary,
   GitHubContentListing,
@@ -12,7 +12,7 @@ import type {
   GitHubPullRequestSummary,
   GitHubRunJob,
   GitHubWorkflowRunSummary,
-} from '../github/github-workspace.types';
+} from '../github/index.js';
 import { ProjectsRepository } from './projects.repository';
 
 export interface ProjectBranchesResponse {

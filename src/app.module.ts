@@ -21,13 +21,14 @@ import { GithubModule } from './modules/github/github.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 import { ProjectsModule } from './modules/projects/projects.module.js';
+import { ProjectReferenceModule } from './modules/projects/project-reference.module.js';
 import { CiModule } from './modules/ci/ci.module.js';
 import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
-import { CapabilitiesModule } from './modules/capabilities/capabilities.module.js';
-import { EnvProvisioningModule } from './modules/env-provisioning/env-provisioning.module.js';
+import { CapabilitiesModule } from './modules/capabilities/index.js';
+import { DeploymentsModule } from './modules/deployments/deployments.module.js';
 import { UsageModule } from './modules/usage/usage.module.js';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module.js';
-import { NotificationsModule } from './modules/notifications/index.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { FeedbackModule } from './modules/feedback/feedback.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';
@@ -56,9 +57,10 @@ import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';
     CiModule,
     WorkflowsModule,
     ProjectsModule,
+    ProjectReferenceModule,
     ExistingReposModule,
     CapabilitiesModule,
-    EnvProvisioningModule,
+    DeploymentsModule,
     UsageModule,
     WorkspacesModule,
     NotificationsModule,

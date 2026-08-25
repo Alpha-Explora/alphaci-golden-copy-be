@@ -1,6 +1,6 @@
 import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
 
-import { GithubService } from '../../../github/github.service';
+import { GithubService } from '../../../github/index.js';
 import {
   GithubTeamAccessProvider,
   type EnsureTeamResult,

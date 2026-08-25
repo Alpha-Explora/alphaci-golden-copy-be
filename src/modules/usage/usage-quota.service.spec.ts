@@ -3,7 +3,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 
-import type { DatabaseService } from '../database/database.service';
+import type { DatabaseService } from '../../kernel/db/database.service';
 import { UsageQuotaService } from './usage-quota.service';
 
 const makeDatabaseService = (query: jest.Mock, isEnabled = true) =>

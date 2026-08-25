@@ -1,8 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { AuditEventsService } from '../../audit/audit-events.service';
-import { UsersRepository } from '../../persistence/users.repository';
-import { OutboxRepository } from '../../persistence/outbox.repository';
+import { AuditEventsService } from '../../audit/index.js';
+import {
+  SESSION_USER_LOOKUP,
+  type SessionUserLookup,
+} from '../../../kernel/auth/session-user-lookup.contract';
+import { OutboxRepository } from '../../../kernel/events/outbox.repository';
 import { AssignmentsRepository } from '../assignments/assignments.repository';
 import { RepositoriesRepository } from '../repositories/repositories.repository';
 import { GithubAccessSyncRepository } from './github-access-sync.repository';
@@ -36,7 +39,8 @@ export class GithubSyncService {
     private readonly assignmentsRepository: AssignmentsRepository,
     private readonly syncRepository: GithubAccessSyncRepository,
     private readonly repositoriesRepository: RepositoriesRepository,
-    private readonly usersRepository: UsersRepository,
+    @Inject(SESSION_USER_LOOKUP)
+    private readonly sessionUserLookup: SessionUserLookup,
     private readonly provider: GithubTeamAccessProvider,
     private readonly auditEventsService: AuditEventsService,
   ) {}
@@ -116,7 +120,9 @@ export class GithubSyncService {
     const repository = await this.repositoriesRepository.findById(
       assignment.repositoryId,
     );
-    const user = await this.usersRepository.findById(assignment.userId);
+    const user = await this.sessionUserLookup.findSessionUser(
+      assignment.userId,
+    );
     if (!repository?.repoFullName || !user) {
       await this.failGrant(
         assignmentId,
@@ -198,7 +204,9 @@ export class GithubSyncService {
     const repository = await this.repositoriesRepository.findById(
       assignment.repositoryId,
     );
-    const user = await this.usersRepository.findById(assignment.userId);
+    const user = await this.sessionUserLookup.findSessionUser(
+      assignment.userId,
+    );
     const sync = await this.syncRepository.findByAssignmentId(assignmentId);
 
     if (!repository?.repoFullName || !user) {

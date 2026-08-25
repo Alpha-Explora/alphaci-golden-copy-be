@@ -9,13 +9,15 @@ public entrance.
   domain/    services, business rules, domain types
   infra/     repositories, provider clients
   <feature>.module.ts
-  index.ts   the ONLY path another module may import
+  index.ts   the public behavior/contract surface another module may import
 ```
 
 ## Rules
 
-1. A module may import another module **only** through its `index.ts`.
-   `../deployments/env-vars.repository` is a build failure.
+1. Feature behavior and contracts cross modules only through `index.ts`.
+   `../deployments/env-vars.repository` is a build failure. Nest composition
+   files may import another module's concrete `*.module.ts` directly so a
+   public behavior barrel does not create circular provider graphs.
 2. A module may import `@kernel/*` freely.
 3. `kernel/` may never import a module.
 4. No circular dependencies between modules.

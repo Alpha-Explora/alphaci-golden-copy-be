@@ -8,8 +8,8 @@ import type { AuditEventsService } from '../audit/audit-events.service';
 import type {
   AppRole,
   AppRoleSource,
-  PlatformAdminsRepository,
 } from '../admin/platform-admins.repository';
+import type { PlatformAdminAccessService } from '../admin/platform-admin-access.service';
 import type { GithubInstallationsRepository } from './github-installations.repository';
 import type { GithubService } from './github.service';
 import { GithubTeamRoleService } from './github-team-role.service';
@@ -63,7 +63,7 @@ function makeRepository(
   current: { role: AppRole; source: AppRoleSource },
   syncedUsers: Array<{ id: string; login: string; appRole: AppRole }> = [],
 ): {
-  repository: PlatformAdminsRepository;
+  repository: PlatformAdminAccessService;
   setAppRole: jest.Mock;
   setAppRoleSource: jest.Mock;
 } {
@@ -75,7 +75,7 @@ function makeRepository(
     listGithubTeamSyncedUsers: jest.fn(() => Promise.resolve(syncedUsers)),
     setAppRole,
     setAppRoleSource,
-  } as unknown as PlatformAdminsRepository;
+  } as unknown as PlatformAdminAccessService;
   return { repository, setAppRole, setAppRoleSource };
 }
 

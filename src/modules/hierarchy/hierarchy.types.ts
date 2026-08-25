@@ -1,4 +1,4 @@
-import type { WorkspaceRole } from '../workspaces/workspaces.repository';
+import type { WorkspaceRole } from '../workspaces/index.js';
 
 /**
  * Group role wire values are the *existing* `orgs.workspace_members.role`

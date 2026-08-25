@@ -16,7 +16,7 @@ import {
   helmetConfigSwagger,
 } from './common/config/security.config.js';
 import type { AppConfig } from './config/app.config.js';
-import { postgresSslConfig } from './modules/database/postgres-ssl.config.js';
+import { postgresSslConfig } from './kernel/db/postgres-ssl.config.js';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');

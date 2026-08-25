@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { Injectable, Logger } from '@nestjs/common';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../kernel/db/database.service';
 
 /**
  * Role-aware visibility predicate for a provisioned project (table aliased `pp`).

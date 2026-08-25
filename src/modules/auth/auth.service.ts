@@ -1,16 +1,24 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 
 import type { AppConfig } from '../../config/app.config';
 import type { SessionUser } from '../../common/interfaces/session-user.interface';
-import { GithubTeamRoleService } from '../github/github-team-role.service';
-import { OAuthStateRepository } from '../persistence/oauth-state.repository';
-import { OutboxRepository } from '../persistence/outbox.repository';
-import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
-import { UsersRepository } from '../persistence/users.repository';
+import { GithubTeamRoleService } from '../github/index.js';
+import { OAuthStateRepository } from './infra/oauth-state.repository';
+import { OutboxRepository } from '../../kernel/events/outbox.repository';
+import {
+  SUBSCRIPTION_BOOTSTRAP,
+  type SubscriptionBootstrap,
+} from '../subscription/index.js';
+import { UsersRepository } from './infra/users.repository';
 
 interface GitHubTokenResponse {
   access_token?: string;
@@ -91,7 +99,8 @@ export class AuthService {
   constructor(
     private readonly configService: ConfigService,
     private readonly usersRepository: UsersRepository,
-    private readonly subscriptionsRepository: SubscriptionsRepository,
+    @Inject(SUBSCRIPTION_BOOTSTRAP)
+    private readonly subscriptionsRepository: SubscriptionBootstrap,
     private readonly outboxRepository: OutboxRepository,
     private readonly oauthStateRepository: OAuthStateRepository,
     private readonly githubTeamRoleService: GithubTeamRoleService,

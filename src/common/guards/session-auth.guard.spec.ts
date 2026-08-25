@@ -2,7 +2,10 @@ import { UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { SessionAuthGuard } from './session-auth.guard.js';
-import { UsersRepository } from '../../modules/persistence/users.repository.js';
+import {
+  SESSION_USER_LOOKUP,
+  type SessionUserLookup,
+} from '../../kernel/auth/session-user-lookup.contract.js';
 import type { ExecutionContext } from '@nestjs/common';
 import type { SessionUser } from '../interfaces/session-user.interface.js';
 
@@ -20,21 +23,21 @@ const makeContext = (session: Record<string, unknown>) =>
     }),
   }) as unknown as ExecutionContext;
 
-const makeUsersRepo = () =>
+const makeSessionUserLookup = () =>
   ({
-    findById: jest.fn().mockResolvedValue(fakeUser),
-  }) as unknown as UsersRepository;
+    findSessionUser: jest.fn().mockResolvedValue(fakeUser),
+  }) as unknown as SessionUserLookup;
 
 describe('SessionAuthGuard', () => {
   let guard: SessionAuthGuard;
-  let usersRepo: UsersRepository;
+  let sessionUserLookup: SessionUserLookup;
 
   beforeEach(async () => {
-    usersRepo = makeUsersRepo();
+    sessionUserLookup = makeSessionUserLookup();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SessionAuthGuard,
-        { provide: UsersRepository, useValue: usersRepo },
+        { provide: SESSION_USER_LOOKUP, useValue: sessionUserLookup },
       ],
     }).compile();
 
@@ -61,13 +64,15 @@ describe('SessionAuthGuard', () => {
     const ctx = makeContext(session);
     const result = await guard.canActivate(ctx);
 
-    expect(usersRepo.findById).toHaveBeenCalledWith('user-1');
+    expect(sessionUserLookup.findSessionUser).toHaveBeenCalledWith('user-1');
     expect(result).toBe(true);
     expect(session['user']).toEqual(fakeUser);
   });
 
   it('throws UnauthorizedException when userId is set but user not found in repo', async () => {
-    (usersRepo.findById as jest.Mock).mockResolvedValueOnce(null);
+    (sessionUserLookup.findSessionUser as jest.Mock).mockResolvedValueOnce(
+      null,
+    );
     const ctx = makeContext({ userId: 'unknown' });
     await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });

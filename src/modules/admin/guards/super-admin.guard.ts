@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { PlatformAdminsRepository } from '../platform-admins.repository';
+import { PlatformAdminAccessService } from '../platform-admin-access.service';
 
 /**
  * SuperAdminGuard — allows only platform super-admins.
@@ -22,7 +22,7 @@ import { PlatformAdminsRepository } from '../platform-admins.repository';
 @Injectable()
 export class SuperAdminGuard implements CanActivate {
   constructor(
-    private readonly platformAdminsRepository: PlatformAdminsRepository,
+    private readonly platformAdminAccessService: PlatformAdminAccessService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -32,7 +32,7 @@ export class SuperAdminGuard implements CanActivate {
       throw new UnauthorizedException('Authentication required');
     }
 
-    const role = await this.platformAdminsRepository.findRole(userId);
+    const role = await this.platformAdminAccessService.findRole(userId);
     if (role !== 'super_admin') {
       throw new ForbiddenException('Super-admin access required');
     }

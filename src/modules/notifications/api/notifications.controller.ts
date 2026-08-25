@@ -15,7 +15,7 @@ import type { Request } from 'express';
 
 import type { AppConfig } from '../../../config/app.config';
 import { SessionAuthGuard } from '../../../common/guards/session-auth.guard';
-import { NotificationsService } from '../domain/notifications.service';
+import { NotificationsService } from '../application/notifications.service';
 
 @Controller('notifications')
 export class NotificationsController {

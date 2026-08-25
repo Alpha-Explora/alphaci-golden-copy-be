@@ -1,5 +1,5 @@
 import { CiReportsService } from './ci-reports.service';
-import type { DatabaseService } from '../database/database.service';
+import type { DatabaseService } from '../../kernel/db/database.service';
 import type {
   CiRunReportRow,
   CiRunReportsRepository,

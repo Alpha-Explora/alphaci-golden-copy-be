@@ -5,12 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { AuditEventsRepository } from '../audit/audit-events.repository';
-import { FeedbackService } from '../feedback/feedback.service';
-import type {
-  FeedbackRecord,
-  FeedbackStatus,
-} from '../feedback/feedback.repository';
+import { AuditEventsService } from '../audit/index.js';
+import { FeedbackService } from '../feedback/index.js';
+import type { FeedbackRecord, FeedbackStatus } from '../feedback/index.js';
 import { AdminRepository, type ListUsersOptions } from './admin.repository';
 import {
   PlatformAdminsRepository,
@@ -39,7 +36,7 @@ export class AdminService {
   constructor(
     private readonly adminRepository: AdminRepository,
     private readonly platformAdminsRepository: PlatformAdminsRepository,
-    private readonly auditEventsRepository: AuditEventsRepository,
+    private readonly auditEventsService: AuditEventsService,
     private readonly feedbackService: FeedbackService,
   ) {}
 
@@ -325,11 +322,9 @@ export class AdminService {
   }
 
   /**
-   * Always-on audit write. Deliberately uses the repository directly (not
-   * AuditEventsService, which is gated behind a feature flag) — admin access
-   * auditing must never be silently disabled. Failures are swallowed so an audit
-   * write never breaks the admin action itself, but they are surfaced via the
-   * repository's own error path.
+   * Always-on audit write. The application service exposes an explicit seam so
+   * admin access auditing cannot be silently disabled while storage stays
+   * private to Audit.
    */
   private async audit(
     actorUserId: string,
@@ -338,7 +333,7 @@ export class AdminService {
     metadata: Record<string, unknown>,
   ): Promise<void> {
     try {
-      await this.auditEventsRepository.create({
+      await this.auditEventsService.recordAlwaysOn({
         actorUserId,
         eventCode,
         message,

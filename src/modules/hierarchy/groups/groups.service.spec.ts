@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
 import type { AuditEventsService } from '../../audit/audit-events.service';
-import type { PlatformAdminsRepository } from '../../admin/platform-admins.repository';
+import type { PlatformAdminAccessService } from '../../admin/platform-admin-access.service';
 import type { AssignmentsRepository } from '../assignments/assignments.repository';
 import type { DeliveryProjectsRepository } from '../delivery-projects/delivery-projects.repository';
 import type { GithubService } from '../../github/github.service';
@@ -75,7 +75,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
     const platformAdminsRepository = {
       findRole: jest.fn().mockResolvedValue(null),
       findAppRole: jest.fn().mockResolvedValue('member'),
-    } as unknown as jest.Mocked<PlatformAdminsRepository>;
+    } as unknown as jest.Mocked<PlatformAdminAccessService>;
 
     accessService = new HierarchyAccessService(
       groupsRepository,

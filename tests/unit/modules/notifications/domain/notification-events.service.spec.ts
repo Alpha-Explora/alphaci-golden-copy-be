@@ -1,4 +1,4 @@
-import { NotificationEventsService } from '../../../../../src/modules/notifications/domain/notification-events.service';
+import { NotificationEventsService } from '../../../../../src/modules/notifications/application/notification-events.service';
 import type { NotificationsRepository } from '../../../../../src/modules/notifications/infra/notifications.repository';
 
 describe('NotificationEventsService', () => {

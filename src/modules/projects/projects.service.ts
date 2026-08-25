@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,32 +16,46 @@ import { ConfigService } from '@nestjs/config';
 import yaml from 'js-yaml';
 
 import type { AppConfig } from '../../config/app.config';
-import { CatalogService } from '../catalog/catalog.service';
-import { CiService } from '../ci/ci.service';
 import {
-  CiTokensRepository,
+  CiService,
+  CI_TOKEN_STATUS_LOOKUP,
+  type CiTokenStatusLookup,
   type ProjectTokenStatus,
-} from '../ci/ci-tokens.repository';
-import { AuditEventsService } from '../audit/audit-events.service';
-import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
-import { EnvVarsRepository } from '../env-provisioning/env-vars.repository';
-import type {
-  DeploymentTargetSummary,
-  EnvVarMetadata,
-} from '../env-provisioning/env-provisioning.types';
+} from '../ci/index.js';
+import { AuditEventsService } from '../audit/index.js';
+import {
+  DEPLOYMENT_ENV_METADATA_QUERY,
+  DEPLOYMENT_PROVISIONING_FACADE,
+  DEPLOYMENT_TARGETS_QUERY,
+  type DeploymentProvisioningFacade,
+  type DeploymentProjectReference,
+  type DeploymentProvisioningResult,
+  type DeploymentEnvMetadataQuery,
+  type DeploymentTargetsQuery,
+  type DeploymentTargetSummary,
+  type EnvVarMetadata,
+} from '../deployments/index.js';
 import {
   GithubRepoDeleteError,
   GithubService,
   REPOSITORY_DELETED_EVENT,
   type GithubRepoDeleteErrorCode,
   type RepositoryDeletedEvent,
-} from '../github/github.service';
-import { ProjectDeploymentProvisioningService } from '../env-provisioning/project-deployment-provisioning.service';
-import { HierarchyProjectLinkService } from '../hierarchy/project-link/hierarchy-project-link.service';
+} from '../github/index.js';
+import { CatalogService } from '../catalog/index.js';
+import { HierarchyProjectLinkService } from '../hierarchy/project-link/index.js';
 import {
-  WorkflowHistoryRepository,
+  WORKFLOW_HISTORY_QUERY,
+  ALPHACI_REPORT_URL,
+  type WorkflowHistoryQuery,
   type WorkflowHistoryEntry,
-} from '../persistence/workflow-history.repository';
+  buildStagedWorkflowBundle,
+  resolveDefaultCentralWorkflowRef,
+  type StagedWorkflowFile,
+  type WorkflowFileMetadata,
+  type DeploymentProvider,
+  type DeploymentWorkflowTarget,
+} from '../workflows/index.js';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -62,22 +77,12 @@ import {
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
+import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
 import {
-  ALPHACI_REPORT_URL,
-  buildStagedWorkflowBundle,
-  resolveDefaultCentralWorkflowRef,
-  type StagedWorkflowFile,
-  type WorkflowFileMetadata,
-} from '../workflows/staged-workflow.builder';
-import type {
-  DeploymentProvider,
-  DeploymentWorkflowTarget,
-} from '../workflows/dto/generate-workflow.dto';
-import { UsageQuotaService } from '../usage/usage-quota.service';
-import type { UsageLimitCode } from '../usage/usage.types';
-import { WorkspacesService } from '../workspaces/workspaces.service';
-import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
-import type { WorkspaceRole } from '../workspaces/workspaces.repository';
+  WorkspacesService,
+  WorkspaceAccessService,
+  type WorkspaceRole,
+} from '../workspaces/index.js';
 import { NotificationEventsService } from '../notifications/index.js';
 import {
   buildProjectScaffold,
@@ -120,47 +125,7 @@ export interface SetupProjectResponse {
   deploymentProvisioning: DeploymentProvisioningResult;
 }
 
-export interface DeploymentProvisioningResult {
-  status: 'skipped' | 'completed' | 'partial' | 'failed';
-  targets: Array<{
-    slot: 'backend' | 'frontend' | 'standalone';
-    provider: 'render' | 'vercel';
-    ownershipMode: 'byo' | 'flowci_managed';
-    deploymentStrategy:
-      | 'provider_native'
-      | 'vercel_git_connected'
-      | 'vercel_ci_pushed'
-      | 'render_git_connected'
-      | 'render_image_pushed'
-      | 'render_existing_service'
-      | null;
-    status: 'created' | 'registered' | 'failed';
-    deploymentTargetId: string | null;
-    providerProjectId: string | null;
-    providerProjectName: string | null;
-    providerMetadata: Record<string, unknown>;
-    renderServiceType?: string | null;
-    renderRuntime?: string | null;
-    renderInstanceType?: string | null;
-    renderRegion?: string | null;
-    renderEnvironmentName?: 'test' | 'uat' | 'production' | null;
-    dockerContext?: string | null;
-    dockerfilePath?: string | null;
-    imageUrl?: string | null;
-    /**
-     * Branch this target tracks. Needed by the cross-link pass, which has to
-     * name the branch to write a preview-lane variable or build a preview URL.
-     */
-    branchName?: string | null;
-    errorSummary: string | null;
-    env: Array<{
-      lane: 'production' | 'preview';
-      gitBranch: string | null;
-      provisioned: Array<{ key: string; status: 'provisioned' }>;
-      failed: Array<{ key: string; status: 'failed'; errorSummary: string }>;
-    }>;
-  }>;
-}
+export type { DeploymentProvisioningResult } from '../deployments/index.js';
 
 export interface ProvisionedProject {
   id: string;
@@ -390,15 +355,20 @@ export class ProjectsService {
     private readonly githubService: GithubService,
     private readonly projectsRepository: ProjectsRepository,
     private readonly ciService: CiService,
-    private readonly projectDeploymentProvisioningService: ProjectDeploymentProvisioningService,
+    @Inject(DEPLOYMENT_PROVISIONING_FACADE)
+    private readonly projectDeploymentProvisioningService: DeploymentProvisioningFacade,
     @Optional()
-    private readonly ciTokensRepository?: CiTokensRepository,
+    @Inject(CI_TOKEN_STATUS_LOOKUP)
+    private readonly ciTokensRepository?: CiTokenStatusLookup,
     @Optional()
-    private readonly deploymentTargetsRepository?: DeploymentTargetsRepository,
+    @Inject(DEPLOYMENT_TARGETS_QUERY)
+    private readonly deploymentTargetsRepository?: DeploymentTargetsQuery,
     @Optional()
-    private readonly envVarsRepository?: EnvVarsRepository,
+    @Inject(DEPLOYMENT_ENV_METADATA_QUERY)
+    private readonly envVarsRepository?: DeploymentEnvMetadataQuery,
     @Optional()
-    private readonly workflowHistoryRepository?: WorkflowHistoryRepository,
+    @Inject(WORKFLOW_HISTORY_QUERY)
+    private readonly workflowHistoryRepository?: WorkflowHistoryQuery,
     @Optional()
     private readonly dashboardSnapshotsRepository?: ProjectDashboardSnapshotsRepository,
     @Optional()
@@ -442,6 +412,33 @@ export class ProjectsService {
         });
       },
     );
+  }
+
+  /**
+   * Resolves the small, viewer-authorized project reference that deployment
+   * queries are allowed to consume. Deployment services never receive the
+   * Projects repository row or perform this authorization themselves.
+   */
+  async getProjectReference(
+    projectId: string,
+    userId: string,
+  ): Promise<DeploymentProjectReference> {
+    const project = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return {
+      projectId: project.id,
+      userId,
+      repoFullName: project.repo_full_name,
+      repoUrl: project.repo_url,
+      workflowPath: project.workflow_path,
+      projectOptions: project.project_options,
+    };
   }
 
   /**
@@ -920,8 +917,7 @@ export class ProjectsService {
 
       // 7. Push frontend workflow file to main (wrapped: failure should not block backend)
       let frontendPushResult:
-        | { commitSha: string; commitUrl: string | null }
-        | undefined;
+        { commitSha: string; commitUrl: string | null } | undefined;
       try {
         frontendPushResult = await this.pushWorkflowFiles(
           provisioningToken,
@@ -1702,8 +1698,7 @@ export class ProjectsService {
 
     let githubRepoDeleted = false;
     let githubRepoDeleteError:
-      | { code: GithubRepoDeleteErrorCode; message: string }
-      | undefined;
+      { code: GithubRepoDeleteErrorCode; message: string } | undefined;
 
     if (deleteGithubRepo) {
       // Role-scoped fetch: this is the SQL-level enforcement point. If the
@@ -2558,11 +2553,15 @@ export class ProjectsService {
     }
 
     const existingSecrets = preserveExisting
-      ? await this.githubService.listActionsSecretNames(accessToken, owner, repo)
+      ? await this.githubService.listActionsSecretNames(
+          accessToken,
+          owner,
+          repo,
+        )
       : new Set<string>();
 
-    const alreadyConfigured = ['SONAR_TOKEN', 'SONAR_PROJECT_KEY'].some((name) =>
-      existingSecrets.has(name),
+    const alreadyConfigured = ['SONAR_TOKEN', 'SONAR_PROJECT_KEY'].some(
+      (name) => existingSecrets.has(name),
     );
 
     if (alreadyConfigured) {
@@ -2876,9 +2875,7 @@ export class ProjectsService {
   private resolveRenderDeploymentStrategy(
     target: DeploymentProvisioningTargetDto,
   ):
-    | 'render_image_pushed'
-    | 'render_git_connected'
-    | 'render_existing_service' {
+    'render_image_pushed' | 'render_git_connected' | 'render_existing_service' {
     if (target.renderDeployMethod === 'existing_service') {
       return 'render_existing_service';
     }
