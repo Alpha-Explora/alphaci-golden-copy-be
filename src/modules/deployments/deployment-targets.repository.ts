@@ -11,6 +11,7 @@ import type {
   RenderEnvironmentName,
   RenderRuntime,
   RenderServiceType,
+  UpdateDeploymentTargetMetadataInput,
 } from './deployments.types';
 
 interface DeploymentTargetRow {
