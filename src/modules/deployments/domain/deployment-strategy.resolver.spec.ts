@@ -1,4 +1,4 @@
-import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
+import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
 
 describe('DeploymentStrategyResolver', () => {
   const resolver = new DeploymentStrategyResolver();

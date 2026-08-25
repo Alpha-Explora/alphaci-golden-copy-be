@@ -15,12 +15,12 @@ import {
 import type { Request } from 'express';
 import { Observable, catchError, interval, of, startWith, switchMap } from 'rxjs';
 
-import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { SubscriptionGuard } from '../../common/guards/subscription.guard';
-import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
-import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
-import { DeploymentTargetsService } from './deployment-targets.service';
-import type { UpdateDeploymentTargetMetadataInput } from './deployments.types';
+import { SessionAuthGuard } from '../../../common/guards/session-auth.guard';
+import { SubscriptionGuard } from '../../../common/guards/subscription.guard';
+import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
+import type { DetachDeploymentTargetDto } from '../dto/detach-deployment-target.dto';
+import { DeploymentTargetsService } from '../application/deployment-targets.service';
+import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import { EnvFeatureGuard } from './env-feature.guard';
 
 const LOG_STREAM_POLL_INTERVAL_MS = 5_000;

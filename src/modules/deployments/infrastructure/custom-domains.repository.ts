@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../../kernel/db/database.service';
+import { DatabaseService } from '../../../kernel/db/database.service';
 import type {
   CustomDomainSummary,
   DomainVerificationChallenge,
   EnvProvider,
-} from './deployments.types';
+} from '../core/deployments.types';
 
 interface CustomDomainRow {
   id: string;

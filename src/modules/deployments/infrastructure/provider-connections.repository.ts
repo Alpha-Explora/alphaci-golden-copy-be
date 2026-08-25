@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../../kernel/db/database.service';
+import { DatabaseService } from '../../../kernel/db/database.service';
 import type {
   EnvProvider,
   ProviderConnectionStatus,
   ProviderConnectionSummary,
   ProviderConnectionWithToken,
-} from './deployments.types';
+} from '../core/deployments.types';
 
 interface ProviderConnectionRow {
   id: string;

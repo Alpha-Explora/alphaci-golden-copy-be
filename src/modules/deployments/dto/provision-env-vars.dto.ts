@@ -1,4 +1,4 @@
-import type { EnvLane, EnvVarInput } from '../deployments.types';
+import type { EnvLane, EnvVarInput } from '../core/deployments.types';
 
 export interface ProvisionEnvVarsDto {
   deploymentTargetId: string;

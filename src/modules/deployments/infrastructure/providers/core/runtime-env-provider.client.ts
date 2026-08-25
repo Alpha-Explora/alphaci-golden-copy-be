@@ -7,7 +7,7 @@ import type {
   RenderRuntime,
   RenderServiceType,
   DomainVerificationChallenge,
-} from '../../../deployments.types';
+} from '../../../core/deployments.types';
 
 export interface ProviderAccountSummary {
   id: string;

@@ -1,5 +1,5 @@
-import type { DatabaseService } from '../../kernel/db/database.service';
-import { DeploymentTargetsRepository } from './deployment-targets.repository';
+import type { DatabaseService } from '../../../kernel/db/database.service';
+import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
 
 const makeDatabaseService = (query: jest.Mock) =>
   ({ query }) as unknown as DatabaseService;

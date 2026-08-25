@@ -1,7 +1,7 @@
 import { CanActivate, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
+import type { AppConfig } from '../../../config/app.config';
 
 @Injectable()
 export class EnvFeatureGuard implements CanActivate {

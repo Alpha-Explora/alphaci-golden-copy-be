@@ -1,4 +1,4 @@
-import type { EnvProvider } from '../deployments.types';
+import type { EnvProvider } from '../core/deployments.types';
 import type { RuntimeEnvProviderClient } from '../infrastructure/providers/core/runtime-env-provider.client';
 
 /**

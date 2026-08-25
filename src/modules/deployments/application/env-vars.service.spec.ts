@@ -2,15 +2,15 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
 import { EnvTokenEncryptionService } from './encryption.service';
-import { DeploymentTargetsRepository } from './deployment-targets.repository';
-import { EnvVarsRepository } from './env-vars.repository';
+import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
+import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
 import { EnvVarsService } from './env-vars.service';
-import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
-import { ProviderConnectionsRepository } from './provider-connections.repository';
-import { AuditEventsService } from '../audit/audit-events.service';
-import { NotificationEventsService } from '../notifications/index.js';
-import { UsageQuotaService } from '../usage/usage-quota.service';
-import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
+import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';
+import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import { AuditEventsService } from '../../audit/audit-events.service';
+import { NotificationEventsService } from '../../notifications/index.js';
+import { UsageQuotaService } from '../../usage/usage-quota.service';
+import { WorkspaceAccessService } from '../../workspaces/workspace-access.service';
 
 describe('EnvVarsService', () => {
   async function createService(

@@ -11,12 +11,12 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { SubscriptionGuard } from '../../common/guards/subscription.guard';
+import { SessionAuthGuard } from '../../../common/guards/session-auth.guard';
+import { SubscriptionGuard } from '../../../common/guards/subscription.guard';
 import {
   CustomDomainsService,
   type AddCustomDomainInput,
-} from './custom-domains.service';
+} from '../application/custom-domains.service';
 import { EnvFeatureGuard } from './env-feature.guard';
 
 @Controller('projects/:projectId/domains')

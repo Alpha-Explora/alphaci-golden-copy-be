@@ -6,7 +6,7 @@ export type {
   DeploymentDriftSeverity as ProjectDriftSeverity,
   DeploymentDriftSource as ProjectDriftSource,
   DeploymentDriftStatus as ProjectDriftStatus,
-} from '../deployment-provisioning.contract';
+} from '../core/deployment-provisioning.contract';
 
 export type ProjectDriftRepairAction =
   | 'regenerate_workflow_preview'

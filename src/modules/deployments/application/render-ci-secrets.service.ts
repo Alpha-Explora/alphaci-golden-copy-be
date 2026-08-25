@@ -6,14 +6,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
-import { GithubService } from '../github/index.js';
+import type { AppConfig } from '../../../config/app.config';
+import { GithubService } from '../../github/index.js';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type {
   DeploymentTargetSummary,
   EnvTargetSlot,
-} from './deployments.types';
-import { ProviderConnectionsRepository } from './provider-connections.repository';
+} from '../core/deployments.types';
+import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
 
 export interface RenderCiSecretNames {
   apiKey: string;

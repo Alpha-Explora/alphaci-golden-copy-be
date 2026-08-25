@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../../kernel/db/database.service';
+import { DatabaseService } from '../../../kernel/db/database.service';
 import type {
   DeploymentTargetStatus,
   DeploymentStrategy,
@@ -12,7 +12,7 @@ import type {
   RenderRuntime,
   RenderServiceType,
   UpdateDeploymentTargetMetadataInput,
-} from './deployments.types';
+} from '../core/deployments.types';
 
 interface DeploymentTargetRow {
   id: string;

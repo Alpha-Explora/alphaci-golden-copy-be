@@ -10,19 +10,19 @@ import {
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
 } from '../../ci/index.js';
-import { DeploymentTargetsRepository } from '../deployment-targets.repository';
-import { EnvVarsRepository } from '../env-vars.repository';
+import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
+import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
-} from '../deployments.types';
+} from '../core/deployments.types';
 import {
   DEPLOYMENT_DRIFT_FINDINGS_STORE,
   type DeploymentDriftFindingsStore,
   type DeploymentDriftQuery,
   type DeploymentDriftResponse,
   type DeploymentProjectReference,
-} from '../deployment-provisioning.contract';
+} from '../core/deployment-provisioning.contract';
 import type {
   ProjectDriftFindingInput,
 } from './project-drift.types';

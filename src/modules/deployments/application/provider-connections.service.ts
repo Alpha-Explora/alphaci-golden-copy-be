@@ -7,11 +7,11 @@ import {
 } from '@nestjs/common';
 
 import { EnvTokenEncryptionService } from './encryption.service';
-import type { CreateProviderConnectionDto } from './dto/create-provider-connection.dto';
-import type { EnvProvider } from './deployments.types';
-import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
-import { ProviderConnectionsRepository } from './provider-connections.repository';
-import { WorkspacesService } from '../workspaces/index.js';
+import type { CreateProviderConnectionDto } from '../dto/create-provider-connection.dto';
+import type { EnvProvider } from '../core/deployments.types';
+import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';
+import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import { WorkspacesService } from '../../workspaces/index.js';
 
 const PROVIDERS: EnvProvider[] = ['render', 'vercel'];
 type ProviderTeamSummary = { id: string; slug?: string; name?: string };

@@ -1,4 +1,4 @@
-import type { EnvProvider } from '../deployments.types';
+import type { EnvProvider } from '../core/deployments.types';
 
 export interface CreateProviderConnectionDto {
   provider: EnvProvider;

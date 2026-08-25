@@ -8,12 +8,12 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 
-import { AuditEventsService } from '../audit/index.js';
-import { WorkspaceAccessService } from '../workspaces/index.js';
-import { CustomDomainsRepository } from './custom-domains.repository';
+import { AuditEventsService } from '../../audit/index.js';
+import { WorkspaceAccessService } from '../../workspaces/index.js';
+import { CustomDomainsRepository } from '../infrastructure/custom-domains.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
-import type { CustomDomainSummary } from './deployments.types';
-import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
+import type { CustomDomainSummary } from '../core/deployments.types';
+import { ProviderClientRegistry } from '../infrastructure/providers/core/provider-client.registry';
 
 /**
  * A hostname, as strictly as we can check locally.

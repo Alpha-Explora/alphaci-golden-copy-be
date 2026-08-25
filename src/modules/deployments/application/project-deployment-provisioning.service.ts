@@ -7,10 +7,10 @@ import type {
   DeploymentProvisioningResult,
   DeploymentProvisioningTarget as DeploymentProvisioningTargetDto,
   DeploymentProvisioningFacade,
-} from './deployment-provisioning.contract';
+} from '../core/deployment-provisioning.contract';
 import { DeploymentTargetsService } from './deployment-targets.service';
-import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
-import type { EnvLane, EnvVarScope } from './deployments.types';
+import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
+import type { EnvLane, EnvVarScope } from '../core/deployments.types';
 import { EnvVarsService } from './env-vars.service';
 import { RenderCiSecretsService } from './render-ci-secrets.service';
 import { VercelCiSecretsService } from './vercel-ci-secrets.service';
