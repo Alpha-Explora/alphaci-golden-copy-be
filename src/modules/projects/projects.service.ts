@@ -91,6 +91,7 @@ import {
   SonarCloudSetupService,
   sonarProjectKeyFor,
 } from './application/sonar-cloud-setup.service';
+import { ProjectWorkflowFilesService } from './application/project-workflow-files.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
@@ -391,6 +392,114 @@ export class ProjectsService {
       this.notificationEventsService,
     ));
   }
+
+  /** Lazily-created workflow-files delegate for direct constructions (tests). */
+  private workflowFilesLazy?: ProjectWorkflowFilesService;
+  private get workflowFiles(): ProjectWorkflowFilesService {
+    return (this.workflowFilesLazy ??= new ProjectWorkflowFilesService(
+      this.catalogService,
+    ));
+  }
+
+  /**
+   * Spy/seam retained for the existing spec suite: tests stub file pushes at
+   * this boundary rather than constructing a full ProjectWorkflowFilesService.
+   */
+  private async pushWorkflowFile(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    filePath: string,
+    content: string,
+    commitMessage = 'ci: add ALPHACI workflow',
+    branch = 'main',
+  ): Promise<{ commitSha: string; commitUrl: string | null }> {
+    return this.workflowFiles.pushWorkflowFile(
+      accessToken,
+      owner,
+      repo,
+      filePath,
+      content,
+      commitMessage,
+      branch,
+    );
+  }
+
+  /** Spy/seam for workflow-file batch pushes (see pushWorkflowFile note). */
+  private async pushWorkflowFiles(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    workflowFiles: StagedWorkflowFile[],
+    branch = 'main',
+  ): Promise<{ commitSha: string; commitUrl: string | null }> {
+    let latest: { commitSha: string; commitUrl: string | null } | null = null;
+
+    for (const file of workflowFiles) {
+      latest = await this.pushWorkflowFile(
+        accessToken,
+        owner,
+        repo,
+        file.path,
+        file.yaml,
+        undefined,
+        branch,
+      );
+    }
+
+    if (!latest) {
+      throw new UnprocessableEntityException(
+        'No workflow files were generated',
+      );
+    }
+
+    return latest;
+  }
+
+
+  /** Spy/seam for bundle assembly (see pushWorkflowFile note). */
+  private async buildWorkflowBundle(options: {
+    templateId: string;
+    serviceName: string;
+    servicePath?: string | undefined;
+    nodeVersion?: string | undefined;
+    coverageThreshold?: number | undefined;
+    customOutputFileName?: string | undefined;
+    enhancements?:
+      | Array<
+          | 'strictProductionApproval'
+          | 'enableUatApproval'
+          | 'disablePlaywright'
+          | 'disableK6'
+        >
+        | undefined;
+    deploymentProvider?: 'render' | 'vercel' | undefined;
+    deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
+    workflowVariant?: 'backend' | 'frontend' | undefined;
+    centralWorkflowRef?: string | undefined;
+    hasTestsDirectory?: boolean | undefined;
+  }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
+    return this.workflowFiles.buildWorkflowBundle(options);
+  }
+
+  /** Spy/seam for direct YAML building (see pushWorkflowFile note). */
+  private async buildWorkflowYaml(
+    templateId: string,
+    serviceName: string,
+    servicePath?: string,
+    nodeVersion?: string,
+    coverageThreshold?: number,
+    customOutputFileName?: string,
+    enhancements?: Array<
+      | 'strictProductionApproval'
+      | 'enableUatApproval'
+      | 'disablePlaywright'
+      | 'disableK6'
+    >,
+  ): Promise<{ generatedYaml: string; outputFileName: string }> {
+    return this.workflowFiles.buildWorkflowYaml(templateId, serviceName, servicePath, nodeVersion, coverageThreshold, customOutputFileName, enhancements);
+  }
+
 
   constructor(
     private readonly catalogService: CatalogService,
@@ -2242,278 +2351,6 @@ export class ProjectsService {
   }
 
   /**
-   * Load the template from the catalog, apply substitutions, and return the
-   * generated YAML string plus the derived output file name.
-   */
-  private async buildWorkflowYaml(
-    templateId: string,
-    serviceName: string,
-    servicePath?: string,
-    nodeVersion?: string,
-    coverageThreshold?: number,
-    customOutputFileName?: string,
-    enhancements?: Array<
-      | 'strictProductionApproval'
-      | 'enableUatApproval'
-      | 'disablePlaywright'
-      | 'disableK6'
-    >,
-  ): Promise<{ generatedYaml: string; outputFileName: string }> {
-    const template = await this.catalogService.getTemplateById(templateId);
-    if (!template) {
-      throw new NotFoundException(`Template '${templateId}' not found`);
-    }
-
-    const source = await readFile(template.workflowPath, 'utf8');
-
-    // Use DEFAULT_SCHEMA (the js-yaml default) explicitly to document that no
-    // unsafe tag constructors (!!js/function, !!js/regexp, etc.) are permitted.
-    // This is equivalent to yaml.load() with no schema option, but makes the
-    // intent clear and is resilient to any future js-yaml API drift.
-    const parsed = yaml.load(source, { schema: yaml.DEFAULT_SCHEMA }) as Record<
-      string,
-      unknown
-    > | null;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new UnprocessableEntityException(
-        'Workflow template could not be parsed',
-      );
-    }
-
-    parsed.name = `${serviceName} - ${template.name}`;
-
-    const onConfig = this.ensureObject(parsed, 'on');
-    const dispatchConfig = this.ensureObject(onConfig, 'workflow_dispatch');
-    const inputConfig = this.ensureObject(dispatchConfig, 'inputs');
-
-    this.setInputDefault(inputConfig, 'service_name', serviceName, 'string');
-
-    if (servicePath !== undefined) {
-      this.setInputDefault(inputConfig, 'service_path', servicePath, 'string');
-    }
-
-    if (nodeVersion !== undefined) {
-      this.setInputDefault(inputConfig, 'node_version', nodeVersion, 'string');
-    }
-
-    if (coverageThreshold !== undefined) {
-      this.setInputDefault(
-        inputConfig,
-        'coverage_threshold',
-        coverageThreshold,
-        'number',
-      );
-    }
-
-    if (enhancements && enhancements.length > 0) {
-      const pipelineConfig = this.ensureObject(
-        this.ensureObject(parsed, 'jobs'),
-        'pipeline',
-      );
-      const withConfig = this.ensureObject(pipelineConfig, 'with');
-      this.applyEnhancements(withConfig, enhancements);
-    }
-
-    const generatedYaml = yaml.dump(parsed, {
-      lineWidth: -1,
-      noRefs: true,
-      sortKeys: false,
-    });
-
-    const outputFileName =
-      customOutputFileName ??
-      this.deriveOutputFileName(serviceName, template.id);
-
-    return { generatedYaml, outputFileName };
-  }
-
-  private async buildWorkflowBundle(options: {
-    templateId: string;
-    serviceName: string;
-    servicePath?: string | undefined;
-    nodeVersion?: string | undefined;
-    coverageThreshold?: number | undefined;
-    customOutputFileName?: string | undefined;
-    enhancements?:
-      | Array<
-          | 'strictProductionApproval'
-          | 'enableUatApproval'
-          | 'disablePlaywright'
-          | 'disableK6'
-        >
-      | undefined;
-    deploymentProvider?: DeploymentProvider | undefined;
-    deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
-    workflowVariant?: 'backend' | 'frontend' | undefined;
-    centralWorkflowRef?: string | undefined;
-    /**
-     * True when the workflow targets a service path that carries the
-     * scaffold's tests/ directory (product-created repos). Leave unset for
-     * BYO/setup repos and monorepo roots (their tests live under packages/).
-     */
-    hasTestsDirectory?: boolean | undefined;
-  }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
-    const {
-      templateId,
-      serviceName,
-      servicePath,
-      nodeVersion,
-      coverageThreshold,
-      customOutputFileName,
-      enhancements,
-      deploymentProvider,
-      deploymentTargets = [],
-      workflowVariant,
-      centralWorkflowRef,
-      hasTestsDirectory,
-    } = options;
-
-    const template = await this.catalogService.getTemplateById(templateId);
-    if (!template) {
-      throw new NotFoundException(`Template '${templateId}' not found`);
-    }
-
-    const bundle = buildStagedWorkflowBundle(template, {
-      templateId,
-      serviceName,
-      ...(servicePath !== undefined && { servicePath }),
-      ...(nodeVersion !== undefined && { nodeVersion }),
-      ...(coverageThreshold !== undefined && { coverageThreshold }),
-      ...(enhancements !== undefined && { enhancements }),
-      ...(deploymentProvider !== undefined && { deploymentProvider }),
-      ...(deploymentTargets.length > 0 && { deploymentTargets }),
-      ...(workflowVariant !== undefined && { workflowVariant }),
-      ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
-      ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
-    });
-
-    const outputFileName = customOutputFileName ?? '00-alphaci-access.yml';
-    return {
-      workflowFiles: bundle.workflowFiles,
-      outputFileName,
-    };
-  }
-
-  private async pushWorkflowFiles(
-    accessToken: string,
-    owner: string,
-    repo: string,
-    workflowFiles: StagedWorkflowFile[],
-    branch = 'main',
-  ): Promise<{ commitSha: string; commitUrl: string | null }> {
-    let latest: { commitSha: string; commitUrl: string | null } | null = null;
-
-    for (const file of workflowFiles) {
-      latest = await this.pushWorkflowFile(
-        accessToken,
-        owner,
-        repo,
-        file.path,
-        file.yaml,
-        undefined,
-        branch,
-      );
-    }
-
-    if (!latest) {
-      throw new UnprocessableEntityException(
-        'No workflow files were generated',
-      );
-    }
-
-    return latest;
-  }
-
-  /**
-   * Push a file to a GitHub repository via the Contents API.
-   * If the file already exists (sha required), this will overwrite it.
-   * Returns the commit SHA and HTML URL.
-   */
-  private async pushWorkflowFile(
-    accessToken: string,
-    owner: string,
-    repo: string,
-    filePath: string,
-    content: string,
-    commitMessage = 'ci: add ALPHACI workflow',
-    /*
-     * The branch to commit to.
-     *
-     * Defaulted rather than required so the new-repository flows — which build
-     * `main` themselves moments earlier — stay unchanged. It exists for
-     * ONBOARDING: an existing repository's default branch is whatever its
-     * owner chose, and this was previously hardcoded to 'main', so every repo
-     * on `master` or `develop` failed the push after its secrets had already
-     * been written.
-     */
-    branch = 'main',
-  ): Promise<{ commitSha: string; commitUrl: string | null }> {
-    const encodedContent = Buffer.from(content, 'utf8').toString('base64');
-
-    // Check whether the file already exists so we can supply its sha (required for updates)
-    let existingSha: string | undefined;
-    try {
-      // Read the sha FROM THE TARGET BRANCH. Without ?ref this asked the
-      // default branch, so updating a file on any other branch would send a
-      // sha that does not belong there and GitHub would reject the write.
-      const checkRes = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(branch)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: 'application/vnd.github+json',
-            'User-Agent': 'cicd-workflow-product',
-          },
-        },
-      );
-
-      if (checkRes.ok) {
-        const existing = (await checkRes.json()) as { sha?: string };
-        existingSha = existing.sha;
-      }
-    } catch {
-      // Not critical — proceed without sha; GitHub will reject if required
-    }
-
-    const body: Record<string, unknown> = {
-      message: commitMessage,
-      content: encodedContent,
-      branch,
-    };
-
-    if (existingSha) {
-      body['sha'] = existingSha;
-    }
-
-    const putRes = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      },
-    );
-
-    if (!putRes.ok) {
-      const err = await putRes.text();
-      throw new UnprocessableEntityException(
-        `GitHub file push failed (${String(putRes.status)}): ${err}`,
-      );
-    }
-
-    const response = (await putRes.json()) as GitHubContentsResponse;
-    const commitSha = response.commit?.sha ?? '';
-    const commitUrl = response.commit?.html_url ?? null;
-
-    return { commitSha, commitUrl };
-  }
-
-  /**
    * Push a full project scaffold to the repository on main, then add README.md.
    * Called immediately after createRepo() so that all downstream branches
    * branch off a commit that already contains these files.
@@ -2561,7 +2398,7 @@ export class ProjectsService {
 
     // Scaffold pushes are strict on purpose: a repo missing package.json,
     // jest.config.ts, or eslint.config.mjs is born with permanently red
-    // checks. Failing here lets the caller's compensation path delete the
+    // checks. Failing here lets the caller compensation path delete the
     // half-created repo so every repo that survives provisioning starts with
     // a fully green pipeline.
     for (const file of scaffoldFiles) {
