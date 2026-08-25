@@ -75,6 +75,7 @@ const makeProjectsRepository = () =>
     }),
     updateStatus: jest.fn().mockResolvedValue(undefined),
     deleteByIdAndUser: jest.fn().mockResolvedValue(true),
+    isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>

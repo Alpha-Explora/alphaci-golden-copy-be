@@ -32,6 +32,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { FeedbackModule } from './modules/feedback/feedback.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';
+import { DeploymentsCoreModule } from './modules/deployments/core/deployments-core.module.js';
+import { GcpDeploymentModule } from './modules/deployments/providers/gcp/gcp.module.js';
 
 @Module({
   imports: [
@@ -60,6 +62,8 @@ import { HierarchyModule } from './modules/hierarchy/hierarchy.module.js';
     ProjectReferenceModule,
     ExistingReposModule,
     CapabilitiesModule,
+    DeploymentsCoreModule,
+    GcpDeploymentModule,
     DeploymentsModule,
     UsageModule,
     WorkspacesModule,

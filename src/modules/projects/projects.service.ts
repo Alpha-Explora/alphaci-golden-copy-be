@@ -520,6 +520,11 @@ export class ProjectsService {
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
     await this.assertWithinQuota(userId, 'projects', 1, null);
+    // Settle the owning team BEFORE any GitHub call. The row is written long after
+    // the repository exists and the workflow is pushed, so discovering there that
+    // the caller named no resolvable team would leave a real repository behind
+    // for a request that never had anywhere to put it.
+    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
     const {
       repositoryCreationToken,
       provisioningToken,
@@ -1071,6 +1076,11 @@ export class ProjectsService {
     oauthAccessToken: string | null | undefined,
     dto: SetupProjectDto,
   ): Promise<SetupProjectResponse> {
+    // Settle the owning team first - this path mutates an existing repository
+    // (branches, secrets, a workflow commit) before the row is written, and none
+    // of that should happen for a request with nowhere to put the project.
+    await this.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+
     // 1. Build workflow YAML from the given templateId
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
       templateId: dto.templateId,
@@ -3758,13 +3768,54 @@ export class ProjectsService {
     };
   }
 
-  private async resolveDefaultWorkspaceId(
-    userId: string,
-  ): Promise<string | null> {
-    const workspaces = await this.workspacesService?.getMyWorkspaces(userId);
-    return workspaces?.items[0]?.id ?? null;
+  /**
+   * Creating a project is a Lead/Admin action, not a Developer one.
+   *
+   * This is the same standard HierarchyAccessService.assertGlobalCreatorRole
+   * applies to systems, delivery projects and repositories - a project is the
+   * same kind of act, and having two different answers to "who may create
+   * things here" is how a product ends up with a role model nobody can predict.
+   *
+   * Deliberately keyed on the GLOBAL app_role rather than the workspace role: a
+   * workspace delegated_lead whose app_role is member is a Developer with
+   * extra rights inside one team, not someone who may provision repositories.
+   */
+  private async assertCanCreateProjects(userId: string): Promise<void> {
+    if (await this.projectsRepository.isGlobalProjectCreator(userId)) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Only a Lead or Admin can create projects. Ask a team lead to create it for you.',
+    );
   }
 
+  /**
+   * Workspace for a create that did not name one.
+   *
+   * This deliberately does NOT fall back to items[0]. That silently picked
+   * the caller's oldest workspace by created_at, which - while personal
+   * workspaces were auto-created on first read - was reliably the personal one,
+   * so projects created outside a team landed somewhere no teammate could see
+   * them. With one team the choice is unambiguous; with several it belongs to
+   * the caller, not to a sort order.
+   */
+  private async resolveImplicitWorkspaceId(userId: string): Promise<string> {
+    const items =
+      (await this.workspacesService?.getMyWorkspaces(userId))?.items ?? [];
+
+    const only = items.length === 1 ? items[0] : undefined;
+    if (only) {
+      return only.id;
+    }
+    if (items.length === 0) {
+      throw new ForbiddenException(
+        'Every project belongs to a team. Ask a team admin to add you to one before creating a project.',
+      );
+    }
+    throw new BadRequestException(
+      'Select which team this project belongs to before creating it.',
+    );
+  }
   /**
    * Workspace a newly-created project belongs to. When the caller creates from
    * inside a group (the "Create project" form passes that group's id), the
@@ -3777,8 +3828,14 @@ export class ProjectsService {
     userId: string,
     workspaceId?: string | null,
   ): Promise<string | null> {
+    await this.assertCanCreateProjects(userId);
     if (!workspaceId) {
-      return this.resolveDefaultWorkspaceId(userId);
+      // Workspaces disabled entirely: leave the project unscoped as before
+      // rather than blocking creation on a module that isn't running.
+      if (!this.workspacesService) {
+        return null;
+      }
+      return this.resolveImplicitWorkspaceId(userId);
     }
     const allowed = await this.projectsRepository.canCreateInWorkspace(
       userId,

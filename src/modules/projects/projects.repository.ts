@@ -292,6 +292,26 @@ export class ProjectsRepository {
    * an active member of the workspace, or any global admin (app_role 'admin' or
    * a platform_admins row). Used to validate a group-scoped "Create project".
    */
+  /**
+   * True when the user may create projects at all, before any question of
+   * which workspace. Mirrors HierarchyAccessService.assertGlobalCreatorRole:
+   * platform admins and app_role 'admin' pass, 'lead' passes, and 'member'
+   * (the Developer tier) does not.
+   */
+  async isGlobalProjectCreator(userId: string): Promise<boolean> {
+    const result = await this.databaseService.query<{ allowed: boolean }>(
+      `
+        SELECT (
+          EXISTS (SELECT 1 FROM identity.app_users u
+                   WHERE u.id = $1 AND u.app_role IN ('admin', 'lead'))
+          OR EXISTS (SELECT 1 FROM identity.platform_admins pa
+                      WHERE pa.user_id = $1)
+        ) AS allowed;
+      `,
+      [userId],
+    );
+    return result.rows[0]?.allowed ?? false;
+  }
   async canCreateInWorkspace(
     userId: string,
     workspaceId: string,

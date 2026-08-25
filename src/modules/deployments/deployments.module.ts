@@ -37,6 +37,9 @@ import { VercelEnvClient } from './infrastructure/providers/vercel/vercel-env.cl
 import { ProviderConnectionsController } from './provider-connections.controller';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { ProviderConnectionsService } from './provider-connections.service';
+import { CustomDomainsController } from './custom-domains.controller';
+import { CustomDomainsRepository } from './custom-domains.repository';
+import { CustomDomainsService } from './custom-domains.service';
 import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 import { LocalDeploymentHistoryProvider } from './application/local-deployment-history.provider';
 import { ProjectDeploymentsService } from './application/project-deployments.service';
@@ -58,11 +61,14 @@ import { ProjectSyncFindingsRepository } from './application/project-sync-findin
     ProviderConnectionsController,
     DeploymentTargetsController,
     EnvVarsController,
+    CustomDomainsController,
   ],
   providers: [
     ProviderConnectionsRepository,
     DeploymentTargetsRepository,
     EnvVarsRepository,
+    CustomDomainsRepository,
+    CustomDomainsService,
     {
       provide: DEPLOYMENT_TARGETS_QUERY,
       useExisting: DeploymentTargetsRepository,
@@ -121,6 +127,8 @@ import { ProjectSyncFindingsRepository } from './application/project-sync-findin
     DEPLOYMENT_TARGET_DELETION,
     DeploymentTargetsRepository,
     EnvVarsRepository,
+    CustomDomainsRepository,
+    CustomDomainsService,
     ProviderConnectionsRepository,
     EnvTokenEncryptionService,
     ProviderClientRegistry,

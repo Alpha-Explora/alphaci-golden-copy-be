@@ -132,6 +132,15 @@ export interface AppConfig {
       sonarOrganization: string;
     };
   };
+  gcpDeployments: {
+    enabled: boolean;
+    sharedProjectId: string;
+    region: string;
+    artifactRegistryRepository: string;
+    workloadIdentityProvider: string;
+    deployerServiceAccount: string;
+    dedicatedProjectsEnabled: boolean;
+  };
   projectSyncSnapshots: {
     enabled: boolean;
     liveGithubEnabled: boolean;
@@ -376,6 +385,19 @@ export const appConfig = registerAs('app', (): AppConfig => {
           env['FLOWCI_SONAR_ORGANIZATION']?.trim() ??
           '',
       },
+    },
+    gcpDeployments: {
+      enabled: env['GCP_DEPLOYMENTS_ENABLED'] === 'true',
+      sharedProjectId: env['GCP_SHARED_PROJECT_ID']?.trim() ?? '',
+      region: env['GCP_REGION']?.trim() || 'asia-southeast1',
+      artifactRegistryRepository:
+        env['GCP_ARTIFACT_REGISTRY_REPOSITORY']?.trim() ?? '',
+      workloadIdentityProvider:
+        env['GCP_WORKLOAD_IDENTITY_PROVIDER']?.trim() ?? '',
+      deployerServiceAccount:
+        env['GCP_DEPLOYER_SERVICE_ACCOUNT']?.trim() ?? '',
+      dedicatedProjectsEnabled:
+        env['GCP_DEDICATED_PROJECTS_ENABLED'] === 'true',
     },
     projectSyncSnapshots: {
       enabled: env['PROJECT_SYNC_SNAPSHOTS_ENABLED'] === 'true',

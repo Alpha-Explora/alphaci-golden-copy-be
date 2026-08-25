@@ -40,8 +40,8 @@ describe('ProviderConnectionsService', () => {
       items: [
         {
           id: 'workspace-1',
-          name: 'Personal workspace',
-          kind: 'personal',
+          name: 'Team workspace',
+          kind: 'team',
           role: 'admin',
         },
       ],
