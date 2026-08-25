@@ -147,3 +147,39 @@ export interface UpdateDeploymentTargetMetadataInput {
   renderEnvironmentName?: RenderEnvironmentName | null;
 }
 
+
+/**
+ * A DNS challenge the provider itself returned for domain verification.
+ * Stored verbatim: the provider is the authority and its instructions change
+ * without notice, so the UI repeats what the provider said rather than
+ * hardcoding an apex IP that goes stale.
+ */
+export interface DomainVerificationChallenge {
+  type: string;
+  domain: string;
+  value: string;
+  reason: string;
+}
+
+export interface CustomDomainSummary {
+  id: string;
+  projectId: string;
+  deploymentTargetId: string;
+  provider: EnvProvider;
+  hostname: string;
+  apexDomain: string | null;
+  /** Branch this hostname serves. Null for the production domain. */
+  gitBranch: string | null;
+  verified: boolean;
+  verification: DomainVerificationChallenge[];
+  /**
+   * Whether DNS currently points at the provider. Null until checked once -
+   * and reported separately from verified, because a domain can be verified
+   * as owned while still not pointed at the deployment.
+   */
+  misconfigured: boolean | null;
+  lastCheckedAt: string | null;
+  lastErrorSafeMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

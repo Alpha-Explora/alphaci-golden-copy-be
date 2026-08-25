@@ -17,6 +17,9 @@ import type {
   ProviderTargetStatus,
   ProviderTargetStatusInput,
   UpsertProviderEnvInput,
+  AddProviderDomainInput,
+  ProviderDomainInput,
+  ProviderDomainResult,
 } from '../core/runtime-env-provider.client';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
@@ -435,6 +438,149 @@ export class VercelEnvClient implements DeploymentProvider {
         message: event.payload?.text ?? '',
         level: event.type === 'stderr' ? 'error' : 'info',
       }));
+  }
+
+  async addDomain(input: AddProviderDomainInput): Promise<ProviderDomainResult> {
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v10/projects/${encodeURIComponent(input.targetId)}/domains`,
+        input,
+      ),
+      {
+        method: 'POST',
+        headers: this.headers(input.token),
+        body: JSON.stringify({
+          name: input.hostname,
+          // Vercel pins a domain to a branch with this field, which is what
+          // lets a branch carry its own hostname the way it carries its own
+          // environment variables. Omitted entirely for the production domain.
+          ...(input.gitBranch ? { gitBranch: input.gitBranch } : {}),
+        }),
+      },
+    );
+
+    if (response.status === 409) {
+      throw new Error(
+        `${input.hostname} is already assigned to a Vercel project. Remove it there first, or use a different hostname.`,
+      );
+    }
+    await this.assertOk(response, 'Vercel domain could not be added');
+
+    return this.toDomainResult(await response.json());
+  }
+
+  async listDomains(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderDomainResult[]> {
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v9/projects/${encodeURIComponent(input.targetId)}/domains`,
+        input,
+      ),
+      { headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return [];
+    }
+    await this.assertOk(response, 'Vercel domains could not be loaded');
+
+    const payload = (await response.json()) as { domains?: unknown[] };
+    return (payload.domains ?? []).map((domain) => this.toDomainResult(domain));
+  }
+
+  /**
+   * Asks Vercel to re-check the challenge, then asks separately whether DNS
+   * actually points at it.
+   *
+   * Two questions, not one: a domain can be verified as owned while still
+   * pointing somewhere else, and reporting only the first would tell someone
+   * their domain is ready while it serves nothing.
+   */
+  async verifyDomain(input: ProviderDomainInput): Promise<ProviderDomainResult> {
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v10/projects/${encodeURIComponent(input.targetId)}/domains/${encodeURIComponent(input.hostname)}/verify`,
+        input,
+      ),
+      { method: 'POST', headers: this.headers(input.token) },
+    );
+    await this.assertOk(response, 'Vercel domain could not be verified');
+
+    const result = this.toDomainResult(await response.json());
+    return { ...result, misconfigured: await this.domainMisconfigured(input) };
+  }
+
+  async removeDomain(input: ProviderDomainInput): Promise<{ removed: true }> {
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v9/projects/${encodeURIComponent(input.targetId)}/domains/${encodeURIComponent(input.hostname)}`,
+        input,
+      ),
+      { method: 'DELETE', headers: this.headers(input.token) },
+    );
+    // Already gone is the outcome the caller wanted.
+    if (response.status === 404) {
+      return { removed: true };
+    }
+    await this.assertOk(response, 'Vercel domain could not be removed');
+
+    return { removed: true };
+  }
+
+  /**
+   * Whether DNS currently points at Vercel. Null rather than a throw when the
+   * check itself fails: not knowing is different from being misconfigured, and
+   * the domain record should not be marked broken on a transient error.
+   */
+  private async domainMisconfigured(
+    input: ProviderDomainInput,
+  ): Promise<boolean | null> {
+    try {
+      const response = await fetch(
+        this.withInputScope(
+          `${VERCEL_API_URL}/v6/domains/${encodeURIComponent(input.hostname)}/config`,
+          input,
+        ),
+        { headers: this.headers(input.token) },
+      );
+      if (!response.ok) {
+        return null;
+      }
+      const payload = (await response.json()) as { misconfigured?: boolean };
+      return payload.misconfigured ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private toDomainResult(payload: unknown): ProviderDomainResult {
+    const domain = payload as {
+      name?: string;
+      apexName?: string;
+      verified?: boolean;
+      verification?: Array<{
+        type?: string;
+        domain?: string;
+        value?: string;
+        reason?: string;
+      }>;
+    };
+
+    return {
+      hostname: domain.name ?? '',
+      apexDomain: domain.apexName ?? null,
+      verified: domain.verified === true,
+      // Passed through as Vercel gave them. These are the DNS records the
+      // reader has to create, so inventing or reshaping them would be
+      // inventing instructions.
+      verification: (domain.verification ?? []).map((challenge) => ({
+        type: challenge.type ?? '',
+        domain: challenge.domain ?? '',
+        value: challenge.value ?? '',
+        reason: challenge.reason ?? '',
+      })),
+      misconfigured: null,
+    };
   }
 
   private withInputScope(

@@ -1072,6 +1072,34 @@ export class DeploymentTargetsService {
     }
   }
 
+  /**
+   * An authenticated handle on one target's provider, for callers that need to
+   * act on the provider outside this service.
+   *
+   * Exposed rather than reimplemented: ownership, provider-token resolution and
+   * the Vercel team scope are three things that must not drift between
+   * callers, and each has a way of being subtly wrong on its own - a missing
+   * ownership check leaks another workspace's target, a missing team scope
+   * silently addresses the wrong Vercel account.
+   */
+  async providerContextForTarget(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<{
+    target: DeploymentTargetSummary;
+    token: string;
+    scope: { vercelTeamId?: string; vercelTeamSlug?: string };
+  }> {
+    const target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
+    const { token } = await this.resolveProviderToken(
+      target.provider,
+      userId,
+      this.tokenResolutionInputFor(target),
+    );
+
+    return { target, token, scope: this.vercelScopeFor(target) };
+  }
   private vercelScopeFor(
     target: DeploymentTargetSummary,
   ): { vercelTeamId?: string; vercelTeamSlug?: string } {
