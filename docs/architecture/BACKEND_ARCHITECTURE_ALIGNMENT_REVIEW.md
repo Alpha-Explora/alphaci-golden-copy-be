@@ -263,3 +263,6 @@ notes below):
 `pnpm-workspace.yaml` and `.pnpm-store/` in the working tree are stray
 artifacts from an unrelated pnpm invocation and are not part of this plan --
 do not run `pnpm install` against this repository; use `npm ci`.
+> **Status note (2026-08-26):** the split-services topology discussed in some
+> planning docs was rejected. `FUTURE_STATE.md` is the adopted direction:
+> hexagonal-clean modular monolith. This file remains as a point-in-time review.
