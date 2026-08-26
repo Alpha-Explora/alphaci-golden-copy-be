@@ -1,13 +1,13 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
+import type { AppConfig } from '#kernel/config/app.config';
 import {
   DEPLOYMENT_HISTORY_QUERY,
   type DeploymentHistoryItem,
   type DeploymentHistoryQuery,
   type DeploymentProjectReference,
-} from '../deployments/index.js';
+} from '#modules/runtime/index.js';
 import type {
   ProjectBranchPreview,
   ProjectPreviewsResponse,

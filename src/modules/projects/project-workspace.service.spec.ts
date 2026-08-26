@@ -1,16 +1,18 @@
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 
 import { ProjectWorkspaceService } from './project-workspace.service';
-import type { GithubService } from '../github/github.service';
+import type { GithubService } from '#modules/pipelines/github/github.service';
 import type { ProjectsRepository } from './projects.repository';
 
 const ROW = { repo_full_name: 'Alpha-Explora/orders-api' };
 
-function build(overrides: {
-  row?: unknown;
-  installationToken?: string | null;
-  github?: Partial<GithubService>;
-} = {}) {
+function build(
+  overrides: {
+    row?: unknown;
+    installationToken?: string | null;
+    github?: Partial<GithubService>;
+  } = {},
+) {
   const findByIdAndUser = jest.fn(() =>
     Promise.resolve('row' in overrides ? overrides.row : ROW),
   );
@@ -45,7 +47,9 @@ function build(overrides: {
     ),
     listWorkflowRuns: jest.fn(() => Promise.resolve([])),
     getWorkflowRunJobs: jest.fn(() => Promise.resolve([])),
-    getJobLogs: jest.fn(() => Promise.resolve({ content: 'x', truncated: false })),
+    getJobLogs: jest.fn(() =>
+      Promise.resolve({ content: 'x', truncated: false }),
+    ),
     listPullRequests: jest.fn(() => Promise.resolve([])),
     getPullRequestFiles: jest.fn(() => Promise.resolve([])),
     ...overrides.github,
@@ -74,9 +78,7 @@ describe('ProjectWorkspaceService', () => {
       const { service, getInstallationAccessTokenForUserRepo } = build({
         row: null,
       });
-      await expect(
-        service.listBranches('p1', 'u1', 'gho_x'),
-      ).rejects.toThrow();
+      await expect(service.listBranches('p1', 'u1', 'gho_x')).rejects.toThrow();
       expect(getInstallationAccessTokenForUserRepo).not.toHaveBeenCalled();
     });
 

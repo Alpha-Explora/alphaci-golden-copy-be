@@ -1,7 +1,7 @@
 /**
  * scripts/apply-migrations.ts
  *
- * Applies named migration files from supabase/migrations against
+ * Applies named migration files from supabase/migrations/<owner> against
  * SUPABASE_DB_URL, each inside its own transaction.
  *
  * Follows the same shape as scripts/hierarchy-migrations.cjs (read the .sql,
@@ -12,13 +12,14 @@
  *
  * Usage:
  *   npm run db:apply -- 20260817000000_app_role_source.sql
+ *   npm run db:apply -- identity-access/20260817000000_app_role_source.sql
  *   npm run db:apply -- <a>.sql <b>.sql        # applied in the order given
  *
  * Every migration this is used with must be idempotent — re-running is a
  * normal recovery step, not an error.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Client } from 'pg';
@@ -40,13 +41,32 @@ async function main(): Promise<void> {
 
   // Read every file up front: a typo in the third filename should fail before
   // the first migration has touched the database.
-  const migrations = files.map((name) => ({
-    name,
-    sql: readFileSync(
-      join(__dirname, '..', 'supabase', 'migrations', name),
-      'utf8',
-    ),
-  }));
+  const migrationFiles = readdirSync(
+    join(__dirname, '..', 'supabase', 'migrations'),
+    { withFileTypes: true },
+  );
+  const resolveMigration = (name: string): string => {
+    if (name.includes('/') || name.includes('\\')) return name;
+    const owner = migrationFiles.find(
+      (entry) =>
+        entry.isDirectory() &&
+        existsSync(
+          join(__dirname, '..', 'supabase', 'migrations', entry.name, name),
+        ),
+    );
+    if (owner) return join(owner.name, name);
+    return name;
+  };
+  const migrations = files.map((requestedName) => {
+    const name = resolveMigration(requestedName);
+    return {
+      name,
+      sql: readFileSync(
+        join(__dirname, '..', 'supabase', 'migrations', name),
+        'utf8',
+      ),
+    };
+  });
 
   const client = new Client({
     connectionString: dbUrl,

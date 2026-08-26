@@ -4,9 +4,11 @@
 # orchestrator, so it runs and gives a verdict even before deployment
 # credentials exist.
 #
-# The baseline in .dependency-cruiser-known-violations.json records the 197
-# violations present when the structure was introduced. This job fails only on
-# violations *beyond* that baseline, so the count can go down and never up.
+# The baseline in .dependency-cruiser-known-violations.json is currently empty
+# (all historical violations were migrated away). It is kept as a mechanism:
+# if a legacy violation ever needs a temporary exemption, regenerate the file
+# with --output-type baseline; this job fails only on violations beyond it, so
+# the count can go down and never up.
 # When you fix some, regenerate with:
 #   npx depcruise src tests --config .dependency-cruiser.cjs \
 #     --output-type baseline > .dependency-cruiser-known-violations.json

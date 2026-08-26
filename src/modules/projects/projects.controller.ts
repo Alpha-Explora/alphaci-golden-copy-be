@@ -16,15 +16,15 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 
-import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { SubscriptionGuard } from '../../common/guards/subscription.guard';
+import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
 import {
   DEPLOYMENT_DRIFT_QUERY,
   DEPLOYMENT_HISTORY_QUERY,
   type DeploymentDriftQuery,
   type DeploymentHistoryQuery,
   type ProjectDriftRepairAction,
-} from '../deployments/index.js';
+} from '#modules/runtime/index.js';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { SetupProjectDto } from './dto/setup-project.dto';
 import { DisconnectProjectDto } from './dto/disconnect-project.dto';
@@ -32,11 +32,11 @@ import { ProjectCiRunsService } from './project-ci-runs.service';
 import { ProjectPreviewsService } from './project-previews.service';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
 import { ProjectsService } from './projects.service';
-import { ProjectDashboardService } from './application/project-dashboard.service';
-import { ProjectDriftRepairApplicationService } from './application/project-drift-repair.service';
-import { ProjectLifecycleService } from './application/project-lifecycle.service';
-import { ProjectPreviewsApplicationService } from './application/project-previews.service';
-import { ProjectWorkflowsService } from './application/project-workflows.service';
+import { ProjectDashboardService } from './application/dashboard/project-dashboard.service';
+import { ProjectDriftRepairApplicationService } from './application/drift/project-drift-repair.service';
+import { ProjectLifecycleService } from './application/lifecycle/project-lifecycle.service';
+import { ProjectPreviewsApplicationService } from './application/dashboard/project-previews.service';
+import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 
 @Controller('projects')
 export class ProjectsController {

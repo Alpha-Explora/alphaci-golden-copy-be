@@ -21,7 +21,7 @@
 import { readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
@@ -32,14 +32,26 @@ const dryRun = args.includes("--dry-run");
 const fromIdx = args.indexOf("--from");
 const from = fromIdx !== -1 ? args[fromIdx + 1] : null;
 
-let files = readdirSync(migrationsDir)
-  .filter((f) => f.endsWith(".sql"))
-  .sort(); // filenames are timestamp-prefixed, so lexical order is chronological
+function migrationFiles(dir, relative = "") {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(dir, entry.name);
+    const name = join(relative, entry.name);
+    if (entry.isDirectory()) return migrationFiles(full, name);
+    return entry.name.endsWith(".sql") ? [name] : [];
+  });
+}
+
+let files = migrationFiles(migrationsDir).sort((a, b) =>
+  basename(a).localeCompare(basename(b)),
+); // timestamp prefixes preserve the old global replay order
 
 if (from) {
-  const start = files.indexOf(from);
+  const start = files.findIndex(
+    (file) =>
+      file === from || file.endsWith(`/${from}`) || file.endsWith(`\\${from}`),
+  );
   if (start === -1) {
-    console.error(`--from ${from} is not in supabase/migrations`);
+    console.error(`--from ${from} is not in supabase/migrations/<owner>`);
     process.exit(1);
   }
   files = files.slice(start);
@@ -61,7 +73,9 @@ if (!process.env.SUPABASE_DB_URL) {
 
 let applied = 0;
 for (const file of files) {
-  process.stdout.write(`  [${String(++applied).padStart(2)}/${files.length}] ${file} ... `);
+  process.stdout.write(
+    `  [${String(++applied).padStart(2)}/${files.length}] ${file.replaceAll("\\", "/")} ... `,
+  );
   const result = spawnSync("npm", ["run", "db:apply", "--", file], {
     cwd: repoRoot,
     encoding: "utf8",

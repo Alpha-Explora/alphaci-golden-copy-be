@@ -15,6 +15,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  DEPLOYMENT_PROVIDER_IDS,
+  type DeploymentProviderId,
+} from '#modules/runtime/index.js';
 
 export class DeploymentProvisioningEnvVarDto {
   @IsString()
@@ -60,8 +64,8 @@ export class DeploymentProvisioningTargetDto {
   @IsIn(['backend', 'frontend', 'standalone'])
   slot!: 'backend' | 'frontend' | 'standalone';
 
-  @IsIn(['render', 'vercel'])
-  provider!: 'render' | 'vercel';
+  @IsIn(DEPLOYMENT_PROVIDER_IDS)
+  provider!: DeploymentProviderId;
 
   @IsIn(['byo', 'flowci_managed'])
   ownershipMode!: 'byo' | 'flowci_managed';
@@ -162,8 +166,8 @@ export class DeploymentProvisioningVariableGroupDto {
   @MaxLength(80)
   name?: string;
 
-  @IsIn(['render', 'vercel'])
-  provider!: 'render' | 'vercel';
+  @IsIn(DEPLOYMENT_PROVIDER_IDS)
+  provider!: DeploymentProviderId;
 
   @IsOptional()
   @IsIn(['all', 'selected'])

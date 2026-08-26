@@ -7,9 +7,9 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
-import { AuditEventsService } from '../audit/index.js';
-import { CiService } from '../ci/index.js';
+import type { AppConfig } from '#kernel/config/app.config';
+import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import { CiService } from '#modules/pipelines/index.js';
 import {
   DEPLOYMENT_DRIFT_FINDINGS_STORE,
   DEPLOYMENT_TARGET_DELETION,
@@ -18,8 +18,8 @@ import {
   type ProjectDriftFinding,
   type ProjectDriftRepairAction,
   type ProjectDriftRepairResponse,
-} from '../deployments/index.js';
-import { NotificationEventsService } from '../notifications/index.js';
+} from '#modules/runtime/index.js';
+import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { ProjectsRepository } from './projects.repository';
 import { ProjectsService } from './projects.service';
 
@@ -38,9 +38,9 @@ export class ProjectDriftRepairService {
     @Optional()
     private readonly configService?: ConfigService,
     @Optional()
-    private readonly auditEventsService?: AuditEventsService,
+    private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
-    private readonly notificationEventsService?: NotificationEventsService,
+    private readonly notificationEventsService?: NotificationEventPublisher,
   ) {}
 
   async repair(

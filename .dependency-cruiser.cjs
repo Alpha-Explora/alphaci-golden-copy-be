@@ -8,6 +8,17 @@
  *   npm run boundaries:new    # strict report (no ignore list)
  *   npm run boundaries:graph  # visual graph (needs graphviz)
  */
+// The top-level module folders are the six bounded contexts. Keep this map
+// next to the dependency rules so every gate uses the same context data.
+const contextByModule = Object.freeze({
+  'identity-access': 'identity-access',
+  projects: 'projects',
+  pipelines: 'pipelines',
+  runtime: 'runtime',
+  billing: 'billing',
+  'platform-ops': 'platform-ops',
+});
+
 module.exports = {
   "forbidden": [
     {
@@ -63,20 +74,48 @@ module.exports = {
       }
     },
     {
+      "name": "no-cross-context-cycles",
+      "severity": "error",
+      "comment": "Context-level cycles are tracked from the contextByModule map above; no cross-context cycle is permitted before physical consolidation.",
+      "from": {
+        "path": "^src/modules/"
+      },
+      "to": {
+        "path": "^src/modules/",
+        "circular": true
+      }
+    },
+    {
+      "name": "contracts-are-dependency-free",
+      "severity": "error",
+      "comment": "Published contracts contain serialisable types only and cannot drag Nest, database clients, Supabase, or infrastructure adapters across a future service boundary.",
+      "from": {
+        "path": "^src/modules/[^/]+/contracts/"
+      },
+      "to": {
+        "path": [
+          "^@nestjs/",
+          "^pg$",
+          "^@supabase/",
+          "^src/modules/[^/]+/infrastructure/"
+        ]
+      }
+    },
+    {
       "name": "deployments-domain-is-framework-free",
       "severity": "error",
       "comment": "Deployment domain rules must stay framework- and vendor-independent. Import Nest, pg, Supabase, API controllers, or adapters only from application/ or infrastructure/.",
       "from": {
-        "path": "^src/modules/deployments/domain/"
+        "path": "^src/modules/runtime/domain/"
       },
       "to": {
         "path": [
           "@nestjs/",
           "pg",
           "@supabase/",
-          "^src/modules/deployments/api/",
-          "^src/modules/deployments/dto/",
-          "^src/modules/deployments/infrastructure/"
+          "^src/modules/runtime/api/",
+          "^src/modules/runtime/dto/",
+          "^src/modules/runtime/infrastructure/"
         ]
       }
     },
@@ -85,12 +124,12 @@ module.exports = {
       "severity": "error",
       "comment": "Controllers translate HTTP and delegate to application services; they never import a repository or provider client directly.",
       "from": {
-        "path": "^src/modules/deployments/(api/)?[^/]*controller\\.ts$"
+        "path": "^src/modules/runtime/(api/)?[^/]*controller\\.ts$"
       },
       "to": {
         "path": [
-          "^src/modules/deployments/(application/)?[^/]*repository\\.ts$",
-          "^src/modules/deployments/infrastructure/providers/"
+          "^src/modules/runtime/(application/)?[^/]*repository\\.ts$",
+          "^src/modules/runtime/infrastructure/providers/"
         ],
         "pathNot": [
           "\\.types\\.ts$",
@@ -103,10 +142,10 @@ module.exports = {
       "severity": "error",
       "comment": "A provider adapter must never know another adapter exists. Add shared behavior to infrastructure/providers/core instead.",
       "from": {
-        "path": "^src/modules/deployments/infrastructure/providers/(render|vercel)/"
+        "path": "^src/modules/runtime/infrastructure/providers/(render|vercel)/"
       },
       "to": {
-        "path": "^src/modules/deployments/infrastructure/providers/(?!core/)"
+        "path": "^src/modules/runtime/infrastructure/providers/(?!core/)"
       }
     },
     {
@@ -172,5 +211,10 @@ module.exports = {
         "collapsePattern": "^src/(kernel|modules)/[^/]+"
       }
     }
-  }
+  },
 };
+
+Object.defineProperty(module.exports, 'contextByModule', {
+  value: contextByModule,
+  enumerable: false,
+});

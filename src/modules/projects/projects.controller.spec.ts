@@ -9,7 +9,7 @@ import {
   type DeploymentDriftQuery,
   type DeploymentHistoryQuery,
   type DeploymentProjectReference,
-} from '../deployments/index.js';
+} from '#modules/runtime/index.js';
 import { ProjectsController } from './projects.controller.js';
 import { ProjectCiRunsService } from './project-ci-runs.service.js';
 import { ProjectPreviewsService } from './project-previews.service.js';
@@ -240,11 +240,11 @@ describe('ProjectsController', () => {
       ],
     })
       .overrideGuard(
-        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+        require('#kernel/auth/session-auth.guard.js').SessionAuthGuard,
       )
       .useValue({ canActivate: () => true })
       .overrideGuard(
-        require('../../common/guards/subscription.guard.js').SubscriptionGuard,
+        require('#kernel/auth/subscription.guard.js').SubscriptionGuard,
       )
       .useValue({ canActivate: () => true })
       .compile();
@@ -521,9 +521,7 @@ describe('ProjectsController', () => {
       'project-1',
     );
 
-    expect(previewsService.listPreviews).toHaveBeenCalledWith(
-      projectReference,
-    );
+    expect(previewsService.listPreviews).toHaveBeenCalledWith(projectReference);
     expect(result).toMatchObject({
       enabled: true,
       liveProvidersEnabled: false,
@@ -549,9 +547,7 @@ describe('ProjectsController', () => {
       'project-1',
     );
 
-    expect(driftService.listFindings).toHaveBeenCalledWith(
-      projectReference,
-    );
+    expect(driftService.listFindings).toHaveBeenCalledWith(projectReference);
     expect(result).toMatchObject({
       mode: 'local_snapshot',
       findings: [],
@@ -564,9 +560,7 @@ describe('ProjectsController', () => {
       'project-1',
     );
 
-    expect(driftService.runDetection).toHaveBeenCalledWith(
-      projectReference,
-    );
+    expect(driftService.runDetection).toHaveBeenCalledWith(projectReference);
     expect(result).toMatchObject({
       mode: 'local_snapshot',
       findings: [],

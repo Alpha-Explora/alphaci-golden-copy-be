@@ -12,8 +12,8 @@ import {
   type QueryResultRow,
 } from 'pg';
 
-import type { AppConfig } from '../../config/app.config';
-import { postgresSslConfig } from './postgres-ssl.config.js';
+import type { AppConfig } from '#kernel/config/app.config';
+import { postgresSslConfig } from '#kernel/db/postgres-ssl.config.js';
 
 const SERVICE_SCHEMA_SEARCH_PATH = [
   'identity',

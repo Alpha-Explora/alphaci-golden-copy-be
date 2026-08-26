@@ -1,7 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 
-import type { DatabaseService } from '../../../../../src/kernel/db/database.service';
-import { NotificationsRepository } from '../../../../../src/modules/notifications/infra/notifications.repository';
+import type { DatabaseService } from '#kernel/db/database.service';
+import { NotificationsRepository } from '#modules/platform-ops/notifications/infra/notifications.repository';
 
 const makeDatabaseService = (query: jest.Mock) =>
   ({ query }) as unknown as DatabaseService;

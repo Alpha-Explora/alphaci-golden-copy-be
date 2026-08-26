@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import { GithubService } from '../github/index.js';
+import { GithubService } from '#modules/pipelines/index.js';
 import type {
   GitHubBranchSummary,
   GitHubContentListing,
@@ -13,7 +13,7 @@ import type {
   GitHubPullRequestSummary,
   GitHubRunJob,
   GitHubWorkflowRunSummary,
-} from '../github/index.js';
+} from '#modules/pipelines/index.js';
 import { ProjectsRepository } from './projects.repository';
 
 export interface ProjectBranchesResponse {
@@ -170,11 +170,7 @@ export class ProjectWorkspaceService {
       oauthToken,
     );
 
-    const log = await this.githubService.getJobLogs(
-      token,
-      repoFullName,
-      jobId,
-    );
+    const log = await this.githubService.getJobLogs(token, repoFullName, jobId);
 
     if (!log) {
       return { available: false, content: '', truncated: false };
@@ -236,7 +232,10 @@ export class ProjectWorkspaceService {
     userId: string,
     oauthToken: string | null,
   ): Promise<{ repoFullName: string; token: string }> {
-    const row = await this.projectsRepository.findByIdAndUser(projectId, userId);
+    const row = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
     if (!row) {
       throw new NotFoundException('Project not found');
     }

@@ -2,7 +2,7 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { DatabaseService } from './database.service.js';
+import { DatabaseService } from '#kernel/db/database.service.js';
 
 const mockPoolQuery = jest.fn();
 const mockPoolConnect = jest.fn();

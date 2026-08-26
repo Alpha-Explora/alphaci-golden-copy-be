@@ -1,54 +1,63 @@
-import { Test } from '@nestjs/testing';
-import type { TestingModule } from '@nestjs/testing';
-import { OutboxRepository } from './outbox.repository.js';
-import { DatabaseService } from '../../kernel/db/database.service.js';
+import { OutboxRepository } from './outbox.repository';
 
-const makeDatabaseService = () =>
-  ({
-    query: jest.fn().mockResolvedValue({ rows: [] }),
-  }) as unknown as DatabaseService;
+describe('OutboxRepository.processPending', () => {
+  it('serially dispatches and marks rows while holding the relay lock', async () => {
+    const client = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ locked: true }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'event-1',
+              topic: 'platform.audit.recorded',
+              aggregate_type: 'audit_event',
+              aggregate_id: 'project-1',
+              payload: { eventCode: 'project.updated' },
+              created_at: '2026-08-27T00:00:00.000Z',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ id: 'event-1' }] })
+        .mockResolvedValueOnce({ rows: [{ unlocked: true }] }),
+    };
+    const databaseService = {
+      withClient: jest.fn((fn: (value: typeof client) => Promise<number>) =>
+        fn(client),
+      ),
+    };
+    const repository = new OutboxRepository(databaseService as never);
+    const handler = jest.fn().mockResolvedValue(undefined);
 
-describe('OutboxRepository', () => {
-  let repo: OutboxRepository;
-  let db: DatabaseService;
-
-  beforeEach(async () => {
-    db = makeDatabaseService();
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [OutboxRepository, { provide: DatabaseService, useValue: db }],
-    }).compile();
-
-    repo = module.get(OutboxRepository);
-  });
-
-  it('should be defined', () => {
-    expect(repo).toBeDefined();
-  });
-
-  it('publishes an event via database query', async () => {
-    await repo.publishLater({
-      topic: 'user.signed_in',
-      aggregateType: 'user',
-      aggregateId: 'user-123',
-      payload: { provider: 'github' },
+    await expect(repository.processPending(handler)).resolves.toBe(1);
+    expect(handler).toHaveBeenCalledWith({
+      id: 'event-1',
+      topic: 'platform.audit.recorded',
+      aggregateType: 'audit_event',
+      aggregateId: 'project-1',
+      payload: { eventCode: 'project.updated' },
+      createdAt: '2026-08-27T00:00:00.000Z',
     });
-
-    expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO outbox_events'),
-      expect.arrayContaining(['user.signed_in', 'user', 'user-123']),
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'published'"),
+      ['event-1'],
     );
   });
 
-  it('swallows database errors and logs a warning', async () => {
-    (db.query as jest.Mock).mockRejectedValueOnce(new Error('db error'));
+  it('does not read rows when another relay owns the lock', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [{ locked: false }] }),
+    };
+    const databaseService = {
+      withClient: jest.fn((fn: (value: typeof client) => Promise<number>) =>
+        fn(client),
+      ),
+    };
+    const repository = new OutboxRepository(databaseService as never);
+    const handler = jest.fn();
 
-    await expect(
-      repo.publishLater({
-        topic: 'test.event',
-        aggregateType: 'test',
-        aggregateId: 'id-1',
-        payload: {},
-      }),
-    ).resolves.toBeUndefined();
+    await expect(repository.processPending(handler)).resolves.toBe(0);
+    expect(handler).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenCalledTimes(1);
   });
 });

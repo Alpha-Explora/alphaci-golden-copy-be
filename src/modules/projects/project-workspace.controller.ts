@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
+import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { ProjectWorkspaceService } from './project-workspace.service';
 
 /**
