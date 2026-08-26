@@ -1,0 +1,62 @@
+name: CI
+
+# Full quality gate for the consolidation refactor.
+#
+# GitHub Actions minutes are constrained on this account (the sibling
+# alphaci-be repo ships the same posture). The workflow is dispatchable on
+# demand and also runs on pushes to main so it activates automatically if
+# minutes become available. Until then, run the loop locally:
+#   npm run typecheck && npm run lint && npm test && npm run boundaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint, test, boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test -- --ci --runInBand
+
+      - name: Application boot smoke
+        run: npm test -- --ci --runInBand tests/architecture/app-module.boot.spec.ts
+
+      - name: Module boundaries
+        run: npm run boundaries
+
+      - name: Application boundaries
+        run: npm run check:application-boundaries
+
+      - name: Architecture metrics
+        run: npm run report:architecture-metrics -- --json
+
+      - name: Provider encapsulation diagnostic
+        run: npm run check:provider-encapsulation
+
+      - name: Schema ownership
+        run: npm run check:schema-ownership

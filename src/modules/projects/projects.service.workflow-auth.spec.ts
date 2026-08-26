@@ -1,7 +1,7 @@
 import { ProjectsService } from './projects.service';
-import type { CatalogService } from '../catalog/catalog.service';
-import type { CiService } from '../ci/ci.service';
-import type { GithubService } from '../github/github.service';
+import type { CatalogService } from './application/catalog/catalog.service';
+import type { CiService } from '#modules/pipelines/ci/ci.service';
+import type { GithubService } from '#modules/pipelines/github/github.service';
 import type { ProjectsRepository } from './projects.repository';
 
 const stagedWorkflowFiles = [

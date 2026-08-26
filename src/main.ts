@@ -8,15 +8,15 @@ import session from 'express-session';
 import helmet from 'helmet';
 import { Pool } from 'pg';
 import { AppModule } from './app.module.js';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
+import { AllExceptionsFilter } from '#kernel/http/filters/all-exceptions.filter.js';
 import {
   BODY_SIZE_LIMIT,
   corsOptions,
   helmetConfig,
   helmetConfigSwagger,
-} from './common/config/security.config.js';
-import type { AppConfig } from './config/app.config.js';
-import { postgresSslConfig } from './kernel/db/postgres-ssl.config.js';
+} from '#kernel/config/security.config.js';
+import type { AppConfig } from '#kernel/config/app.config.js';
+import { postgresSslConfig } from '#kernel/db/postgres-ssl.config.js';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');

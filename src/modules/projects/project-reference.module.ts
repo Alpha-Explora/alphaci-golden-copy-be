@@ -1,17 +1,15 @@
 import { Global, Injectable, Module } from '@nestjs/common';
 
-import { DatabaseModule } from '../../kernel/db/database.module';
+import { DatabaseModule } from '#kernel/db/database.module';
 import {
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
-} from '../deployments/index.js';
+} from '#modules/runtime/index.js';
 import { ProjectsRepository } from './projects.repository';
 
 @Injectable()
-class ProjectReferenceLookupAdapter
-  implements DeploymentProjectReferenceLookup
-{
+class ProjectReferenceLookupAdapter implements DeploymentProjectReferenceLookup {
   constructor(private readonly projectsRepository: ProjectsRepository) {}
 
   async findProjectReference(

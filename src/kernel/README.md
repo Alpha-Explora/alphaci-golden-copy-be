@@ -10,7 +10,8 @@ from here; **this directory may never import from `src/modules/`.**
 | `auth/`   | session-user lookup contract                                  |
 
 `config/` (app config, env validation) and `http/` (guards, filters,
-correlation middleware) remain in `src/common/` and `src/config/` until a
+correlation middleware) remain in the historical `src/common/` and `src/config/`
+paths until a
 second module needs them — see the admission rule below.
 
 ## Admission rule

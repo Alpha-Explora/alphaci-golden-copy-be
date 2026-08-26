@@ -1,5 +1,5 @@
-import { NotificationEventsService } from '../../../../../src/modules/notifications/application/notification-events.service';
-import type { NotificationsRepository } from '../../../../../src/modules/notifications/infra/notifications.repository';
+import { NotificationEventsService } from '#modules/platform-ops/notifications/application/notification-events.service';
+import type { NotificationsRepository } from '#modules/platform-ops/notifications/infra/notifications.repository';
 
 describe('NotificationEventsService', () => {
   const repository = {

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SupabaseService } from '../kernel/db/supabase/supabase.service.js';
-import type { AppConfig } from '../config/app.config.js';
+import { SupabaseService } from '#kernel/db/supabase/supabase.service.js';
+import type { AppConfig } from '#kernel/config/app.config.js';
 
 export type HealthStatus = 'ok' | 'degraded' | 'error';
 

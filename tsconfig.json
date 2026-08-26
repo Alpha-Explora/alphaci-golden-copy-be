@@ -3,9 +3,10 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "baseUrl": ".",
+    "rootDir": ".",
     "paths": {
-      "@kernel/*": ["src/kernel/*"],
-      "@modules/*": ["src/modules/*"]
+      "#kernel/*": ["src/kernel/*"],
+      "#modules/*": ["src/modules/*"]
     },
     "resolvePackageJsonExports": true,
     "esModuleInterop": true,

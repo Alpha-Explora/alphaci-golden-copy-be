@@ -1,7 +1,7 @@
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 
-import { NotificationsController } from '../../../../../src/modules/notifications/api/notifications.controller';
-import { NotificationsService } from '../../../../../src/modules/notifications/application/notifications.service';
+import { NotificationsController } from '#modules/platform-ops/notifications/api/notifications.controller';
+import { NotificationsService } from '#modules/platform-ops/notifications/application/notifications.service';
 
 describe('NotificationsController', () => {
   const makeConfigService = (enabled = true) =>

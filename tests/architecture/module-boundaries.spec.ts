@@ -35,12 +35,15 @@ describe('module boundary policy', () => {
     try {
       const quote = process.platform === 'win32' ? '"' : "'";
       const q = (value: string) => `${quote}${value}${quote}`;
-      execSync(`${q(nodeCmd)} ${q(depcruiseJs)} src tests --config ${q(configPath)}`, {
-        cwd: repositoryRoot,
-        encoding: 'utf8',
-        timeout: 120_000,
-        stdio: 'pipe',
-      });
+      execSync(
+        `${q(nodeCmd)} ${q(depcruiseJs)} src tests --config ${q(configPath)}`,
+        {
+          cwd: repositoryRoot,
+          encoding: 'utf8',
+          timeout: 120_000,
+          stdio: 'pipe',
+        },
+      );
       // Reaching here means exit code 0 (zero violations).
     } catch (error: unknown) {
       const output =

@@ -1,4 +1,4 @@
-import type { SessionUser } from '../../common/interfaces/session-user.interface';
+import type { SessionUser } from '#kernel/auth/session-user.interface';
 
 /**
  * Minimal identity lookup needed by HTTP session authentication.

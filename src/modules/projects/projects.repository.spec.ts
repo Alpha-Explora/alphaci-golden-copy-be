@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 
-import { DatabaseService } from '../../kernel/db/database.service.js';
+import { DatabaseService } from '#kernel/db/database.service.js';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -208,7 +208,10 @@ describe('ProjectsRepository', () => {
   });
 
   it('scopes findByIdAndUser to an allowedRoles list when provided', async () => {
-    await repo.findByIdAndUser('project-1', 'user-1', ['admin', 'delegated_lead']);
+    await repo.findByIdAndUser('project-1', 'user-1', [
+      'admin',
+      'delegated_lead',
+    ]);
 
     expect(db.query).toHaveBeenCalledWith(expect.any(String), [
       'project-1',
@@ -233,7 +236,10 @@ describe('ProjectsRepository', () => {
   it('deletes a project row scoped to a tightened allowedRoles list', async () => {
     (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 });
 
-    await repo.deleteByIdAndUser('project-1', 'user-1', ['admin', 'delegated_lead']);
+    await repo.deleteByIdAndUser('project-1', 'user-1', [
+      'admin',
+      'delegated_lead',
+    ]);
 
     expect(db.query).toHaveBeenCalledWith(expect.any(String), [
       'project-1',
@@ -344,9 +350,7 @@ describe('ProjectsRepository', () => {
       expect(query).toContain('orgs.workspace_members');
       expect(query).toContain("vm.member_status = 'active'");
       // The manager-tier restriction is gone from the READ predicate.
-      expect(query).not.toContain(
-        "vm.role IN ('admin', 'delegated_lead')",
-      );
+      expect(query).not.toContain("vm.role IN ('admin', 'delegated_lead')");
     });
 
     it('still requires an explicit role list for destructive paths', async () => {

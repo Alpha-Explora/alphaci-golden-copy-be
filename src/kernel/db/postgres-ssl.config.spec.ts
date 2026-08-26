@@ -1,4 +1,4 @@
-import { postgresSslConfig } from './postgres-ssl.config.js';
+import { postgresSslConfig } from '#kernel/db/postgres-ssl.config.js';
 
 describe('postgresSslConfig', () => {
   it.each([

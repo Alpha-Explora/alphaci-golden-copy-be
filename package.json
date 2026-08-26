@@ -5,6 +5,24 @@
   "author": "",
   "private": true,
   "license": "UNLICENSED",
+  "imports": {
+    "#kernel/*.js": {
+      "types": "./src/kernel/*",
+      "default": "./dist/src/kernel/*.js"
+    },
+    "#kernel/*": {
+      "types": "./src/kernel/*",
+      "default": "./dist/src/kernel/*.js"
+    },
+    "#modules/*.js": {
+      "types": "./src/modules/*",
+      "default": "./dist/src/modules/*.js"
+    },
+    "#modules/*": {
+      "types": "./src/modules/*",
+      "default": "./dist/src/modules/*.js"
+    }
+  },
   "scripts": {
     "build": "nest build",
     "typecheck": "tsc --noEmit",
@@ -12,7 +30,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main",
     "lint": "eslint \"{src,apps,libs,tests}/**/*.ts\"",
     "lint:fix": "eslint \"{src,apps,libs,tests}/**/*.ts\" --fix",
     "test": "jest",
@@ -26,9 +44,15 @@
     "check:github-teams": "node --env-file=.env -r ts-node/register scripts/check-github-team-setup.ts",
     "db:apply": "node --env-file=.env -r ts-node/register scripts/apply-migrations.ts",
     "boundaries": "depcruise src tests --config .dependency-cruiser.cjs --ignore-known",
+    "check:application-boundaries": "node ./scripts/check-application-boundaries.cjs",
+    "report:architecture-metrics": "node ./scripts/report-architecture-metrics.cjs",
+    "check:provider-encapsulation": "node ./scripts/check-provider-encapsulation.cjs",
     "boundaries:graph": "depcruise src --config .dependency-cruiser.cjs --output-type dot > dependency-graph.dot",
     "boundaries:new": "depcruise src tests --config .dependency-cruiser.cjs",
-    "db:apply:all": "node scripts/apply-all-migrations.mjs"
+      "db:apply:all": "node scripts/apply-all-migrations.mjs",
+      "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
+      "process:outbox": "npm run build && node scripts/process-outbox.cjs",
+      "routes:inventory": "npm run build && node scripts/route-inventory.cjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -101,6 +125,10 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
+      "^#kernel/(.*)\\.js$": "<rootDir>/src/kernel/$1",
+      "^#kernel/(.*)$": "<rootDir>/src/kernel/$1",
+      "^#modules/(.*)\\.js$": "<rootDir>/src/modules/$1",
+      "^#modules/(.*)$": "<rootDir>/src/modules/$1",
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "collectCoverageFrom": [

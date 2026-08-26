@@ -2,7 +2,7 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { HealthService } from './health.service.js';
-import { SupabaseService } from '../kernel/db/supabase/supabase.service.js';
+import { SupabaseService } from '#kernel/db/supabase/supabase.service.js';
 
 const makeSupabaseMock = (pingResult: boolean): Partial<SupabaseService> => ({
   ping: jest.fn().mockResolvedValue(pingResult),

@@ -7,12 +7,12 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import type { CatalogService } from '../catalog/catalog.service.js';
-import type { CiService } from '../ci/ci.service.js';
-import { GithubRepoDeleteError } from '../github/github.service.js';
-import type { GithubService } from '../github/github.service.js';
-import type { WorkspacesService } from '../workspaces/workspaces.service.js';
-import type { WorkspaceAccessService } from '../workspaces/workspace-access.service.js';
+import type { CatalogService } from './application/catalog/catalog.service.js';
+import type { CiService } from '#modules/pipelines/ci/ci.service.js';
+import { GithubRepoDeleteError } from '#modules/pipelines/github/github.service.js';
+import type { GithubService } from '#modules/pipelines/github/github.service.js';
+import type { WorkspacesService } from '#modules/identity-access/workspaces/workspaces.service.js';
+import type { WorkspaceAccessService } from '#modules/identity-access/workspaces/workspace-access.service.js';
 import type { ProjectsRepository } from './projects.repository.js';
 import { ProjectsService } from './projects.service.js';
 
@@ -945,7 +945,6 @@ jobs:
     expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
   });
 
-
   /*
    * ONBOARDING AN EXISTING REPOSITORY (2026-08-18).
    *
@@ -957,9 +956,8 @@ jobs:
    */
   describe('setupProject: existing repositories', () => {
     function pushedBranches(): string[] {
-      const calls = (
-        service as unknown as { pushWorkflowFile: jest.Mock }
-      ).pushWorkflowFile.mock.calls as unknown[][];
+      const calls = (service as unknown as { pushWorkflowFile: jest.Mock })
+        .pushWorkflowFile.mock.calls as unknown[][];
       // (token, owner, repo, path, content, message, branch)
       return calls.map((call) => call[6] as string);
     }
@@ -981,9 +979,7 @@ jobs:
     });
 
     it('falls back to main when the default branch cannot be read', async () => {
-      githubServiceMock.getRepo = jest
-        .fn()
-        .mockRejectedValue(new Error('403'));
+      githubServiceMock.getRepo = jest.fn().mockRejectedValue(new Error('403'));
 
       await service.setupProject('user-1', 'oauth-token', {
         repoFullName: 'tone/orders-api',
@@ -1059,11 +1055,8 @@ jobs:
     });
 
     it('removes the secrets it wrote when the push fails', async () => {
-      (
-        service as unknown as { pushWorkflowFile: jest.Mock }
-      ).pushWorkflowFile = jest
-        .fn()
-        .mockRejectedValue(new Error('branch not found'));
+      (service as unknown as { pushWorkflowFile: jest.Mock }).pushWorkflowFile =
+        jest.fn().mockRejectedValue(new Error('branch not found'));
 
       await expect(
         service.setupProject('user-1', 'oauth-token', {
@@ -1082,9 +1075,8 @@ jobs:
     });
 
     it('never deletes SONAR secrets on cleanup — it may not have written them', async () => {
-      (
-        service as unknown as { pushWorkflowFile: jest.Mock }
-      ).pushWorkflowFile = jest.fn().mockRejectedValue(new Error('nope'));
+      (service as unknown as { pushWorkflowFile: jest.Mock }).pushWorkflowFile =
+        jest.fn().mockRejectedValue(new Error('nope'));
 
       await expect(
         service.setupProject('user-1', 'oauth-token', {
@@ -1101,11 +1093,8 @@ jobs:
     });
 
     it('reports the original failure, not a cleanup error', async () => {
-      (
-        service as unknown as { pushWorkflowFile: jest.Mock }
-      ).pushWorkflowFile = jest
-        .fn()
-        .mockRejectedValue(new Error('branch not found'));
+      (service as unknown as { pushWorkflowFile: jest.Mock }).pushWorkflowFile =
+        jest.fn().mockRejectedValue(new Error('branch not found'));
       githubServiceMock.deleteActionsSecret = jest
         .fn()
         .mockRejectedValue(new Error('no secrets:write'));

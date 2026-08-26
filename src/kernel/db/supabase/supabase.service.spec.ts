@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { SupabaseService } from './supabase.service';
+import { SupabaseService } from '#kernel/db/supabase/supabase.service';
 
 // ---------------------------------------------------------------------------
 // Helpers

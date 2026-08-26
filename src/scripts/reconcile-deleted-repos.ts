@@ -40,7 +40,7 @@
  * added via the "import an existing repo" flow).
  *
  * Required env vars: the full application environment (this boots the
- * whole Nest DI graph via AppModule) — see src/common/config/env.validation.ts
+ * whole Nest DI graph via AppModule) — see src/kernel/config/env.validation.ts
  * for the complete required set. The ones this job specifically exercises:
  *   SUPABASE_DB_URL / SUPABASE_DB_CA_CERT — direct Postgres connection
  *   GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY (or GITHUB_APP / GITHUB_PRIVATE_KEY)
@@ -67,7 +67,7 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../app.module.js';
-import { ProjectsService } from '../modules/projects/index.js';
+import { ProjectsService } from '#modules/projects/index.js';
 
 async function run(): Promise<void> {
   const logger = new Logger('ReconcileDeletedRepos');

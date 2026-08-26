@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '../../config/app.config';
-import type { WorkflowFileMetadata } from '../workflows/index.js';
+import type { AppConfig } from '#kernel/config/app.config';
+import type { WorkflowFileMetadata } from './application/workflows/index';
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
 import type {
   CiRunsProjectContext,

@@ -1,81 +1,63 @@
-import { readFile } from 'node:fs/promises';
-
 import {
   BadRequestException,
-  ForbiddenException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
   Optional,
   ServiceUnavailableException,
-  UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import yaml from 'js-yaml';
 
-import type { AppConfig } from '../../config/app.config';
+import type { AppConfig } from '#kernel/config/app.config';
+import {
+  AuditEventPublisher,
+  NotificationEventPublisher,
+} from '#kernel/events/platform-event-publisher.js';
 import {
   CiService,
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
   type ProjectTokenStatus,
-} from '../ci/index.js';
-import { AuditEventsService } from '../audit/index.js';
+} from '#modules/pipelines/index.js';
+import { AuditEventsService } from '#modules/platform-ops/index.js';
 import {
   DEPLOYMENT_ENV_METADATA_QUERY,
   DEPLOYMENT_PROVISIONING_FACADE,
   DEPLOYMENT_TARGETS_QUERY,
+  type DeploymentProviderId,
   type DeploymentProvisioningFacade,
   type DeploymentProjectReference,
   type DeploymentProvisioningResult,
   type DeploymentEnvMetadataQuery,
   type DeploymentTargetsQuery,
-  type DeploymentTargetSummary,
-  type EnvVarMetadata,
-} from '../deployments/index.js';
+} from '#modules/runtime/index.js';
 import {
   GithubRepoDeleteError,
   GithubService,
   REPOSITORY_DELETED_EVENT,
   type GithubRepoDeleteErrorCode,
   type RepositoryDeletedEvent,
-} from '../github/index.js';
-import { CatalogService } from '../catalog/index.js';
-import { HierarchyProjectLinkService } from '../hierarchy/project-link/index.js';
+} from '#modules/pipelines/index.js';
+import { CatalogService } from './application/catalog/catalog.service';
+import { HierarchyProjectLinkService } from '#modules/identity-access/hierarchy/project-link/index.js';
 import {
   WORKFLOW_HISTORY_QUERY,
   ALPHACI_REPORT_URL,
   type WorkflowHistoryQuery,
-  type WorkflowHistoryEntry,
-  buildStagedWorkflowBundle,
-  resolveDefaultCentralWorkflowRef,
   type StagedWorkflowFile,
-  type WorkflowFileMetadata,
-  type DeploymentProvider,
   type DeploymentWorkflowTarget,
-} from '../workflows/index.js';
+} from './application/workflows/index';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
-  type ProvisionedProjectStatus,
 } from './projects.repository';
-import {
-  ProjectDashboardSnapshotsRepository,
-  type ProjectDashboardSnapshot,
-  type ProjectDashboardSnapshotFinding,
-} from './project-dashboard-snapshots.repository';
-import {
-  ProjectWorkflowSettingsRepository,
-  type ProjectWorkflowSettingsRowValue,
-} from './project-workflow-settings.repository';
-import {
-  ProjectWorkflowUpdateRequestsRepository,
-  type WorkflowUpdateRequestRecord,
-} from './project-workflow-update-requests.repository';
+import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';
+import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.repository';
+import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
 import type { CreateProjectDto } from './dto/create-project.dto';
-import { ProjectWorkflowsService } from './application/project-workflows.service';
+import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 import {
   combineDeploymentProvisioningResults,
   extractDeploymentProvider,
@@ -84,38 +66,39 @@ import {
   resolveSingleRepoDeploymentSlots,
   skippedDeploymentProvisioning,
   withDefaultCreateDeploymentProvisioning,
-} from './application/deployment-provisioning.policy';
-import { resolveDeploymentWorkflowTargets } from './application/deployment-workflow-targets';
-import { buildGeneratedRepoReadme } from './application/generated-repo-readme';
+} from './application/lifecycle/deployment-provisioning.policy';
+import { resolveDeploymentWorkflowTargets } from './application/workflows/deployment-workflow-targets';
+import { buildGeneratedRepoReadme } from './application/lifecycle/generated-repo-readme';
 import {
   SonarCloudSetupService,
   sonarProjectKeyFor,
-} from './application/sonar-cloud-setup.service';
-import { ProvisioningTokenService } from './application/provisioning-token.service';
-import { SetupBranchService } from './application/setup-branch.service';
-import { WorkspaceGateService } from './application/workspace-gate.service';
-import { ProductEventsService } from './application/product-events.service';
+} from './application/lifecycle/sonar-cloud-setup.service';
+import { ProvisioningTokenService } from './application/lifecycle/provisioning-token.service';
+import { SetupBranchService } from './application/lifecycle/setup-branch.service';
+import { WorkspaceGateService } from './application/lifecycle/workspace-gate.service';
+import { ProductEventsService } from './application/lifecycle/product-events.service';
 import {
   buildLocalSnapshotFindings,
   buildOverviewHealth,
   toCiAuthOverview,
   toProvisionedProject,
   workflowFileMetadata,
-} from './application/project-overview.view';
-import { ProjectWorkflowFilesService } from './application/project-workflow-files.service';
+} from './application/dashboard/project-overview.view';
+import { ProjectWorkflowFilesService } from './application/workflows/project-workflow-files.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
-import { UsageQuotaService, type UsageLimitCode } from '../usage/index.js';
+import {
+  UsageQuotaService,
+  type UsageLimitCode,
+} from '#modules/billing/index.js';
 import {
   WorkspacesService,
   WorkspaceAccessService,
   type WorkspaceRole,
-} from '../workspaces/index.js';
-import { NotificationEventsService } from '../notifications/index.js';
+} from '#modules/identity-access/index.js';
 import {
   buildProjectScaffold,
   defaultIncludeDocker,
-  normalizeProjectStack,
   normalizeRepoShape,
 } from './scaffold.builder';
 import type {
@@ -141,12 +124,6 @@ import type {
 
 export type * from './projects.service.types';
 
-
-interface GitHubContentsResponse {
-  content: { html_url?: string };
-  commit: { sha: string; html_url?: string };
-}
-
 @Injectable()
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
@@ -171,8 +148,8 @@ export class ProjectsService {
       this.workflowSettingsRepository,
       this.workflowUpdateRequestsRepository,
       this.usageQuotaService,
-      this.auditEventsService,
-      this.notificationEventsService,
+      this.auditEventPublisher ?? this.auditEventsService,
+      this.notificationEventPublisher,
     ));
   }
 
@@ -213,8 +190,8 @@ export class ProjectsService {
   private productEventsLazy?: ProductEventsService;
   private get productEvents(): ProductEventsService {
     return (this.productEventsLazy ??= new ProductEventsService(
-      this.auditEventsService,
-      this.notificationEventsService,
+      this.auditEventPublisher ?? this.auditEventsService,
+      this.notificationEventPublisher,
     ));
   }
 
@@ -273,7 +250,6 @@ export class ProjectsService {
     return latest;
   }
 
-
   /** Spy/seam for bundle assembly (see pushWorkflowFile note). */
   private async buildWorkflowBundle(options: {
     templateId: string;
@@ -289,8 +265,8 @@ export class ProjectsService {
           | 'disablePlaywright'
           | 'disableK6'
         >
-        | undefined;
-    deploymentProvider?: 'render' | 'vercel' | undefined;
+      | undefined;
+    deploymentProvider?: DeploymentProviderId | undefined;
     deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
     workflowVariant?: 'backend' | 'frontend' | undefined;
     centralWorkflowRef?: string | undefined;
@@ -314,9 +290,16 @@ export class ProjectsService {
       | 'disableK6'
     >,
   ): Promise<{ generatedYaml: string; outputFileName: string }> {
-    return this.workflowFiles.buildWorkflowYaml(templateId, serviceName, servicePath, nodeVersion, coverageThreshold, customOutputFileName, enhancements);
+    return this.workflowFiles.buildWorkflowYaml(
+      templateId,
+      serviceName,
+      servicePath,
+      nodeVersion,
+      coverageThreshold,
+      customOutputFileName,
+      enhancements,
+    );
   }
-
 
   constructor(
     private readonly catalogService: CatalogService,
@@ -352,7 +335,7 @@ export class ProjectsService {
     @Optional()
     private readonly workspacesService?: WorkspacesService,
     @Optional()
-    private readonly notificationEventsService?: NotificationEventsService,
+    private readonly notificationEventPublisher?: NotificationEventPublisher,
     @Optional()
     private readonly workspaceAccessService?: WorkspaceAccessService,
     // Optional and last, like every collaborator above it: the existing specs
@@ -362,6 +345,8 @@ export class ProjectsService {
     private readonly hierarchyProjectLinkService?: HierarchyProjectLinkService,
     @Optional()
     private readonly workflowsService?: ProjectWorkflowsService,
+    @Optional()
+    private readonly auditEventPublisher?: AuditEventPublisher,
   ) {
     // GithubModule cannot import ProjectsModule (that would create a
     // Projects → Github → Projects cycle), so GithubService can't inject
@@ -474,12 +459,19 @@ export class ProjectsService {
     // the repository exists and the workflow is pushed, so discovering there that
     // the caller named no resolvable team would leave a real repository behind
     // for a request that never had anywhere to put it.
-    await this.workspaceGate.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+    await this.workspaceGate.resolveWorkspaceIdForCreate(
+      userId,
+      dto.workspaceId,
+    );
     const {
       repositoryCreationToken,
       provisioningToken,
       provisioningOwnerLogin,
-    } = await this.tokens.resolveRepositoryProvisioning(userId, accessToken, dto);
+    } = await this.tokens.resolveRepositoryProvisioning(
+      userId,
+      accessToken,
+      dto,
+    );
 
     // The catalog publishes the shape IDs 'mono' and 'multi'; normalize so
     // the flow dispatch never silently falls back to the standalone path.
@@ -892,7 +884,8 @@ export class ProjectsService {
 
       // 7. Push frontend workflow file to main (wrapped: failure should not block backend)
       let frontendPushResult:
-        { commitSha: string; commitUrl: string | null } | undefined;
+        | { commitSha: string; commitUrl: string | null }
+        | undefined;
       try {
         frontendPushResult = await this.pushWorkflowFiles(
           provisioningToken,
@@ -1029,7 +1022,10 @@ export class ProjectsService {
     // Settle the owning team first - this path mutates an existing repository
     // (branches, secrets, a workflow commit) before the row is written, and none
     // of that should happen for a request with nowhere to put the project.
-    await this.workspaceGate.resolveWorkspaceIdForCreate(userId, dto.workspaceId);
+    await this.workspaceGate.resolveWorkspaceIdForCreate(
+      userId,
+      dto.workspaceId,
+    );
 
     // 1. Build workflow YAML from the given templateId
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
@@ -1153,7 +1149,12 @@ export class ProjectsService {
        * see. Best-effort: a repo that cannot take the branch still has a
        * working main-branch pipeline, which is better than failing the setup.
        */
-      await this.setupBranch.ensureUatBranch(accessToken, owner, repo, targetBranch);
+      await this.setupBranch.ensureUatBranch(
+        accessToken,
+        owner,
+        repo,
+        targetBranch,
+      );
       await this.projectsRepository.updateStatus(
         row.id,
         'provisioned',
@@ -1428,11 +1429,7 @@ export class ProjectsService {
     userId: string,
     request: WorkflowSettingsPreviewRequest,
   ): Promise<WorkflowSettingsPreviewResponse> {
-    return this.workflows.previewWorkflowSettings(
-      projectId,
-      userId,
-      request,
-    );
+    return this.workflows.previewWorkflowSettings(projectId, userId, request);
   }
 
   /** Delegates to ProjectWorkflowsService. */
@@ -1487,7 +1484,8 @@ export class ProjectsService {
 
     let githubRepoDeleted = false;
     let githubRepoDeleteError:
-      { code: GithubRepoDeleteErrorCode; message: string } | undefined;
+      | { code: GithubRepoDeleteErrorCode; message: string }
+      | undefined;
 
     if (deleteGithubRepo) {
       // Role-scoped fetch: this is the SQL-level enforcement point. If the
@@ -2728,5 +2726,4 @@ export class ProjectsService {
     const config = this.configService?.getOrThrow<AppConfig>('app');
     return config?.auditEvents?.enabled ?? false;
   }
-
 }
