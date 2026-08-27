@@ -25,7 +25,7 @@ compatibility or evidence gaps.
 
 ## Remaining limitations (intentional or evidence-bound)
 
-### P1 — Extraction is not yet a configuration-only claim
+### P1 — Future extraction is not currently a deliverable
 
 The current alias-aware metric still reports cross-context imports. Some are
 composition wiring or compatibility reads inside the same deployable; others
@@ -73,8 +73,9 @@ change.
 
 ## Deferred by decision
 
-- Do not activate Task 11 extraction without an independent scaling,
-  deployment-cadence, or regulatory trigger.
+- Keep microservice extraction outside the current plan. Reopen the future
+  option only with an independent scaling, deployment-cadence, or regulatory
+  trigger.
 - Do not add a seventh context for a provider or deployment mode.
 - Do not redesign schemas/roles/search paths merely to make the tree look more
   service-like.

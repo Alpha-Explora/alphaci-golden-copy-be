@@ -46,7 +46,14 @@ context edge can have several callers and because Nest composition imports are
 visible in the physical graph. The metric is therefore a trend indicator, not
 a claim that there are only 16 import statements.
 
-## Outbox contract and guarantees
+## Current event and outbox model
+
+The active event mechanism is a durable PostgreSQL outbox inside the one NestJS
+deployable. It is an asynchronous in-process work queue, not Kafka, Pub/Sub, a
+broker, or a microservice transport. Writing an outbox row does not create a
+network hop or an independently deployed service.
+
+### Topics and ownership
 
 The active table is `platform.outbox_events`, defined in the existing domain
 bootstrap migration. `OUTBOX_TOPICS` and `OUTBOX_TOPIC_OWNERS` are the kernel
@@ -56,25 +63,50 @@ allow-list. The only active topics are:
 - `platform.notification.requested` → `platform-ops`;
 - hierarchy assignment grant/revoke → `identity-access`.
 
-`OutboxRepository.publishInTransaction(client, event)` is the transactional
-primitive. Hierarchy assignment state transitions that enqueue grant/revoke
-work use it on the same PostgreSQL transaction as the state mutation.
-`publishDurably(event)` is strict for manual/retry work. Audit and notification
-publishers intentionally use `publishBestEffort(event)` after a business
-mutation has committed because those sinks were historically non-critical;
-their writes may be dropped if the database is unavailable. They are not
-transactionally coupled and this document does not promise that they are.
+Producers cannot insert an unregistered topic. The shared
+`OutboxDispatcher` has one handler per registered topic: `platform-ops`
+handles audit/notification, while `identity-access` handles hierarchy grant
+and revoke GitHub-sync work.
 
-`OutboxRelayService` is the only application consumer. The compiled
-`scripts/process-outbox.cjs` is the only scheduled runner, and
-`render.yaml` declares one cron owner. The relay selects only topics registered
-by its dispatcher, holds a PostgreSQL advisory lock, acknowledges with
-`published_at`, and leaves failed rows pending with backoff. Delivery is
-at-least-once, so handlers must be safe to repeat.
+### Runtime flow
 
-## Future transport swap
+1. A use case creates a serialisable event with a topic, aggregate identity,
+   and JSON payload.
+2. A critical hierarchy transition calls
+   `OutboxRepository.publishInTransaction(client, event)` using the same
+   PostgreSQL transaction as the assignment and sync-row mutation. The state
+   change and pending event therefore commit or roll back together.
+3. Audit and notification publishers use the explicit
+   `publishBestEffort(event)` post-commit seam because those sinks are
+   historically non-critical. `publishDurably(event)` remains available for
+   strict non-transactional/manual or retry work.
+4. The single Render cron owner, `alphaci-outbox-relay`, runs
+   `scripts/process-outbox.cjs` once per minute. That runner boots the normal
+   `AppModule` and invokes the in-process relay; there is no second Kafka-era
+   runner.
+5. The relay takes the PostgreSQL advisory lock, selects only pending,
+   available rows whose topics are registered with the dispatcher, and invokes
+   the owning handler.
+6. A successful handler marks the row `status='published'` with
+   `published_at`. A failed handler leaves it pending, increments `attempts`,
+   and schedules the next attempt with backoff.
 
-When an operational trigger exists, a context port can be rebound to an
-HTTP/gRPC adapter and the serialisable contract can become a versioned package.
-Callers and domain logic should remain unchanged. No broker, gateway, schema
-split, or extraction is scheduled by this register.
+### Guarantees and limits
+
+- Critical transaction-coupled events survive a crash before dispatch because
+  the pending row remains in PostgreSQL.
+- Delivery is **at least once**. A crash after a handler performs its side
+  effect but before the published update can repeat that side effect, so
+  handlers must be idempotent.
+- Best-effort audit/notification events can be dropped if their separate
+  outbox write fails; they are not transactionally coupled business events.
+- The current design intentionally has no broker, inbox, dead-letter queue, or
+  independent event service. Legacy unowned rows are quarantined rather than
+  consumed by an arbitrary handler.
+
+## Future-only transport reference
+
+If an operational trigger later justifies extraction, a context port can be
+rebound to an HTTP/gRPC adapter and the serialisable contract can become a
+versioned package. Callers and domain logic should remain unchanged. No broker,
+gateway, schema split, or service extraction is scheduled by this register.

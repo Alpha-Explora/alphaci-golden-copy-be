@@ -9,7 +9,8 @@ business state-machine semantics, provider compatibility values, or migration
 replay order.
 
 This file is an evidence ledger, not a claim that the monolith has already
-become independently deployable microservices.
+become independently deployable microservices. Microservice extraction is a
+future-only option and is outside the current consolidation plan.
 
 ## 1. Outbox ownership and guarantees
 
@@ -114,7 +115,7 @@ the six-directory count is not presented as extraction readiness.
   identity-access, pipelines, or projects. No provider creates a seventh
   bounded context.
 
-## 5. Rollback and extraction decisions
+## 5. Rollback and future extraction posture
 
 - The remediation started from checkpoint `5b703e9` on the named trunk. The
   final remediation change is a normal commit that can be reverted with
@@ -122,10 +123,11 @@ the six-directory count is not presented as extraction readiness.
   needed.
 - Rollback independence across separate PRs is a review/process property, not
   something this single worktree can prove automatically.
-- Task 11 remains closed. No independent scaling requirement, independent
-  deployment cadence, or regulatory-isolation trigger has been supplied.
-  Extraction therefore remains a future composition/transport decision, not a
-  deliverable of this consolidation.
+- No independent scaling requirement, independent deployment cadence, or
+  regulatory-isolation trigger has been supplied. Microservice extraction
+  therefore remains a future composition/transport decision, not a deliverable
+  of this consolidation. Its separate reference topology is documented in
+  `docs/architecture/FUTURE_STATE.md`.
 
 ## 6. Known evidence limits
 

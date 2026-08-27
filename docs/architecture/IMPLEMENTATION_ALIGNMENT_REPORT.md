@@ -27,7 +27,7 @@ measured and documented.
 | Projects decomposition | materially improved | `ProjectsService` is a compatibility facade; provisioning, dashboard, workflow, lifecycle, and reconciliation implementations are focused services |
 | Provider axis | generic seams complete; compatibility debt documented | provider metadata adapters, descriptor-driven slot policy, workflow fragments/target expansion, clients, and CI installers are registry-driven; provider implementations remain inside Runtime |
 | Regression evidence | current reference captured | HTTP boot, route reference, provider acceptance, post-change snapshots, architecture gates |
-| Microservice extraction | intentionally not activated | no independent scaling, release cadence, or regulatory trigger has been evidenced |
+| Microservice extraction | future-only; outside current plan | no independent scaling, release cadence, or regulatory trigger has been evidenced |
 
 ## Important corrections made after the review
 
@@ -75,6 +75,7 @@ measured and documented.
 ## Decision
 
 This is merge-candidate modular-monolith architecture work, not completed
-microservice readiness. Keep Task 11 closed until an operational trigger is
-recorded. The next safe improvements are provider compatibility extraction or
-further Projects application slicing, not new top-level modules.
+microservice readiness. Microservice extraction is outside the current plan and
+should only be reopened when an operational trigger is recorded. The next safe
+improvements are provider compatibility extraction or further Projects
+application slicing, not new top-level modules.

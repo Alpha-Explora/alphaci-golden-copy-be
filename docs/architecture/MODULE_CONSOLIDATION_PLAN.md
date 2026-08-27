@@ -3,9 +3,9 @@
 **Status:** remediation trunk implementation complete; final verification is
 recorded. The six-context consolidation and review-closure slices are
 implemented on `codex/architecture-remediation-trunk`; the evidence ledger
-records the exact verification boundary. Task 11 remains gated on evidence. A
-pre-Task-5 contract baseline was not captured and remains explicitly
-unavailable.
+records the exact verification boundary. Microservice extraction is future-only
+and outside this plan. A pre-consolidation contract baseline was not captured
+and remains explicitly unavailable.
 **Date:** 2026-08-27
 **Scope:** `src/modules/**` topology plus behavior-preserving boundary
 remediation. No intentional endpoint, response, schema-value, provider
@@ -21,11 +21,11 @@ Two goals, in priority order:
    product has real ownership lines. Every extra boundary is another
    `index.ts` to curate, another Nest module to wire, another place where a
    feature lands in the wrong folder.
-2. **Make a later microservice split cheap, without doing it now.** A service
-   boundary is only extractable if the seam is already (a) a small number of
-   coarse contracts, (b) serialisable, and (c) free of import cycles. Those
-   three properties are worth having in a monolith regardless. This plan buys
-   them without buying gateways, internal JWT, or six connection pools.
+2. **Preserve a safe future service-extraction option, without doing it now.**
+   A service boundary is only extractable if the seam is already (a) a small
+   number of coarse contracts, (b) serialisable, and (c) free of import cycles.
+   Those three properties are worth having in a monolith regardless. This plan
+   buys them without buying gateways, internal JWT, or six connection pools.
 
 Explicit non-goal: shipping microservices. `docs/architecture/FUTURE_STATE.md`
 already records that the split-services topology was **rejected**. This plan
@@ -1214,18 +1214,20 @@ phase; the known-violations baseline may shrink, never grow.
   design. See `docs/architecture/CROSS_CONTEXT_CONTRACTS.md` for the exact
   exception list.
 
-### Phase 6 — Extraction, only on evidence (not scheduled)
+### Future-only reference — microservice extraction
 
-Trigger conditions, at least one of which must be demonstrated before this
-phase is opened at all: independent scaling need, independent deploy cadence
-need, or a regulatory isolation requirement. Runtime remains the first
-candidate, but its current measured graph has three inbound context pairs and
-four outbound pairs, plus compatibility seams. The work at that point is:
-swap the relevant port bindings to an HTTP adapter, publish `contracts/` as a
-package, and split the schema. Nothing in `application/` or `domain/` changes.
+Microservice extraction is not a phase or deliverable of this consolidation.
+The current application remains one NestJS deployable with six bounded
+contexts. If an independent scaling need, independent deploy cadence, or
+regulatory isolation requirement is later demonstrated, use
+`docs/architecture/FUTURE_STATE.md` as the separate extraction design starting
+point. Runtime is currently the strongest candidate, but its measured graph
+still has three inbound context pairs, four outbound pairs, and compatibility
+seams; the directory count is not extraction proof.
 
-The current application is not represented as “nearly extractable” merely
-because the directory count is six; see the evidence and residual-gap reports.
+Do not add HTTP transport adapters, service packages, broker infrastructure, or
+schema splits as part of this plan. Nothing in `application/` or `domain/`
+should change merely because a future transport eventually changes.
 
 ## 8. Risks
 

@@ -71,9 +71,10 @@ Projects keeps lifecycle rules in its application services until a second
 consumer justifies a separate domain object. This is deliberate progressive
 depth, not an omitted boundary.
 
-## Extraction posture
+## Future-only extraction posture
 
 The ports and contracts are local in-process seams today. If independent
 scaling, deployment cadence, or regulatory isolation is later demonstrated,
 bind the same ports to an HTTP/gRPC adapter and publish the serialisable
-contracts. No extraction is scheduled from this document alone.
+contracts. Microservice extraction is outside the current consolidation plan
+and is not scheduled from this document alone.

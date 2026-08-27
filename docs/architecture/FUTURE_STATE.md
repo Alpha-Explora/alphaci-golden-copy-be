@@ -1,6 +1,6 @@
 # AlphaCI Enterprise Backend — current and future state
 
-**Status:** current target adopted; microservice extraction remains gated.
+**Status:** current target adopted; microservice extraction is future-only.
 This document describes the six-context modular monolith on the remediation
 trunk and the compatible shape to use if a real extraction trigger appears.
 
@@ -152,7 +152,10 @@ references are explicit transition entries in
   clients, workflow fragments, and CI secret installers are registry-driven;
   provider-specific compatibility logic remains inside `runtime`.
 
-## Future state — extraction-ready shape, not a scheduled build
+## Deferred future option — microservice extraction
+
+The following topology is a future reference only. It is not a current build
+phase, implementation task, or deployment target.
 
 If independent scaling, deployment cadence, or regulatory isolation becomes a
 measured requirement, extract one context behind the seams already present:
@@ -184,9 +187,10 @@ serialisable contracts and transport-swappable ports:
 | shared database schemas | split schema/role after ownership is proven | migrations/operations |
 
 Application and domain logic should not change merely because transport changes.
-The extraction gate stays closed until an operational trigger is documented;
-architecture cleanliness alone is not a trigger. Task 11 is therefore not
-activated by this consolidation.
+Only reopen this future option when an operational trigger is documented:
+independent scaling, independent deployment cadence, or regulatory isolation.
+Architecture cleanliness alone is not a trigger, and this option is outside the
+current consolidation plan.
 
 ## Explicit non-goals
 

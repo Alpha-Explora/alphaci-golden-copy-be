@@ -4,8 +4,9 @@
 > Work one task at a time, in order. Do not start a task whose exit criteria
 > depend on an unfinished predecessor.
 
-**Goal:** Reduce 17 modules to 6 bounded contexts and make a future service
-extraction a configuration change, without altering observable behaviour.
+**Goal:** Reduce 17 modules to 6 bounded contexts and preserve a safe future
+service-extraction option, without altering observable behaviour. Microservice
+extraction is not an implementation task in this plan.
 
 **Design doc:** `docs/architecture/MODULE_CONSOLIDATION_PLAN.md` (current vs
 future state, full trees, measured coupling). This document is the executable
@@ -21,13 +22,14 @@ source for several tasks below. Take its **mechanisms**, not its topology.
 dependency-cruiser.
 
 **Execution status (2026-08-27):** Tasks 0–10 and the review-closure slices are
-implemented on the named remediation trunk. Task 12 has current contract
-snapshots, a post-consolidation route reference with hashes, application-context
-and HTTP boot harnesses, and conditional Postgres integration coverage. A
-pre-Task-5 contract/route baseline was not captured retroactively. Task 11 is
-intentionally not activated because no independent scaling, deployment-cadence,
-or regulatory-isolation trigger has been evidenced. Final verification and the
-rollback evidence record are completed before this plan is marked complete.
+implemented on the named remediation trunk. The continuous regression safety
+net has current contract snapshots, a post-consolidation route reference with
+hashes, application-context and HTTP boot harnesses, and conditional Postgres
+integration coverage. A pre-consolidation contract/route baseline was not
+captured retroactively. Microservice extraction is intentionally outside this
+plan and remains a future option documented in `docs/architecture/FUTURE_STATE.md`.
+Final verification and the rollback evidence record are completed before this
+plan is marked complete.
 
 ---
 
@@ -518,10 +520,10 @@ unit, so they must be broken **before** the moves.
 
     `no-cross-context-cycles` → `error`.
 
-**Exit:** zero context-level cycles. Runtime is the first extraction candidate,
-but the current measured graph still has three inbound context pairs, four
-outbound pairs, and compatibility seams; extraction is not a configuration-only
-claim yet.
+**Exit:** zero context-level cycles. Runtime is the strongest future extraction
+candidate, but the current measured graph still has three inbound context pairs,
+four outbound pairs, and compatibility seams. That future option is not a
+current deliverable or a configuration-only claim.
 
 ---
 
@@ -781,12 +783,16 @@ tolerates staleness.
 
 - [x] **Step 4: Decide delivery guarantees explicitly.**
 
-    In-process dispatch loses events on crash between commit and dispatch.
-    Today's synchronous calls have the same property (an exception in audit
-    recording can already fail the caller), so this is not a regression —
-    but write it down in the contracts doc. Add the sibling repo's
-    `IdempotentInboxRepository` pattern only if/when a broker introduces
-    redelivery (their finding #8: it sat unused for a full phase).
+    The outbox row is durable when it is written in the same transaction as a
+    critical business mutation, so a crash before dispatch leaves the row
+    pending for the scheduled relay. A handler failure also leaves the row
+    pending with backoff. A crash after the handler performs its side effect but
+    before the published update can cause a repeat, so delivery is at-least-once
+    and handlers must be idempotent. Best-effort audit/notification writes can
+    still be dropped if their separate queue write fails. Write these guarantees
+    down in the contracts doc. Add the sibling repo's `IdempotentInboxRepository`
+    pattern only if/when a broker introduces redelivery (their finding #8: it
+    sat unused for a full phase).
 
     Also verify `scripts/process-outbox.cjs` and any new relay do not
     double-dispatch the same rows — one owner per outbox table, stated in
@@ -813,36 +819,10 @@ lock-behaviour, and transaction-boundary tests are included.
 
 ---
 
-## Task 11: Extraction — not scheduled, gated on evidence
+## Continuous regression safety net
 
-Do **not** open this task without a demonstrated trigger: an independent
-scaling need, an independent deploy-cadence need, or a regulatory isolation
-requirement. "The architecture would be cleaner" is not a trigger.
-
-When a trigger exists, `runtime` remains the first candidate, but the current
-measured graph has three inbound context pairs and four outbound pairs. The
-work is:
-
-- [ ] Swap the port binding to an HTTP adapter. Copy
-  `alphaci-be/libs/platform/src/internal/service-http.factory.ts` —
-  `createHttpPortAdapter()` returns `undefined` when the service URL is unset
-  so Nest falls back to in-process wiring, and throws in production when the
-  URL is missing. One function, and the monolith/split choice becomes config.
-- [ ] Publish `contracts/` as a package or generate from OpenAPI.
-- [ ] Split the schema.
-
-Nothing in `application/` or `domain/` changes. That is the whole point of
-Tasks 6–7.
-
-**Status (2026-08-27):** intentionally not activated. No independent scaling,
-deploy-cadence, or regulatory-isolation trigger was supplied, so the plan's
-extraction gate remains closed.
-
----
-
-## Task 12: Regression safety net
-
-Runs continuously alongside Tasks 5–10; it is work, not a phase.
+Runs continuously alongside Tasks 5–10; it is a safety net, not a numbered
+microservice or extraction task.
 
 - [x] **Contract snapshots (post-change reference).** Exact-shape workflow
   metadata/YAML and provider discovery snapshots live in
@@ -894,7 +874,7 @@ measured coupling, environment-dependent checks, and final commit evidence.
 | 8 — consolidation | 1.5–2 wk (+0.5 d/PR test debt) | mechanical | 6 folders, smaller mental model |
 | 9 — schema ownership | 1–2 wk | tedious | inline SQL gets a boundary |
 | 10 — async sinks | 1–2 wk | behavioural | `platform-ops` fully decoupled |
-| 12 — regression net (parallel) | ~2 d spread over 5–10 | discipline | catches what gates miss |
+| regression net (parallel) | ~2 d spread over 5–10 | discipline | catches what gates miss |
 
 **Tasks 0–8: ~5–6.5 weeks. Through Task 10: ~8–10.5 weeks.**
 
@@ -927,7 +907,7 @@ reasoning, taking the value in Tasks 0–7 and deferring 8 is the honest split.
 | `edge-gateway` | nothing to route between |
 | Internal JWT / `x-internal-token` | no network hop to authenticate |
 | Per-service DB roles + `search_path` | revisit only if cross-schema leakage is demonstrated |
-| HTTP port adapters | in-process bindings until Task 11 has a trigger |
+| HTTP port adapters | in-process bindings; revisit only if a future extraction trigger is approved |
 | Pub/Sub + DLQ + inbox | in-process dispatch has no redelivery |
 | `public-api/` naming | we use `contracts/`, matching the context map |
 | `check-module-boundaries.cjs` | dependency-cruiser already does this better |
