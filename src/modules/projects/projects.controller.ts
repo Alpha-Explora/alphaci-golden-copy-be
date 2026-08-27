@@ -24,7 +24,7 @@ import {
   type DeploymentDriftQuery,
   type DeploymentHistoryQuery,
   type ProjectDriftRepairAction,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { SetupProjectDto } from './dto/setup-project.dto';
 import { DisconnectProjectDto } from './dto/disconnect-project.dto';

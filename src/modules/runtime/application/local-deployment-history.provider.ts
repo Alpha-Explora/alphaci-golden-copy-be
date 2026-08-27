@@ -1,7 +1,6 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import type { DeploymentTargetSummary } from '../core/deployments.types';
-import { providerPublicUrl } from '../core/provider-public-url';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import type { DeploymentHistoryStatus } from '../core/deployment-provisioning.contract';
@@ -89,18 +88,7 @@ export class LocalDeploymentHistoryProvider {
     if (presentation) {
       return presentation.dashboardUrl(this.presentationTarget(target)) ?? '';
     }
-
-    if (target.provider === 'vercel') {
-      const teamSlug =
-        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
-          ? target.providerMetadata['vercelTeamSlug'].trim()
-          : '';
-      return teamSlug
-        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}`
-        : `https://vercel.com/dashboard/project/${target.providerProjectId}`;
-    }
-
-    return `https://dashboard.render.com/web/${target.providerProjectId}`;
+    return '';
   }
 
   consoleUrl(target: DeploymentTargetSummary): string {
@@ -108,25 +96,20 @@ export class LocalDeploymentHistoryProvider {
     if (presentation) {
       return presentation.consoleUrl(this.presentationTarget(target)) ?? '';
     }
-
-    if (target.provider === 'vercel') {
-      const teamSlug =
-        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
-          ? target.providerMetadata['vercelTeamSlug'].trim()
-          : '';
-      return teamSlug
-        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}/deployments`
-        : `https://vercel.com/dashboard/project/${target.providerProjectId}/deployments`;
-    }
-
-    return `https://dashboard.render.com/web/${target.providerProjectId}/logs`;
+    return '';
   }
 
   publicUrl(target: DeploymentTargetSummary): string | null {
     const presentation = this.providerPresentation(target);
-    return presentation
-      ? presentation.publicUrl(this.presentationTarget(target))
-      : providerPublicUrl(target);
+    return (
+      presentation?.publicUrl(
+        this.presentationTarget(target),
+        target.renderEnvironmentName === 'production' ||
+          target.branchName === 'main'
+          ? 'production'
+          : 'preview',
+      ) ?? null
+    );
   }
 
   private providerPresentation(target: DeploymentTargetSummary) {

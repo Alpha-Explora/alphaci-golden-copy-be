@@ -2,6 +2,7 @@ import { ProjectProvisioningApplicationService } from './application/lifecycle/p
 import type { CatalogService } from './application/catalog/catalog.service';
 import type { CiService } from '#modules/pipelines/ci/ci.service';
 import type { GithubService } from '#modules/pipelines/github/github.service';
+import { createDefaultWorkflowFragmentRegistry } from '#modules/runtime/index.js';
 import type { ProjectsRepository } from './projects.repository';
 
 const stagedWorkflowFiles = [
@@ -102,6 +103,11 @@ const stagedWorkflowMetadata = stagedWorkflowFiles.map((file) => ({
 }));
 
 describe('ProjectProvisioningApplicationService workflow authorization', () => {
+  let support: {
+    buildWorkflowBundle: jest.Mock;
+    pushStarterFiles: jest.Mock;
+    pushWorkflowFile: jest.Mock;
+  };
   let service: ProjectProvisioningApplicationService;
   let githubService: GithubService;
   let projectsRepository: ProjectsRepository;
@@ -118,32 +124,32 @@ describe('ProjectProvisioningApplicationService workflow authorization', () => {
       projectsRepository,
       ciService,
       makeProjectDeploymentProvisioningService(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createDefaultWorkflowFragmentRegistry(),
     );
 
-    jest
-      .spyOn(
-        service as unknown as { buildWorkflowBundle: jest.Mock },
-        'buildWorkflowBundle',
-      )
-      .mockResolvedValue({
-        workflowFiles: stagedWorkflowFiles,
-        outputFileName: '00-alphaci-access.yml',
-      });
-    jest
-      .spyOn(
-        service as unknown as { pushStarterFiles: jest.Mock },
-        'pushStarterFiles',
-      )
-      .mockResolvedValue(undefined);
-    jest
-      .spyOn(
-        service as unknown as { pushWorkflowFile: jest.Mock },
-        'pushWorkflowFile',
-      )
-      .mockResolvedValue({
-        commitSha: 'commit-1',
-        commitUrl: 'https://commit',
-      });
+    support = (
+      service as unknown as {
+        support: typeof support;
+      }
+    ).support;
+
+    jest.spyOn(support, 'buildWorkflowBundle').mockResolvedValue({
+      workflowFiles: stagedWorkflowFiles,
+      outputFileName: '00-alphaci-access.yml',
+    });
+    jest.spyOn(support, 'pushStarterFiles').mockResolvedValue(undefined);
+    jest.spyOn(support, 'pushWorkflowFile').mockResolvedValue({
+      commitSha: 'commit-1',
+      commitUrl: 'https://commit',
+    });
   });
 
   it('pushes every staged workflow file and installs the project CI token as a GitHub Actions secret', async () => {
@@ -161,9 +167,7 @@ describe('ProjectProvisioningApplicationService workflow authorization', () => {
       },
     );
 
-    expect(
-      (service as unknown as { pushWorkflowFile: jest.Mock }).pushWorkflowFile,
-    ).toHaveBeenCalledTimes(3);
+    expect(support.pushWorkflowFile).toHaveBeenCalledTimes(3);
     const setActionsSecretStrict = (
       githubService as unknown as { setActionsSecretStrict: jest.Mock }
     ).setActionsSecretStrict;

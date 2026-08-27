@@ -9,13 +9,19 @@ import { PROVIDER_CLIENTS } from '../core/provider-client.registry';
 import { RenderEnvClient } from '../render/render-env.client';
 import { renderWorkflowFragment } from '../render/render-workflow.fragment';
 import { RenderDeploymentProvider } from '../render/render-deployment.provider';
+import { RenderCostPolicyService } from '../render/render-cost-policy.service';
+import { RenderDeploymentPolicy } from '../render/render-deployment.policy';
 import { VercelEnvClient } from '../vercel/vercel-env.client';
 import { vercelWorkflowFragment } from '../vercel/vercel-workflow.fragment';
 import { VercelDeploymentProvider } from '../vercel/vercel-deployment.provider';
+import { VercelDeploymentPolicy } from '../vercel/vercel-deployment.policy';
 
 @Module({
   imports: [RuntimeCoreModule],
   providers: [
+    RenderCostPolicyService,
+    RenderDeploymentPolicy,
+    VercelDeploymentPolicy,
     RenderEnvClient,
     VercelEnvClient,
     {
@@ -32,10 +38,15 @@ import { VercelDeploymentProvider } from '../vercel/vercel-deployment.provider';
     },
     {
       provide: 'renderDeploymentProvider',
-      inject: [ConfigService, DeploymentProviderRegistry],
+      inject: [
+        ConfigService,
+        DeploymentProviderRegistry,
+        RenderDeploymentPolicy,
+      ],
       useFactory: (
         configService: ConfigService,
         registry: DeploymentProviderRegistry,
+        policy: RenderDeploymentPolicy,
       ) => {
         const config = configService.getOrThrow<AppConfig>('app');
         return new RenderDeploymentProvider(
@@ -50,15 +61,21 @@ import { VercelDeploymentProvider } from '../vercel/vercel-deployment.provider';
             previewDeployments: false,
           },
           registry,
+          policy,
         );
       },
     },
     {
       provide: 'vercelDeploymentProvider',
-      inject: [ConfigService, DeploymentProviderRegistry],
+      inject: [
+        ConfigService,
+        DeploymentProviderRegistry,
+        VercelDeploymentPolicy,
+      ],
       useFactory: (
         configService: ConfigService,
         registry: DeploymentProviderRegistry,
+        policy: VercelDeploymentPolicy,
       ) => {
         const config = configService.getOrThrow<AppConfig>('app');
         return new VercelDeploymentProvider(
@@ -69,10 +86,17 @@ import { VercelDeploymentProvider } from '../vercel/vercel-deployment.provider';
             previewDeployments: true,
           },
           registry,
+          policy,
         );
       },
     },
   ],
-  exports: [PROVIDER_CLIENTS, WORKFLOW_FRAGMENTS],
+  exports: [
+    PROVIDER_CLIENTS,
+    WORKFLOW_FRAGMENTS,
+    RenderCostPolicyService,
+    RenderDeploymentPolicy,
+    VercelDeploymentPolicy,
+  ],
 })
 export class LegacyDeploymentProvidersModule {}

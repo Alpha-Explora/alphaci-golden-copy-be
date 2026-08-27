@@ -4,6 +4,16 @@
 **Mode:** architecture review and implementation verification  
 **Scope:** alphaci-enterprise-be; behavior-preserving modular-monolith refactor
 
+> **Point-in-time note (2026-08-28):** This review records the earlier
+> boundary-consolidation checkpoint and its measurements. The current
+> remediation closure is recorded in
+> `docs/architecture/IMPLEMENTATION_ALIGNMENT_REPORT.md`,
+> `docs/architecture/REMEDIATION_EVIDENCE.md`, and
+> `docs/architecture/RESIDUAL_GAP_REPORT.md`. In particular, the current
+> trunk has six context-root modules, 32 composition-only cross-context
+> imports, zero actionable/application/contract edges, one outbox runner, and
+> the recovered pre-consolidation route comparison.
+
 ## Outcome
 
 The backend is now **aligned with the approved progressive hexagonal-clean

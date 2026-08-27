@@ -6,28 +6,37 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import {
-  CiService,
+  AUDIT_QUERY_PORT,
+  type AuditQueryPort,
+} from '#kernel/ports/audit.port';
+import {
+  CI_PROJECT_PORT,
   CI_TOKEN_STATUS_LOOKUP,
+  type CiProjectPort,
   type CiTokenStatusLookup,
-} from '#modules/pipelines/index.js';
-import { AuditEventsService } from '#modules/platform-ops/index.js';
+} from '#kernel/ports/ci-project.port';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+  type GithubRepositoryDeletedEvent,
+} from '#kernel/ports/github.port';
 import {
   DEPLOYMENT_ENV_METADATA_QUERY,
+  DEPLOYMENT_PROVISIONING_DEFAULTS,
   DEPLOYMENT_PROVISIONING_FACADE,
   DEPLOYMENT_TARGETS_QUERY,
   type DeploymentProvisioningFacade,
+  type DeploymentProvisioningDefaultsPort,
   type DeploymentProjectReference,
   type DeploymentEnvMetadataQuery,
   type DeploymentTargetsQuery,
-} from '#modules/runtime/index.js';
-import { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
-import {
-  GithubService,
-  REPOSITORY_DELETED_EVENT,
-  type RepositoryDeletedEvent,
-} from '#modules/pipelines/index.js';
+} from '#kernel/ports/deployment-runtime.port';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { CatalogService } from './application/catalog/catalog.service';
-import { HierarchyProjectLinkService } from '#modules/identity-access/hierarchy/project-link/index.js';
+import {
+  PROJECT_LINK_PORT,
+  type ProjectLinkPort,
+} from '#kernel/ports/project-link.port';
 import { ProjectsRepository } from './projects.repository';
 import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';
 import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.repository';
@@ -46,11 +55,16 @@ import { ProjectReconciliationService } from './application/lifecycle/project-re
 import { ProjectProvisioningApplicationService } from './application/lifecycle/project-provisioning-application.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
-import { UsageQuotaService } from '#modules/billing/index.js';
 import {
-  WorkspacesService,
-  WorkspaceAccessService,
-} from '#modules/identity-access/index.js';
+  USAGE_QUOTA,
+  type UsageQuotaPort,
+} from '#kernel/ports/usage-quota.port';
+import {
+  WORKSPACE_ACCESS_PORT,
+  WORKSPACES_PORT,
+  type WorkspaceAccessPort,
+  type WorkspacesPort,
+} from '#kernel/ports/workspaces.port';
 import type {
   CreateProjectResponse,
   DisconnectProjectResponse,
@@ -176,8 +190,9 @@ export class ProjectsService {
       this.dashboardSnapshotsRepository,
       this.hierarchyProjectLinkService,
       this.configService,
-      this.auditEventsService,
-      this.auditEventPublisher,
+      this.auditQueryPort ??
+        (this.auditEventsService as unknown as AuditQueryPort),
+      this.auditEventPublisher ?? this.auditEventsService,
       this.notificationEventPublisher,
     ));
   }
@@ -237,14 +252,17 @@ export class ProjectsService {
         this.hierarchyProjectLinkService,
         (...args) => this.pushWorkflowFile(...args),
         this.workflowFragmentRegistry,
+        this.deploymentProvisioningDefaults,
       ));
   }
 
   constructor(
     private readonly catalogService: CatalogService,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     private readonly projectsRepository: ProjectsRepository,
-    private readonly ciService: CiService,
+    @Inject(CI_PROJECT_PORT)
+    private readonly ciService: CiProjectPort,
     @Inject(DEPLOYMENT_PROVISIONING_FACADE)
     private readonly projectDeploymentProvisioningService: DeploymentProvisioningFacade,
     @Optional()
@@ -268,20 +286,24 @@ export class ProjectsService {
     @Optional()
     private readonly workflowUpdateRequestsRepository?: ProjectWorkflowUpdateRequestsRepository,
     @Optional()
-    private readonly usageQuotaService?: UsageQuotaService,
+    @Inject(USAGE_QUOTA)
+    private readonly usageQuotaService?: UsageQuotaPort,
     @Optional()
-    private readonly auditEventsService?: AuditEventsService,
+    private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
-    private readonly workspacesService?: WorkspacesService,
+    @Inject(WORKSPACES_PORT)
+    private readonly workspacesService?: WorkspacesPort,
     @Optional()
     private readonly notificationEventPublisher?: NotificationEventPublisher,
     @Optional()
-    private readonly workspaceAccessService?: WorkspaceAccessService,
+    @Inject(WORKSPACE_ACCESS_PORT)
+    private readonly workspaceAccessService?: WorkspaceAccessPort,
     // Optional and last, like every collaborator above it: the existing specs
     // construct ProjectsService positionally, and an absent linker simply
     // means group projects are not linked (the migration backfill still is).
     @Optional()
-    private readonly hierarchyProjectLinkService?: HierarchyProjectLinkService,
+    @Inject(PROJECT_LINK_PORT)
+    private readonly hierarchyProjectLinkService?: ProjectLinkPort,
     @Optional()
     private readonly workflowsService?: ProjectWorkflowsService,
     @Optional()
@@ -292,6 +314,12 @@ export class ProjectsService {
     private readonly provisioningApplicationService?: ProjectProvisioningApplicationService,
     @Optional()
     private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,
+    @Optional()
+    @Inject(AUDIT_QUERY_PORT)
+    private readonly auditQueryPort?: AuditQueryPort,
+    @Optional()
+    @Inject(DEPLOYMENT_PROVISIONING_DEFAULTS)
+    private readonly deploymentProvisioningDefaults?: DeploymentProvisioningDefaultsPort,
   ) {
     // GithubModule cannot import ProjectsModule (that would create a
     // Projects → Github → Projects cycle), so GithubService can't inject
@@ -302,16 +330,21 @@ export class ProjectsService {
     // -forget is intentional: handleWebhook() has already ack'd the
     // delivery to GitHub by the time this listener runs, so failures are
     // logged, not thrown.
-    this.githubService.on(
-      REPOSITORY_DELETED_EVENT,
-      (event: RepositoryDeletedEvent) => {
-        this.handleRepositoryDeleted(event).catch((error) => {
-          this.logger.warn(
-            `Failed to process repository.deleted webhook for ${event.repoFullName}: ${String(error)}`,
-          );
-        });
-      },
-    );
+    const repositoryDeletedListener = (event: GithubRepositoryDeletedEvent) => {
+      this.handleRepositoryDeleted(event).catch((error) => {
+        this.logger.warn(
+          `Failed to process repository.deleted webhook for ${event.repoFullName}: ${String(error)}`,
+        );
+      });
+    };
+    if (this.githubService.onRepositoryDeleted) {
+      this.githubService.onRepositoryDeleted(repositoryDeletedListener);
+    } else {
+      // Keep older direct adapters working while the named port subscription
+      // is adopted. The fallback is deliberately limited to this event and
+      // does not expose the EventEmitter to the rest of Projects.
+      this.githubService.on?.('repository.deleted', repositoryDeletedListener);
+    }
   }
 
   /**
@@ -345,7 +378,7 @@ export class ProjectsService {
    * after the delete that removes that project.
    */
   private async handleRepositoryDeleted(
-    event: RepositoryDeletedEvent,
+    event: GithubRepositoryDeletedEvent,
   ): Promise<void> {
     const deletedRows = await this.projectsRepository.deleteByRepoFullName(
       event.repoFullName,

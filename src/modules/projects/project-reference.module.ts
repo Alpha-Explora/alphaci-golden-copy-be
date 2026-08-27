@@ -5,7 +5,7 @@ import {
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 import { ProjectsRepository } from './projects.repository';
 
 @Injectable()

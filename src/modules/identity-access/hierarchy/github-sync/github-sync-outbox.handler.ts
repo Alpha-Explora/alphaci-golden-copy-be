@@ -19,7 +19,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function decodePayload(value: unknown): HierarchyOutboxJobPayload {
-  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  const parsed: unknown =
+    typeof value === 'string' ? (JSON.parse(value) as unknown) : value;
   if (!isRecord(parsed)) {
     throw new Error('Hierarchy outbox payload must be a JSON object');
   }

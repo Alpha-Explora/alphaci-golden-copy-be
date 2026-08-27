@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import {
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -9,7 +10,10 @@ import {
 import yaml from 'js-yaml';
 
 import { CatalogService } from '../catalog/catalog.service';
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 import type { DiscoverExistingRepoDto } from './dto/discover-existing-repo.dto';
 import type { SetupExistingRepoPrDto } from './dto/setup-existing-repo-pr.dto';
 
@@ -53,7 +57,8 @@ export interface ExistingRepoSetupPullRequestResponse {
 @Injectable()
 export class ExistingReposService {
   constructor(
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     private readonly catalogService: CatalogService,
   ) {}
 

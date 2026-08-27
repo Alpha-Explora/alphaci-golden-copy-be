@@ -5,7 +5,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import {
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
-} from '#modules/pipelines/index.js';
+} from '#kernel/ports/ci-project.port';
 import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
 import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
 import type {

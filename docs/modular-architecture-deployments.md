@@ -6,13 +6,16 @@ exists on `main` today — one NestJS application, one deployable, the module la
 `src/modules/`. Every file path, line reference and migration in this document is written
 against that codebase.
 
-> **Current implementation alignment (2026-08-27):** the repository has since
+> **Current implementation alignment (2026-08-28):** the repository has since
 > consolidated the subsystem under `src/modules/runtime/`. The generic
 > `DeploymentProviderRegistry`, `ProviderClientRegistry`,
 > `WorkflowFragmentRegistry`, and `ProviderCiSecretsInstallerRegistry` are now
 > open-id map registries, and the staged workflow builder composes provider
-> fragments without Render/Vercel branches. The provider-plugin acceptance test
-> exercises a fake provider through metadata, client, workflow, and CI seams.
+> fragments without Render/Vercel branches. Provider-owned policy objects,
+> provider catalog data, and quota definitions now keep strategy, target,
+> expansion, URL, and managed-quota rules in Runtime provider folders. The
+> provider-plugin acceptance test exercises a fake provider through metadata,
+> policy, client, workflow, and CI seams.
 > Render/Vercel compatibility fields, target strategy mapping, and the parallel
 > GCP runtime remain intentionally inside Runtime so the existing HTTP and
 > database contracts do not change. The stronger promise in this document —

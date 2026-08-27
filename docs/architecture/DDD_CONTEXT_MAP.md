@@ -19,6 +19,14 @@ behavior, database schemas, or provider behavior.
 HTTP cross-cutting concerns, session contracts, and outbox plumbing. It may not
 import a bounded context or define a business entity.
 
+The focused serialisable ports under `src/kernel/ports/` are dependency
+inversion seams, not additional contexts. They cover GitHub/CI, workspace and
+project links, quota/subscription bootstrap, workflow generation, audit,
+feedback, provider catalog, and the shared deployment-runtime contract. The
+latest alias-aware measurement reports 32 cross-context imports across 15
+directional pairs, all in Nest composition wiring; contract/application and
+actionable cross-context imports are zero.
+
 ## Ubiquitous language
 
 - A **Project** is the Projects-owned user product setup and lifecycle record.

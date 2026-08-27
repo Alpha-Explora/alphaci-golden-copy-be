@@ -4,6 +4,8 @@ import type {
   EnvProvider,
   RenderDeployMethod,
 } from '../core/deployments.types';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
+import type { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 
 export interface ResolveDeploymentStrategyInput {
   provider: EnvProvider;
@@ -13,30 +15,19 @@ export interface ResolveDeploymentStrategyInput {
 }
 
 export class DeploymentStrategyResolver {
+  constructor(
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
+  ) {}
+
   resolve(input: ResolveDeploymentStrategyInput): DeploymentStrategy {
-    if (input.provider === 'vercel') {
-      return 'vercel_ci_pushed';
-    }
-
-    if (input.provider === 'render') {
-      if (
-        input.action === 'register_existing' ||
-        input.renderDeployMethod === 'existing_service'
-      ) {
-        return 'render_existing_service';
-      }
-
-      if (input.ownershipMode === 'flowci_managed') {
-        return 'render_image_pushed';
-      }
-
-      if (input.renderDeployMethod === 'byo_image') {
-        return 'render_image_pushed';
-      }
-
-      return 'render_git_connected';
-    }
-
-    return 'provider_native';
+    return (
+      this.providerRegistry?.find(input.provider)?.policy?.resolveStrategy({
+        ownershipMode: input.ownershipMode,
+        ...(input.action ? { action: input.action } : {}),
+        ...(input.renderDeployMethod
+          ? { renderDeployMethod: input.renderDeployMethod }
+          : {}),
+      }) ?? 'provider_native'
+    );
   }
 }

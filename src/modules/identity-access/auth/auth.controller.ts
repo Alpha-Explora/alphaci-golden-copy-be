@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   Post,
   Query,
   Req,
@@ -16,7 +17,10 @@ import type { Request, Response } from 'express';
 import type { AppConfig } from '#kernel/config/app.config';
 import { DevOnlyGuard } from '#kernel/auth/dev-only.guard';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
-import { SubscriptionService } from '#modules/billing/index.js';
+import {
+  SUBSCRIPTION_ACCESS,
+  type SubscriptionAccessPort,
+} from '#kernel/auth/subscription-access.port';
 import { PlatformAdminAccessService } from '#modules/identity-access/admin/index.js';
 import { AuthService } from './auth.service';
 
@@ -27,7 +31,8 @@ export class AuthController {
 
   constructor(
     private readonly authService: AuthService,
-    private readonly subscriptionService: SubscriptionService,
+    @Inject(SUBSCRIPTION_ACCESS)
+    private readonly subscriptionService: SubscriptionAccessPort,
     private readonly platformAdminAccessService: PlatformAdminAccessService,
     private readonly configService: ConfigService,
   ) {

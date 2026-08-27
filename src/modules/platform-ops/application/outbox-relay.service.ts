@@ -3,6 +3,7 @@ import { Injectable, type OnModuleInit } from '@nestjs/common';
 import {
   OutboxRepository,
   type PendingOutboxEvent,
+  type OutboxProcessingOptions,
 } from '#kernel/events/outbox.repository';
 import {
   OutboxDispatcher,
@@ -42,6 +43,7 @@ export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
       (event) => this.dispatcher.dispatch(event),
       limit,
       this.dispatcher.topics(),
+      this.processingOptions(),
     );
   }
 
@@ -63,4 +65,22 @@ export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
         throw new Error(`Unsupported platform event topic '${event.topic}'`);
     }
   }
+
+  private processingOptions(): OutboxProcessingOptions {
+    const maxAttempts = positiveIntegerFromEnv('OUTBOX_MAX_ATTEMPTS');
+    const retryDelaySeconds = positiveIntegerFromEnv(
+      'OUTBOX_RETRY_DELAY_SECONDS',
+    );
+    return {
+      ...(maxAttempts === undefined ? {} : { maxAttempts }),
+      ...(retryDelaySeconds === undefined ? {} : { retryDelaySeconds }),
+    };
+  }
+}
+
+function positiveIntegerFromEnv(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw?.trim()) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
 }

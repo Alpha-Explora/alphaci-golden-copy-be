@@ -6,6 +6,7 @@ import type {
   ProviderFormSchema,
 } from '../../../core/deployment-provider.contract';
 import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
+import type { DeploymentProviderPolicy } from '../../../core/deployment-provider.policy';
 import {
   LEGACY_PROVIDER_CAPABILITIES,
   LEGACY_PROVIDER_CONFIG_SCHEMA,
@@ -40,6 +41,7 @@ export class RenderDeploymentProvider
   readonly capabilities;
   readonly configSchema: ProviderFormSchema = LEGACY_PROVIDER_CONFIG_SCHEMA;
   readonly credentialSchema: ProviderFormSchema = { fields: [] };
+  readonly policy: DeploymentProviderPolicy;
   readonly presentation = RENDER_PRESENTATION;
   readonly slotViolationMessage = (): string =>
     `Render deployment targets are backend-only. Choose the backend slot for Render.`;
@@ -47,6 +49,7 @@ export class RenderDeploymentProvider
   constructor(
     private readonly config: LegacyProviderConfig,
     private readonly registry: DeploymentProviderRegistry,
+    policy: DeploymentProviderPolicy,
   ) {
     this.label = config.label;
     this.supportedSlots = config.supportedSlots;
@@ -54,6 +57,7 @@ export class RenderDeploymentProvider
       ...LEGACY_PROVIDER_CAPABILITIES,
       previewDeployments: config.previewDeployments ?? false,
     };
+    this.policy = policy;
   }
 
   onModuleInit(): void {

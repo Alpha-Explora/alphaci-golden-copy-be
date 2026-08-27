@@ -108,7 +108,7 @@ describe('ProviderConnectionsService', () => {
       repository as never,
       encryptionService as never,
       clientRegistry,
-      workspacesService as never,
+      workspacesService,
       providerRegistry as never,
     );
   });

@@ -1,5 +1,8 @@
 import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
+import type { DeploymentProviderPolicy } from '../../../core/deployment-provider.policy';
 import { RenderDeploymentProvider } from './render-deployment.provider';
+
+const testPolicy = {} as DeploymentProviderPolicy;
 
 describe('RenderDeploymentProvider', () => {
   it('registers provider-owned metadata and preserves the backend slot policy', () => {
@@ -12,6 +15,7 @@ describe('RenderDeploymentProvider', () => {
         previewDeployments: false,
       },
       registry,
+      testPolicy,
     );
 
     provider.onModuleInit();
@@ -35,6 +39,7 @@ describe('RenderDeploymentProvider', () => {
         supportedSlots: ['backend'],
       },
       new DeploymentProviderRegistry(),
+      testPolicy,
     );
 
     expect(() => provider.validateConfig({})).toThrow(

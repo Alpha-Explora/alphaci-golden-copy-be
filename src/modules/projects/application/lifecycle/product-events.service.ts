@@ -18,8 +18,7 @@ export class ProductEventsService {
   constructor(
     private readonly auditEventsService: AuditEventSink | undefined,
     private readonly notificationEventsService:
-      | NotificationEventSink
-      | undefined,
+      NotificationEventSink | undefined,
   ) {}
 
   async record(input: {

@@ -1,12 +1,13 @@
 # Module Consolidation Plan — Current State vs Future State
 
-**Status:** remediation trunk implementation complete; final verification is
-recorded. The six-context consolidation and review-closure slices are
-implemented on `codex/architecture-remediation-trunk`; the evidence ledger
-records the exact verification boundary. Microservice extraction is future-only
-and outside this plan. A pre-consolidation contract baseline was not captured
-and remains explicitly unavailable.
-**Date:** 2026-08-27
+**Status:** remediation trunk implementation complete; current verification and
+evidence are recorded in `REMEDIATION_EVIDENCE.md`. The six-context
+consolidation and review-closure slices are implemented on
+`codex/architecture-remediation-trunk`. Microservice extraction is future-only
+and outside this plan. A pre-consolidation route baseline was recovered from
+`b175938`; a pre-consolidation contract baseline was not present in that source
+commit and remains explicitly unavailable.
+**Date:** 2026-08-28
 **Scope:** `src/modules/**` topology plus behavior-preserving boundary
 remediation. No intentional endpoint, response, schema-value, provider
 behavior, or deployment contract change is proposed here; compatibility
@@ -62,7 +63,7 @@ The authoritative implemented state is in §2.5 and in
 17 modules, 343 files, ~58,300 lines. (Earlier notes say "19 modules"; the
 `database` and `persistence` modules have since been folded into `kernel/`.)
 
-### 2.5 Implemented current tree (2026-08-27)
+### 2.5 Implemented current tree (2026-08-28)
 
 ```text
 src/
@@ -551,8 +552,8 @@ describing different systems.
 | Metric | Now | After | Delta |
 |---|---:|---:|---|
 | Modules | 17 | 6 | −65% |
-| Directional context pairs | 40 historical module edges | 16 measured context pairs | not directly comparable |
-| Cross-context import statements | 135 historical module imports | 115 alias-aware production imports | not directly comparable |
+| Directional context pairs | 40 historical module edges | 15 current context pairs | not directly comparable |
+| Cross-context import statements | 135 historical module imports | 32 alias-aware imports, all composition-only | not directly comparable |
 
 28 import statements stop crossing a boundary entirely — they become ordinary
 intra-context calls:
@@ -568,63 +569,48 @@ intra-context calls:
 | 1 | `hierarchy -> auth` | `identity-access` |
 | 1 | `hierarchy -> workspaces` | `identity-access` |
 
-Current alias-aware production import edges — this is the measurable file-level
-surface that still needs to shrink behind serialisable contracts before a
-future split:
+Current alias-aware cross-context imports after the review-closure work:
 
 | Count | Edge |
 |---:|---|
-| 29 | `projects -> runtime` |
-| 23 | `projects -> pipelines` |
-| 9 | `projects -> identity-access` |
-| 8 | `projects -> billing` |
-| 7 | `identity-access -> pipelines` |
-| 7 | `identity-access -> platform-ops` |
-| 7 | `projects -> platform-ops` |
-| 5 | `runtime -> identity-access` |
-| 5 | `runtime -> pipelines` |
-| 4 | `runtime -> billing` |
-| 3 | `identity-access -> billing` |
-| 3 | `identity-access -> runtime` |
-| 2 | `runtime -> platform-ops` |
-| 1 | `identity-access -> projects` |
-| 1 | `billing -> runtime` |
+| 8 | `identity-access -> billing`, `identity-access -> pipelines`, `identity-access -> platform-ops`, `identity-access -> projects`, `identity-access -> runtime` |
 | 1 | `pipelines -> platform-ops` |
+| 15 | `projects -> billing`, `projects -> identity-access`, `projects -> pipelines`, `projects -> platform-ops`, `projects -> runtime` |
+| 8 | `runtime -> billing`, `runtime -> identity-access`, `runtime -> pipelines`, `runtime -> platform-ops` |
 
-These counts sum to 115 file-level imports across the 16 directional pairs;
-the contract register remains the governing list of conceptual edges.
+These counts sum to 32 file-level imports across 15 directional pairs. All are
+explicit Nest composition wiring; the metrics report zero contract,
+application, and actionable cross-context imports. The contract register in
+`CROSS_CONTEXT_CONTRACTS.md` remains the governing list of conceptual edges.
 
-Consolidation does **not** reduce import volume much. The current alias-aware
-scanner reports 115 production import statements across 16 directional context
-pairs. That is the honest result: the six directories reduce the number of
-ownership units, but extraction work still requires reducing the relevant
-synchronous edges behind serialisable contracts and transport-swappable ports.
-The scanner is a trend report; dependency-cruiser remains authoritative for
-the actual file graph.
+The scanner is a trend report, not a service-extraction proof. The remaining
+composition imports are expected in one NestJS deployable; dependency-cruiser
+remains authoritative for the actual file graph and reports zero violations.
 
-### 3.3 Two cycles that block extraction
+### 3.3 Cycle closure
 
-Consolidation surfaces two context-level cycles that today hide as
-module-level edges:
+The consolidation surfaced two context-level cycles that had been hidden as
+module-level edges. Both are now governed by context-root composition and
+focused ports; they remain documented as current in-process edges rather than
+as application-level cycles:
 
 **Cycle A — `identity-access` ⇄ `projects`**
 
 | Direction | Evidence |
 |---|---|
-| `identity-access -> projects` | `hierarchy/repositories/repositories.service.ts -> projects/index`, `hierarchy/hierarchy.module.ts -> projects.module`, `auth/auth.module.ts -> projects.module` |
-| `projects -> identity-access` | `projects/projects.service.ts -> workspaces/index`, `projects/projects.service.ts -> hierarchy/project-link/index`, `projects/application/workspace-gate.service.ts -> workspaces/index` |
+| `identity-access -> projects` | `ProjectLookupPort` plus context-root composition for the project lookup adapter |
+| `projects -> identity-access` | public identity-access indexes and project-link/workspace ports |
 
 **Cycle B — `identity-access` ⇄ `pipelines`**
 
 | Direction | Evidence |
 |---|---|
-| `identity-access -> pipelines` | `hierarchy/groups/groups.service.ts`, `hierarchy/repositories/repositories.service.ts`, `hierarchy/github-sync/providers/github-team-access.live.ts`, `hierarchy/config-broker/providers/github-secrets.provider.ts`, `auth/auth.service.ts` — all `-> github/index` |
-| `pipelines -> identity-access` | `github/github-team-role.service.ts -> admin/index`, `github/github.module.ts -> admin.module` |
+| `identity-access -> pipelines` | public pipelines index and GitHub/CI contracts, composed by the identity-access root |
+| `pipelines -> identity-access` | inverted through a focused kernel port; no current pipelines-to-identity context edge is reported |
 
-These were the pre-consolidation cycle surfaces. The current context roots and
-dependency-cruiser graph have no circular violations, but the remaining
-cross-context imports are still visible in the measured graph and are not an
-extraction proof. They must continue to be governed by the contract register.
+The current context roots and dependency-cruiser graph have no circular
+violations. The alias-aware metrics report 32 cross-context imports, all
+composition-only, with zero contract/application/actionable edges.
 
 ### 3.4 Extraction readiness ranking
 
@@ -632,15 +618,16 @@ Fan-in is what makes a service extractable; fan-out only makes it chatty.
 
 | Context | Inbound context pairs | Outbound context pairs | Current posture |
 |---|---:|---:|---|
-| `platform-ops` | 4 | 0 | sink-shaped; event consumer, but still in the monolith |
-| `billing` | 3 | 1 | mostly sink-shaped; runtime compatibility read remains |
-| `runtime` | 3 | 4 | extraction candidate, not one-inbound/configuration-only |
-| `pipelines` | 3 | 1 | webhook/CI context with platform event output |
-| `identity-access` | 2 | 5 | high fan-out policy context |
-| `projects` | 1 | 5 | orchestrator; extract last or never |
+| `platform-ops` | 0 | 0 | sink-shaped; event consumer, but still in the monolith |
+| `billing` | 0 | 0 | self-contained in the current composition graph |
+| `runtime` | 4 | 4 | provider/deployment context; extraction candidate only after a real trigger |
+| `pipelines` | 1 | 1 | webhook/CI context with platform event output |
+| `identity-access` | 5 | 5 | policy context with explicit composition fan-out |
+| `projects` | 5 | 5 | orchestrator; extract last or never |
 
-These are current directional context-pair counts from the alias-aware metric,
-not a claim that every pair is already a transport-swappable port.
+These are current directional context-pair counts from the alias-aware metric;
+they describe the in-process composition graph, not independently deployable
+services.
 
 ## 4. The seam that makes a split cheap
 

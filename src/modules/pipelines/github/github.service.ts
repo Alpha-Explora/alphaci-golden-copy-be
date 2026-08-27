@@ -16,6 +16,14 @@ import { ConfigService } from '@nestjs/config';
 import sodium from 'libsodium-wrappers';
 
 import type { AppConfig } from '#kernel/config/app.config';
+import {
+  GithubRepoDeleteError,
+  type GithubOrganizationPort,
+  type GithubProjectPort,
+  type GithubRepositoryDeletedEvent,
+} from '#kernel/ports/github.port';
+export { GithubRepoDeleteError } from '#kernel/ports/github.port';
+export type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
 import { ENV_GUARD_CHECK_CONTEXT } from './github-policy.constants';
 import type {
   GitHubBranchSummary,
@@ -143,36 +151,8 @@ interface GitHubPullRequestResponse {
   html_url?: string;
 }
 
-export interface GitHubRepo {
-  id: number;
-  name: string;
-  fullName: string;
-  private: boolean;
-  description: string | null;
-  defaultBranch: string;
-  htmlUrl: string;
-  updatedAt: string;
-}
-
-export type GithubRepoDeleteErrorCode = 'missing_scope' | 'not_found' | 'other';
-
-/**
- * Thrown by deleteRepoForUser() (never by deleteRepo(), which stays silent
- * for its compensating-transaction call sites). Carries a machine-readable
- * `code` so a user-initiated delete can surface *why* it failed instead of
- * a generic failure — in particular, distinguishing a missing `delete_repo`
- * OAuth scope (the caller should prompt the user to reconnect GitHub) from a
- * repo that's simply already gone.
- */
-export class GithubRepoDeleteError extends Error {
-  constructor(
-    public readonly code: GithubRepoDeleteErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'GithubRepoDeleteError';
-  }
-}
+export type { GitHubRepo } from '#kernel/ports/github.port';
+import type { GitHubRepo } from '#kernel/ports/github.port';
 
 /*
  * There is deliberately no DEFAULT_ENFORCED_ORG.
@@ -202,10 +182,7 @@ export class GithubRepoDeleteError extends Error {
  */
 export const REPOSITORY_DELETED_EVENT = 'repository.deleted';
 
-export interface RepositoryDeletedEvent {
-  /** e.g. "Alpha-Explora/some-repo" — case-insensitive per GitHub semantics. */
-  repoFullName: string;
-}
+export type RepositoryDeletedEvent = GithubRepositoryDeletedEvent;
 
 /**
  * Emitted when a GitHub `membership` webhook reports someone being added to or
@@ -232,7 +209,10 @@ export interface TeamMembershipChangedEvent {
 }
 
 @Injectable()
-export class GithubService extends EventEmitter {
+export class GithubService
+  extends EventEmitter
+  implements GithubProjectPort, GithubOrganizationPort
+{
   private readonly logger = new Logger(GithubService.name);
   private readonly appId: string;
   private readonly appSlug: string;
@@ -299,6 +279,12 @@ export class GithubService extends EventEmitter {
       this.configService?.get<AppConfig>('app')?.github.enforcedOrg?.trim() ??
       ''
     );
+  }
+
+  onRepositoryDeleted(
+    listener: (event: GithubRepositoryDeletedEvent) => void,
+  ): void {
+    this.on(REPOSITORY_DELETED_EVENT, listener);
   }
 
   /**
@@ -1703,15 +1689,13 @@ export class GithubService extends EventEmitter {
 
     if (Array.isArray(payload)) {
       const entries = (payload as GitHubContentsRow[])
-        .map(
-          (row): GitHubContentEntry => ({
-            name: row.name ?? '',
-            path: row.path ?? '',
-            type: (row.type ?? 'file') as GitHubContentEntryType,
-            size: row.size ?? 0,
-            sha: row.sha ?? '',
-          }),
-        )
+        .map((row): GitHubContentEntry => ({
+          name: row.name ?? '',
+          path: row.path ?? '',
+          type: (row.type ?? 'file') as GitHubContentEntryType,
+          size: row.size ?? 0,
+          sha: row.sha ?? '',
+        }))
         // Directories first, then alphabetical — the ordering every file
         // browser uses, and one GitHub does not guarantee.
         .sort((a, b) => {

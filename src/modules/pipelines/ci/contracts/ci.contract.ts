@@ -1,8 +1,5 @@
 export type CiRunStatusContract =
-  | 'queued'
-  | 'in_progress'
-  | 'success'
-  | 'failure';
+  'queued' | 'in_progress' | 'success' | 'failure';
 
 export interface CiRunContract {
   id: string;

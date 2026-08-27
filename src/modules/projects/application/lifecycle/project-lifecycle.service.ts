@@ -12,15 +12,16 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import {
+  GITHUB_PROJECT_PORT,
   GithubRepoDeleteError,
-  GithubService,
+  type GithubProjectPort,
   type GithubRepoDeleteErrorCode,
-} from '#modules/pipelines/index.js';
-import { AuditEventsService } from '#modules/platform-ops/index.js';
+} from '#kernel/ports/github.port';
 import {
-  WorkspaceAccessService,
+  WORKSPACE_ACCESS_PORT,
+  type WorkspaceAccessPort,
   type WorkspaceRole,
-} from '#modules/identity-access/index.js';
+} from '#kernel/ports/workspaces.port';
 import type { CreateProjectDto } from '../../dto/create-project.dto';
 import type { DisconnectProjectDto } from '../../dto/disconnect-project.dto';
 import type { SetupProjectDto } from '../../dto/setup-project.dto';
@@ -69,11 +70,13 @@ export class ProjectLifecycleService {
     @Inject(PROJECT_PROVISIONING_PORT)
     private readonly provisioningPort: ProjectProvisioningPort,
     private readonly projectsRepository: ProjectsRepository,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     @Optional()
-    private readonly workspaceAccessService?: WorkspaceAccessService,
+    @Inject(WORKSPACE_ACCESS_PORT)
+    private readonly workspaceAccessService?: WorkspaceAccessPort,
     @Optional()
-    private readonly auditEventsService?: AuditEventsService,
+    private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventPublisher?: NotificationEventPublisher,
     @Optional()
@@ -136,8 +139,7 @@ export class ProjectLifecycleService {
 
     let githubRepoDeleted = false;
     let githubRepoDeleteError:
-      | { code: GithubRepoDeleteErrorCode; message: string }
-      | undefined;
+      { code: GithubRepoDeleteErrorCode; message: string } | undefined;
 
     if (deleteGithubRepo) {
       const project = await this.projectsRepository.findByIdAndUser(

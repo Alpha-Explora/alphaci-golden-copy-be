@@ -5,12 +5,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { AuditEventsService } from '#modules/platform-ops/index.js';
-import { FeedbackService } from '#modules/platform-ops/index.js';
-import type {
-  FeedbackRecord,
-  FeedbackStatus,
-} from '#modules/platform-ops/index.js';
+import { Inject } from '@nestjs/common';
+import {
+  AUDIT_SECURITY_PORT,
+  type AuditSecurityPort,
+} from '#kernel/ports/audit.port';
+import {
+  FEEDBACK_PORT,
+  type FeedbackPort,
+  type FeedbackRecord,
+  type FeedbackStatus,
+} from '#kernel/ports/feedback.port';
 import { AdminRepository, type ListUsersOptions } from './admin.repository';
 import {
   PlatformAdminsRepository,
@@ -39,8 +44,10 @@ export class AdminService {
   constructor(
     private readonly adminRepository: AdminRepository,
     private readonly platformAdminsRepository: PlatformAdminsRepository,
-    private readonly auditEventsService: AuditEventsService,
-    private readonly feedbackService: FeedbackService,
+    @Inject(AUDIT_SECURITY_PORT)
+    private readonly auditEventsService: AuditSecurityPort,
+    @Inject(FEEDBACK_PORT)
+    private readonly feedbackService: FeedbackPort,
   ) {}
 
   async listUsers(

@@ -1,5 +1,27 @@
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 
+const providerRegistry = {
+  get: jest.fn((provider: string) => ({
+    presentation:
+      provider === 'vercel'
+        ? {
+            publicUrl: (target: { providerProjectName: string }) =>
+              `https://${target.providerProjectName}.vercel.app`,
+            dashboardUrl: (target: {
+              providerProjectName: string;
+              providerMetadata: Record<string, unknown>;
+            }) =>
+              `https://vercel.com/${String(target.providerMetadata['vercelTeamSlug'])}/${target.providerProjectName}`,
+            consoleUrl: (target: {
+              providerProjectName: string;
+              providerMetadata: Record<string, unknown>;
+            }) =>
+              `https://vercel.com/${String(target.providerMetadata['vercelTeamSlug'])}/${target.providerProjectName}/deployments`,
+          }
+        : undefined,
+  })),
+};
+
 describe('LocalDeploymentHistoryProvider', () => {
   it('normalizes Vercel-like deployment statuses', () => {
     const provider = new LocalDeploymentHistoryProvider();
@@ -27,7 +49,10 @@ describe('LocalDeploymentHistoryProvider', () => {
   });
 
   it('returns fixture deployments with provider dashboard links', async () => {
-    const provider = new LocalDeploymentHistoryProvider({ fixtureMode: true });
+    const provider = new LocalDeploymentHistoryProvider(
+      { fixtureMode: true },
+      providerRegistry as never,
+    );
 
     await expect(
       provider.listDeployments([

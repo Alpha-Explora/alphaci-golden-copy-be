@@ -1,84 +1,89 @@
 # Residual architecture gaps
 
-**Date:** 2026-08-27
+**Date:** 2026-08-28
 **Trunk:** `codex/architecture-remediation-trunk`
 
-This is the honest follow-up to the six-context consolidation review. It
-distinguishes defects fixed on the trunk from limitations that are deliberate
-compatibility or evidence gaps.
+This report closes the follow-up review against the adopted six-context,
+progressive hexagonal-clean modular-monolith direction. It separates fixed
+implementation defects from evidence that requires an external database or
+deployment environment. Microservice extraction is deliberately deferred.
 
 ## Closed on this trunk
 
 | Review finding | Resolution |
 |---|---|
-| Outbox used `processed_at` against the active table | Relay acknowledges with `status='published'`, `published_at`, and `updated_at`. |
-| Two competing outbox runners | Kafka-era runner/types removed; `scripts/process-outbox.cjs` is the only runner. |
+| Outbox used `processed_at` against the active table | The relay acknowledges with `status='published'`, `published_at`, and `updated_at`. |
+| Two competing outbox runners | The Kafka-era runner/types were removed; `scripts/process-outbox.cjs` is the sole runner. |
 | Relay could consume unsupported topics | Dispatcher registration and SQL topic filtering are required; legacy rows are quarantined explicitly. |
 | No scheduler wiring | Render has exactly one `alphaci-outbox-relay` cron using the compiled runner. |
-| Outbox guarantee was overstated | Critical hierarchy transitions use `publishInTransaction`; audit/notification are labeled best-effort post-commit. |
-| Metrics reported aliased edges as zero | The scanner counts aliases and common module syntaxes; dependency-cruiser remains authoritative. |
+| Outbox guarantee was overstated | Critical hierarchy transitions use `publishInTransaction`; audit/notification are documented as best-effort post-commit. |
+| Metrics reported aliased edges as zero | The scanner resolves aliases and common module syntaxes; dependency-cruiser remains authoritative. |
 | Schema gate had broad filename exemptions | Allowances are exact file plus exact schema.table pairs and inline SQL is scanned. |
 | AppModule exposed feature-module wiring | Six context-root modules now own feature composition. |
-| Projects god-service hotspot | Provisioning, dashboard, workflow, lifecycle, and reconciliation logic moved to application slices; the facade remains only for compatibility. |
-| Provider acceptance was missing | Registries are generic/open-id and the architecture suite exercises a fake provider across all contribution types. |
-| HTTP boot was not real | `createHttpApplication()` boots the Express middleware and serves the health endpoint in architecture tests. |
+| Projects god-service hotspot | Provisioning is split by real repository shape/use case; dashboard, workflow, lifecycle, and reconciliation are focused application slices; the facade only preserves compatibility. |
+| Provider acceptance was missing | Generic registries and open-id seams are exercised by a fake provider across metadata, policy, client, workflow, CI, and staged generation. |
+| HTTP boot was not real | `createHttpApplication()` boots the Express adapter and serves the health endpoint in architecture tests. |
+| Nest CLI build was unstable with current aliases | The package build uses direct `tsc -p tsconfig.build.json`; typecheck/build pass and Node package-import mappings remain intact. |
+| Repository-wide lint was obscured by line endings | `.gitattributes`/ESLint alignment and formatting now produce zero errors and warnings across 483 files. |
+| Route equality had no pre-change reference | A 145-route pre-consolidation inventory was recovered from `b175938`; it matches the current inventory byte-for-byte. |
 
-## Remaining limitations (intentional or evidence-bound)
+## Remaining limitations and evidence boundaries
 
-### P1 — Future extraction is not currently a deliverable
+### P2 — Pre-change contract snapshot was never captured
 
-The current alias-aware metric still reports cross-context imports. Some are
-composition wiring or compatibility reads inside the same deployable; others
-are genuine synchronous application edges. A future extraction must reduce the
-relevant edges to serialisable contracts and transport-swappable ports rather
-than relying on the directory count.
+The source commit `b175938` contains no old contract snapshot. Current
+`tests/architecture/contract-snapshots.spec.ts` protects the present provider
+and workflow shape from future drift, but no repository evidence can prove
+retroactive contract equality for the original consolidation.
 
-Runtime also retains historical provider-specific storage fields, token/scope
-selection, legacy strategy identifiers, and compatibility DTO fields. Workflow
-target expansion and slot policy are now provider-owned and generic. The
-remaining compatibility adapters stay inside Runtime so public behavior and
-database values do not change; extracting them is a separate slice, not a
-reason to move provider code into other contexts.
+### P2 — Live Postgres execution requires credentials
 
-### P1 — Projects still has a large application slice
+`tests/integration/database.integration.spec.ts` performs live schema,
+retry/quarantine, acknowledgement, and transaction rollback assertions when
+`SUPABASE_DB_URL` is provided. This worktree has no `SUPABASE_DB_URL`, local
+Postgres binary, or running Docker database, so the live test is skipped. The
+64-migration dry-run and static schema gate are valid complementary evidence,
+not a substitute for a live connection.
 
-`ProjectsService` is now a facade and no longer owns the former 2,500-line
-workflow implementation. `ProjectProvisioningApplicationService` remains the
-largest focused slice because it preserves the complete existing setup
-workflow. Further splitting should follow use-case ownership and tests; do not
-create wrappers that only rename calls.
+### P2 — Deployed operations require deployment access
 
-### P2 — Historical regression evidence is unavailable
+`render.yaml`, `Dockerfile`, and `tests/architecture/outbox-scheduler.spec.ts`
+prove that one cron owner is configured and invokes the compiled relay. Actual
+cron execution, production metrics, and a rollback rehearsal require Render
+credentials and a deployed environment; they were not simulated as if they
+had run.
 
-The route files and contract snapshots are post-consolidation references. The
-repository does not contain a pre-consolidation route or contract snapshot, so
-retroactive equality cannot be claimed. The route manifest records this fact
-and hashes the current reference. New changes must update it only through the
-route-inventory test.
+### P2 — Runtime compatibility debt remains intentionally in Runtime
 
-### P2 — Database verification depends on environment
+Historical Render/Vercel fields, strategy identifiers, token/scope selection,
+and DTO/storage values remain because changing them would change the public or
+database contract. Provider policies, generic registries, workflow fragments,
+target expansion, clients, and CI installers keep new provider behavior out of
+other contexts. Projects also retains the legacy `deploy_render` /
+`deploy_vercel` CI stage labels and provider-host URL allowlist because those
+are compatibility/security surfaces, not provider orchestration. Adding a
+provider still requires normal Runtime composition registration; it does not
+require a new top-level context.
 
-Migration replay ordering is verified by `scripts/apply-all-migrations.mjs
---dry-run`, and SQL ownership is statically checked. The Postgres integration
-test runs only when `SUPABASE_DB_URL` is provided. A local run without that
-secret cannot prove live connectivity or transaction behavior.
+### P2 — The monolith still has composition imports
 
-### P2 — Rollback evidence is procedural
-
-The remediation is committed on the named trunk and can be reverted as a
-normal commit. No destructive reset, force push, branch deletion, or worktree
-cleanup is needed to establish the result. A production rollback rehearsal
-requires the deployment environment and is intentionally outside this code
-change.
+The latest alias-aware metric reports 32 cross-context imports across 15
+directional pairs, all classified as explicit Nest composition. Contract and
+application cross-context imports are zero, and dependency-cruiser reports no
+violations. This is a healthy current modular-monolith boundary, not proof of
+independent service deployment.
 
 ## Deferred by decision
 
-- Keep microservice extraction outside the current plan. Reopen the future
-  option only with an independent scaling, deployment-cadence, or regulatory
+- Keep microservice extraction outside the current plan. Reopen it only with a
+  measured independent-scaling, deployment-cadence, or regulatory-isolation
   trigger.
 - Do not add a seventh context for a provider or deployment mode.
-- Do not redesign schemas/roles/search paths merely to make the tree look more
+- Do not redesign schemas, roles, or search paths merely to make the tree look
   service-like.
+- Do not further split the provisioning support slice without a distinct
+  behavior-owning use case and tests; wrapper-only decomposition would make
+  the boundary less clear, not more.
 
-The authoritative current measurements and command results live in
+The authoritative measurements and commands are in
 `docs/architecture/REMEDIATION_EVIDENCE.md`.

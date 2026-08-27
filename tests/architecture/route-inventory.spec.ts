@@ -70,6 +70,9 @@ describe('HTTP route inventory', () => {
         routeCount: number;
         baselineKind: string;
         preConsolidationBaselineAvailable: boolean;
+        preConsolidationBaselineFile: string;
+        preConsolidationBaselineSha256: string;
+        preConsolidationSourceCommit: string;
         baselineSha256: string;
         currentSha256: string;
       };
@@ -77,6 +80,13 @@ describe('HTTP route inventory', () => {
         resolve(
           __dirname,
           '../../docs/architecture/route-inventory.current.txt',
+        ),
+        'utf8',
+      );
+      const preConsolidationReference = readFileSync(
+        resolve(
+          __dirname,
+          '../../docs/architecture/route-inventory.pre-consolidation.txt',
         ),
         'utf8',
       );
@@ -88,7 +98,15 @@ describe('HTTP route inventory', () => {
       expect(sha256(baseline.join('\n') + '\n')).toBe(manifest.baselineSha256);
       expect(sha256(currentReference)).toBe(manifest.currentSha256);
       expect(manifest.baselineKind).toBe('post-consolidation-reference');
-      expect(manifest.preConsolidationBaselineAvailable).toBe(false);
+      expect(manifest.preConsolidationBaselineAvailable).toBe(true);
+      expect(manifest.preConsolidationBaselineFile).toBe(
+        'route-inventory.pre-consolidation.txt',
+      );
+      expect(sha256(preConsolidationReference)).toBe(
+        manifest.preConsolidationBaselineSha256,
+      );
+      expect(manifest.preConsolidationSourceCommit).toBe('b175938');
+      expect(preConsolidationReference).toBe(currentReference);
     } finally {
       await app.close();
     }

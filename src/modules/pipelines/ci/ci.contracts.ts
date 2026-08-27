@@ -1,9 +1,5 @@
-import type { ProjectTokenStatus } from './infra/ci-tokens.repository';
-
-export interface CiTokenStatusLookup {
-  findProjectTokenStatus(projectId: string): Promise<ProjectTokenStatus | null>;
-}
-
-export const CI_TOKEN_STATUS_LOOKUP = Symbol('CI_TOKEN_STATUS_LOOKUP');
-
-export type { ProjectTokenStatus };
+export {
+  CI_TOKEN_STATUS_LOOKUP,
+  type CiTokenStatusLookup,
+  type ProjectTokenStatus,
+} from '#kernel/ports/ci-project.port';

@@ -21,7 +21,7 @@ describe('VercelCiSecretsService', () => {
 
   const makeService = () =>
     new VercelCiSecretsService(
-      githubService as never,
+      githubService,
       providerConnectionsRepository as never,
       encryptionService as never,
       configService as never,

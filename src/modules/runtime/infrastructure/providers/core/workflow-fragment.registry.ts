@@ -4,7 +4,7 @@ import {
   type WorkflowFragmentContext,
   type WorkflowFragmentResult,
   type WorkflowFragmentTarget,
-} from '../../../core/workflow-fragment.contract';
+} from '#kernel/ports/workflow-fragment.port';
 
 export function buildDeploymentWorkflowFragment(
   target: WorkflowFragmentTarget,
@@ -12,13 +12,13 @@ export function buildDeploymentWorkflowFragment(
   context: WorkflowFragmentContext,
   registry: WorkflowFragmentRegistry = new WorkflowFragmentRegistry(),
 ): WorkflowFragmentResult | undefined {
-  return registry.get(target.provider)?.build(target, branch, context);
+  return registry.build(target, branch, context);
 }
 
 export {
   WORKFLOW_FRAGMENTS,
   WorkflowFragmentRegistry,
-} from '../../../core/workflow-fragment.contract';
+} from '#kernel/ports/workflow-fragment.port';
 export type {
   WorkflowFragment,
   WorkflowFragmentContext,

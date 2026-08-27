@@ -9,7 +9,10 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { CiService } from '#modules/pipelines/index.js';
+import {
+  CI_PROJECT_PORT,
+  type CiProjectPort,
+} from '#kernel/ports/ci-project.port';
 import {
   DEPLOYMENT_DRIFT_FINDINGS_STORE,
   DEPLOYMENT_TARGET_DELETION,
@@ -18,7 +21,7 @@ import {
   type ProjectDriftFinding,
   type ProjectDriftRepairAction,
   type ProjectDriftRepairResponse,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { ProjectsRepository } from './projects.repository';
 import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
@@ -29,7 +32,8 @@ export class ProjectDriftRepairService {
     private readonly projectsRepository: ProjectsRepository,
     @Inject(DEPLOYMENT_DRIFT_FINDINGS_STORE)
     private readonly findingsRepository: DeploymentDriftFindingsStore,
-    private readonly ciService: CiService,
+    @Inject(CI_PROJECT_PORT)
+    private readonly ciService: CiProjectPort,
     @Optional()
     @Inject(DEPLOYMENT_TARGET_DELETION)
     private readonly deploymentTargetsRepository?: DeploymentTargetDeletion,
@@ -168,11 +172,12 @@ export class ProjectDriftRepairService {
         ['workflow_files_missing', 'central_workflow_ref_outdated'],
         action,
       );
-      const preview = await this.projectWorkflowsService?.previewWorkflowSettings(
-        projectId,
-        userId,
-        {},
-      );
+      const preview =
+        await this.projectWorkflowsService?.previewWorkflowSettings(
+          projectId,
+          userId,
+          {},
+        );
       await this.recordRepairEvent({
         userId,
         projectId,

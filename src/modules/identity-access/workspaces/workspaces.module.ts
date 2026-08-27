@@ -6,6 +6,10 @@ import { WorkspacesController } from './workspaces.controller';
 import { WorkspaceAccessService } from './workspace-access.service';
 import { WorkspacesRepository } from './workspaces.repository';
 import { WorkspacesService } from './workspaces.service';
+import {
+  WORKSPACES_PORT,
+  WORKSPACE_ACCESS_PORT,
+} from '#kernel/ports/workspaces.port';
 
 @Module({
   imports: [DatabaseModule],
@@ -14,8 +18,15 @@ import { WorkspacesService } from './workspaces.service';
     WorkspacesRepository,
     WorkspacesService,
     WorkspaceAccessService,
+    { provide: WORKSPACES_PORT, useExisting: WorkspacesService },
+    { provide: WORKSPACE_ACCESS_PORT, useExisting: WorkspaceAccessService },
     SessionAuthGuard,
   ],
-  exports: [WorkspacesService, WorkspaceAccessService],
+  exports: [
+    WorkspacesService,
+    WorkspaceAccessService,
+    WORKSPACES_PORT,
+    WORKSPACE_ACCESS_PORT,
+  ],
 })
 export class WorkspacesModule {}

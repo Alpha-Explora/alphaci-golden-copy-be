@@ -54,4 +54,21 @@ export default tseslint.config(
       '@typescript-eslint/unbound-method': 'off',
     },
   },
+  {
+    // k6 supplies the module types and __ENV global at runtime. The Node
+    // workspace intentionally does not install k6's separate type package;
+    // keep the performance smoke script linted for syntax/formatting while
+    // not treating the external runtime values as unsafe Node values.
+    files: ['tests/performance/*.js'],
+    languageOptions: {
+      globals: {
+        __ENV: 'readonly',
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+    },
+  },
 );

@@ -20,6 +20,21 @@ describe('ProjectDeploymentsService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const providerRegistry = {
+    find: jest.fn((provider: string) =>
+      provider === 'render'
+        ? {
+            label: 'Render',
+            presentation: {
+              publicUrl: (target: { providerProjectName: string }) =>
+                `https://${target.providerProjectName}.onrender.com`,
+              dashboardUrl: () => 'https://dashboard.render.com/web/srv-1',
+              consoleUrl: () => 'https://dashboard.render.com/web/srv-1/logs',
+            },
+          }
+        : undefined,
+    ),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -174,7 +189,10 @@ describe('ProjectDeploymentsService', () => {
         deploymentTargetsRepository as never,
         provider as never,
         configService as never,
-        clientRegistry as never,
+        clientRegistry,
+        undefined,
+        undefined,
+        providerRegistry as never,
       );
     }
 

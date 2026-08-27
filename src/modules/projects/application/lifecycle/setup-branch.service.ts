@@ -1,6 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 
 /**
  * Setup-flow GitHub helpers for onboarding an existing repository.
@@ -12,7 +15,10 @@ import { GithubService } from '#modules/pipelines/index.js';
 export class SetupBranchService {
   private readonly logger = new Logger(SetupBranchService.name);
 
-  constructor(private readonly githubService: GithubService) {}
+  constructor(
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
+  ) {}
   /**
    * The branch an onboarded repository's workflows belong on.
    *

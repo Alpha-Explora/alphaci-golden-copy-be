@@ -2,6 +2,10 @@ import { BadRequestException } from '@nestjs/common';
 
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
 import { DeploymentTargetsService } from './deployment-targets.service';
+import { RenderCostPolicyService } from '../infrastructure/providers/render/render-cost-policy.service';
+import { RenderDeploymentPolicy } from '../infrastructure/providers/render/render-deployment.policy';
+import { VercelDeploymentPolicy } from '../infrastructure/providers/vercel/vercel-deployment.policy';
+import type { DeploymentProviderPolicy } from '../core/deployment-provider.policy';
 
 describe('DeploymentTargetsService', () => {
   const projectReferenceLookup = {
@@ -49,7 +53,24 @@ describe('DeploymentTargetsService', () => {
         return {
           label: 'Render',
           supportedSlots: ['backend', 'standalone'],
-          slotViolationMessage: () =>
+          policy: renderPolicy,
+          presentation: {
+            publicUrl: (target: {
+              providerProjectName: string;
+              providerMetadata: Record<string, unknown>;
+            }) =>
+              (typeof target.providerMetadata['renderServiceUrl'] ===
+                'string' &&
+                target.providerMetadata['renderServiceUrl'].trim()) ||
+              (target.providerProjectName
+                ? `https://${target.providerProjectName}.onrender.com`
+                : null),
+            dashboardUrl: (target: { providerProjectId: string }) =>
+              `https://dashboard.render.com/web/${target.providerProjectId}`,
+            consoleUrl: (target: { providerProjectId: string }) =>
+              `https://dashboard.render.com/web/${target.providerProjectId}/logs`,
+          },
+          slotViolationMessage: (): string =>
             'Render deployment targets are backend-only. Choose the backend slot for Render.',
         };
       }
@@ -57,13 +78,49 @@ describe('DeploymentTargetsService', () => {
         return {
           label: 'Vercel',
           supportedSlots: ['frontend'],
-          slotViolationMessage: () =>
+          policy: vercelPolicy,
+          presentation: {
+            publicUrl: (target: { providerProjectName: string }) =>
+              target.providerProjectName
+                ? `https://${target.providerProjectName}.vercel.app`
+                : null,
+            dashboardUrl: (target: {
+              providerProjectId: string;
+              providerProjectName: string;
+              providerMetadata: Record<string, unknown>;
+            }) => {
+              const teamSlug =
+                typeof target.providerMetadata['vercelTeamSlug'] === 'string'
+                  ? target.providerMetadata['vercelTeamSlug'].trim()
+                  : '';
+              return teamSlug
+                ? `https://vercel.com/${teamSlug}/${target.providerProjectName}`
+                : `https://vercel.com/dashboard/project/${target.providerProjectId}`;
+            },
+            consoleUrl: (target: {
+              providerProjectId: string;
+              providerProjectName: string;
+              providerMetadata: Record<string, unknown>;
+            }) => {
+              const teamSlug =
+                typeof target.providerMetadata['vercelTeamSlug'] === 'string'
+                  ? target.providerMetadata['vercelTeamSlug'].trim()
+                  : '';
+              return teamSlug
+                ? `https://vercel.com/${teamSlug}/${target.providerProjectName}/deployments`
+                : `https://vercel.com/dashboard/project/${target.providerProjectId}/deployments`;
+            },
+          },
+          slotViolationMessage: (): string =>
             'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
         };
       }
       return undefined;
     }),
   };
+
+  let renderPolicy: DeploymentProviderPolicy;
+  let vercelPolicy: DeploymentProviderPolicy;
 
   let service: DeploymentTargetsService;
 
@@ -105,6 +162,10 @@ describe('DeploymentTargetsService', () => {
         enabled: true,
       },
     });
+    renderPolicy = new RenderDeploymentPolicy(
+      new RenderCostPolicyService(configService as never),
+    );
+    vercelPolicy = new VercelDeploymentPolicy();
 
     service = new DeploymentTargetsService(
       projectReferenceLookup,
@@ -113,9 +174,9 @@ describe('DeploymentTargetsService', () => {
       encryptionService as never,
       clientRegistry,
       configService as never,
-      new DeploymentStrategyResolver(),
+      new DeploymentStrategyResolver(providerRegistry as never),
       undefined,
-      usageQuotaService as never,
+      usageQuotaService,
       workspaceAccessService as never,
       auditEventsService as never,
       notificationEventsService as never,

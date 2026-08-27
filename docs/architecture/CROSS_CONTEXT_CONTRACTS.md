@@ -23,28 +23,46 @@ not evidence that a network service already exists.
 
 | Context edge | Current contract surface | Seam |
 |---|---|---|
-| `identity-access -> projects` | `kernel/ports/project-lookup.port.ts` | `ProjectLookupPort` breaks the cycle for hierarchy-managed projects |
-| `identity-access -> pipelines` | `#modules/pipelines/index` and GitHub contracts | context index; role policy uses `PlatformAdminPort` where inversion is needed |
-| `identity-access -> billing` | `#modules/billing/index` | in-process subscription/usage contract |
+| `identity-access -> projects` | `kernel/ports/project-lookup.port.ts` plus `ProjectProvisioningModule` composition | `ProjectLookupPort` breaks the hierarchy/project cycle |
+| `identity-access -> pipelines` | `#modules/pipelines/index` and GitHub contracts | in-process GitHub/CI composition |
+| `identity-access -> billing` | `#modules/billing/index` | in-process subscription/usage composition |
 | `identity-access -> platform-ops` | `#kernel/events/platform-event.registry` | best-effort audit/notification publishers |
-| `projects -> pipelines` | `#modules/pipelines/index` and CI contracts | in-process GitHub/CI contract |
-| `projects -> runtime` | `#modules/runtime/index` and runtime contracts | provisioning/history/drift tokens; first extraction candidate |
-| `projects -> billing` | `#modules/billing/index` | in-process quota contract; edition-optional port remains a future slice |
-| `billing -> runtime` | `#modules/runtime/index` | Runtime-owned deployment usage facts consumed as data by quota policy |
+| `identity-access -> runtime` | `#modules/runtime/index` | runtime capability/configuration composition |
+| `projects -> pipelines` | `#modules/pipelines/index` and CI contracts | in-process GitHub/CI composition |
+| `projects -> runtime` | `#modules/runtime/index` and runtime contracts | provisioning/history/drift composition and focused runtime tokens |
+| `projects -> billing` | `#modules/billing/index` | in-process quota composition |
 | `projects -> platform-ops` | `#kernel/events/platform-event.registry` | best-effort audit/notification publishers |
-| `projects -> identity-access` | identity-access indexes and project-link contract | in-process authorization/reference contract |
-| `runtime -> identity-access` | identity-access workspace contract | in-process workspace access contract |
-| `runtime -> pipelines` | `#modules/pipelines/index` | in-process GitHub/CI contract |
-| `runtime -> billing` | `#modules/billing/index` | in-process usage/quota contract |
+| `projects -> identity-access` | identity-access indexes and project-link contract | in-process authorization/reference composition |
+| `runtime -> identity-access` | identity-access workspace contract | in-process workspace-access composition |
+| `runtime -> pipelines` | `#modules/pipelines/index` | in-process GitHub/CI composition |
+| `runtime -> billing` | `#modules/billing/index` | in-process usage/quota composition |
 | `runtime -> platform-ops` | `#kernel/events/platform-event.registry` | best-effort audit/notification publishers |
-| `pipelines -> identity-access` | `kernel/ports/platform-admin.port.ts` | `PlatformAdminPort` breaks the role-policy cycle |
 | `pipelines -> platform-ops` | `#kernel/events/platform-event.registry` | best-effort audit publisher |
 
-The conceptual register contains 16 current directional context pairs. The
-metric report counts more file-level imports than this register because one
-context edge can have several callers and because Nest composition imports are
-visible in the physical graph. The metric is therefore a trend indicator, not
-a claim that there are only 16 import statements.
+The conceptual register contains the 15 current directional context pairs
+reported by the alias-aware metric. All 32 file-level cross-context imports are
+explicit Nest composition wiring; the metric reports zero contract,
+application, and actionable cross-context imports. The metric is therefore a
+trend indicator, not a claim that the monolith already has transport-swappable
+service boundaries.
+
+## Focused kernel ports
+
+The reusable serialisable seams are deliberately small and live in
+`src/kernel/ports/`:
+
+- `github.port.ts`, `github-team-role.port.ts`, and `ci-project.port.ts`;
+- `usage-quota.port.ts` and `workspaces.port.ts`;
+- `project-link.port.ts`, `subscription-bootstrap.port.ts`, and
+  `feedback.port.ts`;
+- `workflow-fragment.port.ts` and `workflow-generation.port.ts`;
+- `audit.port.ts` and `deployment-provider-catalog.port.ts`;
+- `deployment-runtime.port.ts` for the shared runtime/project deployment
+  contract.
+
+These are in-process ports today. They are not a reason to add a broker or
+extract a service; they make optional integrations and future transport swaps
+explicit without introducing blanket interfaces.
 
 ## Current event and outbox model
 

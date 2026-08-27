@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 import {
   PROJECT_LOOKUP,
   type ProjectLookupPort,
@@ -27,7 +30,8 @@ export class RepositoriesService {
     private readonly repositoriesRepository: RepositoriesRepository,
     private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
     private readonly accessService: HierarchyAccessService,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     @Inject(PROJECT_LOOKUP)
     private readonly projectLookup: ProjectLookupPort,
     private readonly auditEventsService: AuditEventPublisher,

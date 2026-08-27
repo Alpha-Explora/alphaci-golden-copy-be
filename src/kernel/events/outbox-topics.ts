@@ -11,8 +11,7 @@ export const OUTBOX_TOPICS = {
   hierarchyAssignmentRevoke: 'hierarchy.repository_assignment.revoke',
 } as const;
 
-export type OutboxTopic =
-  (typeof OUTBOX_TOPICS)[keyof typeof OUTBOX_TOPICS];
+export type OutboxTopic = (typeof OUTBOX_TOPICS)[keyof typeof OUTBOX_TOPICS];
 
 export const OUTBOX_TOPIC_OWNERS: Readonly<Record<OutboxTopic, string>> = {
   [OUTBOX_TOPICS.platformAuditRecorded]: 'platform-ops',
@@ -21,9 +20,6 @@ export const OUTBOX_TOPIC_OWNERS: Readonly<Record<OutboxTopic, string>> = {
   [OUTBOX_TOPICS.hierarchyAssignmentRevoke]: 'identity-access',
 };
 
-export function isRegisteredOutboxTopic(
-  topic: string,
-): topic is OutboxTopic {
+export function isRegisteredOutboxTopic(topic: string): topic is OutboxTopic {
   return Object.prototype.hasOwnProperty.call(OUTBOX_TOPIC_OWNERS, topic);
 }
-

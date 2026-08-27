@@ -7,6 +7,7 @@ import { UsersRepository } from './infra/users.repository.js';
 import { SubscriptionsRepository } from '#modules/billing/subscription/infra/subscriptions.repository.js';
 import { OAuthStateRepository } from './infra/oauth-state.repository.js';
 import { SUBSCRIPTION_BOOTSTRAP } from '#modules/billing/subscription/subscription.contracts.js';
+import { GITHUB_TEAM_ROLE_PORT } from '#kernel/ports/github-team-role.port.js';
 import { GithubTeamRoleService } from '#modules/pipelines/github/github-team-role.service.js';
 import type { Request } from 'express';
 import type {
@@ -135,7 +136,7 @@ async function createService(
       // Sync disabled by default so these tests continue to exercise the
       // legacy org-ownership seeding path unchanged.
       {
-        provide: GithubTeamRoleService,
+        provide: GITHUB_TEAM_ROLE_PORT,
         useValue: makeGithubTeamRoleService(),
       },
     ],
@@ -159,7 +160,7 @@ function mockSuccessfulGitHubFetch(
     .mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ access_token: 'gh-token-123' }),
-    } as unknown as Response)
+    })
     .mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -171,7 +172,7 @@ function mockSuccessfulGitHubFetch(
           avatar_url: 'https://example.com/avatar.png',
           ...profile,
         }),
-    } as unknown as Response);
+    });
 }
 
 interface GitHubProfilePayload {
@@ -440,7 +441,7 @@ describe('AuthService', () => {
         ok: false,
         status: 404,
         json: () => Promise.resolve({}),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -475,7 +476,7 @@ describe('AuthService', () => {
         ok: true,
         status: 200,
         json: () => Promise.resolve({ state: 'pending' }),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -513,7 +514,7 @@ describe('AuthService', () => {
         ok: false,
         status: 403,
         json: () => Promise.resolve({}),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -576,7 +577,7 @@ describe('AuthService', () => {
         ok: true,
         status: 200,
         json: () => Promise.resolve({ state: 'active' }),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -701,15 +702,11 @@ describe('AuthService', () => {
         archivedAt: '2026-05-01T00:00:00Z',
         githubUserId: '12345',
       };
-      const { service, subsRepo } = await createService(
-        true,
-        undefined,
-        {
-          findByGithubUserIdIncludingArchived: jest
-            .fn()
-            .mockResolvedValue(archivedRow),
-        },
-      );
+      const { service, subsRepo } = await createService(true, undefined, {
+        findByGithubUserIdIncludingArchived: jest
+          .fn()
+          .mockResolvedValue(archivedRow),
+      });
 
       const req = makeRequest();
       await service.handleGitHubCallback(req, 'code123', 'valid-state');
@@ -722,7 +719,7 @@ describe('AuthService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
         json: () => Promise.resolve({}),
-      } as unknown as Response);
+      });
 
       const { service } = await createService();
       const req = makeRequest();
@@ -740,7 +737,7 @@ describe('AuthService', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ access_token: 'gh-token' }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: () =>
@@ -750,14 +747,14 @@ describe('AuthService', () => {
               name: 'User',
               email: null,
             }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: () =>
             Promise.resolve([
               { email: 'primary@example.com', primary: true, verified: true },
             ]),
-        } as unknown as Response);
+        });
 
       const { service } = await createService();
       const req = makeRequest();

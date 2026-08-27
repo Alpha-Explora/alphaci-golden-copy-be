@@ -7,7 +7,7 @@ import {
   type DeploymentHistoryItem,
   type DeploymentHistoryQuery,
   type DeploymentProjectReference,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 import type {
   ProjectBranchPreview,
   ProjectPreviewsResponse,

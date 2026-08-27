@@ -5,6 +5,9 @@
   "baselineSha256": "d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a",
   "currentSha256": "d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a",
   "baselineKind": "post-consolidation-reference",
-  "preConsolidationBaselineAvailable": false,
-  "capturedAtCheckpoint": "5b703e9025208e686201460e489a07417f1bbba4"
+  "preConsolidationBaselineAvailable": true,
+  "preConsolidationBaselineFile": "route-inventory.pre-consolidation.txt",
+  "preConsolidationBaselineSha256": "d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a",
+  "preConsolidationSourceCommit": "b175938",
+  "capturedAtCheckpoint": "f9db7a80f1ebdce27d319121e5610f7f6e54d134"
 }

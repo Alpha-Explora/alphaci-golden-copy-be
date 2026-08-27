@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
+import type { WorkspacesPort } from '#kernel/ports/workspaces.port';
 import { WorkspaceAccessService } from './workspace-access.service';
 import {
   WorkspacesRepository,
@@ -19,7 +20,7 @@ export interface AddWorkspaceMemberInput {
 }
 
 @Injectable()
-export class WorkspacesService {
+export class WorkspacesService implements WorkspacesPort {
   constructor(
     private readonly repository: WorkspacesRepository,
     private readonly workspaceAccessService: WorkspaceAccessService,

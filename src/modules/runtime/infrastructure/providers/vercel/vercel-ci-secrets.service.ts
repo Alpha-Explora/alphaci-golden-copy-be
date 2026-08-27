@@ -7,7 +7,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
-import { GithubService } from '#modules/pipelines/index.js';
 import { EnvTokenEncryptionService } from '../../../application/encryption.service';
 import type {
   DeploymentTargetSummary,
@@ -18,6 +17,11 @@ import type {
   ProviderCiSecretsInstaller,
   ProviderCiSecretsInstallerInput,
 } from '../../../application/ports/provider-ci-secrets-installer.port';
+import {
+  GITHUB_ACTIONS_SECRETS,
+  type GithubActionsSecretsPort,
+} from '../../../application/ports/github-actions-secrets.port';
+import { Inject } from '@nestjs/common';
 
 export interface InstallVercelCiSecretsInput {
   githubAccessToken: string;
@@ -39,7 +43,8 @@ export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
   readonly provider = 'vercel';
 
   constructor(
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_ACTIONS_SECRETS)
+    private readonly githubService: GithubActionsSecretsPort,
     private readonly providerConnectionsRepository: ProviderConnectionsRepository,
     private readonly encryptionService: EnvTokenEncryptionService,
     private readonly configService: ConfigService,

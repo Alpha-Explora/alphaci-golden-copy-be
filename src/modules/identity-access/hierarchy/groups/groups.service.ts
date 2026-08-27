@@ -1,12 +1,16 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_ORGANIZATION_PORT,
+  type GithubOrganizationPort,
+} from '#kernel/ports/github.port';
 import { AssignmentsRepository } from '../assignments/assignments.repository';
 import { GithubSyncService } from '../github-sync/github-sync.service';
 import { HierarchyAccessService } from '../hierarchy-access.service';
@@ -27,7 +31,8 @@ export class GroupsService {
     private readonly accessService: HierarchyAccessService,
     private readonly assignmentsRepository: AssignmentsRepository,
     private readonly githubSyncService: GithubSyncService,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_ORGANIZATION_PORT)
+    private readonly githubService: GithubOrganizationPort,
     private readonly auditEventsService: AuditEventPublisher,
   ) {}
 

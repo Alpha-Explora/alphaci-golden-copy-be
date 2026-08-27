@@ -8,12 +8,6 @@
  * when a second module genuinely needs the thing.
  */
 
-// Provider URL conventions. Shared so that "where does this service answer?"
-// has exactly one answer in the backend — the target listing and the
-// deployment history both need it, and a provider changing its hostname
-// format should be a one-line edit.
-export { providerPublicUrl } from './core/provider-public-url';
-
 // Contracts: the shapes crossing this boundary. Which provider hosts a thing
 // is stamped on every deployment and preview payload the projects module
 // returns, so it is part of this module's public vocabulary.
@@ -31,6 +25,13 @@ export {
   DEFAULT_FRONTEND_PROVIDER_ID,
 } from './core/deployment-provider.defaults';
 export { DeploymentProviderRegistry } from './core/deployment-provider.registry';
+export {
+  DeploymentProviderPolicyRegistry,
+  type DeploymentProviderPolicy,
+  type DeploymentProviderManagedQuota,
+  type DeploymentProviderTargetPolicyInput,
+  type DeploymentProviderTargetPolicyResult,
+} from './core/deployment-provider.policy';
 export {
   buildDeploymentWorkflowFragment,
   WORKFLOW_FRAGMENTS,
@@ -82,6 +83,10 @@ export {
   type DeploymentEnvMetadataQuery,
   type DeploymentTargetDeletion,
 } from './core/deployment-provisioning.contract';
+export {
+  DEPLOYMENT_PROVISIONING_DEFAULTS,
+  type DeploymentProvisioningDefaultsPort,
+} from './core/deployment-provisioning.defaults';
 
 export type {
   ProjectDriftFinding,

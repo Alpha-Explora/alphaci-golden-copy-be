@@ -23,6 +23,25 @@ function moduleNameOf(relPath) {
   return match ? match[1] : null;
 }
 
+function crossContextImportKind(sourceRel, targetRel) {
+  if (sourceRel === 'src/app.module.ts' || sourceRel.endsWith('.module.ts')) {
+    return 'composition';
+  }
+
+  const target = targetRel.replace(/\.js$/, '');
+  if (
+    target.endsWith('/index.ts') ||
+    target.endsWith('/index') ||
+    target.includes('/contracts/') ||
+    target.endsWith('.contract.ts') ||
+    target.endsWith('.contract')
+  ) {
+    return 'contract';
+  }
+
+  return 'application';
+}
+
 function resolveImportTarget(sourceRel, importPath) {
   if (importPath.startsWith('#modules/')) {
     return path.posix.normalize(
@@ -63,6 +82,11 @@ function collectModuleMetrics(moduleName) {
   let forbiddenInfrastructureImports = 0;
   let crossModuleImports = 0;
   const crossContextPairs = new Set();
+  const crossContextImportsByKind = {
+    composition: 0,
+    contract: 0,
+    application: 0,
+  };
   let repositoryFilesInApplication = 0;
 
   // Layer metrics are intentionally application-focused, but boundary metrics
@@ -91,6 +115,9 @@ function collectModuleMetrics(moduleName) {
         if (targetModule && sourceModule && targetModule !== sourceModule) {
           crossModuleImports++;
           crossContextPairs.add(`${sourceModule}->${targetModule}`);
+          crossContextImportsByKind[
+            crossContextImportKind(rel, target)
+          ]++;
         }
       }
     }
@@ -132,6 +159,11 @@ function collectModuleMetrics(moduleName) {
     forbiddenInfrastructureImports,
     repositoryFilesInApplication,
     crossModuleImports,
+    compositionCrossContextImports: crossContextImportsByKind.composition,
+    contractCrossContextImports: crossContextImportsByKind.contract,
+    applicationCrossContextImports: crossContextImportsByKind.application,
+    actionableCrossContextImports:
+      crossContextImportsByKind.application,
     crossContextPairs: [...crossContextPairs].sort(),
     crossContextPairCount: crossContextPairs.size,
     deadInProcessAdapters: sourceFiles.filter((file) =>
@@ -162,6 +194,9 @@ const columns = [
   ['infra imports', 'infrastructureImports'],
   ['forbidden', 'forbiddenInfrastructureImports'],
   ['cross-module', 'crossModuleImports'],
+  ['composition', 'compositionCrossContextImports'],
+  ['contracts', 'contractCrossContextImports'],
+  ['actionable', 'actionableCrossContextImports'],
   ['cross-context pairs', 'crossContextPairCount'],
   ['dead adapters', 'deadInProcessAdapters'],
   ['tests', 'testFiles'],

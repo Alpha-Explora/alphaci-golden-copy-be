@@ -15,7 +15,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
-import type { FeedbackStatus } from '#modules/platform-ops/index.js';
+import type { FeedbackStatus } from '#kernel/ports/feedback.port';
 import { AdminService } from './admin.service';
 import { GrantRoleDto } from './dto/grant-role.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';

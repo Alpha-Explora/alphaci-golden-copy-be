@@ -1,6 +1,14 @@
-import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_ORGANIZATION_PORT,
+  type GithubOrganizationPort,
+} from '#kernel/ports/github.port';
 import {
   GithubTeamAccessProvider,
   type EnsureTeamResult,
@@ -32,7 +40,10 @@ const USER_AGENT = 'cicd-workflow-product';
 export class GithubTeamAccessLiveProvider extends GithubTeamAccessProvider {
   private readonly logger = new Logger(GithubTeamAccessLiveProvider.name);
 
-  constructor(private readonly githubService: GithubService) {
+  constructor(
+    @Inject(GITHUB_ORGANIZATION_PORT)
+    private readonly githubService: GithubOrganizationPort,
+  ) {
     super();
   }
 

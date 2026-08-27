@@ -21,15 +21,16 @@ source for several tasks below. Take its **mechanisms**, not its topology.
 `noUncheckedIndexedAccess`), PostgreSQL via `pg` + Supabase, Jest + ts-jest,
 dependency-cruiser.
 
-**Execution status (2026-08-27):** Tasks 0–10 and the review-closure slices are
+**Execution status (2026-08-28):** Tasks 0–10 and the review-closure slices are
 implemented on the named remediation trunk. The continuous regression safety
-net has current contract snapshots, a post-consolidation route reference with
-hashes, application-context and HTTP boot harnesses, and conditional Postgres
-integration coverage. A pre-consolidation contract/route baseline was not
-captured retroactively. Microservice extraction is intentionally outside this
+net has current contract snapshots, a recovered pre-consolidation route
+reference from `b175938` with hashes, application-context and real HTTP boot
+harnesses, and conditional Postgres integration coverage. The source commit
+did not contain a pre-consolidation contract snapshot, so that comparison
+remains unavailable. Microservice extraction is intentionally outside this
 plan and remains a future option documented in `docs/architecture/FUTURE_STATE.md`.
-Final verification and the rollback evidence record are completed before this
-plan is marked complete.
+Final verification and the rollback evidence record are maintained in
+`docs/architecture/REMEDIATION_EVIDENCE.md` before this plan is marked complete.
 
 ---
 
@@ -831,10 +832,10 @@ microservice or extraction task.
   retroactive equality with the old tree.
 
 - [x] **Route inventory.** Generate the full route table after consolidation
-  and store it as the post-consolidation reference. A pre-consolidation route
-  baseline was not captured retroactively, so historical equality cannot be
-  claimed; `github-webhook.controller.ts` remains covered by the current
-  inventory test.
+  and store it as the post-consolidation reference. The pre-consolidation route
+  baseline was recovered from source commit `b175938` and matches the current
+  145-route inventory byte-for-byte; `github-webhook.controller.ts` remains
+  covered by the current inventory test.
 
 - [x] **Boot smoke.** The architecture suite boots the full `AppModule`
   application context and a real HTTP/Express application. The no-database
@@ -847,12 +848,13 @@ microservice or extraction task.
   independence remains a review/process rule rather than something a local
   repository test can prove.
 
-**Status (2026-08-27):** current contract snapshots, the route reference and
-hash manifest, the full application-context boot, and the real HTTP boot
-harness are in the repository. The pre-consolidation route/contract baseline
-was unavailable, so the evidence record says exactly what is and is not
-proven. Rollback is evidenced procedurally by the checkpoint plus final normal
-commit; PR-level independence still requires the normal review process.
+**Status (2026-08-28):** current contract snapshots, the route reference and
+hash manifest, the recovered pre-consolidation route comparison, the full
+application-context boot, and the real HTTP boot harness are in the repository.
+The source commit did not contain a pre-consolidation contract snapshot, so
+that comparison remains unavailable. Rollback is evidenced procedurally by
+the checkpoint plus a normal revertible commit; PR-level independence still
+requires the normal review process.
 
 See `docs/architecture/REMEDIATION_EVIDENCE.md` for the executed commands,
 measured coupling, environment-dependent checks, and final commit evidence.

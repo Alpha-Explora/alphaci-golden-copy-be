@@ -15,6 +15,9 @@ describe('outbox scheduler wiring', () => {
     expect(renderBlueprint).toContain('type: cron');
     expect(renderBlueprint).toContain('name: alphaci-outbox-relay');
     expect(renderBlueprint).toContain('schedule: "*/1 * * * *"');
+    expect(renderBlueprint).toContain('key: OUTBOX_MAX_ATTEMPTS');
+    expect(renderBlueprint).toContain('key: OUTBOX_RETRY_DELAY_SECONDS');
+    expect(renderBlueprint).toContain('key: SUPABASE_DB_CA_CERT');
     expect(
       renderBlueprint.match(
         /dockerCommand:\s+node scripts\/process-outbox\.cjs/g,
@@ -27,6 +30,9 @@ describe('outbox scheduler wiring', () => {
     expect(dockerfile).not.toContain('CMD ["node", "dist/main"]');
     expect(runner).toContain('OutboxRelayService');
     expect(runner).toContain('processPendingOnce');
+    expect(runner).toContain('positiveInteger');
+    expect(runner).toContain('OUTBOX_BATCH_SIZE');
+    expect(runner).toContain('Math.min');
   });
 
   it('keeps legacy unowned topics out of the active producer and relay surface', () => {

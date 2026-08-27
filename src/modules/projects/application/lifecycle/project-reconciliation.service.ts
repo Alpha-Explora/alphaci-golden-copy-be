@@ -1,8 +1,10 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { GithubService } from '#modules/pipelines/index.js';
-import { AuditEventsService } from '#modules/platform-ops/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { ProjectsRepository } from '../../projects.repository';
 import type { ReconcileDeletedReposResult } from '../../projects.service.types';
@@ -20,9 +22,10 @@ export class ProjectReconciliationService {
 
   constructor(
     private readonly projectsRepository: ProjectsRepository,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     @Optional()
-    private readonly auditEventsService?: AuditEventsService,
+    private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventPublisher?: NotificationEventPublisher,
     @Optional()

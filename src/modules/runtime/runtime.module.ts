@@ -6,6 +6,7 @@ import { AuditModule } from '#modules/platform-ops/audit/audit.module.js';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
+import { GithubService } from '#modules/pipelines/index.js';
 import { NotificationsModule } from '#modules/platform-ops/notifications/notifications.module.js';
 import { SubscriptionModule } from '#modules/billing/subscription/subscription.module.js';
 import { UsageModule } from '#modules/billing/usage/usage.module.js';
@@ -36,6 +37,7 @@ import {
 } from './application/ports/provider-ci-secrets-installer.port';
 import { ProviderCiSecretsInstallerRegistry } from './infrastructure/providers/core/provider-ci-secrets.registry';
 import { ProjectDeploymentProvisioningService } from './application/project-deployment-provisioning.service';
+import { DeploymentProvisioningDefaultsService } from './application/deployment-provisioning-defaults.service';
 import { RenderCiSecretsService } from './infrastructure/providers/render/render-ci-secrets.service';
 import { RenderCostPolicyService } from './infrastructure/providers/render/render-cost-policy.service';
 import { ProviderConnectionsController } from './api/provider-connections.controller';
@@ -53,12 +55,24 @@ import { ProjectSyncFindingsRepository } from './infrastructure/repositories/pro
 import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-registry.port';
 import { RuntimeCoreModule } from './core/runtime-core.module';
 import { DEPLOYMENT_TARGET_DEFAULTS } from './core/deployment-provider.contract';
+import { DEPLOYMENT_PROVISIONING_DEFAULTS } from './core/deployment-provisioning.defaults';
+import { DeploymentProviderPolicyRegistry } from './core/deployment-provider.policy';
+import { RenderDeploymentPolicy } from './infrastructure/providers/render/render-deployment.policy';
+import { VercelDeploymentPolicy } from './infrastructure/providers/vercel/vercel-deployment.policy';
+import {
+  MANAGED_QUOTA_REGISTRAR,
+  type ManagedQuotaRegistrar,
+} from '#kernel/ports/usage-quota.port';
 import {
   WORKFLOW_FRAGMENTS,
   WorkflowFragmentRegistry,
   type WorkflowFragment,
 } from './core/workflow-fragment.contract';
 import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
+import {
+  GITHUB_ACTIONS_SECRETS,
+  type GithubActionsSecretsPort,
+} from './application/ports/github-actions-secrets.port';
 
 @Module({
   imports: [
@@ -102,8 +116,40 @@ import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
     ProviderConnectionsService,
     DeploymentTargetsService,
     DeploymentStrategyResolver,
+    {
+      provide: DeploymentProviderPolicyRegistry,
+      useFactory: (
+        renderPolicy: RenderDeploymentPolicy,
+        vercelPolicy: VercelDeploymentPolicy,
+        usageQuotaRegistrar: ManagedQuotaRegistrar,
+      ) => {
+        const policies = [renderPolicy, vercelPolicy];
+        for (const policy of policies) {
+          if (policy.managedQuota) {
+            usageQuotaRegistrar.registerManagedQuota({
+              providerId: policy.providerId,
+              ...policy.managedQuota,
+            });
+          }
+        }
+        return new DeploymentProviderPolicyRegistry(policies);
+      },
+      inject: [
+        RenderDeploymentPolicy,
+        VercelDeploymentPolicy,
+        MANAGED_QUOTA_REGISTRAR,
+      ],
+    },
     EnvVarsService,
     EnvTokenEncryptionService,
+    {
+      provide: GITHUB_ACTIONS_SECRETS,
+      inject: [GithubService],
+      useFactory: (githubService: GithubService): GithubActionsSecretsPort => ({
+        setActionsSecretStrict: (...args) =>
+          githubService.setActionsSecretStrict(...args),
+      }),
+    },
     ProviderClientRegistry,
     {
       provide: PROVIDER_CLIENT_REGISTRY,
@@ -139,12 +185,16 @@ import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
       useExisting: ProjectSyncFindingsRepository,
     },
     ProjectDeploymentProvisioningService,
+    DeploymentProvisioningDefaultsService,
+    {
+      provide: DEPLOYMENT_PROVISIONING_DEFAULTS,
+      useExisting: DeploymentProvisioningDefaultsService,
+    },
     {
       provide: DEPLOYMENT_PROVISIONING_FACADE,
       useExisting: ProjectDeploymentProvisioningService,
     },
     RenderCiSecretsService,
-    RenderCostPolicyService,
     {
       provide: DEPLOYMENT_TARGET_DEFAULTS,
       useExisting: RenderCostPolicyService,

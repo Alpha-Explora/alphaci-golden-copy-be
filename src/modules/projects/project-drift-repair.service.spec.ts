@@ -74,8 +74,8 @@ describe('ProjectDriftRepairService', () => {
     return new ProjectDriftRepairService(
       projectsRepository as never,
       findingsRepository as never,
-      ciService as never,
-      deploymentTargetsRepository as never,
+      ciService,
+      deploymentTargetsRepository,
       projectWorkflowsService as never,
       configService as never,
       auditEventsService as never,

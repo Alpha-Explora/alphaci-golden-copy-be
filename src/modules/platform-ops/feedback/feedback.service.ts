@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
 import { FeedbackRepository } from './feedback.repository';
+import type { FeedbackPort } from '#kernel/ports/feedback.port';
 import type {
   FeedbackRecord,
   FeedbackStatus,
@@ -9,7 +10,7 @@ import type {
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 
 @Injectable()
-export class FeedbackService {
+export class FeedbackService implements FeedbackPort {
   constructor(private readonly repository: FeedbackRepository) {}
 
   async submit(

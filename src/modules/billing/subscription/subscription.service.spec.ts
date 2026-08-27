@@ -94,7 +94,7 @@ describe('SubscriptionService', () => {
 
   beforeEach(() => {
     fetchMock = jest.fn();
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
   });
 
   afterEach(() => {
@@ -182,9 +182,7 @@ describe('SubscriptionService', () => {
       const result = await service.cancelForUser(fakeUser);
 
       expect(result.plan).toBe('free');
-      expect(subsRepo.cancelCurrent).toHaveBeenCalledWith(
-        'user-1',
-      );
+      expect(subsRepo.cancelCurrent).toHaveBeenCalledWith('user-1');
     });
 
     it('cancels when mock activation is enabled', async () => {
@@ -193,9 +191,7 @@ describe('SubscriptionService', () => {
       });
       await service.cancelForUser(fakeUser);
 
-      expect(subsRepo.cancelCurrent).toHaveBeenCalledWith(
-        'user-1',
-      );
+      expect(subsRepo.cancelCurrent).toHaveBeenCalledWith('user-1');
     });
   });
 });

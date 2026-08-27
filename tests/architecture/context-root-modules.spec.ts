@@ -22,7 +22,8 @@ Object.assign(process.env, {
 });
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { AppModule } = require('../../src/app.module.js') as typeof import('../../src/app.module.js');
+const { AppModule } =
+  require('../../src/app.module.js') as typeof import('../../src/app.module.js');
 
 describe('application context roots', () => {
   it('composes the six bounded contexts through their root modules', () => {

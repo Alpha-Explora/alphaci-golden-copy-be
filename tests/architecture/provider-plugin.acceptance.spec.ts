@@ -1,4 +1,9 @@
 import { DeploymentProviderRegistry } from '../../src/modules/runtime/core/deployment-provider.registry';
+import { DeploymentProviderCatalogService } from '../../src/modules/runtime/core/deployment-provider-catalog.service';
+import {
+  DeploymentProviderPolicyRegistry,
+  type DeploymentProviderPolicy,
+} from '../../src/modules/runtime/core/deployment-provider.policy';
 import { ProviderCiSecretsInstallerRegistry } from '../../src/modules/runtime/infrastructure/providers/core/provider-ci-secrets.registry';
 import { ProviderClientRegistry } from '../../src/modules/runtime/infrastructure/providers/core/provider-client.registry';
 import { WorkflowFragmentRegistry } from '../../src/modules/runtime/core/workflow-fragment.contract';
@@ -16,6 +21,18 @@ import { buildStagedWorkflowBundle } from '../../src/modules/projects/applicatio
  */
 describe('provider plugin composition', () => {
   it('registers metadata, runtime I/O, workflow, and CI contributions by id', async () => {
+    const policy: DeploymentProviderPolicy = {
+      providerId: 'fake-cloud',
+      resolveStrategy: () => 'fake_native',
+      resolveTarget: () => ({
+        storage: {},
+        providerInput: {},
+        providerMetadata: { policy: 'fake-cloud' },
+      }),
+      resolveConnectionScope: () => ({}),
+      resolveOperationInput: () => ({}),
+      resolveManagedToken: () => 'fake-token',
+    };
     const provider: DeploymentProvider = {
       id: 'fake-cloud',
       label: 'Fake Cloud',
@@ -34,6 +51,7 @@ describe('provider plugin composition', () => {
       },
       configSchema: { fields: [] },
       credentialSchema: { fields: [] },
+      policy,
       isEnabled: () => ({ enabled: true }),
       validateConfig: () => undefined,
     };
@@ -66,12 +84,24 @@ describe('provider plugin composition', () => {
 
     const metadata = new DeploymentProviderRegistry<DeploymentProvider>();
     const clients = new ProviderClientRegistry([client]);
+    const policies = new DeploymentProviderPolicyRegistry([policy]);
     const workflows = new WorkflowFragmentRegistry([fragment]);
     const ciInstallers = new ProviderCiSecretsInstallerRegistry([installer]);
 
     metadata.register(provider);
 
+    const catalog = new DeploymentProviderCatalogService(metadata);
+
     expect(metadata.get('fake-cloud')).toBe(provider);
+    expect(catalog.list()).toEqual([
+      {
+        id: 'fake-cloud',
+        enabled: true,
+        envProvisioning: true,
+        previewDeployments: false,
+      },
+    ]);
+    expect(policies.get('fake-cloud')).toBe(policy);
     expect(clients.getClient('fake-cloud')).toBe(client);
     expect(workflows.get('fake-cloud')).toBe(fragment);
     expect(

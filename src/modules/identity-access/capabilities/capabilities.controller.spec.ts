@@ -1,7 +1,8 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
-import { DeploymentProviderRegistry } from '#modules/runtime/index.js';
+import type { DeploymentProviderCatalogEntry } from '#kernel/ports/deployment-provider-catalog.port';
+import { DEPLOYMENT_PROVIDER_CATALOG } from '#kernel/ports/deployment-provider-catalog.port';
 import { CapabilitiesController } from './capabilities.controller';
 
 const makeConfig = (
@@ -69,24 +70,27 @@ const makeConfig = (
     }),
   }) as unknown as ConfigService;
 
-const makeProviderRegistry = () => {
-  const registry = new DeploymentProviderRegistry<{
-    id: string;
-    capabilities: {
-      envProvisioning: boolean;
-      previewDeployments: boolean;
-    };
-  }>();
-  registry.register({
-    id: 'render',
-    capabilities: { envProvisioning: true, previewDeployments: false },
-  });
-  registry.register({
-    id: 'vercel',
-    capabilities: { envProvisioning: true, previewDeployments: true },
-  });
-  return registry;
-};
+const makeProviderCatalog = () => ({
+  list: (): readonly DeploymentProviderCatalogEntry[] => [
+    {
+      id: 'render',
+      enabled: true,
+      envProvisioning: true,
+      previewDeployments: false,
+    },
+    {
+      id: 'vercel',
+      enabled: true,
+      envProvisioning: true,
+      previewDeployments: true,
+    },
+  ],
+});
+
+const providerCatalog = () => ({
+  provide: DEPLOYMENT_PROVIDER_CATALOG,
+  useValue: makeProviderCatalog(),
+});
 
 describe('CapabilitiesController', () => {
   it('reports env provisioning enabled capabilities', async () => {
@@ -95,8 +99,7 @@ describe('CapabilitiesController', () => {
       providers: [
         { provide: ConfigService, useValue: makeConfig(true) },
         {
-          provide: DeploymentProviderRegistry,
-          useValue: makeProviderRegistry(),
+          ...providerCatalog(),
         },
       ],
     }).compile();
@@ -177,8 +180,7 @@ describe('CapabilitiesController', () => {
           useValue: makeConfig(true, 'flowci_managed'),
         },
         {
-          provide: DeploymentProviderRegistry,
-          useValue: makeProviderRegistry(),
+          ...providerCatalog(),
         },
       ],
     }).compile();
@@ -196,8 +198,7 @@ describe('CapabilitiesController', () => {
       providers: [
         { provide: ConfigService, useValue: makeConfig(false) },
         {
-          provide: DeploymentProviderRegistry,
-          useValue: makeProviderRegistry(),
+          ...providerCatalog(),
         },
       ],
     }).compile();
@@ -299,8 +300,7 @@ describe('CapabilitiesController', () => {
       providers: [
         { provide: ConfigService, useValue: configService },
         {
-          provide: DeploymentProviderRegistry,
-          useValue: makeProviderRegistry(),
+          ...providerCatalog(),
         },
       ],
     }).compile();

@@ -1,4 +1,8 @@
 import type { RenderServiceType } from './deployment-target.types';
+import type { DeploymentProviderPolicy } from './deployment-provider.policy';
+import type { DeploymentProviderId } from './deployment-provider-id';
+
+export type { DeploymentProviderId } from './deployment-provider-id';
 
 export interface ProviderCapabilities {
   envVars: boolean;
@@ -88,15 +92,15 @@ export const DEPLOYMENT_TARGET_DEFAULTS = Symbol('DeploymentTargetDefaults');
  * owns its id and registers it at runtime; adding one must not require editing
  * this contract or a central DTO union.
  */
-export type DeploymentProviderId = string;
-
 export interface DeploymentProvider {
-  readonly id: string;
+  readonly id: DeploymentProviderId;
   readonly label: string;
   readonly supportedSlots: readonly string[];
   readonly capabilities: ProviderCapabilities;
   readonly configSchema: ProviderFormSchema;
   readonly credentialSchema: ProviderFormSchema;
+  /** Provider-owned strategy/default/scope policy; absent for non-provisioning providers. */
+  readonly policy?: DeploymentProviderPolicy;
   /** Optional until a provider exposes stable human-facing console links. */
   readonly presentation?: DeploymentProviderPresentation;
   /** Optional provider-owned wording for an unsupported deployment slot. */

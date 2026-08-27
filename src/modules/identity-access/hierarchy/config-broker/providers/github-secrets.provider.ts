@@ -1,6 +1,9 @@
-import { BadGatewayException, Injectable } from '@nestjs/common';
+import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
 
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 
 const GITHUB_API = 'https://api.github.com';
 const USER_AGENT = 'cicd-workflow-product';
@@ -21,7 +24,10 @@ const USER_AGENT = 'cicd-workflow-product';
  */
 @Injectable()
 export class GithubSecretsProvider {
-  constructor(private readonly githubService: GithubService) {}
+  constructor(
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
+  ) {}
 
   async resolveInstallationToken(userId: string): Promise<string> {
     const token =

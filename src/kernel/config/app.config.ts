@@ -299,8 +299,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
       mockEnabled: env['SUBSCRIPTION_MOCK_ENABLED'] === 'true',
       defaultPlan:
         (env['SUBSCRIPTION_MOCK_DEFAULT_PLAN'] as
-          | SubscriptionPlan
-          | undefined) ?? 'free',
+          SubscriptionPlan | undefined) ?? 'free',
       seededPlans,
       proMonthlyPricePhp: Number(env['PRO_MONTHLY_PRICE_PHP'] ?? 300),
     },

@@ -133,6 +133,10 @@ references are explicit transition entries in
 - Cross-context code uses public barrels, `contracts/`, or focused ports.
   Dependency-cruiser is the authoritative import graph and must remain at zero
   violations.
+- The focused kernel ports include GitHub/CI, workspace/project-link,
+  quota/subscription, workflow generation, audit/feedback, provider catalog,
+  and deployment-runtime seams. They are in-process dependency-inversion
+  contracts, not additional modules or services.
 - The static metrics report counts aliased and relative production imports. It
   is descriptive, not a proof of extractability. The latest remediation
   measurement is recorded in `docs/architecture/REMEDIATION_EVIDENCE.md`.

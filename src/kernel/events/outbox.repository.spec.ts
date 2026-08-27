@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 import { OutboxRepository } from './outbox.repository';
 
 describe('OutboxRepository.publishInTransaction', () => {
@@ -54,6 +56,31 @@ describe('OutboxRepository.publishInTransaction', () => {
       }),
     ).rejects.toThrow("Unsupported outbox topic 'workflow.generated'");
     expect(client.query).not.toHaveBeenCalled();
+  });
+
+  it('redacts bearer credentials when a best-effort write fails', async () => {
+    const warning = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    const repository = new OutboxRepository({
+      query: jest
+        .fn()
+        .mockRejectedValue(new Error('upstream rejected Bearer secret-token')),
+    } as never);
+
+    await expect(
+      repository.publishBestEffort({
+        topic: 'platform.audit.recorded',
+        aggregateType: 'audit_event',
+        aggregateId: 'project-1',
+        payload: {},
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(warning).toHaveBeenCalledWith(
+      'Outbox write skipped: upstream rejected Bearer [redacted]',
+    );
+    warning.mockRestore();
   });
 });
 
@@ -186,11 +213,9 @@ describe('OutboxRepository.processPending', () => {
     const repository = new OutboxRepository(databaseService as never);
 
     await expect(
-      repository.processPending(
-        jest.fn().mockResolvedValue(undefined),
-        10,
-        ['platform.audit.recorded'],
-      ),
+      repository.processPending(jest.fn().mockResolvedValue(undefined), 10, [
+        'platform.audit.recorded',
+      ]),
     ).resolves.toBe(0);
 
     expect(client.query).toHaveBeenNthCalledWith(
@@ -238,8 +263,176 @@ describe('OutboxRepository.processPending', () => {
 
     expect(client.query).toHaveBeenNthCalledWith(
       3,
-      expect.stringContaining('attempts = attempts + 1'),
-      ['event-1'],
+      expect.stringContaining('attempts = $2'),
+      ['event-1', 3, 60, 'temporary downstream failure'],
+    );
+    expect(client.query.mock.calls[2][0]).toContain('last_error = $4');
+  });
+
+  it('quarantines a row after the configured attempts and records the failure', async () => {
+    const client = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ locked: true }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'event-1',
+              topic: 'platform.audit.recorded',
+              aggregate_type: 'audit_event',
+              aggregate_id: 'project-1',
+              payload: {},
+              created_at: '2026-08-27T00:00:00.000Z',
+              attempts: 4,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ id: 'event-1' }] })
+        .mockResolvedValueOnce({ rows: [{ unlocked: true }] }),
+    };
+    const databaseService = {
+      withClient: jest.fn((fn: (value: typeof client) => Promise<number>) =>
+        fn(client),
+      ),
+    };
+    const repository = new OutboxRepository(databaseService as never);
+
+    await expect(
+      repository.processPending(
+        jest.fn().mockRejectedValue(new Error('terminal downstream failure')),
+        10,
+        ['platform.audit.recorded'],
+        { maxAttempts: 5 },
+      ),
+    ).resolves.toBe(0);
+
+    expect(client.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("status = 'quarantined'"),
+      ['event-1', 5, 'terminal downstream failure'],
+    );
+    expect(client.query.mock.calls[2][0]).toContain('last_error = $3');
+    expect(client.query.mock.calls[2][0]).toContain('quarantined_at = NOW()');
+    expect(client.query.mock.calls[2][0]).toContain('available_at = NULL');
+  });
+
+  it('propagates retry-state persistence failures instead of reporting a successful run', async () => {
+    const retryError = new Error('retry state database unavailable');
+    const client = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ locked: true }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'event-1',
+              topic: 'platform.audit.recorded',
+              aggregate_type: 'audit_event',
+              aggregate_id: 'project-1',
+              payload: {},
+              created_at: '2026-08-27T00:00:00.000Z',
+              attempts: 1,
+            },
+          ],
+        })
+        .mockRejectedValueOnce(retryError)
+        .mockResolvedValueOnce({ rows: [{ unlocked: true }] }),
+    };
+    const databaseService = {
+      withClient: jest.fn((fn: (value: typeof client) => Promise<number>) =>
+        fn(client),
+      ),
+    };
+    const repository = new OutboxRepository(databaseService as never);
+
+    await expect(
+      repository.processPending(
+        jest.fn().mockRejectedValue(new Error('temporary downstream failure')),
+        10,
+        ['platform.audit.recorded'],
+      ),
+    ).rejects.toThrow('retry state database unavailable');
+    expect(client.query).toHaveBeenNthCalledWith(
+      4,
+      'SELECT pg_advisory_unlock(hashtext($1))',
+      ['alphaci_platform_outbox_relay'],
     );
   });
+
+  it('propagates quarantine persistence failures instead of hiding a terminal handler failure', async () => {
+    const quarantineError = new Error('quarantine state database unavailable');
+    const client = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ locked: true }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'event-1',
+              topic: 'platform.audit.recorded',
+              aggregate_type: 'audit_event',
+              aggregate_id: 'project-1',
+              payload: {},
+              created_at: '2026-08-27T00:00:00.000Z',
+              attempts: 4,
+            },
+          ],
+        })
+        .mockRejectedValueOnce(quarantineError)
+        .mockResolvedValueOnce({ rows: [{ unlocked: true }] }),
+    };
+    const databaseService = {
+      withClient: jest.fn((fn: (value: typeof client) => Promise<number>) =>
+        fn(client),
+      ),
+    };
+    const repository = new OutboxRepository(databaseService as never);
+
+    await expect(
+      repository.processPending(
+        jest.fn().mockRejectedValue(new Error('terminal downstream failure')),
+        10,
+        ['platform.audit.recorded'],
+        { maxAttempts: 5 },
+      ),
+    ).rejects.toThrow('quarantine state database unavailable');
+    expect(client.query).toHaveBeenNthCalledWith(
+      4,
+      'SELECT pg_advisory_unlock(hashtext($1))',
+      ['alphaci_platform_outbox_relay'],
+    );
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    'falls back to the bounded default batch size for invalid limit %s',
+    async (limit) => {
+      const client = {
+        query: jest
+          .fn()
+          .mockResolvedValueOnce({ rows: [{ locked: true }] })
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [{ unlocked: true }] }),
+      };
+      const databaseService = {
+        withClient: jest.fn((fn: (value: typeof client) => Promise<number>) =>
+          fn(client),
+        ),
+      };
+      const repository = new OutboxRepository(databaseService as never);
+
+      await expect(
+        repository.processPending(
+          jest.fn().mockResolvedValue(undefined),
+          limit,
+          ['platform.audit.recorded'],
+        ),
+      ).resolves.toBe(0);
+
+      expect(client.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('LIMIT $1'),
+        [50, ['platform.audit.recorded']],
+      );
+    },
+  );
 });

@@ -1,4 +1,8 @@
 import { ProjectDeploymentProvisioningService } from './project-deployment-provisioning.service';
+import { DeploymentProviderPolicyRegistry } from '../core/deployment-provider.policy';
+import { RenderDeploymentPolicy } from '../infrastructure/providers/render/render-deployment.policy';
+import { VercelDeploymentPolicy } from '../infrastructure/providers/vercel/vercel-deployment.policy';
+import type { RenderCostPolicyService } from '../infrastructure/providers/render/render-cost-policy.service';
 
 describe('ProjectDeploymentProvisioningService', () => {
   const deploymentTargetsService = {
@@ -21,6 +25,10 @@ describe('ProjectDeploymentProvisioningService', () => {
       provider === 'vercel' ? vercelCiSecretsService : undefined,
     ),
   };
+  const providerPolicyRegistry = new DeploymentProviderPolicyRegistry([
+    new RenderDeploymentPolicy({} as RenderCostPolicyService),
+    new VercelDeploymentPolicy(),
+  ]);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -49,6 +57,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       deploymentTargetsService as never,
       envVarsService as never,
       ciSecretsInstallerRegistry as never,
+      providerPolicyRegistry,
     );
 
     const result = await service.provisionForProject({
@@ -110,6 +119,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       deploymentTargetsService as never,
       envVarsService as never,
       ciSecretsInstallerRegistry as never,
+      providerPolicyRegistry,
     );
 
     await service.provisionForProject({
@@ -194,6 +204,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       deploymentTargetsService as never,
       envVarsService as never,
       ciSecretsInstallerRegistry as never,
+      providerPolicyRegistry,
     );
 
     await service.provisionForProject({
@@ -285,6 +296,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       deploymentTargetsService as never,
       envVarsService as never,
       ciSecretsInstallerRegistry as never,
+      providerPolicyRegistry,
     );
 
     const result = await service.provisionForProject({
@@ -345,6 +357,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       deploymentTargetsService as never,
       envVarsService as never,
       ciSecretsInstallerRegistry as never,
+      providerPolicyRegistry,
     );
 
     const result = await service.provisionForProject({
@@ -473,6 +486,7 @@ describe('ProjectDeploymentProvisioningService', () => {
         deploymentTargetsService as never,
         envVarsService as never,
         ciSecretsInstallerRegistry as never,
+        providerPolicyRegistry,
       );
 
       await service.provisionForProject({
@@ -559,6 +573,7 @@ describe('ProjectDeploymentProvisioningService', () => {
         deploymentTargetsService as never,
         envVarsService as never,
         ciSecretsInstallerRegistry as never,
+        providerPolicyRegistry,
       );
 
       await service.provisionForProject({
@@ -615,6 +630,7 @@ describe('ProjectDeploymentProvisioningService', () => {
         deploymentTargetsService as never,
         envVarsService as never,
         ciSecretsInstallerRegistry as never,
+        providerPolicyRegistry,
       );
 
       const backendTarget = {
@@ -703,6 +719,7 @@ describe('ProjectDeploymentProvisioningService', () => {
         deploymentTargetsService as never,
         envVarsService as never,
         ciSecretsInstallerRegistry as never,
+        providerPolicyRegistry,
       );
 
       await service.crossLinkServiceUrls({

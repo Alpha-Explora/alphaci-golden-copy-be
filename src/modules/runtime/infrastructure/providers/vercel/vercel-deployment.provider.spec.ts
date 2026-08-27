@@ -1,5 +1,8 @@
 import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
+import type { DeploymentProviderPolicy } from '../../../core/deployment-provider.policy';
 import { VercelDeploymentProvider } from './vercel-deployment.provider';
+
+const testPolicy = {} as DeploymentProviderPolicy;
 
 describe('VercelDeploymentProvider', () => {
   it('registers provider-owned metadata and renders team-aware links', () => {
@@ -12,6 +15,7 @@ describe('VercelDeploymentProvider', () => {
         previewDeployments: true,
       },
       registry,
+      testPolicy,
     );
 
     provider.onModuleInit();
@@ -45,6 +49,7 @@ describe('VercelDeploymentProvider', () => {
         supportedSlots: ['frontend'],
       },
       new DeploymentProviderRegistry(),
+      testPolicy,
     );
     const validateTeamAccess = jest.fn().mockResolvedValue({
       id: 'team-1',

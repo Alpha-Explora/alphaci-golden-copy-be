@@ -9,7 +9,7 @@ import {
   type DeploymentDriftQuery,
   type DeploymentHistoryQuery,
   type DeploymentProjectReference,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 import { ProjectsController } from './projects.controller.js';
 import { ProjectCiRunsService } from './project-ci-runs.service.js';
 import { ProjectPreviewsService } from './project-previews.service.js';

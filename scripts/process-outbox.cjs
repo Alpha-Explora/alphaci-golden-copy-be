@@ -5,7 +5,7 @@ const {
 } = require('../dist/src/modules/platform-ops/application/outbox-relay.service.js');
 
 async function main() {
-  const limit = Number(process.env.OUTBOX_BATCH_SIZE || 50);
+  const limit = positiveInteger(process.env.OUTBOX_BATCH_SIZE, 50, 500);
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn'],
   });
@@ -17,6 +17,13 @@ async function main() {
   } finally {
     await app.close();
   }
+}
+
+function positiveInteger(raw, fallback, maximum) {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0
+    ? Math.min(Math.floor(value), maximum)
+    : fallback;
 }
 
 main().catch((error) => {

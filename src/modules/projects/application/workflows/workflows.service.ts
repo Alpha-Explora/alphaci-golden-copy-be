@@ -11,7 +11,7 @@ import {
 import { WorkflowHistoryRepository } from './infrastructure/workflow-history.repository';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 import { buildStagedWorkflowBundle } from './staged-workflow.builder';
-import { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 
 type Enhancement =
   | 'strictProductionApproval'

@@ -391,8 +391,7 @@ export class VercelEnvClient implements DeploymentProvider {
       level?: string;
     }
     const logsData = (await logsResponse.json()) as
-      | VercelRuntimeLogEntry[]
-      | { logs?: VercelRuntimeLogEntry[] };
+      VercelRuntimeLogEntry[] | { logs?: VercelRuntimeLogEntry[] };
     const logsList = Array.isArray(logsData) ? logsData : (logsData.logs ?? []);
 
     return logsList.map((l) => ({

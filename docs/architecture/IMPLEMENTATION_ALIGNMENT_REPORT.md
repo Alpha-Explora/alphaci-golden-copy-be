@@ -1,81 +1,102 @@
 # Modular-monolith implementation alignment report
 
-**Date:** 2026-08-27
+**Date:** 2026-08-28
 **Trunk:** `codex/architecture-remediation-trunk`
-**Scope:** the six-context consolidation and the remediation items identified
-by the follow-up architecture review.
+**Scope:** the six-context consolidation and the follow-up remediation items
+identified by the architecture review.
 
 ## Verdict
 
-The consolidation is structurally aligned with the agreed plan. The current
-trunk has six bounded-context directories, context-root Nest modules, generic
-provider registries, explicit schema ownership, and a single scheduled outbox
-relay. This report no longer treats directory count as proof of extraction
-readiness: the remaining synchronous import volume and compatibility seams are
-measured and documented.
+The current trunk is aligned with the approved progressive hexagonal-clean
+modular-monolith target. It has six bounded-context directories, six context
+root Nest modules, explicit kernel ports, provider registries/policies, one
+scheduled outbox relay, schema ownership checks, and behavior-preserving
+Projects use-case slices. The remaining limitations are external evidence
+requirements or deliberate compatibility seams; none is a new known P0/P1
+implementation defect.
+
+This is not a claim of microservice readiness. The application remains one
+NestJS deployable, and extraction remains future-only.
 
 ## Alignment matrix
 
 | Plan area | Current state | Evidence |
 |---|---|---|
 | Six bounded contexts | complete | `src/modules/{identity-access,projects,pipelines,runtime,billing,platform-ops}` and six root modules |
-| Kernel boundary | complete | `src/kernel/` contains technical DB/auth/HTTP/events only; dependency-cruiser checks kernel imports |
-| Cross-context contracts | implemented with residual seams | context barrels, `contracts/`, and focused port tokens; metrics remain descriptive rather than claiming zero coupling |
-| Schema ownership | gate implemented | `scripts/check-schema-ownership.cjs` scans migrations and inline SQL; per-file transition allowances are explicit |
-| Outbox | corrected | active table uses `published_at`; one compiled runner and one dispatcher; topic allow-list and advisory lock |
-| Context-root composition | complete | `AppModule` imports the six roots, with feature composition behind them |
-| Projects decomposition | materially improved | `ProjectsService` is a compatibility facade; provisioning, dashboard, workflow, lifecycle, and reconciliation implementations are focused services |
-| Provider axis | generic seams complete; compatibility debt documented | provider metadata adapters, descriptor-driven slot policy, workflow fragments/target expansion, clients, and CI installers are registry-driven; provider implementations remain inside Runtime |
-| Regression evidence | current reference captured | HTTP boot, route reference, provider acceptance, post-change snapshots, architecture gates |
+| Kernel boundary | complete | `src/kernel/` contains technical DB/auth/HTTP/config/events and serialisable ports; it does not import contexts |
+| Cross-context contracts | complete for actionable edges | public context indexes and focused ports; latest 32 cross-context imports are composition-only, with zero contract/application/actionable edges |
+| Schema ownership | enforced | `scripts/check-schema-ownership.cjs` scans migrations and inline SQL with exact transition allowances |
+| Outbox | corrected and operationally wired | active `published_at` acknowledgement, topic registry, retry/quarantine state, advisory lock, one Render cron and one dispatcher |
+| Context-root composition | complete | `AppModule` imports the six roots; feature modules are composed behind them |
+| Projects decomposition | materially complete | compatibility facade plus provisioning slices for single-repository, microservices-shaped, and multi-repository project flows, shared mechanics, dashboard, workflows, lifecycle, and reconciliation |
+| Provider axis | generic plugin seam complete | Runtime-owned policies, metadata/client/workflow/CI registries, provider catalog port, open provider ids, and fake-provider acceptance coverage |
+| Regression evidence | current and route-compatible | real HTTP boot, 145-route pre/current equality, current contract snapshots, provider acceptance, architecture gates |
+| Build/CI hygiene | resolved locally and configured in CI | direct TypeScript build avoids the reproducible Nest CLI alias transformer failure; full ESLint is clean and CI runs the same gates |
+| Database/operations | code and integration evidence prepared; external execution pending | conditional live Postgres test, migration dry-run, Render/Docker scheduler wiring, and honest evidence limits |
 | Microservice extraction | future-only; outside current plan | no independent scaling, release cadence, or regulatory trigger has been evidenced |
+
+## Current measurements
+
+- 401 TypeScript source files, including 98 test files; 303 production files.
+- 56 application files; 32 cross-context imports, all classified as Nest
+  composition; zero contract/application/actionable edges; 15 directional
+  context pairs.
+- Dependency-cruiser: 382 modules, 1,544 dependencies cruised, zero
+  violations.
+- 145 routes. The recovered pre-consolidation inventory from `b175938` and the
+  current inventory have identical SHA-256
+  `d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a`.
+- 64 migrations are discovered in globally sorted order by the dry-run.
+- Jest: 130 passed suites plus one intentionally skipped suite; 1,247 passed
+  tests plus two intentionally skipped tests; two snapshots passed.
+- Full ESLint: 483 files, zero errors and zero warnings.
 
 ## Important corrections made after the review
 
-1. The outbox acknowledgement now updates `platform.outbox_events.published_at`
-   (the active migration column), never the historical `processed_at` name.
-2. The Kafka-era runner and unsupported producers are gone. The only runner is
-   `scripts/process-outbox.cjs`, wired as the `alphaci-outbox-relay` Render cron.
-3. Relays select only topics registered by their dispatcher. Legacy pending
-   topics are quarantined by an explicit migration rather than being silently
-   acknowledged by a new handler.
+1. Outbox acknowledgement updates the active
+   `platform.outbox_events.published_at` column, never historical
+   `processed_at`.
+2. The Kafka-era runner was removed. `scripts/process-outbox.cjs` is the only
+   runner, and Render contains one scheduled owner.
+3. Relays select only topics registered by the dispatcher. Legacy unowned
+   pending topics are quarantined by an explicit migration.
 4. Critical hierarchy assignment grant/revoke state transitions write their
-   outbox row on the same transaction. Audit and notification publishers are
-   explicitly best-effort post-commit observability seams; the documentation no
-   longer promises stronger atomicity for them.
-5. The architecture metric scanner counts aliased, relative, ESM, and CommonJS
-   production imports. Dependency-cruiser remains the authoritative graph.
-6. The schema gate applies allowances to exact schema/table references in exact
-   files; it does not exempt an entire migration file by filename.
-7. `AppModule` no longer wires feature modules one-by-one. The six context roots
-   own that composition graph.
-8. Provider workflow fragments are contributed by provider composition and
-   selected by a generic registry. A fake-provider acceptance test exercises
-   metadata, runtime client, workflow, and CI installer registration together.
+   outbox row in the same transaction. Audit and notification publishers are
+   explicitly best-effort post-commit observability seams.
+5. Metrics resolve aliased, relative, ESM, and CommonJS imports. The schema
+   gate resolves DDL references and scans inline SQL without broad filename
+   exemptions.
+6. `AppModule` no longer wires feature modules one by one; the six context
+   roots own that composition graph.
+7. Provider-specific strategy, target, quota, URL, workflow, and fallback-log
+   decisions moved behind provider-owned policy/registry seams. Historical
+   Render/Vercel API and storage fields remain inside Runtime for compatibility.
+   Projects intentionally retains the legacy `deploy_render` / `deploy_vercel`
+   CI stage labels and the provider-host URL allowlist; these are compatibility
+   and security surfaces, not provider orchestration.
+8. The Projects provisioning hotspot was split along actual repository-shape
+   use cases without changing its public constructor or setup ordering.
+9. A real Express boot test and a recovered pre-consolidation route inventory
+   close the prior weak boot/route evidence.
 
-## Known residual limitations
+## Known evidence limits
 
-- Runtime still contains provider-specific compatibility logic for historical
-  Render/Vercel storage columns, token configuration, legacy target/strategy
-  identifiers, and compatibility DTO fields. Slot policy and workflow target
-  expansion are now provider-owned/generic. This is within the Runtime ownership
-  boundary and preserves existing API/database behavior; it is not yet a claim
-  that a new provider is zero-edit outside its composition binding.
-- The static cross-context metric is not an extraction proof. It reports the
-  current alias-aware count so that future reductions are visible; see
-  `docs/architecture/REMEDIATION_EVIDENCE.md` for the last measurement.
-- The stored route reference and snapshots are post-consolidation references.
-  A pre-consolidation route/contract snapshot was not captured retroactively,
-  so route equality before the refactor cannot be proven from this repository.
-- Database integration tests are conditional on `SUPABASE_DB_URL`; local runs
-  without that secret validate SQL strings and migration dry-run ordering but do
-  not prove connectivity to the live database.
-- The rollback proof is commit/revert discipline. No destructive reset or
-  branch deletion is part of this remediation.
+- The source commit `b175938` did not contain a pre-consolidation contract
+  snapshot, so current contract snapshots cannot prove retroactive equality.
+- `SUPABASE_DB_URL` is absent in this worktree. The live Postgres integration
+  test is available but intentionally skipped; static SQL checks and migration
+  ordering do not claim live connectivity.
+- Render cron execution and a production rollback rehearsal require deployment
+  credentials and were not claimed as locally executed.
+
+These limits are recorded rather than hidden. See
+`docs/architecture/REMEDIATION_EVIDENCE.md` and
+`docs/architecture/RESIDUAL_GAP_REPORT.md` for the complete evidence ledger.
 
 ## Decision
 
-This is merge-candidate modular-monolith architecture work, not completed
-microservice readiness. Microservice extraction is outside the current plan and
-should only be reopened when an operational trigger is recorded. The next safe
-improvements are provider compatibility extraction or further Projects
-application slicing, not new top-level modules.
+This is merge-candidate modular-monolith architecture work. Do not start
+microservice extraction or add provider-specific top-level contexts unless a
+measured operational trigger is documented. The next changes, if needed,
+should be driven by live database/operations evidence or a real behavior-owning
+use case—not by directory-count aesthetics.

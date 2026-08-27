@@ -2,10 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
-import {
-  isRegisteredOutboxTopic,
-  type OutboxTopic,
-} from './outbox-topics';
+import { isRegisteredOutboxTopic, type OutboxTopic } from './outbox-topics';
 
 export interface OutboxEventInput {
   topic: OutboxTopic;
@@ -25,8 +22,20 @@ export interface PendingOutboxEvent {
 
 export type OutboxEventHandler = (event: PendingOutboxEvent) => Promise<void>;
 
+export interface OutboxProcessingOptions {
+  /** Maximum number of handler failures before the row is quarantined. */
+  maxAttempts?: number;
+  /** Delay before a retry becomes eligible, in seconds. */
+  retryDelaySeconds?: number;
+}
+
 const OUTBOX_RELAY_LOCK = 'alphaci_platform_outbox_relay';
 const OUTBOX_TABLE = 'platform.outbox_events';
+const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_BATCH_SIZE = 50;
+const MAX_BATCH_SIZE = 500;
+const DEFAULT_RETRY_DELAY_SECONDS = 60;
+const MAX_RETRY_DELAY_SECONDS = 86_400;
 
 @Injectable()
 export class OutboxRepository {
@@ -63,7 +72,7 @@ export class OutboxRepository {
     try {
       await this.publishDurably(event);
     } catch (error) {
-      this.logger.warn(`Outbox write skipped: ${(error as Error).message}`);
+      this.logger.warn(`Outbox write skipped: ${this.sanitizeError(error)}`);
     }
   }
 
@@ -81,13 +90,29 @@ export class OutboxRepository {
     handler: OutboxEventHandler,
     limit = 50,
     topics: readonly string[] = [],
+    options: OutboxProcessingOptions = {},
   ): Promise<number> {
-    const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 500));
+    const boundedLimit = this.boundedPositiveInteger(
+      limit,
+      DEFAULT_BATCH_SIZE,
+      MAX_BATCH_SIZE,
+    );
+    const maxAttempts = this.boundedPositiveInteger(
+      options.maxAttempts,
+      DEFAULT_MAX_ATTEMPTS,
+      100,
+    );
+    const retryDelaySeconds = this.boundedPositiveInteger(
+      options.retryDelaySeconds,
+      DEFAULT_RETRY_DELAY_SECONDS,
+      MAX_RETRY_DELAY_SECONDS,
+    );
+    const ownedTopics = [...new Set(topics.filter((topic) => topic.trim()))];
 
     // A single outbox table can contain events owned by more than one context.
     // A relay must pass its registered topic set explicitly; otherwise a newly
     // introduced topic could be acknowledged by the wrong process.
-    if (topics.length === 0) {
+    if (ownedTopics.length === 0) {
       return 0;
     }
 
@@ -112,7 +137,7 @@ export class OutboxRepository {
             ORDER BY created_at ASC, id ASC
             LIMIT $1;
           `,
-          [boundedLimit, [...topics]],
+          [boundedLimit, ownedTopics],
         );
 
         let processed = 0;
@@ -123,7 +148,11 @@ export class OutboxRepository {
             const marked = await client.query<{ id: string }>(
               `
                 UPDATE ${OUTBOX_TABLE}
-                SET status = 'published', published_at = NOW(), updated_at = NOW()
+                SET status = 'published',
+                    published_at = NOW(),
+                    last_error = NULL,
+                    quarantined_at = NULL,
+                    updated_at = NOW()
                 WHERE id = $1 AND status = 'pending'
                 RETURNING id;
               `,
@@ -133,25 +162,46 @@ export class OutboxRepository {
               processed += 1;
             }
           } catch (error) {
+            const failure = this.sanitizeError(error);
+            const nextAttempts = Math.max(0, row.attempts) + 1;
             this.logger.warn(
-              `Outbox event ${event.id} (${event.topic}) was not processed: ${String(error)}`,
+              `Outbox event ${event.id} (${event.topic}) was not processed: ${failure}`,
             );
-            await client
-              .query(
-                `
+            const terminal = nextAttempts >= maxAttempts;
+            const retryQuery = terminal
+              ? `
                   UPDATE ${OUTBOX_TABLE}
-                  SET attempts = attempts + 1,
-                      available_at = NOW() + INTERVAL '1 minute',
+                  SET status = 'quarantined',
+                      attempts = $2,
+                      available_at = NULL,
+                      last_error = $3,
+                      quarantined_at = NOW(),
                       updated_at = NOW()
                   WHERE id = $1 AND status = 'pending';
-                `,
-                [event.id],
-              )
-              .catch((retryError: unknown) => {
-                this.logger.warn(
-                  `Outbox retry schedule failed for ${event.id}: ${String(retryError)}`,
-                );
-              });
+                `
+              : `
+                  UPDATE ${OUTBOX_TABLE}
+                  SET attempts = $2,
+                      available_at = NOW() + ($3 * INTERVAL '1 second'),
+                      last_error = $4,
+                      updated_at = NOW()
+                  WHERE id = $1 AND status = 'pending';
+                `;
+            const retryParams = terminal
+              ? [event.id, nextAttempts, failure]
+              : [event.id, nextAttempts, retryDelaySeconds, failure];
+            try {
+              await client.query(retryQuery, retryParams);
+            } catch (retryError) {
+              this.logger.warn(
+                `Outbox retry schedule failed for ${event.id}: ${this.sanitizeError(retryError)}`,
+              );
+              // A successful handler failure must not be reported as a
+              // successful relay run when its retry/quarantine state could
+              // not be persisted. Propagate the database error so the
+              // scheduler can alert and retry the whole run.
+              throw retryError;
+            }
           }
         }
         return processed;
@@ -167,12 +217,28 @@ export class OutboxRepository {
     });
   }
 
+  private boundedPositiveInteger(
+    value: number | undefined,
+    fallback: number,
+    maximum: number,
+  ): number {
+    if (!Number.isFinite(value) || value === undefined) {
+      return fallback;
+    }
+    return Math.max(1, Math.min(Math.floor(value), maximum));
+  }
+
+  private sanitizeError(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error);
+    return raw.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0, 1_000);
+  }
+
   private async insert(
     executor: Pick<PoolClient, 'query'>,
     event: OutboxEventInput,
   ): Promise<void> {
     if (!isRegisteredOutboxTopic(event.topic)) {
-      throw new Error(`Unsupported outbox topic '${event.topic}'`);
+      throw new Error(`Unsupported outbox topic '${String(event.topic)}'`);
     }
     await executor.query(
       `

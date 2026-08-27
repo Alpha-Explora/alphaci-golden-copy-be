@@ -38,9 +38,19 @@ function pairs(entries) {
 /** Historical migrations that must remain replayable without changing data. */
 const LEGACY_MIGRATION_REFERENCES = new Map([
   [
-    'billing/20260614000000_account_archive.sql',
-    pairs(['identity.app_users']),
+    'identity-access/20260606_domain_schema_bootstrap.sql',
+    pairs([
+      'projects.provisioned_projects',
+      'billing.subscription_plans',
+      'billing.user_subscriptions',
+      'billing.subscription_events',
+      'workflow.workflow_generations',
+      'github_app.github_installation_accounts',
+      'github_app.github_installations',
+      'platform.outbox_events',
+    ]),
   ],
+  ['billing/20260614000000_account_archive.sql', pairs(['identity.app_users'])],
   [
     'billing/20260614000200_usage_quotas.sql',
     pairs(['projects.provisioned_projects']),
@@ -99,7 +109,11 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
   ],
   [
     'platform-ops/20260614000300_workspaces_audit_notifications.sql',
-    pairs(['orgs.workspaces', 'projects.provisioned_projects']),
+    pairs([
+      'orgs.workspaces',
+      'orgs.workspace_members',
+      'projects.provisioned_projects',
+    ]),
   ],
   [
     'platform-ops/20260617000300_user_feedback.sql',
@@ -161,10 +175,7 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
 
 /** Current source-level transition seams, recorded per file and table. */
 const TRANSITIONAL_SOURCE_REFERENCES = new Map([
-  [
-    'src/kernel/events/outbox.repository.ts',
-    pairs(['platform.outbox_events']),
-  ],
+  ['src/kernel/events/outbox.repository.ts', pairs(['platform.outbox_events'])],
   [
     'src/modules/billing/usage/usage-quota.service.ts',
     pairs([
@@ -253,10 +264,7 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
       'hierarchy.repositories',
     ]),
   ],
-  [
-    'scripts/hierarchy-migrations.cjs',
-    pairs(['information_schema.columns']),
-  ],
+  ['scripts/hierarchy-migrations.cjs', pairs(['information_schema.columns'])],
 ]);
 
 const SOURCE_SCRIPT_OWNERS = new Map([
@@ -265,7 +273,12 @@ const SOURCE_SCRIPT_OWNERS = new Map([
 ]);
 
 const SQL_REFERENCE_RE =
-  /\b(?:FROM|JOIN|INSERT\s+INTO|UPDATE|DELETE\s+FROM|REFERENCES|ALTER\s+TABLE|CREATE\s+TABLE|TRUNCATE\s+TABLE|DROP\s+TABLE)\s+(?:ONLY\s+)?(?:["']?([a-z_][a-z0-9_-]*)["']?\.)?["']?([a-z_][a-z0-9_-]*)["']?/gi;
+  /\b(?:FROM|JOIN|INSERT\s+INTO|UPDATE|DELETE\s+FROM|REFERENCES|ALTER\s+TABLE|CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|TRUNCATE\s+TABLE|DROP\s+TABLE)\s+(?:ONLY\s+)?(?:["']?([a-z_][a-z0-9_-]*)["']?\.)?["']?([a-z_][a-z0-9_-]*)["']?/gi;
+
+const SQL_DDL_TARGET_RE =
+  /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+["']?[a-z_][a-z0-9_-]*["']?\s+ON|CREATE\s+POLICY\s+["']?[a-z_][a-z0-9_-]*["']?\s+ON|ALTER\s+POLICY\s+["']?[a-z_][a-z0-9_-]*["']?\s+ON)\s+(?:["']?([a-z_][a-z0-9_-]*)["']?\.)?["']?([a-z_][a-z0-9_-]*)["']?/gi;
+
+let knownTableSchemasCache;
 
 function filesUnder(dir) {
   if (!fs.existsSync(dir)) return [];
@@ -279,35 +292,96 @@ function filesUnder(dir) {
 }
 
 function stripSqlComments(text) {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, (comment) =>
-      comment.replace(/[^\r\n]/g, ' '),
-    )
-    .replace(/--[^\r\n]*/g, (comment) => comment.replace(/[^\r\n]/g, ' '))
-    // Inline SQL is embedded in TypeScript as well as SQL files. Remove its
-    // line comments so prose such as "build from tsconfig" is not parsed as a
-    // table reference. This intentionally preserves newlines for line output.
-    .replace(/\/\/[^\r\n]*/g, (comment) => comment.replace(/[^\r\n]/g, ' '));
+  return (
+    text
+      .replace(/\/\*[\s\S]*?\*\//g, (comment) =>
+        comment.replace(/[^\r\n]/g, ' '),
+      )
+      .replace(/--[^\r\n]*/g, (comment) => comment.replace(/[^\r\n]/g, ' '))
+      // Inline SQL is embedded in TypeScript as well as SQL files. Remove its
+      // line comments so prose such as "build from tsconfig" is not parsed as a
+      // table reference. This intentionally preserves newlines for line output.
+      .replace(/\/\/[^\r\n]*/g, (comment) => comment.replace(/[^\r\n]/g, ' '))
+  );
 }
 
 function collectQualifiedReferences(text) {
+  return collectSqlReferences(text)
+    .filter((reference) => reference.schema)
+    .map(({ reference, line }) => ({ reference, line }));
+}
+
+/**
+ * Collect both qualified and unqualified table references from SQL.
+ *
+ * Qualified references are authoritative. An unqualified reference can only
+ * be resolved when the migration tree contains exactly one table with that
+ * name; ambiguous legacy names (for example app_users, which existed in both
+ * public and identity during the transition) are deliberately left alone
+ * rather than guessed from a search_path that differs by deployment.
+ */
+function collectSqlReferences(text) {
   const sanitized = stripSqlComments(text);
   const references = [];
-  SQL_REFERENCE_RE.lastIndex = 0;
-  let match;
-  while ((match = SQL_REFERENCE_RE.exec(sanitized)) !== null) {
-    if (!match[1]) continue;
-    references.push({
-      reference: `${match[1].toLowerCase()}.${match[2].toLowerCase()}`,
-      line: sanitized.slice(0, match.index).split(/\r?\n/).length,
-    });
+  const collect = (matcher) => {
+    matcher.lastIndex = 0;
+    let match;
+    while ((match = matcher.exec(sanitized)) !== null) {
+      const schema = match[1]?.toLowerCase() ?? null;
+      const table = match[2].toLowerCase();
+      references.push({
+        schema,
+        table,
+        reference: schema ? `${schema}.${table}` : null,
+        line: sanitized.slice(0, match.index).split(/\r?\n/).length,
+        offset: match.index,
+      });
+    }
+  };
+
+  collect(SQL_REFERENCE_RE);
+  // CREATE INDEX/POLICY statements attach ownership to their ON target, but
+  // a generic `ON schema.table` matcher would also mistake JOIN predicates for
+  // table references. Keep this list limited to DDL forms whose ON clause is
+  // unambiguously a table target.
+  collect(SQL_DDL_TARGET_RE);
+  return references
+    .sort((left, right) => left.offset - right.offset)
+    .map(({ offset, ...reference }) => reference);
+}
+
+function knownTableSchemas() {
+  if (knownTableSchemasCache) return knownTableSchemasCache;
+
+  const schemasByTable = new Map();
+  const createTableReferences =
+    /\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:["']?([a-z_][a-z0-9_-]*)["']?\.)?["']?([a-z_][a-z0-9_-]*)["']?/gi;
+  for (const file of filesUnder(MIGRATIONS)) {
+    if (!file.endsWith('.sql')) continue;
+    const text = stripSqlComments(fs.readFileSync(file, 'utf8'));
+    createTableReferences.lastIndex = 0;
+    let match;
+    while ((match = createTableReferences.exec(text)) !== null) {
+      const schema = (match[1] ?? 'public').toLowerCase();
+      const table = match[2].toLowerCase();
+      const schemas = schemasByTable.get(table) ?? new Set();
+      schemas.add(schema);
+      schemasByTable.set(table, schemas);
+    }
   }
-  return references;
+
+  knownTableSchemasCache = schemasByTable;
+  return schemasByTable;
+}
+
+function resolveKnownUnqualifiedTable(table) {
+  const schemas = knownTableSchemas().get(table.toLowerCase());
+  return schemas?.size === 1 ? [...schemas][0] : null;
 }
 
 function moduleOwnerOf(relPath) {
   const match = /^src\/modules\/([^/]+)\//.exec(relPath);
-  return match ? match[1] : SOURCE_SCRIPT_OWNERS.get(relPath) ?? null;
+  return match ? match[1] : (SOURCE_SCRIPT_OWNERS.get(relPath) ?? null);
 }
 
 function isAllowedReference(owner, reference, legacyReferences) {
@@ -361,15 +435,22 @@ function sourceViolations() {
       if (!owner) continue;
       const legacy = new Set(TRANSITIONAL_SOURCE_REFERENCES.get(rel) ?? []);
       const allowedSchemas = ALLOWED_SCHEMAS_BY_OWNER[owner];
-      for (const reference of collectQualifiedReferences(
+      for (const reference of collectSqlReferences(
         fs.readFileSync(file, 'utf8'),
       )) {
-        const schema = reference.reference.split('.')[0];
-        if (allowedSchemas?.has(schema) || legacy.has(reference.reference)) {
+        const resolvedReference =
+          reference.reference ??
+          (() => {
+            const schema = resolveKnownUnqualifiedTable(reference.table);
+            return schema ? `${schema}.${reference.table}` : null;
+          })();
+        if (!resolvedReference) continue;
+        const schema = resolvedReference.split('.')[0];
+        if (allowedSchemas?.has(schema) || legacy.has(resolvedReference)) {
           continue;
         }
         violations.push(
-          `${rel}:${reference.line}: ${reference.reference} is outside ${owner}`,
+          `${rel}:${reference.line}: ${resolvedReference} is outside ${owner}`,
         );
       }
     }
@@ -415,6 +496,8 @@ if (require.main === module) {
 
 module.exports = {
   collectQualifiedReferences,
+  collectSqlReferences,
+  resolveKnownUnqualifiedTable,
   isAllowedReference,
   stripSqlComments,
 };

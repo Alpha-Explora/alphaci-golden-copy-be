@@ -13,8 +13,8 @@ import {
   type DeploymentWorkflowTarget,
   type StagedWorkflowFile,
 } from './index';
-import type { DeploymentProviderId as DeploymentProvider } from '#modules/runtime/index.js';
-import { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
+import type { DeploymentProviderId as DeploymentProvider } from '#kernel/ports/deployment-runtime.port';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 
 interface GitHubContentsResponse {
   content: { html_url?: string };

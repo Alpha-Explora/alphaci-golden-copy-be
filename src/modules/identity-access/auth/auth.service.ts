@@ -11,12 +11,15 @@ import type { Request } from 'express';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import type { SessionUser } from '#kernel/auth/session-user.interface';
-import { GithubTeamRoleService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_TEAM_ROLE_PORT,
+  type GithubTeamRolePort,
+} from '#kernel/ports/github-team-role.port';
 import { OAuthStateRepository } from './infra/oauth-state.repository';
 import {
   SUBSCRIPTION_BOOTSTRAP,
-  type SubscriptionBootstrap,
-} from '#modules/billing/index.js';
+  type SubscriptionBootstrapPort,
+} from '#kernel/ports/subscription-bootstrap.port';
 import { UsersRepository } from './infra/users.repository';
 
 interface GitHubTokenResponse {
@@ -75,10 +78,7 @@ type AccountState =
 
 /** Result of checking GitHub org membership for the internal gate. */
 type OrgMembershipCheck =
-  | 'member'
-  | 'not_member'
-  | 'invitation_pending'
-  | 'verification_failed';
+  'member' | 'not_member' | 'invitation_pending' | 'verification_failed';
 
 export interface PendingAccountInfo {
   pending: true;
@@ -99,9 +99,10 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly usersRepository: UsersRepository,
     @Inject(SUBSCRIPTION_BOOTSTRAP)
-    private readonly subscriptionsRepository: SubscriptionBootstrap,
+    private readonly subscriptionsRepository: SubscriptionBootstrapPort,
     private readonly oauthStateRepository: OAuthStateRepository,
-    private readonly githubTeamRoleService: GithubTeamRoleService,
+    @Inject(GITHUB_TEAM_ROLE_PORT)
+    private readonly githubTeamRoleService: GithubTeamRolePort,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
     this.returnToOrigins = this.buildReturnToOrigins(

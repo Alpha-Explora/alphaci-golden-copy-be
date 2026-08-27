@@ -18,7 +18,13 @@ services:
         value: production
       - key: OUTBOX_BATCH_SIZE
         value: "50"
+      - key: OUTBOX_MAX_ATTEMPTS
+        value: "5"
+      - key: OUTBOX_RETRY_DELAY_SECONDS
+        value: "60"
       - key: SUPABASE_DB_URL
+        sync: false
+      - key: SUPABASE_DB_CA_CERT
         sync: false
       - key: SUPABASE_URL
         sync: false

@@ -24,7 +24,7 @@
     }
   },
   "scripts": {
-    "build": "nest build",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "start": "nest start",

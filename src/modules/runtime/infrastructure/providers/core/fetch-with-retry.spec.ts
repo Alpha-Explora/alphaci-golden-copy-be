@@ -14,10 +14,10 @@ describe('fetchWithRetry', () => {
   });
 
   it('retries on 429 honoring Retry-After, then succeeds', async () => {
-    jest.spyOn(global, 'setTimeout').mockImplementation(((fn: () => void) => {
+    jest.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
       fn();
       return 0 as unknown as NodeJS.Timeout;
-    }) as unknown as typeof setTimeout);
+    });
 
     global.fetch = jest
       .fn()
@@ -36,10 +36,10 @@ describe('fetchWithRetry', () => {
   });
 
   it('gives up and returns the last 429 response after the max attempts', async () => {
-    jest.spyOn(global, 'setTimeout').mockImplementation(((fn: () => void) => {
+    jest.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
       fn();
       return 0 as unknown as NodeJS.Timeout;
-    }) as unknown as typeof setTimeout);
+    });
 
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,

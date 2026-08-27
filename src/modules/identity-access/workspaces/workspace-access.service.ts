@@ -10,6 +10,7 @@ import {
   type WorkspaceMembership,
   type WorkspaceRole,
 } from './workspaces.repository';
+import type { WorkspaceAccessPort } from '#kernel/ports/workspaces.port';
 
 // `admin` = top workspace-membership tier ("Lead", formerly `owner`) — NOT
 // the unrelated identity.platform_admins tier. See WorkspaceRole doc comment.
@@ -21,7 +22,7 @@ const ROLE_RANK: Record<WorkspaceRole, number> = {
 };
 
 @Injectable()
-export class WorkspaceAccessService {
+export class WorkspaceAccessService implements WorkspaceAccessPort {
   constructor(private readonly repository: WorkspacesRepository) {}
 
   async assertWorkspaceRole(

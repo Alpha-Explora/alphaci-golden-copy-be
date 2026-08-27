@@ -10,11 +10,7 @@ export type CiRunStage =
 
 export type CiRunStatus = 'queued' | 'in_progress' | 'completed';
 export type CiRunConclusion =
-  | 'success'
-  | 'failure'
-  | 'cancelled'
-  | 'skipped'
-  | null;
+  'success' | 'failure' | 'cancelled' | 'skipped' | null;
 
 export interface ProjectCiRun {
   id: string;

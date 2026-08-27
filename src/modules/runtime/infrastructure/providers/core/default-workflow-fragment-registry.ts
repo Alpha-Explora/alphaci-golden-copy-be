@@ -1,4 +1,4 @@
-import { WorkflowFragmentRegistry } from '../../../core/workflow-fragment.contract';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { renderWorkflowFragment } from '../render/render-workflow.fragment';
 import { vercelWorkflowFragment } from '../vercel/vercel-workflow.fragment';
 

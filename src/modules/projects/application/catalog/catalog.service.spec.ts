@@ -38,7 +38,7 @@ const mockReaddir = (entries: import('node:fs').Dirent[]) => {
 };
 
 const mockReadFile = (value: string) => {
-  mockFs.readFile.mockResolvedValue(value as never);
+  mockFs.readFile.mockResolvedValue(value);
 };
 
 const sampleProperties = JSON.stringify({

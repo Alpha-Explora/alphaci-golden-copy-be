@@ -73,7 +73,7 @@ describe('RenderCiSecretsService', () => {
     });
 
     service = new RenderCiSecretsService(
-      githubService as never,
+      githubService,
       providerConnectionsRepository as never,
       encryptionService as never,
       configService as never,

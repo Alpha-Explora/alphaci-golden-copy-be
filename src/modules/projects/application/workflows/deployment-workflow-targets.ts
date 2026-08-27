@@ -1,23 +1,27 @@
 import type { DeploymentProvisioningRequestDto } from '../../dto/create-project.dto';
-import { createDefaultWorkflowFragmentRegistry } from '#modules/runtime/index.js';
-import type { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
+import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import type { DeploymentWorkflowTarget } from './dto/generate-workflow.dto';
 
 export type ProvisioningSlot = 'standalone' | 'backend' | 'frontend';
 
 /**
  * Projects does not know provider strategy names, secret names, or filtering
- * rules. It asks the Runtime provider registry to expand each request target
- * into the workflow descriptors consumed by the generic staged builder.
+ * rules. It asks the provider registry port to expand each request target into
+ * the workflow descriptors consumed by the generic staged builder.
  */
 export function resolveDeploymentWorkflowTargets(
   request: DeploymentProvisioningRequestDto | undefined,
   slots: ProvisioningSlot[],
   fallbackRootDirectory?: string,
-  workflowFragmentRegistry: WorkflowFragmentRegistry = createDefaultWorkflowFragmentRegistry(),
+  workflowFragmentRegistry?: WorkflowFragmentRegistry,
 ): DeploymentWorkflowTarget[] {
   if (!request?.enabled || !request.targets?.length) {
     return [];
+  }
+  if (!workflowFragmentRegistry) {
+    throw new Error(
+      'A workflow fragment registry is required when deployment targets are configured',
+    );
   }
 
   const context =

@@ -14,19 +14,25 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import {
+  AUDIT_QUERY_PORT,
+  type AuditQueryPort,
+} from '#kernel/ports/audit.port';
+import {
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
   type ProjectTokenStatus,
-} from '#modules/pipelines/index.js';
-import { AuditEventsService } from '#modules/platform-ops/index.js';
-import type { DeploymentProjectReference } from '#modules/runtime/index.js';
+} from '#kernel/ports/ci-project.port';
+import type { DeploymentProjectReference } from '#kernel/ports/deployment-runtime.port';
 import {
   DEPLOYMENT_ENV_METADATA_QUERY,
   DEPLOYMENT_TARGETS_QUERY,
   type DeploymentEnvMetadataQuery,
   type DeploymentTargetsQuery,
-} from '#modules/runtime/index.js';
-import { HierarchyProjectLinkService } from '#modules/identity-access/hierarchy/project-link/index.js';
+} from '#kernel/ports/deployment-runtime.port';
+import {
+  PROJECT_LINK_PORT,
+  type ProjectLinkPort,
+} from '#kernel/ports/project-link.port';
 import { ProjectDashboardSnapshotsRepository } from '../../project-dashboard-snapshots.repository';
 import { ProjectsRepository } from '../../projects.repository';
 import type {
@@ -73,11 +79,13 @@ export class ProjectDashboardService {
     @Optional()
     private readonly dashboardSnapshotsRepository?: ProjectDashboardSnapshotsRepository,
     @Optional()
-    private readonly hierarchyProjectLinkService?: HierarchyProjectLinkService,
+    @Inject(PROJECT_LINK_PORT)
+    private readonly hierarchyProjectLinkService?: ProjectLinkPort,
     @Optional()
     private readonly configService?: ConfigService,
     @Optional()
-    private readonly auditEventsService?: AuditEventsService,
+    @Inject(AUDIT_QUERY_PORT)
+    private readonly auditQueryPort?: AuditQueryPort,
     @Optional()
     private readonly auditEventPublisher?: AuditEventPublisher,
     @Optional()
@@ -91,14 +99,19 @@ export class ProjectDashboardService {
   ): Promise<ProvisionedProjectsResponse> {
     return this.projectsRepository
       .listByUser(userId, limit, workspaceId)
-      .then((rows) => ({ items: rows.map((row) => toProvisionedProject(row)) }));
+      .then((rows) => ({
+        items: rows.map((row) => toProvisionedProject(row)),
+      }));
   }
 
   async getProjectOverview(
     projectId: string,
     userId: string,
   ): Promise<ProjectOverviewResponse> {
-    const row = await this.projectsRepository.findByIdAndUser(projectId, userId);
+    const row = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
     if (!row) {
       throw new NotFoundException('Project not found');
     }
@@ -144,7 +157,7 @@ export class ProjectDashboardService {
         path: row.workflow_path,
         files: workflowFiles,
         stageCount: workflowFiles.length,
-        history: workflowHistory as ProjectOverviewResponse['workflow']['history'],
+        history: workflowHistory,
       },
       deploymentTargets: {
         items: deploymentTargets,
@@ -256,7 +269,7 @@ export class ProjectDashboardService {
     }
 
     return (
-      (await this.auditEventsService?.listProjectEvents(projectId, userId)) ?? {
+      (await this.auditQueryPort?.listProjectEvents(projectId, userId)) ?? {
         enabled: this.auditEventsEnabled(),
         items: [],
       }
@@ -324,8 +337,7 @@ export class ProjectDashboardService {
       get?: <T = unknown>(propertyPath: string) => T | undefined;
     };
     return (
-      service.get?.<AppConfig>('app') ??
-      service.getOrThrow<AppConfig>('app')
+      service.get?.<AppConfig>('app') ?? service.getOrThrow<AppConfig>('app')
     );
   }
 
@@ -344,14 +356,7 @@ export class ProjectDashboardService {
         eventCode: input.eventCode,
         message: input.body,
         metadata: input.metadata,
-      }) ??
-        this.auditEventsService?.recordProjectEvent({
-          actorUserId: input.userId,
-          projectId: input.projectId,
-          eventCode: input.eventCode,
-          message: input.body,
-          metadata: input.metadata,
-        }),
+      }),
       this.notificationEventPublisher?.record({
         userId: input.userId,
         projectId: input.projectId,

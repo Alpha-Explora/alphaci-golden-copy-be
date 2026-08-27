@@ -9,12 +9,15 @@ import {
 
 import { EnvTokenEncryptionService } from './encryption.service';
 import {
+  WORKSPACES_PORT,
+  type WorkspacesPort,
+} from '#kernel/ports/workspaces.port';
+import {
   PROVIDER_CLIENT_REGISTRY,
   type ProviderClientRegistryPort,
 } from './ports/provider-client-registry.port';
 import type { CreateProviderConnectionDto } from '../dto/create-provider-connection.dto';
 import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
-import { WorkspacesService } from '#modules/identity-access/index.js';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
@@ -26,7 +29,8 @@ export class ProviderConnectionsService {
     @Inject(PROVIDER_CLIENT_REGISTRY)
     private readonly clientRegistry: ProviderClientRegistryPort,
     @Optional()
-    private readonly workspacesService?: WorkspacesService,
+    @Inject(WORKSPACES_PORT)
+    private readonly workspacesService?: WorkspacesPort,
     @Optional()
     private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {}

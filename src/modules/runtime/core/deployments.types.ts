@@ -1,6 +1,7 @@
-import type { DeploymentProviderId } from './deployment-provider.contract';
+import type { DeploymentProviderId } from './deployment-provider-id';
 import type { RenderServiceType } from './deployment-target.types';
 
+export type { DeploymentProviderId } from './deployment-provider-id';
 export type { RenderServiceType } from './deployment-target.types';
 
 export type EnvProvider = DeploymentProviderId;

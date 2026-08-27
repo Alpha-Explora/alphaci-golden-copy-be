@@ -1,47 +1,52 @@
 # Architecture remediation evidence
 
-**Date:** 2026-08-27
+**Date:** 2026-08-28
 **Trunk:** `codex/architecture-remediation-trunk`
 **Worktree:** `C:\Users\anton\Codes\Alpha Explora\AlphaCi Enterprise\worktrees\alphaci-enterprise-be\merry-prism\alphaci-enterprise-be`
-**Starting checkpoint:** `5b703e9025208e686201460e489a07417f1bbba4`
-**Scope:** close the follow-up review findings without changing public API,
-business state-machine semantics, provider compatibility values, or migration
-replay order.
+**Follow-up starting checkpoint:** `f9db7a80f1ebdce27d319121e5610f7f6e54d134`
+**Scope:** close the follow-up architecture findings without changing public
+API, business state-machine semantics, provider compatibility values, or
+migration replay order.
 
-This file is an evidence ledger, not a claim that the monolith has already
-become independently deployable microservices. Microservice extraction is a
-future-only option and is outside the current consolidation plan.
+This is an evidence ledger for the six-context modular monolith. It does not
+claim that the application has become independently deployable microservices.
+Microservice extraction is a future-only option and is outside the current
+consolidation plan.
 
 ## 1. Outbox ownership and guarantees
 
-- Active table: `platform.outbox_events`, defined by
+- The active table is `platform.outbox_events`, defined by
   `supabase/migrations/identity-access/20260606_domain_schema_bootstrap.sql`.
-- Active acknowledgement columns: `status`, `published_at`, and `updated_at`.
-  The historical `public.outbox_events.processed_at` column is only used by
-  replay/backfill/rollback SQL and is not referenced by the active relay.
-- Producers use `OutboxRepository.publishInTransaction()` when the event is a
-  critical part of a business mutation. Hierarchy assignment creation now
-  couples the assignment row, pending GitHub-sync row, and grant event on one
-  PostgreSQL transaction; revoke transitions retain the same property.
-- Audit and notification events are explicitly best-effort post-commit
-  observability writes. They are not advertised as transactional business
-  events.
-- One dispatcher owns the four registered topics. The hierarchy handler owns
-  grant/revoke; `platform-ops` owns audit/notification.
-- One scheduled deployment owner exists: Render cron
+- Active acknowledgement uses `status`, `published_at`, and `updated_at`.
+  The active relay does not reference the historical `processed_at` name.
+- `supabase/migrations/platform-ops/20260828000000_outbox_reliability.sql`
+  adds retry/error/quarantine state, makes `available_at` nullable for
+  terminal rows, and adds pending/quarantine indexes. Its rollback is recorded
+  at `supabase/rollbacks/20260828000000_outbox_reliability_down.sql`.
+- Critical hierarchy assignment grant/revoke mutations use
+  `OutboxRepository.publishInTransaction()` with the assignment and sync-row
+  changes on the same PostgreSQL transaction. Audit and notification writes
+  remain explicitly best-effort post-commit observability writes, preserving
+  their prior non-critical behavior.
+- One `OutboxDispatcher` owns four registered topics:
+  `platform.audit.recorded`, `platform.notification.requested`,
+  `hierarchy.repository_assignment.grant`, and
+  `hierarchy.repository_assignment.revoke`. `platform-ops` owns the first two;
+  `identity-access` owns the hierarchy handler.
+- One scheduled deployment owner exists: the Render cron
   `alphaci-outbox-relay`, invoking `node scripts/process-outbox.cjs` once per
-  minute. The runner boots the application context and delegates to the same
+  minute. The runner boots the normal application context and invokes the same
   in-process relay used by the application.
 - `pg_try_advisory_lock(hashtext('alphaci_platform_outbox_relay'))` prevents
   concurrent relay instances from processing the same batch. Delivery remains
-  at-least-once; handlers must be repeat-safe.
+  at-least-once, so handlers must be idempotent.
 - Legacy pending topics from the removed Kafka-era producers are quarantined by
-  `20260827000000_quarantine_unowned_outbox_topics.sql`; new code rejects topics
-  absent from the kernel registry.
+  `20260827000000_quarantine_unowned_outbox_topics.sql`; new code rejects
+  topics absent from the kernel registry.
 
-## 2. Boundary and schema gates
+## 2. Boundary, provider, and schema gates
 
-The verification commands for this trunk are:
+The checked gates are:
 
 ```text
 npm run boundaries
@@ -49,119 +54,132 @@ npm run check:application-boundaries
 npm run check:provider-encapsulation
 npm run check:schema-ownership
 npm run report:architecture-metrics -- --json
+npm run db:apply:all -- --dry-run
 ```
 
 Dependency-cruiser is the authoritative import graph. The readable metrics
-scanner is alias-aware and reports trend counts; it is not used as an
-extraction proof. The schema gate scans migration SQL and repository/source
-inline SQL, with exact file-and-table transition allowances rather than whole
-file exemptions.
+scanner is alias-aware and reports trends; it is not used as an extraction
+proof. The schema gate scans migration SQL and repository/source inline SQL,
+with exact file-and-table transition allowances rather than whole-file
+exemptions.
 
-The latest alias-aware production-import measurement is:
+Latest alias-aware metrics:
 
-| Context | Production files | Cross-context imports | Directional pairs |
-|---|---:|---:|---:|
-| `billing` | 21 | 1 | 1 |
-| `identity-access` | 103 | 21 | 5 |
-| `pipelines` | 37 | 1 | 1 |
-| `platform-ops` | 26 | 0 | 0 |
-| `projects` | 86 | 76 | 5 |
-| `runtime` | 116 | 16 | 4 |
-| **Total** | **389** | **115** | **16** |
+| Context | TS files | Test files | Production files | Application files | Cross-context | Composition | Contract | Application edge | Directional pairs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `billing` | 21 | 5 | 16 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `identity-access` | 103 | 15 | 88 | 0 | 8 | 8 | 0 | 0 | 5 |
+| `pipelines` | 37 | 9 | 28 | 0 | 1 | 1 | 0 | 0 | 1 |
+| `platform-ops` | 27 | 3 | 24 | 3 | 0 | 0 | 0 | 0 | 0 |
+| `projects` | 90 | 23 | 67 | 37 | 15 | 15 | 0 | 0 | 5 |
+| `runtime` | 123 | 43 | 80 | 16 | 8 | 8 | 0 | 0 | 4 |
+| **Total** | **401** | **98** | **303** | **56** | **32** | **32** | **0** | **0** | **15** |
 
-The remaining imports are documented transition/composition seams. In
-particular, runtime has three inbound context pairs and four outbound pairs;
-the six-directory count is not presented as extraction readiness.
+All remaining cross-context imports are explicit Nest composition wiring. No
+production contract/application import or actionable cross-context edge is
+reported. The six-directory count is therefore not presented as extraction
+readiness.
 
-## 3. Regression and boot evidence
+Additional gate results:
 
-- Current route reference: 145 compiled Nest routes.
-- `docs/architecture/route-inventory.manifest.json` records the current and
-  post-consolidation reference SHA-256:
+- Dependency-cruiser: 382 modules, 1,544 dependencies cruised, zero violations.
+- Application-boundary check: zero violations.
+- Provider-encapsulation check: passed.
+- Schema-ownership check: zero migration violations and zero source-SQL
+  violations.
+- Migration replay dry-run: 64 migrations discovered in global timestamp
+  order; nothing was applied.
+
+Provider-specific policies, metadata, clients, workflow fragments, target
+expansion, and CI secret installers are registered inside Runtime. Provider
+ids and generic strategy seams are open at the plugin boundary; Render/Vercel
+compatibility fields remain Runtime-owned because they are part of the
+existing API/database contract. Projects intentionally retains the legacy
+`deploy_render` / `deploy_vercel` CI stage labels and the provider-host URL
+allowlist for compatibility and security; neither is provider orchestration.
+
+## 3. Regression, route, and boot evidence
+
+- Current compiled route inventory: 145 routes.
+- The pre-consolidation route inventory is now available from source commit
+  `b175938` at `route-inventory.pre-consolidation.txt`.
+- Pre-consolidation and current inventories are byte-for-byte equal, both with
+  SHA-256
   `d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a`.
-- A pre-consolidation route inventory and pre-Task-5 contract snapshots were
-  not captured, so this repository cannot prove retroactive equality. The
-  route and contract files are post-change references for future drift checks.
-- `tests/architecture/contract-snapshots.spec.ts` protects current provider
-  discovery and staged workflow metadata/YAML shape.
+- A pre-consolidation contract snapshot is not available: the source commit
+  did not contain one. Current snapshots therefore protect future drift but do
+  not make a retroactive contract comparison possible.
 - `tests/architecture/app-module.boot.spec.ts` constructs the complete Nest
   application context with test configuration.
 - `tests/architecture/http-boot.spec.ts` boots the real Express adapter and
   calls the health route. With no database configured, the expected readiness
-  result is a structured 503 with status, path, and correlation id; a configured
-  database may return the normal 200 readiness response.
+  result is a structured 503; a configured database may return normal 200
+  readiness.
 - `tests/architecture/provider-plugin.acceptance.spec.ts` composes a fake
-  provider through metadata, runtime client, workflow fragment, CI installer,
-  and the staged workflow builder without changing the builder.
-- `tests/integration/database.integration.spec.ts` checks the live Postgres
-  outbox schema when `SUPABASE_DB_URL` is present. Without that environment
-  variable it is intentionally skipped; migration dry-run and SQL gates do not
-  pretend to prove live connectivity.
+  provider through metadata, policy, runtime client, workflow fragment, CI
+  installer, and the staged workflow builder.
+- `tests/integration/database.integration.spec.ts` is a live PostgreSQL
+  integration test when `SUPABASE_DB_URL` is supplied. The current worktree
+  has no database URL, so the live test is intentionally skipped; static SQL
+  checks and migration dry-run do not pretend to prove live connectivity.
 
 ## 4. Projects and provider posture
 
-- `ProjectsService` is a compatibility facade (504 lines on this trunk).
-  Dashboard, workflow, lifecycle, reconciliation, and provisioning use cases
-  are in focused application services; the provisioning slice remains the
-  largest focused service (1,865 lines) because it preserves the existing
-  setup sequence.
-- Runtime provider metadata adapters, clients, workflow fragments, workflow
-  target expansion, descriptor-driven slot policy, and CI secret installers
-  are registry-driven and provider ids are open at the generic seams. Render/
-  Vercel token/scope selection, target strategy identifiers, secret naming,
-  storage fields, legacy DTO fields, and the parallel GCP runtime remain
-  compatibility code inside Runtime.
-- Provider compatibility code is deliberately not moved into billing,
-  identity-access, pipelines, or projects. No provider creates a seventh
-  bounded context.
+`ProjectsService` is a compatibility facade at 537 lines. The former
+provisioning hotspot is split by actual use case:
 
-## 5. Rollback and future extraction posture
+| Slice | Lines |
+|---|---:|
+| Provisioning dispatcher | 215 |
+| Shared provisioning mechanics | 535 |
+| Single-repository provisioner | 466 |
+| Microservices-shaped project provisioner | 340 |
+| Multi-repository provisioner | 460 |
 
-- The remediation started from checkpoint `5b703e9` on the named trunk. The
-  final remediation change is a normal commit that can be reverted with
-  `git revert`; no reset, force-push, branch deletion, or worktree cleanup is
-  needed.
-- Rollback independence across separate PRs is a review/process property, not
-  something this single worktree can prove automatically.
-- No independent scaling requirement, independent deployment cadence, or
-  regulatory-isolation trigger has been supplied. Microservice extraction
-  therefore remains a future composition/transport decision, not a deliverable
-  of this consolidation. Its separate reference topology is documented in
-  `docs/architecture/FUTURE_STATE.md`.
+The `microservices` name above describes a project repository shape handled by
+the existing product workflow; it is not microservice extraction.
 
-## 6. Known evidence limits
+Dashboard, workflow, lifecycle, reconciliation, and provisioning behavior is
+owned by focused application services. Remaining facade methods are
+compatibility forwarding, not a second implementation.
 
-1. Historical pre-change route and contract baselines are unavailable.
-2. The live Postgres integration result depends on `SUPABASE_DB_URL` and is
-   reported separately from local tests.
-3. The current monolith still has synchronous cross-context imports and
-   provider compatibility seams; it is not claimed to be service-extraction
-   ready by directory count alone.
-4. A production rollback rehearsal and external scheduler execution require
-   deployment credentials/infrastructure and are not simulated locally.
+## 5. Build, lint, and operational evidence
 
-## 7. Final verification run
+- `npm run typecheck`: passed.
+- `npm run build`: passed using the repository's direct TypeScript build
+  (`tsc -p tsconfig.build.json`). This avoids a reproducible Nest CLI path
+  transformer failure with TypeScript 5.9 and the repository's `#kernel` /
+  `#modules` aliases; it does not change the emitted application behavior.
+- Full ESLint: 483 files, zero errors, zero warnings.
+- Jest: 130 passed suites, one intentionally skipped suite; 1,247 passed tests,
+  two intentionally skipped tests; two snapshots passed.
+- The Render cron and Dockerfile wiring are checked into the repository and
+  covered by `tests/architecture/outbox-scheduler.spec.ts`. Actual execution
+  of the deployed cron still requires the deployment environment.
+- No local production rollback rehearsal or external scheduler execution was
+  possible in this worktree.
 
-The final local verification on this trunk completed with:
+## 6. Evidence limits
 
-- TypeScript typecheck: passed.
-- Nest production build: passed; compiled `#modules/runtime/index.js` and
-  `#kernel/events/outbox.repository.js` resolution smoke: passed.
-- Changed-file ESLint: passed with zero warnings or errors.
-- Jest regression suite: 130 passed suites, 1 intentionally skipped suite;
-  1,242 passed tests, 2 intentionally skipped tests; 2 snapshots passed.
-- Dependency-cruiser: passed (`357` modules, `1,434` dependencies cruised).
-- Application-boundary, provider-encapsulation, and schema-ownership gates:
-  passed. The schema gate inspected 63 migrations and inline SQL.
-- Architecture metrics: 389 production files, 115 cross-context imports, and
-  16 directional context pairs.
-- Migration replay dry-run: passed; all 63 owner-folder migrations were
-  discovered in global timestamp order and nothing was applied.
-- HTTP route inventory: 145 routes; the route and current-reference hashes
-  match the checked-in manifest.
-- Postgres integration: conditional; skipped when `SUPABASE_DB_URL` is not
-  configured. The local suite does not claim live database connectivity.
+1. A pre-consolidation contract snapshot did not exist in the source commit;
+   the route baseline is available, but contract equality cannot be proven
+   retroactively.
+2. `SUPABASE_DB_URL` is not configured in this environment. The live Postgres
+   integration test and transaction assertions are available but were not
+   executed here.
+3. The Render cron is statically wired and guarded by an operational test;
+   deployed execution and rollback rehearsal require deployment credentials.
+4. Runtime retains historical provider-specific compatibility fields and the
+   Projects context retains legacy CI stage labels and a provider-host URL
+   allowlist. The monolith also retains synchronous composition imports. These
+   are intentional current-state constraints, not evidence of a completed
+   service extraction.
 
-Repository-wide lint remains a separate baseline check: changed files are
-clean, while pre-existing findings in untouched files are not part of this
-remediation slice and are not represented as a newly introduced failure.
+## 7. Future-only extraction posture
+
+No independent scaling requirement, independent deployment cadence, or
+regulatory-isolation trigger has been supplied. Microservice extraction remains
+a future composition/transport decision, not a deliverable of this
+consolidation. Reopen it only after an operational trigger is documented and
+the measured application edges justify the added deployment and data
+ownership complexity.

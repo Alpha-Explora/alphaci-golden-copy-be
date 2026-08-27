@@ -140,12 +140,23 @@ module.exports = {
     {
       "name": "deployment-providers-are-isolated",
       "severity": "error",
-      "comment": "A provider adapter must never know another adapter exists. Add shared behavior to infrastructure/providers/core instead.",
+      "comment": "Render provider code must not import Vercel provider code. Same-provider policy composition is allowed; shared behavior belongs in infrastructure/providers/core.",
       "from": {
-        "path": "^src/modules/runtime/infrastructure/providers/(render|vercel)/"
+        "path": "^src/modules/runtime/infrastructure/providers/render/"
       },
       "to": {
-        "path": "^src/modules/runtime/infrastructure/providers/(?!core/)"
+        "path": "^src/modules/runtime/infrastructure/providers/vercel/"
+      }
+    },
+    {
+      "name": "deployment-providers-are-isolated-reciprocal",
+      "severity": "error",
+      "comment": "Vercel provider code must not import Render provider code. Same-provider policy composition is allowed; shared behavior belongs in infrastructure/providers/core.",
+      "from": {
+        "path": "^src/modules/runtime/infrastructure/providers/vercel/"
+      },
+      "to": {
+        "path": "^src/modules/runtime/infrastructure/providers/render/"
       }
     },
     {

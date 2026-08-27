@@ -4,4 +4,4 @@
  * GitHub boundary instead of making the provider depend on the workflows
  * feature.
  */
-export const ENV_GUARD_CHECK_CONTEXT = 'env-guard';
+export { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';

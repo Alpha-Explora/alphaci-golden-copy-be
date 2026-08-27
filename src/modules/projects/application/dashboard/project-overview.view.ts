@@ -1,4 +1,4 @@
-import type { ProjectTokenStatus } from '#modules/pipelines/index.js';
+import type { ProjectTokenStatus } from '#kernel/ports/ci-project.port';
 import type {
   StagedWorkflowFile,
   WorkflowFileMetadata,
@@ -6,7 +6,7 @@ import type {
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 import type { ProjectDashboardSnapshotFinding } from '../../project-dashboard-snapshots.repository';
 import type { ProvisionedProjectRow } from '../../projects.repository';
 import type {

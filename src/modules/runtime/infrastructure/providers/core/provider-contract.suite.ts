@@ -45,8 +45,10 @@ function assertStructuralContract(provider: RuntimeEnvProviderClient): void {
   // Optional operations, when present, must still be functions.
   const optionalOperations = ['getDeployHistory', 'getLogs'] as const;
   for (const operation of optionalOperations) {
-    const value = provider[operation];
-    if (value !== undefined && typeof value !== 'function') {
+    if (
+      provider[operation] !== undefined &&
+      typeof provider[operation] !== 'function'
+    ) {
       throw new Error(
         `Provider ${provider.provider} has non-function optional operation: ${operation}`,
       );
@@ -56,8 +58,6 @@ function assertStructuralContract(provider: RuntimeEnvProviderClient): void {
 
 function assertProviderIdIsValid(provider: RuntimeEnvProviderClient): void {
   if (!provider.provider.trim()) {
-    throw new Error(
-      'Deployment provider id must be a non-empty string',
-    );
+    throw new Error('Deployment provider id must be a non-empty string');
   }
 }
