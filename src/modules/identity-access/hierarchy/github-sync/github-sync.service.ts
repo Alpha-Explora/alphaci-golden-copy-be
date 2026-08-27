@@ -26,7 +26,7 @@ export interface HierarchyOutboxJobPayload {
 /**
  * Implements the desired_state x effective_state state machine transition
  * table (plan §1.6). Called directly by services for the synchronous parts
- * (enqueue) and by GithubSyncOutboxWorker for the async parts (process a
+ * (enqueue) and by GithubSyncOutboxHandler for the async parts (process a
  * dequeued job). Kept as plain TypeScript (no DB trigger) so the state
  * machine stays testable in isolation (plan §1.6 rationale).
  */
@@ -50,8 +50,7 @@ export class GithubSyncService {
     assignmentId: string,
     actingUserId: string,
   ): Promise<void> {
-    await this.syncRepository.upsertPending(assignmentId);
-    await this.outboxRepository.publishLater({
+    await this.syncRepository.upsertPending(assignmentId, {
       topic: HIERARCHY_OUTBOX_TOPICS.grant,
       aggregateType: 'repository_assignment',
       aggregateId: assignmentId,
@@ -68,19 +67,18 @@ export class GithubSyncService {
     actingUserId: string,
   ): Promise<void> {
     const assignment =
-      await this.assignmentsRepository.setDesiredUnassigned(assignmentId);
+      await this.assignmentsRepository.setDesiredUnassigned(assignmentId, {
+        topic: HIERARCHY_OUTBOX_TOPICS.revoke,
+        aggregateType: 'repository_assignment',
+        aggregateId: assignmentId,
+        payload: {
+          assignmentId,
+          actingUserId,
+        } satisfies HierarchyOutboxJobPayload,
+      });
     if (!assignment) {
       return;
     }
-    await this.outboxRepository.publishLater({
-      topic: HIERARCHY_OUTBOX_TOPICS.revoke,
-      aggregateType: 'repository_assignment',
-      aggregateId: assignmentId,
-      payload: {
-        assignmentId,
-        actingUserId,
-      } satisfies HierarchyOutboxJobPayload,
-    });
   }
 
   /** Transition #5: manual drift-repair trigger — re-enqueues a job matching current desired_state. */
@@ -96,7 +94,7 @@ export class GithubSyncService {
       assignment.desiredState === 'assigned'
         ? HIERARCHY_OUTBOX_TOPICS.grant
         : HIERARCHY_OUTBOX_TOPICS.revoke;
-    await this.outboxRepository.publishLater({
+    await this.outboxRepository.publishBestEffort({
       topic,
       aggregateType: 'repository_assignment',
       aggregateId: assignmentId,
@@ -107,7 +105,7 @@ export class GithubSyncService {
     });
   }
 
-  /** Processes one dequeued outbox job — called by the polling worker. */
+  /** Processes one dequeued outbox job — called by the central relay handler. */
   async processJob(
     topic: string,
     payload: HierarchyOutboxJobPayload,
@@ -364,7 +362,7 @@ export class GithubSyncService {
     if (retryCount >= maxRetries || !actingUserId) {
       return; // stays failed/revoking indefinitely, surfaced on the admin view (plan §1.6).
     }
-    await this.outboxRepository.publishLater({
+    await this.outboxRepository.publishBestEffort({
       topic:
         kind === 'grant'
           ? HIERARCHY_OUTBOX_TOPICS.grant

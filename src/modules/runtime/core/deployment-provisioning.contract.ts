@@ -13,7 +13,8 @@ import type {
  * importing presentation types from Projects.
  */
 
-export type DeploymentProvider = 'render' | 'vercel';
+/** Provider ids are open because providers are runtime plugins. */
+export type DeploymentProvider = string;
 export type DeploymentSlot = 'backend' | 'frontend' | 'standalone';
 export type DeploymentOwnershipMode = 'byo' | 'flowci_managed';
 export type DeploymentProvisioningAction = 'create' | 'register_existing';
@@ -257,14 +258,7 @@ export type DeploymentProvisioningResult = {
     slot: DeploymentSlot;
     provider: DeploymentProvider;
     ownershipMode: DeploymentOwnershipMode;
-    deploymentStrategy:
-      | 'provider_native'
-      | 'vercel_git_connected'
-      | 'vercel_ci_pushed'
-      | 'render_git_connected'
-      | 'render_image_pushed'
-      | 'render_existing_service'
-      | null;
+    deploymentStrategy: string | null;
     status: 'created' | 'registered' | 'failed';
     deploymentTargetId: string | null;
     providerProjectId: string | null;

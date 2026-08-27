@@ -70,9 +70,21 @@ const makeConfig = (
   }) as unknown as ConfigService;
 
 const makeProviderRegistry = () => {
-  const registry = new DeploymentProviderRegistry();
-  registry.register({ id: 'render' });
-  registry.register({ id: 'vercel' });
+  const registry = new DeploymentProviderRegistry<{
+    id: string;
+    capabilities: {
+      envProvisioning: boolean;
+      previewDeployments: boolean;
+    };
+  }>();
+  registry.register({
+    id: 'render',
+    capabilities: { envProvisioning: true, previewDeployments: false },
+  });
+  registry.register({
+    id: 'vercel',
+    capabilities: { envProvisioning: true, previewDeployments: true },
+  });
   return registry;
 };
 

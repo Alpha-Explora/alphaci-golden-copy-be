@@ -8,7 +8,6 @@ import {
   CatalogService,
   type WorkflowTemplate,
 } from '../catalog/catalog.service';
-import { OutboxRepository } from '#kernel/events/outbox.repository';
 import { WorkflowHistoryRepository } from './infrastructure/workflow-history.repository';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 import { buildStagedWorkflowBundle } from './staged-workflow.builder';
@@ -24,7 +23,6 @@ export class WorkflowsService {
   constructor(
     private readonly catalogService: CatalogService,
     private readonly workflowHistoryRepository: WorkflowHistoryRepository,
-    private readonly outboxRepository: OutboxRepository,
   ) {}
 
   async generate(userId: string, dto: GenerateWorkflowDto) {
@@ -54,18 +52,6 @@ export class WorkflowsService {
       lineCount,
       yaml: generatedYaml,
       sha256,
-    });
-
-    await this.outboxRepository.publishLater({
-      topic: 'workflow.generated',
-      aggregateType: 'workflow',
-      aggregateId: userId,
-      payload: {
-        userId,
-        templateId: template.id,
-        serviceName: dto.serviceName,
-        outputFileName,
-      },
     });
 
     return {

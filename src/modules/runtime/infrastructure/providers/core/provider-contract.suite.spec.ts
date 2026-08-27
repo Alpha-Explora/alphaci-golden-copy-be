@@ -41,18 +41,18 @@ describe('deployment provider contract', () => {
     },
   );
 
-  it('rejects a provider with an unknown provider id', () => {
+  it('rejects a provider with an empty provider id', () => {
     const base = new RenderEnvClient();
     const proto: object | null = Object.getPrototypeOf(base);
     const fake = Object.assign(Object.create(proto), base);
-    fake.provider = 'unknown' as never;
+    fake.provider = '' as never;
     expect(() =>
       assertDeploymentProviderContract(
         fake as unknown as Parameters<
           typeof assertDeploymentProviderContract
         >[0],
       ),
-    ).toThrow('Unsupported deployment provider: unknown');
+    ).toThrow('Deployment provider id must be a non-empty string');
   });
 
   it('rejects a provider missing a required operation', () => {

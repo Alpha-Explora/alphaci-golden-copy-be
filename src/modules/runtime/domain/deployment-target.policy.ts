@@ -28,7 +28,7 @@ export class DeploymentPolicyViolation extends Error {
 }
 
 export function assertProviderSlotAllowed(
-  provider: 'render' | 'vercel',
+  provider: string,
   slot: 'backend' | 'frontend' | 'standalone',
 ): void {
   if (provider === 'render' && slot !== 'backend') {

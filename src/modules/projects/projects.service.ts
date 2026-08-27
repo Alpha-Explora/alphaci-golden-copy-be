@@ -1,16 +1,13 @@
 import {
-  BadRequestException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
   Optional,
-  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '#kernel/config/app.config';
 import {
   AuditEventPublisher,
   NotificationEventPublisher,
@@ -19,7 +16,6 @@ import {
   CiService,
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
-  type ProjectTokenStatus,
 } from '#modules/pipelines/index.js';
 import { AuditEventsService } from '#modules/platform-ops/index.js';
 import {
@@ -34,10 +30,8 @@ import {
   type DeploymentTargetsQuery,
 } from '#modules/runtime/index.js';
 import {
-  GithubRepoDeleteError,
   GithubService,
   REPOSITORY_DELETED_EVENT,
-  type GithubRepoDeleteErrorCode,
   type RepositoryDeletedEvent,
 } from '#modules/pipelines/index.js';
 import { CatalogService } from './application/catalog/catalog.service';
@@ -78,13 +72,14 @@ import { SetupBranchService } from './application/lifecycle/setup-branch.service
 import { WorkspaceGateService } from './application/lifecycle/workspace-gate.service';
 import { ProductEventsService } from './application/lifecycle/product-events.service';
 import {
-  buildLocalSnapshotFindings,
-  buildOverviewHealth,
-  toCiAuthOverview,
-  toProvisionedProject,
   workflowFileMetadata,
 } from './application/dashboard/project-overview.view';
+import { ProjectDashboardService } from './application/dashboard/project-dashboard.service';
 import { ProjectWorkflowFilesService } from './application/workflows/project-workflow-files.service';
+import {
+  ProjectLifecycleService,
+  type ProjectProvisioningPort,
+} from './application/lifecycle/project-lifecycle.service';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import {
@@ -94,7 +89,6 @@ import {
 import {
   WorkspacesService,
   WorkspaceAccessService,
-  type WorkspaceRole,
 } from '#modules/identity-access/index.js';
 import {
   buildProjectScaffold,
@@ -109,7 +103,6 @@ import type {
   CreateProjectResponse,
   DisconnectProjectResponse,
   ProjectAuditEventsResponse,
-  ProvisionedProject,
   ProjectOverviewResponse,
   ProjectSyncSnapshotResponse,
   ProvisionedProjectsResponse,
@@ -192,6 +185,48 @@ export class ProjectsService {
     return (this.productEventsLazy ??= new ProductEventsService(
       this.auditEventPublisher ?? this.auditEventsService,
       this.notificationEventPublisher,
+    ));
+  }
+
+  /**
+   * Compatibility read facade for direct callers that still construct this
+   * class instead of using ProjectDashboardService from the module graph.
+   * The implementation lives in the dashboard application service.
+   */
+  private dashboardServiceLazy?: ProjectDashboardService;
+  private get dashboard(): ProjectDashboardService {
+    return (this.dashboardServiceLazy ??= new ProjectDashboardService(
+      this.projectsRepository,
+      this.ciTokensRepository,
+      this.deploymentTargetsRepository,
+      this.envVarsRepository,
+      this.workflowHistoryRepository,
+      this.dashboardSnapshotsRepository,
+      this.hierarchyProjectLinkService,
+      this.configService,
+      this.auditEventsService,
+      this.auditEventPublisher,
+      this.notificationEventPublisher,
+    ));
+  }
+
+  /**
+   * Compatibility facade for lifecycle callers that still construct
+   * ProjectsService directly in tests or older integrations. The destructive
+   * disconnect and repository-sync implementations live in the lifecycle
+   * application service; provisioning is passed through the narrow port until
+   * that workflow is extracted as its own slice.
+   */
+  private lifecycleServiceLazy?: ProjectLifecycleService;
+  private get lifecycle(): ProjectLifecycleService {
+    return (this.lifecycleServiceLazy ??= new ProjectLifecycleService(
+      this as ProjectProvisioningPort,
+      this.projectsRepository,
+      this.githubService,
+      this.workspaceAccessService,
+      this.auditEventsService,
+      this.notificationEventPublisher,
+      this.auditEventPublisher,
     ));
   }
 
@@ -378,22 +413,7 @@ export class ProjectsService {
     projectId: string,
     userId: string,
   ): Promise<DeploymentProjectReference> {
-    const project = await this.projectsRepository.findByIdAndUser(
-      projectId,
-      userId,
-    );
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-
-    return {
-      projectId: project.id,
-      userId,
-      repoFullName: project.repo_full_name,
-      repoUrl: project.repo_url,
-      workflowPath: project.workflow_path,
-      projectOptions: project.project_options,
-    };
+    return this.dashboard.getProjectReference(projectId, userId);
   }
 
   /**
@@ -1224,104 +1244,14 @@ export class ProjectsService {
     limit = 25,
     workspaceId?: string | null,
   ): Promise<ProvisionedProjectsResponse> {
-    const rows = await this.projectsRepository.listByUser(
-      userId,
-      limit,
-      workspaceId,
-    );
-    return {
-      items: rows.map((row) => toProvisionedProject(row)),
-    };
+    return this.dashboard.listProjects(userId, limit, workspaceId);
   }
 
   async getProjectOverview(
     projectId: string,
     userId: string,
   ): Promise<ProjectOverviewResponse> {
-    const row = await this.projectsRepository.findByIdAndUser(
-      projectId,
-      userId,
-    );
-    if (!row) {
-      throw new NotFoundException('Project not found');
-    }
-
-    const [
-      ciToken,
-      deploymentTargets,
-      envMetadata,
-      workflowHistory,
-      latestSnapshot,
-      hierarchyRepositoryId,
-    ] = await Promise.all([
-      this.loadCiTokenStatus(projectId),
-      this.deploymentTargetsRepository?.listDeploymentTargets(projectId) ??
-        Promise.resolve([]),
-      this.envVarsRepository?.listEnvMetadata(projectId) ?? Promise.resolve([]),
-      this.workflowHistoryRepository?.listForProjectIdentity({
-        userId,
-        serviceName: row.service_name,
-        templateId: row.template_id,
-        limit: 5,
-      }) ?? Promise.resolve([]),
-      this.dashboardSnapshotsRepository?.findLatestByProject(projectId) ??
-        Promise.resolve(null),
-      this.hierarchyProjectLinkService?.getLinkedRepositoryId(projectId) ??
-        Promise.resolve(null),
-    ]);
-
-    const project = toProvisionedProject(row);
-    const workflowFiles = project.workflowFiles ?? [];
-    const matchingHistory = workflowHistory;
-    const ciAuth = toCiAuthOverview(ciToken);
-    const failedEnvCount = envMetadata.filter(
-      (metadata) => metadata.status === 'failed',
-    ).length;
-
-    return {
-      project: {
-        ...project,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      },
-      workflow: {
-        path: row.workflow_path,
-        files: workflowFiles,
-        stageCount: workflowFiles.length,
-        history: matchingHistory,
-      },
-      deploymentTargets: {
-        items: deploymentTargets,
-        count: deploymentTargets.length,
-      },
-      environment: {
-        items: envMetadata,
-        count: envMetadata.length,
-        failedCount: failedEnvCount,
-      },
-      ciAuth,
-      health: buildOverviewHealth({
-        project,
-        workflowFiles,
-        ciAuth,
-        deploymentTargets,
-        envMetadata,
-      }),
-      syncSnapshot: {
-        enabled: this.projectSyncSnapshotsEnabled(),
-        mode: 'local_snapshot',
-        latest: latestSnapshot,
-      },
-      capabilities: {
-        envProvisioning: true,
-        workflowSettings: this.workflowSettingsPreviewEnabled(),
-        syncSnapshots: this.projectSyncSnapshotsEnabled(),
-        ciRunTracking: this.ciRunTrackingEnabled(),
-        deploymentHistory: this.deploymentHistoryEnabled(),
-        driftDetection: this.driftDetectionEnabled(),
-      },
-      hierarchyRepositoryId,
-    };
+    return this.dashboard.getProjectOverview(projectId, userId);
   }
 
   // ─── DELETE /projects/:id ──────────────────────────────────────────────────
@@ -1336,83 +1266,14 @@ export class ProjectsService {
     projectId: string,
     userId: string,
   ): Promise<ProjectSyncSnapshotResponse> {
-    if (!this.projectSyncSnapshotsEnabled()) {
-      throw new BadRequestException('Project sync snapshots are disabled');
-    }
-
-    if (!this.dashboardSnapshotsRepository) {
-      throw new ServiceUnavailableException(
-        'Project dashboard snapshots are not configured',
-      );
-    }
-
-    const startedAt = new Date().toISOString();
-    const overview = await this.getProjectOverview(projectId, userId);
-    const findings = buildLocalSnapshotFindings(overview);
-    const completedAt = new Date().toISOString();
-    const snapshot = await this.dashboardSnapshotsRepository.createSnapshot({
-      projectId,
-      status: overview.health.summary,
-      summary: {
-        mode: 'local_snapshot',
-        projectId,
-        healthSummary: overview.health.summary,
-        workflowStageCount: overview.workflow.stageCount,
-        deploymentTargetCount: overview.deploymentTargets.count,
-        envVarCount: overview.environment.count,
-        failedEnvVarCount: overview.environment.failedCount,
-        ciTokenStatus: overview.ciAuth.status,
-      },
-      findings,
-      startedAt,
-      completedAt,
-      createdBy: userId,
-    });
-
-    await this.recordProductEvent({
-      userId,
-      projectId,
-      eventCode: 'project_snapshot_synced',
-      title: 'Project snapshot synced',
-      body: `Project snapshot completed with ${findings.length} finding${findings.length === 1 ? '' : 's'}.`,
-      metadata: {
-        snapshotId: snapshot.id,
-        status: snapshot.status,
-        findingCount: findings.length,
-      },
-    });
-
-    return {
-      snapshot,
-      overview: {
-        ...overview,
-        syncSnapshot: {
-          enabled: true,
-          mode: 'local_snapshot',
-          latest: snapshot,
-        },
-      },
-    };
+    return this.dashboard.syncProjectSnapshot(projectId, userId);
   }
 
   async listProjectAuditEvents(
     projectId: string,
     userId: string,
   ): Promise<ProjectAuditEventsResponse> {
-    const project = await this.projectsRepository.findByIdAndUser(
-      projectId,
-      userId,
-    );
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-
-    return (
-      (await this.auditEventsService?.listProjectEvents(projectId, userId)) ?? {
-        enabled: this.auditEventsEnabled(),
-        items: [],
-      }
-    );
+    return this.dashboard.listProjectAuditEvents(projectId, userId);
   }
 
   /** Delegates to ProjectWorkflowsService (owns workflow settings behavior). */
@@ -1452,253 +1313,22 @@ export class ProjectsService {
     options?: DisconnectProjectDto,
     githubAccessToken?: string | null,
   ): Promise<DisconnectProjectResponse> {
-    const deleteGithubRepo = options?.deleteGithubRepo === true;
-    // Single source of truth for the tightened role set, used both as the
-    // app-layer fast-fail pre-check below AND passed down into the
-    // repository so the SQL itself enforces it (see findByIdAndUser /
-    // deleteByIdAndUser). The app-layer check alone is not sufficient: it
-    // depends on workspaceAccessService being wired in (it's `@Optional()`
-    // and no-ops via `?.` when absent), so it must not be the only gate for
-    // a destructive, external-side-effecting action.
-    const destructiveRoles: WorkspaceRole[] = ['admin', 'delegated_lead'];
-
-    try {
-      await this.assertProjectMutationAccess(
-        projectId,
-        userId,
-        deleteGithubRepo ? destructiveRoles : undefined,
-      );
-    } catch (error) {
-      if (deleteGithubRepo) {
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_rejected',
-          title: 'GitHub repository deletion rejected',
-          body: 'Insufficient workspace role for deleteGithubRepo=true (owner/admin required).',
-          metadata: { reason: 'insufficient_role' },
-        });
-      }
-      throw error;
-    }
-
-    let githubRepoDeleted = false;
-    let githubRepoDeleteError:
-      | { code: GithubRepoDeleteErrorCode; message: string }
-      | undefined;
-
-    if (deleteGithubRepo) {
-      // Role-scoped fetch: this is the SQL-level enforcement point. If the
-      // caller's workspace role isn't owner/admin, no row comes back — this
-      // fails closed independent of whether the app-layer check above ran.
-      const project = await this.projectsRepository.findByIdAndUser(
-        projectId,
-        userId,
-        destructiveRoles,
-      );
-      if (!project) {
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_rejected',
-          title: 'GitHub repository deletion rejected',
-          body: `Project '${projectId}' was not found, does not belong to the current user, or the current workspace role does not permit deleting its GitHub repository (owner/admin required).`,
-          metadata: { reason: 'not_found_or_insufficient_role' },
-        });
-        throw new NotFoundException(
-          `Project '${projectId}' not found or does not belong to the current user.`,
-        );
-      }
-
-      const repoFullName = project.repo_full_name;
-      // CRITICAL: re-validate the typed confirmation server-side against the
-      // project's actual repo_full_name. Never trust client-side gating —
-      // a modified or replayed request without this check would let a
-      // caller delete the GitHub repo without ever having typed the
-      // confirmation the UI showed them.
-      if (options?.confirmRepoName !== repoFullName) {
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_rejected',
-          title: 'GitHub repository deletion rejected',
-          body: `confirmRepoName did not match this project's repository name (${repoFullName}). The GitHub repository was not deleted.`,
-          metadata: { reason: 'confirmation_mismatch', repoFullName },
-        });
-        throw new BadRequestException(
-          "confirmRepoName does not match this project's repository name. The GitHub repository was not deleted.",
-        );
-      }
-
-      if (!githubAccessToken) {
-        githubRepoDeleteError = {
-          code: 'missing_scope',
-          message:
-            'No GitHub access token on this session — reconnect your GitHub account to grant repository-deletion permission.',
-        };
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_missing_scope',
-          title: 'GitHub repository deletion needs reconnect',
-          body: `Could not delete ${repoFullName} on GitHub: no GitHub access token on this session.`,
-          metadata: { repoFullName, code: 'missing_scope' },
-        });
-      } else {
-        const [owner, repo] = repoFullName.split('/');
-        if (!owner || !repo) {
-          githubRepoDeleteError = {
-            code: 'other',
-            message: `Could not derive an owner/repo from '${repoFullName}'.`,
-          };
-          await this.recordProductEvent({
-            userId,
-            projectId,
-            eventCode: 'project_github_repo_delete_failed',
-            title: 'GitHub repository deletion failed',
-            body: `Could not derive an owner/repo from '${repoFullName}'.`,
-            metadata: { repoFullName, code: 'other' },
-          });
-        } else {
-          try {
-            await this.githubService.deleteRepoForUser(
-              githubAccessToken,
-              owner,
-              repo,
-            );
-            githubRepoDeleted = true;
-            await this.recordProductEvent({
-              userId,
-              projectId,
-              eventCode: 'project_github_repo_deleted',
-              title: 'GitHub repository deleted',
-              body: `${repoFullName} was deleted from GitHub.`,
-              metadata: { repoFullName },
-            });
-          } catch (error) {
-            const deleteError =
-              error instanceof GithubRepoDeleteError
-                ? { code: error.code, message: error.message }
-                : { code: 'other' as const, message: (error as Error).message };
-            githubRepoDeleteError = deleteError;
-            await this.recordProductEvent({
-              userId,
-              projectId,
-              eventCode:
-                deleteError.code === 'missing_scope'
-                  ? 'project_github_repo_delete_missing_scope'
-                  : 'project_github_repo_delete_failed',
-              title: 'GitHub repository deletion failed',
-              body: `Could not delete ${repoFullName} on GitHub: ${deleteError.message}`,
-              metadata: { repoFullName, code: deleteError.code },
-            });
-          }
-        }
-      }
-    }
-
-    const deleted = await this.projectsRepository.deleteByIdAndUser(
+    return this.lifecycle.disconnectProject(
       projectId,
       userId,
-      deleteGithubRepo ? destructiveRoles : undefined,
+      options,
+      githubAccessToken,
     );
-    if (!deleted) {
-      throw new NotFoundException(
-        `Project '${projectId}' not found or does not belong to the current user.`,
-      );
-    }
-
-    return {
-      ok: true,
-      githubRepoDeleted,
-      ...(githubRepoDeleteError ? { githubRepoDeleteError } : {}),
-    };
   }
 
   // ─── POST /projects/sync ───────────────────────────────────────────────────
 
-  /**
-   * Checks each provisioned project against the GitHub API to see if its
-   * repository still exists. Projects whose repos have been deleted are marked
-   * 'orphaned'; orphaned projects whose repos reappear are restored to
-   * 'provisioned'. Requires a valid GitHub access token in session.
-   */
   async syncProjects(
     userId: string,
     accessToken: string,
   ): Promise<SyncProjectsResponse> {
-    const rows = await this.projectsRepository.listByUser(userId, 100);
-    if (rows.length === 0) {
-      await this.recordProductEvent({
-        userId,
-        projectId: null,
-        eventCode: 'project_sync_completed',
-        title: 'Project sync completed',
-        body: 'Project repository sync found no tracked projects.',
-        metadata: { orphaned: 0, reachable: 0, total: 0 },
-      });
-      return { orphaned: 0, reachable: 0, total: 0 };
-    }
-
-    const orphanedIds: string[] = [];
-    const reachableIds: string[] = [];
-
-    // Check repos concurrently — cap at 10 parallel requests to avoid GitHub
-    // secondary rate-limit triggers on large project lists.
-    const CONCURRENCY = 10;
-    for (let i = 0; i < rows.length; i += CONCURRENCY) {
-      const batch = rows.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        batch.map(async (row) => {
-          try {
-            const exists = await this.githubService.repoExists(
-              accessToken,
-              row.repo_full_name,
-            );
-            if (exists) {
-              reachableIds.push(row.id);
-            } else {
-              orphanedIds.push(row.id);
-            }
-          } catch (err) {
-            // repoExists throws on anything inconclusive — 401/403 (bad or
-            // revoked token, rate limit) as well as 5xx/network errors. None
-            // of those confirm the repo is gone, so skip rather than mark
-            // orphaned; a batch full of these usually means the shared
-            // session token is bad, not that every repo vanished at once.
-            this.logger.warn(
-              `Sync: GitHub check failed for ${row.repo_full_name}: ${String(err)}`,
-            );
-          }
-        }),
-      );
-    }
-
-    const [orphanedCount, reachableCount] = await Promise.all([
-      this.projectsRepository.markOrphaned(orphanedIds, userId),
-      this.projectsRepository.markReachable(reachableIds, userId),
-    ]);
-
-    await this.recordProductEvent({
-      userId,
-      projectId: null,
-      eventCode: 'project_sync_completed',
-      title: 'Project sync completed',
-      body: `Project repository sync checked ${rows.length} tracked project${rows.length === 1 ? '' : 's'}.`,
-      metadata: {
-        orphaned: orphanedCount,
-        reachable: reachableCount,
-        total: rows.length,
-      },
-    });
-
-    return {
-      orphaned: orphanedCount,
-      reachable: reachableCount,
-      total: rows.length,
-    };
+    return this.lifecycle.syncProjects(userId, accessToken);
   }
-
   // ─── Scheduled reconciliation (src/scripts/reconcile-deleted-repos.ts) ────
 
   /**
@@ -2545,34 +2175,6 @@ export class ProjectsService {
     }
   }
 
-  private async loadCiTokenStatus(
-    projectId: string,
-  ): Promise<ProjectTokenStatus | null> {
-    if (!this.ciTokensRepository) {
-      return null;
-    }
-
-    return this.ciTokensRepository.findProjectTokenStatus(projectId);
-  }
-
-  private async loadOwnedProjectForWorkflowSettings(
-    projectId: string,
-    userId: string,
-  ): Promise<{ row: ProvisionedProjectRow; project: ProvisionedProject }> {
-    const row = await this.projectsRepository.findByIdAndUser(
-      projectId,
-      userId,
-    );
-    if (!row) {
-      throw new NotFoundException('Project not found');
-    }
-
-    return {
-      row,
-      project: toProvisionedProject(row),
-    };
-  }
-
   /**
    * Single choke point for creating a provisioned_projects row.
    *
@@ -2659,28 +2261,6 @@ export class ProjectsService {
     }
   }
 
-  /**
-   * Role gate for project-mutating actions. Defaults to the existing
-   * permissive set (lead/delegated_lead/member) when no override is given, so
-   * plain callers are unaffected; pass a narrower `roles` list (e.g.
-   * ['admin', 'delegated_lead']) for actions with real external side effects, such as
-   * deleting the linked GitHub repository. Mirrors
-   * DeploymentTargetsService.assertProjectMutationAccess. No-ops when
-   * workspaceAccessService isn't wired in (e.g. some test doubles), matching
-   * the optional-injection pattern used throughout this service.
-   */
-  private async assertProjectMutationAccess(
-    projectId: string,
-    userId: string,
-    roles: WorkspaceRole[] = ['admin', 'delegated_lead', 'member'],
-  ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(
-      projectId,
-      userId,
-      roles,
-    );
-  }
-
   private async recordProductEvent(input: {
     userId: string;
     projectId: string | null;
@@ -2692,38 +2272,4 @@ export class ProjectsService {
     await this.productEvents.record(input);
   }
 
-  private projectSyncSnapshotsEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.projectSyncSnapshots.enabled ?? false;
-  }
-
-  private workflowSettingsPreviewEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.workflowSettingsPreview.enabled ?? false;
-  }
-
-  private workflowUpdatePrEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.workflowUpdatePr.enabled ?? false;
-  }
-
-  private ciRunTrackingEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.ciRunTracking?.enabled ?? false;
-  }
-
-  private deploymentHistoryEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.deploymentHistory?.enabled ?? false;
-  }
-
-  private driftDetectionEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.driftDetection?.enabled ?? false;
-  }
-
-  private auditEventsEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.auditEvents?.enabled ?? false;
-  }
 }

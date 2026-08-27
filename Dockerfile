@@ -67,6 +67,10 @@ RUN echo "@implementsprint:registry=https://npm.pkg.github.com" > .npmrc \
 
 # Copy compiled application
 COPY --chown=nestjs:nodejs --from=builder /app/dist ./dist
+# The cron deployment runs the same compiled application in application
+# context; keep its one entrypoint in the image instead of relying on dev
+# tooling or a source-only script that is absent from the production layer.
+COPY --chown=nestjs:nodejs scripts/process-outbox.cjs ./scripts/process-outbox.cjs
 
 # Bake templates into the image — copied from the cloned repo in stage 1
 COPY --chown=nestjs:nodejs --from=builder /tmp/cicd-workflow/workflow-templates ./templates/workflow-templates

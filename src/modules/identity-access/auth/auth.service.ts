@@ -13,7 +13,6 @@ import type { AppConfig } from '#kernel/config/app.config';
 import type { SessionUser } from '#kernel/auth/session-user.interface';
 import { GithubTeamRoleService } from '#modules/pipelines/index.js';
 import { OAuthStateRepository } from './infra/oauth-state.repository';
-import { OutboxRepository } from '#kernel/events/outbox.repository';
 import {
   SUBSCRIPTION_BOOTSTRAP,
   type SubscriptionBootstrap,
@@ -101,7 +100,6 @@ export class AuthService {
     private readonly usersRepository: UsersRepository,
     @Inject(SUBSCRIPTION_BOOTSTRAP)
     private readonly subscriptionsRepository: SubscriptionBootstrap,
-    private readonly outboxRepository: OutboxRepository,
     private readonly oauthStateRepository: OAuthStateRepository,
     private readonly githubTeamRoleService: GithubTeamRoleService,
   ) {
@@ -449,16 +447,6 @@ export class AuthService {
       // required to guarantee the token reaches the session store before we
       // redirect the browser.
       await this.saveSession(request);
-
-      await this.outboxRepository.publishLater({
-        topic: 'user.signed_in',
-        aggregateType: 'user',
-        aggregateId: persistedUser.id,
-        payload: {
-          provider: 'github',
-          login: persistedUser.login,
-        },
-      });
 
       return this.withQuery(returnTo, 'auth', 'success');
     } catch (err) {

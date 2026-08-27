@@ -33,8 +33,6 @@ import { ProviderClientRegistry } from './infrastructure/providers/core/provider
 import { ProjectDeploymentProvisioningService } from './application/project-deployment-provisioning.service';
 import { RenderCiSecretsService } from './application/render-ci-secrets.service';
 import { RenderCostPolicyService } from './application/render-cost-policy.service';
-import { RenderEnvClient } from './infrastructure/providers/render/render-env.client';
-import { VercelEnvClient } from './infrastructure/providers/vercel/vercel-env.client';
 import { ProviderConnectionsController } from './api/provider-connections.controller';
 import { ProviderConnectionsRepository } from './infrastructure/provider-connections.repository';
 import { ProviderConnectionsService } from './application/provider-connections.service';
@@ -48,6 +46,8 @@ import { ProjectDeploymentsService } from './application/project-deployments.ser
 import { ProjectDriftService } from './application/project-drift.service';
 import { ProjectSyncFindingsRepository } from './infrastructure/repositories/project-sync-findings.repository';
 import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-registry.port';
+import { RuntimeCoreModule } from './core/runtime-core.module';
+import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
 
 @Module({
   imports: [
@@ -61,6 +61,8 @@ import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-re
     WorkspacesModule,
     CiModule,
     LegacyDeploymentProvidersModule,
+    RuntimeCoreModule,
+    GcpDeploymentModule,
   ],
   controllers: [
     ProviderConnectionsController,
@@ -91,8 +93,6 @@ import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-re
     DeploymentStrategyResolver,
     EnvVarsService,
     EnvTokenEncryptionService,
-    RenderEnvClient,
-    VercelEnvClient,
     ProviderClientRegistry,
     {
       provide: PROVIDER_CLIENT_REGISTRY,

@@ -12,6 +12,7 @@ export interface LegacyDeploymentProviderConfig {
   label: string;
   enabled: boolean;
   supportedSlots: Array<'backend' | 'frontend' | 'standalone'>;
+  previewDeployments?: boolean;
 }
 
 const LEGACY_CONFIG_SCHEMA: ProviderFormSchema = {
@@ -34,6 +35,7 @@ const LEGACY_CAPABILITIES: ProviderCapabilities = {
   connectivity: 'direct',
   enumerable: true,
   credentialCustody: 'platform',
+  envProvisioning: true,
 };
 
 /**
@@ -47,7 +49,7 @@ export class LegacyDeploymentProvider
   readonly id: 'render' | 'vercel';
   readonly label: string;
   readonly supportedSlots: Array<'backend' | 'frontend' | 'standalone'>;
-  readonly capabilities = LEGACY_CAPABILITIES;
+  readonly capabilities: ProviderCapabilities;
   readonly configSchema = LEGACY_CONFIG_SCHEMA;
   readonly credentialSchema: ProviderFormSchema = { fields: [] };
 
@@ -58,6 +60,10 @@ export class LegacyDeploymentProvider
     this.id = config.id;
     this.label = config.label;
     this.supportedSlots = config.supportedSlots;
+    this.capabilities = {
+      ...LEGACY_CAPABILITIES,
+      previewDeployments: config.previewDeployments ?? false,
+    };
   }
 
   onModuleInit(): void {

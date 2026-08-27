@@ -5,9 +5,11 @@
  * deliberately small and serialisable: these values are the contract a later
  * process or microservice will consume, not an internal Nest service API.
  */
+import { OUTBOX_TOPICS } from './outbox-topics';
+
 export const PLATFORM_EVENT_TOPICS = {
-  auditRecorded: 'platform.audit.recorded',
-  notificationRequested: 'platform.notification.requested',
+  auditRecorded: OUTBOX_TOPICS.platformAuditRecorded,
+  notificationRequested: OUTBOX_TOPICS.platformNotificationRequested,
 } as const;
 
 export type PlatformEventTopic =

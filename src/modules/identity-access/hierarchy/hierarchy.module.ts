@@ -20,7 +20,7 @@ import { GithubSecretsProvider } from './config-broker/providers/github-secrets.
 import { DeliveryProjectsController } from './delivery-projects/delivery-projects.controller';
 import { DeliveryProjectsRepository } from './delivery-projects/delivery-projects.repository';
 import { DeliveryProjectsService } from './delivery-projects/delivery-projects.service';
-import { GithubSyncOutboxWorker } from './github-sync/github-sync-outbox.worker';
+import { GithubSyncOutboxHandler } from './github-sync/github-sync-outbox.handler';
 import { GithubAccessSyncRepository } from './github-sync/github-access-sync.repository';
 import { GithubSyncService } from './github-sync/github-sync.service';
 import { GithubTeamAccessProvider } from './github-sync/providers/github-team-access.provider';
@@ -77,7 +77,7 @@ import { SystemsService } from './systems/systems.service';
     AssignmentsService,
     GithubAccessSyncRepository,
     GithubSyncService,
-    GithubSyncOutboxWorker,
+    GithubSyncOutboxHandler,
     GithubTeamAccessStubProvider,
     GithubTeamAccessLiveProvider,
     {

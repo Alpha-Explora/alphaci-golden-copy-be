@@ -1,4 +1,5 @@
 import type { WorkspaceRole } from '#modules/identity-access/workspaces/index.js';
+import { OUTBOX_TOPICS } from '#kernel/events/outbox-topics';
 
 /**
  * Group role wire values are the *existing* `orgs.workspace_members.role`
@@ -77,11 +78,10 @@ export type ApprovalState =
 
 export type ConfigurationSyncState = 'pending' | 'synced' | 'failed';
 
-/** outbox_events.topic values (plan §1.7/§2.2) — additive data only, no new table. */
+/** Active outbox topics with an in-process owner in the application relay. */
 export const HIERARCHY_OUTBOX_TOPICS = {
-  grant: 'hierarchy.repository_assignment.grant',
-  revoke: 'hierarchy.repository_assignment.revoke',
-  reconcile: 'hierarchy.repository_assignment.reconcile',
+  grant: OUTBOX_TOPICS.hierarchyAssignmentGrant,
+  revoke: OUTBOX_TOPICS.hierarchyAssignmentRevoke,
 } as const;
 
 export type HierarchyOutboxTopic =

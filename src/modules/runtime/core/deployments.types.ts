@@ -38,10 +38,8 @@ export type RenderDeploymentStrategy =
 export type VercelDeploymentStrategy =
   | 'vercel_git_connected'
   | 'vercel_ci_pushed';
-export type DeploymentStrategy =
-  | 'provider_native'
-  | VercelDeploymentStrategy
-  | RenderDeploymentStrategy;
+/** Strategy identifiers are owned by the provider plugin that implements them. */
+export type DeploymentStrategy = string;
 export type RenderServiceType =
   | 'web_service'
   | 'private_service'

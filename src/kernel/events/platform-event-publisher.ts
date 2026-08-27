@@ -28,7 +28,7 @@ export class AuditEventPublisher {
 
   async recordProjectEvent(input: AuditRecordedEventPayload): Promise<void> {
     try {
-      await this.outboxRepository.publishLater({
+      await this.outboxRepository.publishBestEffort({
         topic: PLATFORM_EVENT_TOPICS.auditRecorded,
         aggregateType: 'audit_event',
         aggregateId: aggregateIdFor(input),
@@ -53,7 +53,7 @@ export class NotificationEventPublisher {
 
   async record(input: NotificationRequestedEventPayload): Promise<void> {
     try {
-      await this.outboxRepository.publishLater({
+      await this.outboxRepository.publishBestEffort({
         topic: PLATFORM_EVENT_TOPICS.notificationRequested,
         aggregateType: 'notification',
         aggregateId: aggregateIdFor(input),

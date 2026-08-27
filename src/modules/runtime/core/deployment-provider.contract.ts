@@ -8,6 +8,10 @@ export interface ProviderCapabilities {
   connectivity: 'direct' | 'indirect';
   enumerable: boolean;
   credentialCustody: 'platform' | 'external';
+  /** Whether this provider is available through the runtime env API. */
+  envProvisioning?: boolean;
+  /** Whether this provider exposes a branch-scoped preview lane. */
+  previewDeployments?: boolean;
 }
 
 export interface ProviderFormField {
@@ -20,16 +24,12 @@ export interface ProviderFormSchema {
   fields: ProviderFormField[];
 }
 
-/** Provider ids supported by the current deployment runtime. */
-export const DEPLOYMENT_PROVIDER_IDS = ['render', 'vercel'] as const;
-export type DeploymentProviderId = (typeof DEPLOYMENT_PROVIDER_IDS)[number];
-
-/** Legacy defaults retained for response compatibility until providers are user-selected. */
-export const DEFAULT_BACKEND_PROVIDER_ID = DEPLOYMENT_PROVIDER_IDS[0];
-export const DEFAULT_FRONTEND_PROVIDER_ID = DEPLOYMENT_PROVIDER_IDS[1];
-
-/** Provider ids that currently expose the frontend preview lane. */
-export const PREVIEW_DEPLOYMENT_PROVIDER_IDS = ['vercel'] as const;
+/**
+ * Provider ids are open data, not a closed TypeScript union. A provider plugin
+ * owns its id and registers it at runtime; adding one must not require editing
+ * this contract or a central DTO union.
+ */
+export type DeploymentProviderId = string;
 
 export interface DeploymentProvider {
   readonly id: string;

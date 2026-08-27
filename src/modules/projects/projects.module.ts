@@ -25,7 +25,10 @@ import { UrlEmbeddabilityProbe } from './url-embeddability.probe';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
 import { ProjectDashboardService } from './application/dashboard/project-dashboard.service';
 import { ProjectDriftRepairApplicationService } from './application/drift/project-drift-repair.service';
-import { ProjectLifecycleService } from './application/lifecycle/project-lifecycle.service';
+import {
+  PROJECT_PROVISIONING_PORT,
+  ProjectLifecycleService,
+} from './application/lifecycle/project-lifecycle.service';
 import { ProjectPreviewsApplicationService } from './application/dashboard/project-previews.service';
 import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 import { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
@@ -35,6 +38,7 @@ import { ProjectsRepository } from './projects.repository';
 import { ProjectWorkspaceController } from './project-workspace.controller';
 import { ProjectWorkspaceService } from './project-workspace.service';
 import { ProjectsService } from './projects.service';
+import { ProjectReferenceModule } from './project-reference.module';
 
 @Module({
   imports: [
@@ -52,10 +56,15 @@ import { ProjectsService } from './projects.service';
     ExistingReposModule,
     CatalogModule,
     HierarchyProjectLinkModule,
+    ProjectReferenceModule,
   ],
   controllers: [ProjectsController, ProjectWorkspaceController],
   providers: [
     ProjectsService,
+    {
+      provide: PROJECT_PROVISIONING_PORT,
+      useExisting: ProjectsService,
+    },
     ProjectLifecycleService,
     ProjectDashboardService,
     ProjectWorkflowsService,

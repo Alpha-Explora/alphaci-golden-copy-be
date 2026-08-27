@@ -1,9 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  isRegisteredOutboxTopic,
+  type OutboxTopic,
+} from './outbox-topics';
 
 export interface OutboxEventInput {
-  topic: string;
+  topic: OutboxTopic;
   aggregateType: string;
   aggregateId: string;
   payload: unknown;
@@ -21,6 +26,7 @@ export interface PendingOutboxEvent {
 export type OutboxEventHandler = (event: PendingOutboxEvent) => Promise<void>;
 
 const OUTBOX_RELAY_LOCK = 'alphaci_platform_outbox_relay';
+const OUTBOX_TABLE = 'platform.outbox_events';
 
 @Injectable()
 export class OutboxRepository {
@@ -28,26 +34,34 @@ export class OutboxRepository {
 
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async publishLater(event: OutboxEventInput): Promise<void> {
+  /**
+   * Write an event on the caller's transaction. The business mutation and the
+   * event row are committed or rolled back together.
+   */
+  async publishInTransaction(
+    client: Pick<PoolClient, 'query'>,
+    event: OutboxEventInput,
+  ): Promise<void> {
+    await this.insert(client, event);
+  }
+
+  /** Strict durable write for a caller that owns no transaction. */
+  async publishDurably(event: OutboxEventInput): Promise<void> {
+    await this.insert(
+      this.databaseService as unknown as Pick<PoolClient, 'query'>,
+      event,
+    );
+  }
+
+  /**
+   * Explicit best-effort seam for non-critical producers. Transactional
+   * business transitions must use publishInTransaction() instead; this method
+   * deliberately suppresses a queueing failure after the business mutation has
+   * already committed.
+   */
+  async publishBestEffort(event: OutboxEventInput): Promise<void> {
     try {
-      await this.databaseService.query(
-        `
-          INSERT INTO outbox_events (
-            topic,
-            aggregate_type,
-            aggregate_id,
-            payload,
-            status
-          )
-          VALUES ($1, $2, $3, $4::jsonb, 'pending');
-        `,
-        [
-          event.topic,
-          event.aggregateType,
-          event.aggregateId,
-          JSON.stringify(event.payload ?? {}),
-        ],
-      );
+      await this.publishDurably(event);
     } catch (error) {
       this.logger.warn(`Outbox write skipped: ${(error as Error).message}`);
     }
@@ -66,8 +80,16 @@ export class OutboxRepository {
   async processPending(
     handler: OutboxEventHandler,
     limit = 50,
+    topics: readonly string[] = [],
   ): Promise<number> {
     const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 500));
+
+    // A single outbox table can contain events owned by more than one context.
+    // A relay must pass its registered topic set explicitly; otherwise a newly
+    // introduced topic could be acknowledged by the wrong process.
+    if (topics.length === 0) {
+      return 0;
+    }
 
     return this.databaseService.withClient(async (client) => {
       const lockResult = await client.query<{ locked: boolean }>(
@@ -82,13 +104,15 @@ export class OutboxRepository {
       try {
         const result = await client.query<OutboxRow>(
           `
-            SELECT id, topic, aggregate_type, aggregate_id, payload, created_at
-            FROM outbox_events
+            SELECT id, topic, aggregate_type, aggregate_id, payload, created_at, attempts
+            FROM ${OUTBOX_TABLE}
             WHERE status = 'pending'
+              AND (available_at IS NULL OR available_at <= NOW())
+              AND topic = ANY($2::text[])
             ORDER BY created_at ASC, id ASC
             LIMIT $1;
           `,
-          [boundedLimit],
+          [boundedLimit, [...topics]],
         );
 
         let processed = 0;
@@ -98,8 +122,8 @@ export class OutboxRepository {
             await handler(event);
             const marked = await client.query<{ id: string }>(
               `
-                UPDATE outbox_events
-                SET status = 'published', processed_at = NOW()
+                UPDATE ${OUTBOX_TABLE}
+                SET status = 'published', published_at = NOW(), updated_at = NOW()
                 WHERE id = $1 AND status = 'pending'
                 RETURNING id;
               `,
@@ -112,6 +136,22 @@ export class OutboxRepository {
             this.logger.warn(
               `Outbox event ${event.id} (${event.topic}) was not processed: ${String(error)}`,
             );
+            await client
+              .query(
+                `
+                  UPDATE ${OUTBOX_TABLE}
+                  SET attempts = attempts + 1,
+                      available_at = NOW() + INTERVAL '1 minute',
+                      updated_at = NOW()
+                  WHERE id = $1 AND status = 'pending';
+                `,
+                [event.id],
+              )
+              .catch((retryError: unknown) => {
+                this.logger.warn(
+                  `Outbox retry schedule failed for ${event.id}: ${String(retryError)}`,
+                );
+              });
           }
         }
         return processed;
@@ -126,6 +166,33 @@ export class OutboxRepository {
       }
     });
   }
+
+  private async insert(
+    executor: Pick<PoolClient, 'query'>,
+    event: OutboxEventInput,
+  ): Promise<void> {
+    if (!isRegisteredOutboxTopic(event.topic)) {
+      throw new Error(`Unsupported outbox topic '${event.topic}'`);
+    }
+    await executor.query(
+      `
+        INSERT INTO ${OUTBOX_TABLE} (
+          topic,
+          aggregate_type,
+          aggregate_id,
+          payload,
+          status
+        )
+        VALUES ($1, $2, $3, $4::jsonb, 'pending');
+      `,
+      [
+        event.topic,
+        event.aggregateType,
+        event.aggregateId,
+        JSON.stringify(event.payload ?? {}),
+      ],
+    );
+  }
 }
 
 interface OutboxRow {
@@ -135,6 +202,7 @@ interface OutboxRow {
   aggregate_id: string;
   payload: unknown;
   created_at: string | Date;
+  attempts: number;
 }
 
 function toPendingEvent(row: OutboxRow): PendingOutboxEvent {

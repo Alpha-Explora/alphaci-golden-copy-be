@@ -23,21 +23,22 @@ export type {
   EnvVarMetadata,
 } from './core/deployments.types';
 export {
-  DEFAULT_BACKEND_PROVIDER_ID,
-  DEFAULT_FRONTEND_PROVIDER_ID,
-  DEPLOYMENT_PROVIDER_IDS,
-  PREVIEW_DEPLOYMENT_PROVIDER_IDS,
   type DeploymentProvider,
   type DeploymentProviderId,
 } from './core/deployment-provider.contract';
+export {
+  DEFAULT_BACKEND_PROVIDER_ID,
+  DEFAULT_FRONTEND_PROVIDER_ID,
+} from './core/deployment-provider.defaults';
 export { DeploymentProviderRegistry } from './core/deployment-provider.registry';
 export {
   buildDeploymentWorkflowFragment,
+  WorkflowFragmentRegistry,
   type WorkflowFragment,
   type WorkflowFragmentContext,
   type WorkflowFragmentResult,
   type WorkflowFragmentTarget,
-} from './core/workflow-fragment.contract';
+} from './infrastructure/providers/core/workflow-fragment.registry';
 export type { DeploymentProviderContract } from './contracts/deployment-provider.contract';
 export type { DeploymentProvisioningContract } from './contracts/deployment-provisioning.contract';
 export {

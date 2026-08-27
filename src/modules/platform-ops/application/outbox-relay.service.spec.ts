@@ -1,4 +1,5 @@
 import { OutboxRelayService } from './outbox-relay.service';
+import { OutboxDispatcher } from '#kernel/events/outbox-dispatcher';
 
 describe('OutboxRelayService', () => {
   it('routes audit and notification topics to their existing policy services', async () => {
@@ -38,11 +39,14 @@ describe('OutboxRelayService', () => {
     const notificationEventsService = {
       record: jest.fn().mockResolvedValue(undefined),
     };
+    const dispatcher = new OutboxDispatcher();
     const service = new OutboxRelayService(
       { processPending } as never,
+      dispatcher,
       auditEventsService as never,
       notificationEventsService as never,
     );
+    service.onModuleInit();
 
     await expect(service.processPendingOnce(10)).resolves.toBe(2);
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(

@@ -4,7 +4,6 @@ import type { TestingModule } from '@nestjs/testing';
 import { WorkflowsService } from './workflows.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { WorkflowHistoryRepository } from './infrastructure/workflow-history.repository.js';
-import { OutboxRepository } from '#kernel/events/outbox.repository.js';
 import type { WorkflowTemplate } from '../catalog/catalog.service.js';
 
 jest.mock('node:fs/promises');
@@ -49,11 +48,6 @@ const makeHistoryRepo = () =>
     create: jest.fn().mockResolvedValue(undefined),
   }) as unknown as WorkflowHistoryRepository;
 
-const makeOutboxRepo = () =>
-  ({
-    publishLater: jest.fn().mockResolvedValue(undefined),
-  }) as unknown as OutboxRepository;
-
 const toWorkflowMetadata = (file: {
   stage: 'access' | 'quality' | 'package' | 'guard';
   name: string;
@@ -70,13 +64,11 @@ describe('WorkflowsService', () => {
   let service: WorkflowsService;
   let catalogService: CatalogService;
   let historyRepo: WorkflowHistoryRepository;
-  let outboxRepo: OutboxRepository;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     catalogService = makeCatalogService();
     historyRepo = makeHistoryRepo();
-    outboxRepo = makeOutboxRepo();
 
     mockFs.readFile.mockResolvedValue(baseYaml);
 
@@ -85,7 +77,6 @@ describe('WorkflowsService', () => {
         WorkflowsService,
         { provide: CatalogService, useValue: catalogService },
         { provide: WorkflowHistoryRepository, useValue: historyRepo },
-        { provide: OutboxRepository, useValue: outboxRepo },
       ],
     }).compile();
 
@@ -195,7 +186,7 @@ describe('WorkflowsService', () => {
       );
     });
 
-    it('saves to history and publishes outbox event', async () => {
+    it('saves workflow history through the workflow history repository', async () => {
       await service.generate('user-1', {
         templateId: 'nestjs-be',
         serviceName: 'my-service',
@@ -203,15 +194,8 @@ describe('WorkflowsService', () => {
 
       const createHistory = (historyRepo as unknown as { create: jest.Mock })
         .create;
-      const publishLater = (
-        outboxRepo as unknown as { publishLater: jest.Mock }
-      ).publishLater;
-
       expect(createHistory).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 'user-1', templateId: 'nestjs-be' }),
-      );
-      expect(publishLater).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: 'workflow.generated' }),
       );
     });
 

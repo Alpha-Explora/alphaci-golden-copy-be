@@ -5,7 +5,6 @@ import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { UsersRepository } from './infra/users.repository.js';
 import { SubscriptionsRepository } from '#modules/billing/subscription/infra/subscriptions.repository.js';
-import { OutboxRepository } from '#kernel/events/outbox.repository.js';
 import { OAuthStateRepository } from './infra/oauth-state.repository.js';
 import { SUBSCRIPTION_BOOTSTRAP } from '#modules/billing/subscription/subscription.contracts.js';
 import { GithubTeamRoleService } from '#modules/pipelines/github/github-team-role.service.js';
@@ -73,11 +72,6 @@ const makeSubsRepo = () =>
     ensureDefaultFreeSubscription: jest.fn().mockResolvedValue(fakeFreeSub),
   }) as unknown as SubscriptionsRepository;
 
-const makeOutboxRepo = () =>
-  ({
-    publishLater: jest.fn().mockResolvedValue(undefined),
-  }) as unknown as OutboxRepository;
-
 /**
  * Default OAuthStateRepository mock: save() succeeds, findAndDelete() returns
  * a matching github record. Tests override these per-case as needed.
@@ -128,7 +122,6 @@ async function createService(
 ) {
   const usersRepo = makeUsersRepo(usersRepoOverrides);
   const subsRepo = makeSubsRepo();
-  const outboxRepo = makeOutboxRepo();
   const oauthStateRepo = makeOAuthStateRepo(oauthStateOverrides);
 
   const module: TestingModule = await Test.createTestingModule({
@@ -138,7 +131,6 @@ async function createService(
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: SUBSCRIPTION_BOOTSTRAP, useValue: subsRepo },
-      { provide: OutboxRepository, useValue: outboxRepo },
       { provide: OAuthStateRepository, useValue: oauthStateRepo },
       // Sync disabled by default so these tests continue to exercise the
       // legacy org-ownership seeding path unchanged.
@@ -153,7 +145,6 @@ async function createService(
     service: module.get(AuthService),
     usersRepo,
     subsRepo,
-    outboxRepo,
     oauthStateRepo,
   };
 }
@@ -701,7 +692,7 @@ describe('AuthService', () => {
       expect(upsertSpy).not.toHaveBeenCalled();
     });
 
-    it('does NOT call ensureDefaultFreeSubscription or publishLater for archived accounts', async () => {
+    it('does NOT call ensureDefaultFreeSubscription or publishBestEffort for archived accounts', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
 
       const archivedRow: ArchivedUserLookup = {
@@ -710,7 +701,7 @@ describe('AuthService', () => {
         archivedAt: '2026-05-01T00:00:00Z',
         githubUserId: '12345',
       };
-      const { service, subsRepo, outboxRepo } = await createService(
+      const { service, subsRepo } = await createService(
         true,
         undefined,
         {
@@ -725,8 +716,6 @@ describe('AuthService', () => {
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(subsRepo.ensureDefaultFreeSubscription).not.toHaveBeenCalled();
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(outboxRepo.publishLater).not.toHaveBeenCalled();
     });
 
     it('returns failed when token exchange fails', async () => {

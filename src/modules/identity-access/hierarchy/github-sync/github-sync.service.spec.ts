@@ -62,7 +62,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
 
   beforeEach(() => {
     outboxRepository = {
-      publishLater: jest.fn(),
+      publishBestEffort: jest.fn(),
     } as unknown as jest.Mocked<OutboxRepository>;
     assignmentsRepository = {
       findById: jest.fn(),
@@ -110,10 +110,11 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
   it('requestGrant (transition #1) marks sync pending and enqueues a grant job', async () => {
     await service.requestGrant('assignment-1', 'pm-1');
 
-    expect(syncRepository.upsertPending).toHaveBeenCalledWith('assignment-1');
-    expect(outboxRepository.publishLater).toHaveBeenCalledWith(
+    expect(syncRepository.upsertPending).toHaveBeenCalledWith(
+      'assignment-1',
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
     );
+    expect(outboxRepository.publishBestEffort).not.toHaveBeenCalled();
   });
 
   it('transition #2a: a verified grant marks the assignment active — never active before verification', async () => {
@@ -159,7 +160,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
       'assignment-1',
     );
     expect(assignmentsRepository.markGrantVerified).not.toHaveBeenCalled();
-    expect(outboxRepository.publishLater).toHaveBeenCalledWith(
+    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
     );
   });
@@ -175,7 +176,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     });
 
     expect(assignmentsRepository.markGrantFailed).toHaveBeenCalled();
-    expect(outboxRepository.publishLater).not.toHaveBeenCalled();
+    expect(outboxRepository.publishBestEffort).not.toHaveBeenCalled();
   });
 
   it('transition #3: requestRevoke sets desired_state=unassigned and enqueues a revoke job', async () => {
@@ -190,10 +191,9 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
 
     expect(assignmentsRepository.setDesiredUnassigned).toHaveBeenCalledWith(
       'assignment-1',
-    );
-    expect(outboxRepository.publishLater).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
     );
+    expect(outboxRepository.publishBestEffort).not.toHaveBeenCalled();
   });
 
   it('transition #4a: a verified revoke marks the assignment revoked', async () => {
@@ -266,7 +266,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     expect(assignmentsRepository.markRevokeFailed).toHaveBeenCalledWith(
       'assignment-1',
     );
-    expect(outboxRepository.publishLater).toHaveBeenCalledWith(
+    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
     );
   });
@@ -293,7 +293,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
 
     await service.requestReconcile('assignment-1', 'pm-1');
 
-    expect(outboxRepository.publishLater).toHaveBeenCalledWith(
+    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
     );
   });
@@ -305,7 +305,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
 
     await service.requestReconcile('assignment-1', 'pm-1');
 
-    expect(outboxRepository.publishLater).toHaveBeenCalledWith(
+    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
     );
   });

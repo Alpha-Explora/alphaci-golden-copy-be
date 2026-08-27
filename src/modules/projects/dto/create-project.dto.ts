@@ -6,6 +6,7 @@ import {
   IsObject,
   IsOptional,
   IsPositive,
+  Matches,
   IsString,
   Max,
   MaxLength,
@@ -15,10 +16,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import {
-  DEPLOYMENT_PROVIDER_IDS,
-  type DeploymentProviderId,
-} from '#modules/runtime/index.js';
+import type { DeploymentProviderId } from '#modules/runtime/index.js';
 
 export class DeploymentProvisioningEnvVarDto {
   @IsString()
@@ -64,7 +62,11 @@ export class DeploymentProvisioningTargetDto {
   @IsIn(['backend', 'frontend', 'standalone'])
   slot!: 'backend' | 'frontend' | 'standalone';
 
-  @IsIn(DEPLOYMENT_PROVIDER_IDS)
+  // Provider ids are plugin data. Runtime validates that a registered,
+  // enabled provider can serve the requested slot; this DTO only validates
+  // the transport-safe id shape so adding a provider does not require editing
+  // this class.
+  @Matches(/^[a-z][a-z0-9-]*$/)
   provider!: DeploymentProviderId;
 
   @IsIn(['byo', 'flowci_managed'])
@@ -166,7 +168,7 @@ export class DeploymentProvisioningVariableGroupDto {
   @MaxLength(80)
   name?: string;
 
-  @IsIn(DEPLOYMENT_PROVIDER_IDS)
+  @Matches(/^[a-z][a-z0-9-]*$/)
   provider!: DeploymentProviderId;
 
   @IsOptional()

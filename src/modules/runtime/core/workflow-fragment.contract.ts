@@ -8,15 +8,8 @@ export interface WorkflowFragmentTarget {
   readonly dockerContext?: string | null;
   readonly dockerfilePath?: string | null;
   readonly imageName?: string | null;
-  readonly renderServiceType?: string | null;
-  readonly renderInstanceType?: string | null;
-  readonly secretNames?: {
-    readonly token?: string;
-    readonly orgId?: string;
-    readonly projectId?: string;
-    readonly deployHookUrl?: string;
-    readonly healthcheckUrl?: string;
-  };
+  /** Provider-owned secret names; keys are intentionally open-ended. */
+  readonly secretNames?: Readonly<Record<string, string>>;
 }
 
 export interface WorkflowFragmentContext {
@@ -32,10 +25,11 @@ export interface WorkflowFragmentResult {
 }
 
 /**
- * Provider-owned workflow contribution. Workflows composes this result but
+ * Provider-owned workflow contribution. Projects composes this result but
  * does not know provider job names, reusable workflow refs, or secret maps.
  */
 export interface WorkflowFragment {
+  readonly provider: string;
   build(
     target: WorkflowFragmentTarget,
     branch: WorkflowFragmentBranch,
@@ -43,145 +37,35 @@ export interface WorkflowFragment {
   ): WorkflowFragmentResult | undefined;
 }
 
-const CENTRAL_WORKFLOW_REF =
-  'cicd-external-project/cicd-workflow/.github/workflows';
-const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
-const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
+/**
+ * Generic plugin registry used by the workflow builder. It deliberately has
+ * no vendor branches; provider modules contribute fragments at composition
+ * time and duplicate ids fail fast.
+ */
+export class WorkflowFragmentRegistry {
+  private readonly fragmentsByProvider = new Map<string, WorkflowFragment>();
 
-function branchCondition(branch: WorkflowFragmentBranch): string {
-  return `\${{ (${BRANCH_EXPR}) == '${branch}' }}`;
-}
+  constructor(fragments: readonly WorkflowFragment[] = []) {
+    fragments.forEach((fragment) => this.register(fragment));
+  }
 
-function deploymentNeeds(branch: WorkflowFragmentBranch): string[] {
-  return branch === 'main' ? ['build', 'production-gate'] : ['build'];
-}
+  register(fragment: WorkflowFragment): void {
+    if (!fragment.provider.trim()) {
+      throw new Error('Workflow fragments must register a non-empty provider');
+    }
+    if (this.fragmentsByProvider.has(fragment.provider)) {
+      throw new Error(
+        `Duplicate workflow fragment provider: ${fragment.provider}`,
+      );
+    }
+    this.fragmentsByProvider.set(fragment.provider, fragment);
+  }
 
-function vercelFragment(
-  target: WorkflowFragmentTarget,
-  branch: WorkflowFragmentBranch,
-  context: WorkflowFragmentContext,
-): WorkflowFragmentResult {
-  const secretNames = target.secretNames ?? {};
-  const jobId = `deploy-${target.provider}-${target.slot}-${branch}`;
-  return {
-    jobs: {
-      [jobId]: {
-        needs: deploymentNeeds(branch),
-        if: branchCondition(branch),
-        uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@${context.centralWorkflowRef}`,
-        with: {
-          'system-name': context.serviceName,
-          'working-directory': target.rootDirectory ?? context.servicePath,
-          environment: branch === 'main' ? 'production' : 'preview',
-          'checkout-ref': HEAD_SHA_EXPR,
-        },
-        secrets: {
-          VERCEL_TOKEN: `\${{ secrets.${secretNames.token ?? 'VERCEL_TOKEN'} }}`,
-          VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId ?? 'VERCEL_ORG_ID'} }}`,
-          VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId ?? 'VERCEL_PROJECT_ID'} }}`,
-          GH_PR_TOKEN:
-            "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
-        },
-      },
-    },
-    jobIds: [jobId],
-    promotionNeeds: branch === 'uat' ? [jobId] : [],
-  };
-}
+  get(provider: string): WorkflowFragment | undefined {
+    return this.fragmentsByProvider.get(provider);
+  }
 
-function dockerBuildFragment(
-  target: WorkflowFragmentTarget,
-  branch: WorkflowFragmentBranch,
-  context: WorkflowFragmentContext,
-): Record<string, unknown> {
-  return {
-    // docker-build.yml's nested vulnerability-scan job requires
-    // security-events: write to upload its Trivy SARIF report.
-    permissions: {
-      contents: 'read',
-      packages: 'write',
-      'security-events': 'write',
-    },
-    needs: deploymentNeeds(branch),
-    if: branchCondition(branch),
-    uses: `${CENTRAL_WORKFLOW_REF}/docker-build.yml@${context.centralWorkflowRef}`,
-    with: {
-      'working-directory':
-        target.dockerContext ?? target.rootDirectory ?? context.servicePath,
-      'image-name': target.imageName ?? `alphaci-${target.slot}`,
-      'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
-      'push-image': true,
-      'scan-vulnerabilities': true,
-      'fail-on-vulnerabilities': true,
-    },
-  };
-}
-
-function renderFragment(
-  target: WorkflowFragmentTarget,
-  branch: WorkflowFragmentBranch,
-  context: WorkflowFragmentContext,
-  dockerJobId: string,
-): Record<string, unknown> {
-  const secretNames = target.secretNames ?? {};
-  return {
-    needs: [dockerJobId],
-    if: branchCondition(branch),
-    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${context.centralWorkflowRef}`,
-    with: {
-      'system-name': context.serviceName,
-      environment: branch === 'main' ? 'production' : branch,
-      branch,
-      'deploy-mode': 'auto',
-      'healthcheck-path': '/api/v1/health',
-      'require-api-center-check': true,
-    },
-    secrets: {
-      RENDER_DEPLOY_HOOK_URL_TEST: `\${{ secrets.${secretNames.deployHookUrl ?? 'RENDER_DEPLOY_HOOK_URL_TEST'} }}`,
-      RENDER_DEPLOY_HOOK_URL_UAT: `\${{ secrets.${secretNames.deployHookUrl ?? 'RENDER_DEPLOY_HOOK_URL_UAT'} }}`,
-      RENDER_DEPLOY_HOOK_URL_MAIN: `\${{ secrets.${secretNames.deployHookUrl ?? 'RENDER_DEPLOY_HOOK_URL_MAIN'} }}`,
-      RENDER_HEALTHCHECK_URL_TEST: `\${{ secrets.${secretNames.healthcheckUrl ?? 'RENDER_HEALTHCHECK_URL_TEST'} }}`,
-      RENDER_HEALTHCHECK_URL_UAT: `\${{ secrets.${secretNames.healthcheckUrl ?? 'RENDER_HEALTHCHECK_URL_UAT'} }}`,
-      RENDER_HEALTHCHECK_URL_MAIN: `\${{ secrets.${secretNames.healthcheckUrl ?? 'RENDER_HEALTHCHECK_URL_MAIN'} }}`,
-    },
-  };
-}
-
-const workflowFragments: ReadonlyMap<string, WorkflowFragment> = new Map([
-  [
-    'vercel',
-    {
-      build: (target, branch, context) =>
-        vercelFragment(target, branch, context),
-    },
-  ],
-  [
-    'render',
-    {
-      build: (target, branch, context) => {
-        if (target.deploymentStrategy !== 'render_image_pushed') {
-          return undefined;
-        }
-
-        const jobId = `deploy-${target.provider}-${target.slot}-${branch}`;
-        const dockerJobId = `docker-${target.slot}-${branch}`;
-        return {
-          jobs: {
-            [dockerJobId]: dockerBuildFragment(target, branch, context),
-            [jobId]: renderFragment(target, branch, context, dockerJobId),
-          },
-          jobIds: [dockerJobId, jobId],
-          promotionNeeds: branch === 'uat' ? [dockerJobId, jobId] : [],
-        };
-      },
-    },
-  ],
-]);
-
-export function buildDeploymentWorkflowFragment(
-  target: WorkflowFragmentTarget,
-  branch: WorkflowFragmentBranch,
-  context: WorkflowFragmentContext,
-): WorkflowFragmentResult | undefined {
-  return workflowFragments.get(target.provider)?.build(target, branch, context);
+  list(): WorkflowFragment[] {
+    return [...this.fragmentsByProvider.values()];
+  }
 }

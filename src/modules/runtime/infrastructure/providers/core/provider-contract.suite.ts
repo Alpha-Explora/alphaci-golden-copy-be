@@ -55,9 +55,9 @@ function assertStructuralContract(provider: RuntimeEnvProviderClient): void {
 }
 
 function assertProviderIdIsValid(provider: RuntimeEnvProviderClient): void {
-  if (provider.provider !== 'render' && provider.provider !== 'vercel') {
+  if (!provider.provider.trim()) {
     throw new Error(
-      `Unsupported deployment provider: ${String(provider.provider)}`,
+      'Deployment provider id must be a non-empty string',
     );
   }
 }

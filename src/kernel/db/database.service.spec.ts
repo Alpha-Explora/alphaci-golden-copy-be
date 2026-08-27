@@ -83,6 +83,51 @@ describe('DatabaseService', () => {
     );
   });
 
+  it('commits a transaction after the callback succeeds', async () => {
+    const client = {
+      release: jest.fn(),
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    };
+    mockPoolConnect.mockResolvedValueOnce(client);
+
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@127.0.0.1:5432/db'),
+    );
+
+    await expect(
+      service.withTransaction(async (transactionClient) => {
+        await transactionClient.query('UPDATE subscriptions');
+        return 'committed';
+      }),
+    ).resolves.toBe('committed');
+
+    expect(client.query).toHaveBeenNthCalledWith(2, 'BEGIN');
+    expect(client.query).toHaveBeenLastCalledWith('COMMIT');
+    expect(client.query).not.toHaveBeenCalledWith('ROLLBACK');
+  });
+
+  it('rolls back a transaction and rethrows callback errors', async () => {
+    const client = {
+      release: jest.fn(),
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    };
+    mockPoolConnect.mockResolvedValueOnce(client);
+
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@127.0.0.1:5432/db'),
+    );
+
+    await expect(
+      service.withTransaction(async () => {
+        throw new Error('mutation failed');
+      }),
+    ).rejects.toThrow('mutation failed');
+
+    expect(client.query).toHaveBeenNthCalledWith(2, 'BEGIN');
+    expect(client.query).toHaveBeenLastCalledWith('ROLLBACK');
+    expect(client.query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
   it('close resolves without error when pool is null', async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [

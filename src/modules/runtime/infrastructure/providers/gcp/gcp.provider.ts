@@ -24,6 +24,8 @@ const capabilities: ProviderCapabilities = {
   connectivity: 'direct',
   enumerable: false,
   credentialCustody: 'platform',
+  envProvisioning: false,
+  previewDeployments: false,
 };
 
 const configSchema: ProviderFormSchema = {

@@ -1,0 +1,44 @@
+# Render Blueprint for the one platform.outbox_events consumer.
+#
+# The web service and this cron job must use the same database credentials.
+# Leave secret values as `sync: false` and attach the same Render environment
+# values used by the web service; no credential is stored in the repository.
+# Do not add a second outbox consumer: the PostgreSQL advisory lock is a safety
+# net, while this single scheduled owner is the deployment-level ownership
+# boundary.
+services:
+  - type: cron
+    name: alphaci-outbox-relay
+    runtime: docker
+    schedule: "*/1 * * * *"
+    dockerfilePath: ./Dockerfile
+    dockerCommand: node scripts/process-outbox.cjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OUTBOX_BATCH_SIZE
+        value: "50"
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false

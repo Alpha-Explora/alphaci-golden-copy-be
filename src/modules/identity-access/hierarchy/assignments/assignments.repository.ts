@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  OutboxRepository,
+  type OutboxEventInput,
+} from '#kernel/events/outbox.repository';
 import type {
   AssignmentStatus,
   DesiredState,
@@ -35,7 +40,10 @@ interface AssignmentRow {
 
 @Injectable()
 export class AssignmentsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly outboxRepository: OutboxRepository,
+  ) {}
 
   /**
    * Creates (or reactivates) an assignment. `UNIQUE (repository_id, user_id)`
@@ -228,8 +236,32 @@ export class AssignmentsRepository {
 
   async setDesiredUnassigned(
     assignmentId: string,
+    outboxEvent?: OutboxEventInput,
   ): Promise<AssignmentRecord | null> {
-    const result = await this.databaseService.query<AssignmentRow>(
+    if (outboxEvent) {
+      return this.databaseService.withTransaction(async (client) => {
+        const record = await this.setDesiredUnassignedWithClient(
+          client,
+          assignmentId,
+        );
+        if (record) {
+          await this.outboxRepository.publishInTransaction(client, outboxEvent);
+        }
+        return record;
+      });
+    }
+
+    return this.setDesiredUnassignedWithClient(
+      this.databaseService as unknown as Pick<PoolClient, 'query'>,
+      assignmentId,
+    );
+  }
+
+  private async setDesiredUnassignedWithClient(
+    client: Pick<PoolClient, 'query'>,
+    assignmentId: string,
+  ): Promise<AssignmentRecord | null> {
+    const result = await client.query<AssignmentRow>(
       `
         UPDATE hierarchy.repository_assignments
         SET desired_state = 'unassigned', effective_state = 'revoking', updated_at = NOW()

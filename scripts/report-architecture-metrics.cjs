@@ -19,8 +19,22 @@ function filesUnder(dir) {
 }
 
 function moduleNameOf(relPath) {
-  const match = /^src\/modules\/([^/]+)\//.exec(relPath);
+  const match = /^src\/modules\/([^/]+)(?:\/|$)/.exec(relPath);
   return match ? match[1] : null;
+}
+
+function resolveImportTarget(sourceRel, importPath) {
+  if (importPath.startsWith('#modules/')) {
+    return path.posix.normalize(
+      `src/modules/${importPath.slice('#modules/'.length)}`,
+    );
+  }
+  if (importPath.startsWith('.')) {
+    return path.posix.normalize(
+      path.posix.join(path.posix.dirname(sourceRel), importPath),
+    );
+  }
+  return null;
 }
 
 function isRepositoryTarget(target) {
@@ -48,30 +62,55 @@ function collectModuleMetrics(moduleName) {
   let infrastructureImports = 0;
   let forbiddenInfrastructureImports = 0;
   let crossModuleImports = 0;
+  const crossContextPairs = new Set();
   let repositoryFilesInApplication = 0;
 
-  for (const file of applicationFiles) {
+  // Layer metrics are intentionally application-focused, but boundary metrics
+  // must inspect every production file. Cross-context imports commonly enter
+  // through a public index alias (`#modules/...`) and the old relative-only
+  // scan silently reported those as zero.
+  const productionFiles = sourceFiles.filter(
+    (file) => !file.endsWith('.spec.ts'),
+  );
+  for (const file of productionFiles) {
     const rel = path.relative(ROOT, file).replace(/\\/g, '/');
     const content = fs.readFileSync(file, 'utf8');
-    if (
-      path.basename(file).endsWith('.repository.ts') &&
-      !rel.includes('/infrastructure/')
-    ) {
-      repositoryFilesInApplication++;
-      forbiddenInfrastructureImports++;
-    }
     const importRe = /(?:from|import\()\s*['"]([.][^'"]+)['"]/g;
+    const aliasImportRe = /(?:from|import\()\s*['"](#modules\/[^'"]+)['"]/g;
     let match;
-    while ((match = importRe.exec(content)) !== null) {
-      const target = path.posix.normalize(
-        path.posix.join(path.posix.dirname(rel), match[1]),
-      );
-      if (target.includes('/infrastructure/')) {
-        infrastructureImports++;
-        if (!isRepositoryTarget(target)) forbiddenInfrastructureImports++;
+    for (const matcher of [importRe, aliasImportRe]) {
+      while ((match = matcher.exec(content)) !== null) {
+        const target = resolveImportTarget(rel, match[1]);
+        if (!target) continue;
+        const targetModule = moduleNameOf(target);
+        const sourceModule = moduleNameOf(rel);
+        if (targetModule && sourceModule && targetModule !== sourceModule) {
+          crossModuleImports++;
+          crossContextPairs.add(`${sourceModule}->${targetModule}`);
+        }
       }
-      const targetModule = moduleNameOf(target);
-      if (targetModule && targetModule !== moduleName) crossModuleImports++;
+    }
+
+    // Repository placement/import checks remain application-focused.
+    if (applicationFiles.includes(file)) {
+      if (
+        path.basename(file).endsWith('.repository.ts') &&
+        !rel.includes('/infrastructure/')
+      ) {
+        repositoryFilesInApplication++;
+        forbiddenInfrastructureImports++;
+      }
+      const applicationImportRe = /(?:from|import\()\s*['"]([.][^'"]+)['"]/g;
+      // Keep the existing relative infrastructure metric scoped to application
+      // files; the separate dependency gate owns all cross-context edges.
+      while ((match = applicationImportRe.exec(content)) !== null) {
+        const target = resolveImportTarget(rel, match[1]);
+        if (!target) continue;
+        if (target.includes('/infrastructure/')) {
+          infrastructureImports++;
+          if (!isRepositoryTarget(target)) forbiddenInfrastructureImports++;
+        }
+      }
     }
   }
 
@@ -89,6 +128,8 @@ function collectModuleMetrics(moduleName) {
     forbiddenInfrastructureImports,
     repositoryFilesInApplication,
     crossModuleImports,
+    crossContextPairs: [...crossContextPairs].sort(),
+    crossContextPairCount: crossContextPairs.size,
     deadInProcessAdapters: sourceFiles.filter((file) =>
       path.basename(file).startsWith('in-process-'),
     ).length,
@@ -117,6 +158,7 @@ const columns = [
   ['infra imports', 'infrastructureImports'],
   ['forbidden', 'forbiddenInfrastructureImports'],
   ['cross-module', 'crossModuleImports'],
+  ['cross-context pairs', 'crossContextPairCount'],
   ['dead adapters', 'deadInProcessAdapters'],
   ['tests', 'testFiles'],
 ];

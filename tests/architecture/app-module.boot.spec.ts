@@ -1,4 +1,7 @@
 import { NestFactory } from '@nestjs/core';
+import { OutboxDispatcher } from '#kernel/events/outbox-dispatcher';
+import { HIERARCHY_OUTBOX_TOPICS } from '#modules/identity-access/hierarchy/hierarchy.types';
+import { PLATFORM_EVENT_TOPICS } from '#kernel/events/platform-event.registry';
 
 Object.assign(process.env, {
   NODE_ENV: 'test',
@@ -24,6 +27,15 @@ describe('AppModule boot smoke', () => {
       logger: false,
       abortOnError: false,
     });
+    const dispatcher = app.get(OutboxDispatcher);
+    expect(dispatcher.topics()).toEqual(
+      expect.arrayContaining([
+        PLATFORM_EVENT_TOPICS.auditRecorded,
+        PLATFORM_EVENT_TOPICS.notificationRequested,
+        HIERARCHY_OUTBOX_TOPICS.grant,
+        HIERARCHY_OUTBOX_TOPICS.revoke,
+      ]),
+    );
     await app.close();
   }, 30_000);
 });

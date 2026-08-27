@@ -305,6 +305,31 @@ export class DatabaseService implements OnModuleDestroy {
   }
 
   /**
+   * Runs a mutation and any dependent outbox insert on one connection and one
+   * transaction. A rollback failure is logged but never replaces the original
+   * application error, because that is the actionable failure for the caller.
+   */
+  async withTransaction<T>(
+    fn: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    return this.withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        const result = await fn(client);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+          this.logger.warn(
+            `Postgres transaction rollback failed: ${String(rollbackError)}`,
+          );
+        });
+        throw error;
+      }
+    });
+  }
+
+  /**
    * Checks out a connection that has been verified to still work, replacing a
    * stale one once. Only connection-level failures are retried — anything else
    * is the caller's problem and is thrown as-is.

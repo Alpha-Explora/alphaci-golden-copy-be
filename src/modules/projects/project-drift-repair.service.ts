@@ -21,7 +21,7 @@ import {
 } from '#modules/runtime/index.js';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { ProjectsRepository } from './projects.repository';
-import { ProjectsService } from './projects.service';
+import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 
 @Injectable()
 export class ProjectDriftRepairService {
@@ -34,7 +34,7 @@ export class ProjectDriftRepairService {
     @Inject(DEPLOYMENT_TARGET_DELETION)
     private readonly deploymentTargetsRepository?: DeploymentTargetDeletion,
     @Optional()
-    private readonly projectsService?: ProjectsService,
+    private readonly projectWorkflowsService?: ProjectWorkflowsService,
     @Optional()
     private readonly configService?: ConfigService,
     @Optional()
@@ -168,7 +168,7 @@ export class ProjectDriftRepairService {
         ['workflow_files_missing', 'central_workflow_ref_outdated'],
         action,
       );
-      const preview = await this.projectsService?.previewWorkflowSettings(
+      const preview = await this.projectWorkflowsService?.previewWorkflowSettings(
         projectId,
         userId,
         {},
@@ -201,7 +201,7 @@ export class ProjectDriftRepairService {
         );
       }
       const pullRequest =
-        await this.projectsService?.createWorkflowUpdatePullRequest(
+        await this.projectWorkflowsService?.createWorkflowUpdatePullRequest(
           projectId,
           userId,
           githubAccessToken,

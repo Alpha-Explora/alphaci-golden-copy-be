@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  OutboxRepository,
+  type OutboxEventInput,
+} from '#kernel/events/outbox.repository';
 import type {
   AssignmentStatus,
   DesiredState,
@@ -38,10 +43,34 @@ interface GithubAccessSyncRow {
 
 @Injectable()
 export class GithubAccessSyncRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly outboxRepository: OutboxRepository,
+  ) {}
 
-  async upsertPending(assignmentId: string): Promise<GithubAccessSyncRecord> {
-    const result = await this.databaseService.query<GithubAccessSyncRow>(
+  async upsertPending(
+    assignmentId: string,
+    outboxEvent?: OutboxEventInput,
+  ): Promise<GithubAccessSyncRecord> {
+    if (outboxEvent) {
+      return this.databaseService.withTransaction(async (client) => {
+        const record = await this.upsertPendingWithClient(client, assignmentId);
+        await this.outboxRepository.publishInTransaction(client, outboxEvent);
+        return record;
+      });
+    }
+
+    return this.upsertPendingWithClient(
+      this.databaseService as unknown as Pick<PoolClient, 'query'>,
+      assignmentId,
+    );
+  }
+
+  private async upsertPendingWithClient(
+    client: Pick<PoolClient, 'query'>,
+    assignmentId: string,
+  ): Promise<GithubAccessSyncRecord> {
+    const result = await client.query<GithubAccessSyncRow>(
       `
         INSERT INTO hierarchy.github_access_sync (assignment_id, sync_state)
         VALUES ($1, 'pending')

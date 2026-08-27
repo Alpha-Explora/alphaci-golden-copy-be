@@ -1,9 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, type OnModuleInit } from '@nestjs/common';
 
 import {
   OutboxRepository,
   type PendingOutboxEvent,
 } from '#kernel/events/outbox.repository';
+import {
+  OutboxDispatcher,
+  type OutboxTopicHandler,
+} from '#kernel/events/outbox-dispatcher';
 import {
   decodePlatformEvent,
   PLATFORM_EVENT_TOPICS,
@@ -19,23 +23,29 @@ import { NotificationEventsService } from '../notifications/application/notifica
  * this class without changing producers.
  */
 @Injectable()
-export class OutboxRelayService {
-  private readonly logger = new Logger(OutboxRelayService.name);
+export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
+  readonly topics = Object.values(PLATFORM_EVENT_TOPICS);
 
   constructor(
     private readonly outboxRepository: OutboxRepository,
+    private readonly dispatcher: OutboxDispatcher,
     private readonly auditEventsService: AuditEventsService,
     private readonly notificationEventsService: NotificationEventsService,
   ) {}
 
+  onModuleInit(): void {
+    this.dispatcher.register(this);
+  }
+
   async processPendingOnce(limit = 50): Promise<number> {
     return this.outboxRepository.processPending(
-      (event) => this.dispatch(event),
+      (event) => this.dispatcher.dispatch(event),
       limit,
+      this.dispatcher.topics(),
     );
   }
 
-  private async dispatch(event: PendingOutboxEvent): Promise<void> {
+  async handle(event: PendingOutboxEvent): Promise<void> {
     const decoded = decodePlatformEvent(event.topic, event.payload);
 
     switch (decoded.topic) {
@@ -48,7 +58,9 @@ export class OutboxRelayService {
         await this.notificationEventsService.record(decoded.payload);
         return;
       default:
-        this.logger.warn(`No platform outbox handler for '${event.topic}'`);
+        // The dispatcher should make this unreachable. Keep the exhaustive
+        // guard explicit so a new platform topic cannot be silently acked.
+        throw new Error(`Unsupported platform event topic '${event.topic}'`);
     }
   }
 }
