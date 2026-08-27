@@ -1,0 +1,10 @@
+{
+  "routeCount": 145,
+  "baselineFile": "route-inventory.baseline.txt",
+  "currentFile": "route-inventory.current.txt",
+  "baselineSha256": "d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a",
+  "currentSha256": "d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a",
+  "baselineKind": "post-consolidation-reference",
+  "preConsolidationBaselineAvailable": false,
+  "capturedAtCheckpoint": "5b703e9025208e686201460e489a07417f1bbba4"
+}

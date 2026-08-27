@@ -4,13 +4,14 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '#kernel/config/app.config';
 import { RuntimeCoreModule } from '../../../core/runtime-core.module';
 import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
-import {
-  PROVIDER_CLIENTS,
-  ProviderClientRegistry,
-} from '../core/provider-client.registry';
+import { WORKFLOW_FRAGMENTS } from '../../../core/workflow-fragment.contract';
+import { PROVIDER_CLIENTS } from '../core/provider-client.registry';
 import { RenderEnvClient } from '../render/render-env.client';
+import { renderWorkflowFragment } from '../render/render-workflow.fragment';
+import { RenderDeploymentProvider } from '../render/render-deployment.provider';
 import { VercelEnvClient } from '../vercel/vercel-env.client';
-import { LegacyDeploymentProvider } from './legacy-deployment.provider';
+import { vercelWorkflowFragment } from '../vercel/vercel-workflow.fragment';
+import { VercelDeploymentProvider } from '../vercel/vercel-deployment.provider';
 
 @Module({
   imports: [RuntimeCoreModule],
@@ -26,6 +27,10 @@ import { LegacyDeploymentProvider } from './legacy-deployment.provider';
       inject: [RenderEnvClient, VercelEnvClient],
     },
     {
+      provide: WORKFLOW_FRAGMENTS,
+      useValue: [renderWorkflowFragment, vercelWorkflowFragment],
+    },
+    {
       provide: 'renderDeploymentProvider',
       inject: [ConfigService, DeploymentProviderRegistry],
       useFactory: (
@@ -33,12 +38,15 @@ import { LegacyDeploymentProvider } from './legacy-deployment.provider';
         registry: DeploymentProviderRegistry,
       ) => {
         const config = configService.getOrThrow<AppConfig>('app');
-        return new LegacyDeploymentProvider(
+        return new RenderDeploymentProvider(
           {
-            id: 'render',
             label: 'Render',
             enabled: config.envProvisioning.enabled,
-            supportedSlots: ['backend', 'standalone'],
+            // Preserve the established target policy: Render is the backend
+            // provider. The old metadata advertised `standalone`, but the
+            // domain policy rejected it; exposing only the actually supported
+            // slot keeps discovery and validation truthful.
+            supportedSlots: ['backend'],
             previewDeployments: false,
           },
           registry,
@@ -53,9 +61,8 @@ import { LegacyDeploymentProvider } from './legacy-deployment.provider';
         registry: DeploymentProviderRegistry,
       ) => {
         const config = configService.getOrThrow<AppConfig>('app');
-        return new LegacyDeploymentProvider(
+        return new VercelDeploymentProvider(
           {
-            id: 'vercel',
             label: 'Vercel',
             enabled: config.envProvisioning.enabled,
             supportedSlots: ['frontend'],
@@ -66,6 +73,6 @@ import { LegacyDeploymentProvider } from './legacy-deployment.provider';
       },
     },
   ],
-  exports: [PROVIDER_CLIENTS],
+  exports: [PROVIDER_CLIENTS, WORKFLOW_FRAGMENTS],
 })
 export class LegacyDeploymentProvidersModule {}

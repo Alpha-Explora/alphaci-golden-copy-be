@@ -1,91 +1,79 @@
-# AlphaCI Backend DDD Context Map
+# AlphaCI Backend bounded-context map
 
-This map defines ownership for the modular-monolith refactor. It changes no
-runtime behavior, HTTP contract, database schema, or provider behavior.
+This map describes ownership in the six-context modular monolith. It is a
+code-ownership and contract document; it does not by itself change HTTP
+behavior, database schemas, or provider behavior.
 
-## Bounded contexts
+## Contexts
 
-| Context | Owns | Does not own |
-| --- | --- | --- |
-| Projects | Project lifecycle, project ownership, setup authorization, project workflow configuration, project-owned persistence | Provider credentials, provider clients, deployment-target persistence |
-| Deployments | DeploymentTarget lifecycle, ProviderConnection custody, environment synchronization, provider status/history, provider adapters | Project authorization and Project persistence |
-| CI | Project CI-token lifecycle and authenticated CI report ingestion | Provider API calls and deployment-target rules |
-| Workflows | Workflow document composition and workflow history | Provider-specific branching and provider credentials |
-| Usage | Quota and usage policy | Provider registries and provider-specific SQL |
-| Auth | Users, OAuth state, session-user lookup | Subscription and platform-admin policy |
-| Kernel | Database client, configuration, HTTP cross-cutting concerns, technical auth contracts, outbox plumbing | Business entities, business repositories, provider rules |
+| Context | Owns | Public boundary | Does not own |
+|---|---|---|---|
+| `identity-access` | auth, admin, capabilities, workspaces, hierarchy, repository access state | `src/modules/identity-access/index.ts`, focused contracts/ports, hierarchy event topics | project entities, provider clients, billing policy |
+| `projects` | project lifecycle, catalog, workflows, existing repos, project read models | `src/modules/projects/index.ts`, `contracts/` | provider credentials, provider clients, deployment persistence |
+| `pipelines` | GitHub integration, CI token lifecycle, CI report ingestion | `src/modules/pipelines/index.ts`, CI/GitHub contracts | project authorization, provider APIs |
+| `runtime` | deployment targets, env metadata, domains, provider connections, provider adapters/history | `src/modules/runtime/index.ts`, runtime contracts/ports | project authorization and project persistence |
+| `billing` | subscriptions, usage, quotas | `src/modules/billing/index.ts` | provider registries, provider SQL |
+| `platform-ops` | audit, notifications, feedback, outbox consumers | `src/modules/platform-ops/index.ts`, serialisable event topics | business aggregates and provider policy |
+
+`kernel/` is technical infrastructure only: database access, configuration,
+HTTP cross-cutting concerns, session contracts, and outbox plumbing. It may not
+import a bounded context or define a business entity.
 
 ## Ubiquitous language
 
-- A **Project** is the Projects aggregate representing a user-owned product
-  setup and its lifecycle.
-- A **ProjectReference** is an immutable cross-context reference containing only
-  the project identity and data required by a deployment use case. It is not a
-  Project entity or persistence record.
-- A **DeploymentTarget** is the Deployments aggregate representing one
-  provider-backed target for a project slot.
-- A **ProviderConnection** is a Deployments entity representing provider
-  credential custody and connection status. Credential encryption and transport
-  are infrastructure concerns.
-- An **EnvironmentScope** is a value object containing a lane and, for preview
-  scopes, a branch. Invalid lane/branch combinations are rejected together.
-- A **DeploymentProvider** is an infrastructure adapter implementing the
-  provider-neutral deployment contract. Render and Vercel are adapters, not
-  separate business contexts.
+- A **Project** is the Projects-owned user product setup and lifecycle record.
+- A **ProjectReference** is a serialisable, viewer-authorized reference passed
+  to runtime; it is not a Projects repository row.
+- A **DeploymentTarget** is a Runtime-owned provider-backed target for one
+  project slot.
+- A **ProviderConnection** is Runtime-owned credential custody and connection
+  metadata. Encryption and transport remain infrastructure concerns.
+- An **EnvironmentScope** is a lane plus branch value: production has no branch;
+  preview requires one.
+- A **DeploymentProvider** is a plugin inside Runtime. Render, Vercel, and GCP
+  are adapters, not contexts.
+- An **outbox event** is a serialisable integration record in
+  `platform.outbox_events`. The topic registry names its owner and the relay
+  dispatches only registered topics.
 
-## Deployment invariants
+## Context interaction rules
 
-These are the only rules that justify the initial Deployments domain layer:
+1. Production cross-context callers use the owning `index.ts`, a serialisable
+   `contracts/` type, or a focused injected port. They do not import another
+   context's concrete service, repository, DTO, or provider adapter.
+2. Composition roots may import Nest feature modules to build the in-process
+   graph. This is wiring, not an application-level dependency.
+3. Stale-tolerant audit and notification writes use kernel event publishers and
+   are consumed by `platform-ops`; they are intentionally best-effort
+   post-commit writes. They must not be described as transactionally coupled.
+4. Hierarchy grant/revoke events are critical integration work. The state
+   mutation and outbox insert use one PostgreSQL transaction; the GitHub
+   handler is idempotent/at-least-once aware.
+5. Provider-specific rules remain within Runtime. Other contexts receive
+   provider-neutral contracts and may store/return the existing provider id as
+   part of their public API where compatibility requires it.
+6. SQL ownership is governed by
+   `docs/architecture/SCHEMA_OWNERSHIP.md`; existing cross-schema references
+   are explicit transition debt, not a new dependency pattern.
 
-1. A target's provider and slot combination must be supported.
-2. A target lifecycle transition must be valid for its current state.
-3. A target using customer-owned credentials must reference an active compatible
-   ProviderConnection.
-4. A preview EnvironmentScope must include a non-empty branch; production has
-   no branch.
-5. Provider-specific configuration is validated by the owning provider adapter
-## Implementation status (2026-08-25)
+## Domain invariants
 
-The Deployments domain layer now exists at src/modules/deployments/domain/:
+Runtime currently keeps the following rules in framework-free policy functions:
 
-- deployment-target.policy.ts holds the provider/slot compatibility rule and
-  the EnvironmentScope lane/branch validation as pure, framework-free
-  functions that throw DeploymentPolicyViolation. The owning services catch
-  these violations where they cross into application code.
-- Project lifecycle rules remain embedded in ProjectsService methods; they
-  have not been promoted to a domain layer yet because no second consumer or
-  independently testable invariant has justified it.
-- Lifecycle transition state for targets is still tracked ad hoc from provider
-  query results rather than a formal state machine.
-## Implementation status (2026-08-25)
+1. provider/slot combinations must be supported;
+2. target lifecycle transitions must be valid;
+3. BYO targets must reference a compatible active ProviderConnection;
+4. production environment values have no branch and preview values require a
+   non-empty valid branch;
+5. provider configuration is validated by the owning provider adapter.
 
-The Deployments domain layer now exists at src/modules/deployments/domain/:
+Projects keeps lifecycle rules in its application services until a second
+consumer justifies a separate domain object. This is deliberate progressive
+depth, not an omitted boundary.
 
-- deployment-target.policy.ts holds the provider/slot compatibility rule and
-  the EnvironmentScope lane/branch validation as pure, framework-free
-  functions that throw DeploymentPolicyViolation. The owning services catch
-  these violations where they cross into application code.
-- Project lifecycle rules remain embedded in ProjectsService methods; they
-  have not been promoted to a domain layer yet because no second consumer or
-  independently testable invariant has justified it.
-- Lifecycle transition state for targets is still tracked ad hoc from provider
-  query results rather than a formal state machine.
-   and does not leak into the shared domain vocabulary.
+## Extraction posture
 
-## Anti-corruption boundaries
-
-Projects calls Deployments through DeploymentProvisioningFacade,
-DeploymentHistoryQuery, and DeploymentDriftQuery. It passes ProjectReference
-and user/authorization context and receives deployment-owned result contracts.
-
-Deployments must not import ProjectsService, ProjectsRepository, project DTOs,
-or project database rows. Projects remains responsible for authorizing access
-before invoking a deployment query or command.
-
-Provider adapters translate provider terminology and errors into deployment
-contracts. Workflows and Usage consume provider-neutral contracts and never
-branch on Render, Vercel, or GCP implementation details.
-
-The kernel is technical infrastructure, not a business shared kernel. It may
-define injection tokens and technical types, but it must not define Project,
-DeploymentTarget, ProviderConnection, or provider policies.
+The ports and contracts are local in-process seams today. If independent
+scaling, deployment cadence, or regulatory isolation is later demonstrated,
+bind the same ports to an HTTP/gRPC adapter and publish the serialisable
+contracts. No extraction is scheduled from this document alone.

@@ -16,6 +16,9 @@ describe('ProviderConnectionsService', () => {
   const clientRegistry = {
     getClient: jest.fn(),
   };
+  const providerRegistry = {
+    get: jest.fn(),
+  };
   const workspacesService = {
     getMyWorkspaces: jest.fn(),
   };
@@ -35,6 +38,44 @@ describe('ProviderConnectionsService', () => {
       slug: 'flowci',
     });
     clientRegistry.getClient.mockReturnValue(vercelClient);
+    providerRegistry.get.mockReturnValue({
+      prepareConnection: jest.fn(
+        async (input: {
+          token: string;
+          config: Record<string, unknown>;
+          account: { id: string; metadata?: Record<string, unknown> };
+          client: typeof vercelClient;
+        }) => {
+          const teamId = (
+            input.config['vercelTeamId'] as string | undefined
+          )?.trim();
+          const teamSlug = (
+            input.config['vercelTeamSlug'] as string | undefined
+          )?.trim();
+          if (teamSlug && !teamId) {
+            throw new Error(
+              'vercelTeamId is required when connecting a Vercel team',
+            );
+          }
+          const team = teamId
+            ? await input.client.validateTeamAccess(input.token, teamId)
+            : undefined;
+          return teamId
+            ? {
+                accountType: 'team',
+                orgId: team?.id ?? teamId,
+                teamId: team?.id ?? teamId,
+                ...((team?.slug ?? teamSlug)
+                  ? { teamSlug: team?.slug ?? teamSlug }
+                  : {}),
+              }
+            : {
+                accountType: 'user',
+                orgId: input.account.metadata?.['orgId'] ?? input.account.id,
+              };
+        },
+      ),
+    });
     workspacesService.getMyWorkspaces.mockResolvedValue({
       enabled: true,
       items: [
@@ -66,8 +107,9 @@ describe('ProviderConnectionsService', () => {
     service = new ProviderConnectionsService(
       repository as never,
       encryptionService as never,
-      clientRegistry as never,
+      clientRegistry,
       workspacesService as never,
+      providerRegistry as never,
     );
   });
 

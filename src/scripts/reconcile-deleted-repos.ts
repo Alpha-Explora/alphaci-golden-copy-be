@@ -10,10 +10,11 @@
  * to send (webhooks are at-most-once-ish in practice, even though GitHub
  * retries failed deliveries for a while).
  *
- * UNLIKE process-outbox.ts and purge-archived-accounts.ts (the other two
- * scheduled scripts in this repo), this one IS a NestJS application context
- * (via NestFactory.createApplicationContext) rather than a bare pg/kafkajs
- * script. That's a deliberate exception to this repo's usual "standalone
+ * UNLIKE the compiled outbox relay (`scripts/process-outbox.cjs`) and
+ * purge-archived-accounts.ts (the other two scheduled scripts in this repo),
+ * this one IS a NestJS application context (via
+ * NestFactory.createApplicationContext) rather than a bare `pg` script.
+ * That's a deliberate exception to this repo's usual "standalone
  * script, not a NestJS app" convention: checking a repo against GitHub
  * requires GitHub App JWT signing (RS256), installation token exchange,
  * org-installation resolution, and rate-limit retry/backoff — all of that

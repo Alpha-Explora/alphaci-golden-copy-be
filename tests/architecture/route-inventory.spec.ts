@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -5,7 +6,6 @@ import {
   SwaggerModule,
   type OpenAPIObject,
 } from '@nestjs/swagger';
-import { createHttpApplication } from '../../src/main.js';
 
 Object.assign(process.env, {
   NODE_ENV: 'test',
@@ -22,6 +22,12 @@ Object.assign(process.env, {
   ENV_PROVISIONING_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64'),
 });
 
+// `app.module.ts` validates required configuration during module evaluation;
+// require it only after the fixture above has populated process.env.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { createHttpApplication } =
+  require('../../src/main.js') as typeof import('../../src/main.js');
+
 function routeSet(document: OpenAPIObject): string[] {
   return Object.entries(document.paths)
     .flatMap(([path, operations]) =>
@@ -33,7 +39,7 @@ function routeSet(document: OpenAPIObject): string[] {
 }
 
 describe('HTTP route inventory', () => {
-  it('matches the pre-consolidation route baseline exactly', async () => {
+  it('matches the post-consolidation route reference exactly', async () => {
     const app = await createHttpApplication();
     await app.init();
 
@@ -44,13 +50,45 @@ describe('HTTP route inventory', () => {
       );
       const actual = routeSet(document);
       const baseline = readFileSync(
-        resolve(__dirname, '../../docs/architecture/route-inventory.baseline.txt'),
+        resolve(
+          __dirname,
+          '../../docs/architecture/route-inventory.baseline.txt',
+        ),
         'utf8',
       )
         .split(/\r?\n/)
         .filter(Boolean);
+      const manifest = JSON.parse(
+        readFileSync(
+          resolve(
+            __dirname,
+            '../../docs/architecture/route-inventory.manifest.json',
+          ),
+          'utf8',
+        ),
+      ) as {
+        routeCount: number;
+        baselineKind: string;
+        preConsolidationBaselineAvailable: boolean;
+        baselineSha256: string;
+        currentSha256: string;
+      };
+      const currentReference = readFileSync(
+        resolve(
+          __dirname,
+          '../../docs/architecture/route-inventory.current.txt',
+        ),
+        'utf8',
+      );
+      const sha256 = (value: string) =>
+        createHash('sha256').update(value, 'utf8').digest('hex');
 
       expect(actual).toEqual(baseline);
+      expect(actual).toHaveLength(manifest.routeCount);
+      expect(sha256(baseline.join('\n') + '\n')).toBe(manifest.baselineSha256);
+      expect(sha256(currentReference)).toBe(manifest.currentSha256);
+      expect(manifest.baselineKind).toBe('post-consolidation-reference');
+      expect(manifest.preConsolidationBaselineAvailable).toBe(false);
     } finally {
       await app.close();
     }

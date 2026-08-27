@@ -30,16 +30,21 @@ import { EnvVarsController } from './api/env-vars.controller';
 import { EnvVarsRepository } from './infrastructure/env-vars.repository';
 import { EnvVarsService } from './application/env-vars.service';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
+import {
+  PROVIDER_CI_SECRETS_INSTALLERS,
+  PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+} from './application/ports/provider-ci-secrets-installer.port';
+import { ProviderCiSecretsInstallerRegistry } from './infrastructure/providers/core/provider-ci-secrets.registry';
 import { ProjectDeploymentProvisioningService } from './application/project-deployment-provisioning.service';
-import { RenderCiSecretsService } from './application/render-ci-secrets.service';
-import { RenderCostPolicyService } from './application/render-cost-policy.service';
+import { RenderCiSecretsService } from './infrastructure/providers/render/render-ci-secrets.service';
+import { RenderCostPolicyService } from './infrastructure/providers/render/render-cost-policy.service';
 import { ProviderConnectionsController } from './api/provider-connections.controller';
 import { ProviderConnectionsRepository } from './infrastructure/provider-connections.repository';
 import { ProviderConnectionsService } from './application/provider-connections.service';
 import { CustomDomainsController } from './api/custom-domains.controller';
 import { CustomDomainsRepository } from './infrastructure/custom-domains.repository';
 import { CustomDomainsService } from './application/custom-domains.service';
-import { VercelCiSecretsService } from './application/vercel-ci-secrets.service';
+import { VercelCiSecretsService } from './infrastructure/providers/vercel/vercel-ci-secrets.service';
 import { LegacyDeploymentProvidersModule } from './infrastructure/providers/legacy/legacy-deployment-providers.module';
 import { LocalDeploymentHistoryProvider } from './application/local-deployment-history.provider';
 import { ProjectDeploymentsService } from './application/project-deployments.service';
@@ -47,6 +52,12 @@ import { ProjectDriftService } from './application/project-drift.service';
 import { ProjectSyncFindingsRepository } from './infrastructure/repositories/project-sync-findings.repository';
 import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-registry.port';
 import { RuntimeCoreModule } from './core/runtime-core.module';
+import { DEPLOYMENT_TARGET_DEFAULTS } from './core/deployment-provider.contract';
+import {
+  WORKFLOW_FRAGMENTS,
+  WorkflowFragmentRegistry,
+  type WorkflowFragment,
+} from './core/workflow-fragment.contract';
 import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
 
 @Module({
@@ -98,6 +109,19 @@ import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
       provide: PROVIDER_CLIENT_REGISTRY,
       useExisting: ProviderClientRegistry,
     },
+    {
+      provide: PROVIDER_CI_SECRETS_INSTALLERS,
+      useFactory: (
+        renderCiSecretsService: RenderCiSecretsService,
+        vercelCiSecretsService: VercelCiSecretsService,
+      ) => [renderCiSecretsService, vercelCiSecretsService],
+      inject: [RenderCiSecretsService, VercelCiSecretsService],
+    },
+    ProviderCiSecretsInstallerRegistry,
+    {
+      provide: PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+      useExisting: ProviderCiSecretsInstallerRegistry,
+    },
     LocalDeploymentHistoryProvider,
     ProjectSyncFindingsRepository,
     ProjectDeploymentsService,
@@ -121,6 +145,16 @@ import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
     },
     RenderCiSecretsService,
     RenderCostPolicyService,
+    {
+      provide: DEPLOYMENT_TARGET_DEFAULTS,
+      useExisting: RenderCostPolicyService,
+    },
+    {
+      provide: WorkflowFragmentRegistry,
+      useFactory: (fragments: readonly WorkflowFragment[]) =>
+        new WorkflowFragmentRegistry(fragments),
+      inject: [WORKFLOW_FRAGMENTS],
+    },
     VercelCiSecretsService,
     EnvFeatureGuard,
     SessionAuthGuard,
@@ -142,6 +176,8 @@ import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
     EnvTokenEncryptionService,
     ProviderClientRegistry,
     PROVIDER_CLIENT_REGISTRY,
+    PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+    WorkflowFragmentRegistry,
   ],
 })
 export class RuntimeModule {}

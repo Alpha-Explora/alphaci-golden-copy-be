@@ -49,10 +49,10 @@
     "check:provider-encapsulation": "node ./scripts/check-provider-encapsulation.cjs",
     "boundaries:graph": "depcruise src --config .dependency-cruiser.cjs --output-type dot > dependency-graph.dot",
     "boundaries:new": "depcruise src tests --config .dependency-cruiser.cjs",
-      "db:apply:all": "node scripts/apply-all-migrations.mjs",
-      "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
-      "process:outbox": "npm run build && node scripts/process-outbox.cjs",
-      "routes:inventory": "npm run build && node scripts/route-inventory.cjs"
+    "db:apply:all": "node scripts/apply-all-migrations.mjs",
+    "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
+    "process:outbox": "npm run build && node scripts/process-outbox.cjs",
+    "routes:inventory": "npm run build && node scripts/route-inventory.cjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -62,10 +62,10 @@
     "@nestjs/swagger": "^11.4.3",
     "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.100.1",
-
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "connect-pg-simple": "^10.0.0",
+    "express": "5.2.1",
     "express-session": "^1.19.0",
     "google-auth-library": "^10.9.1",
     "helmet": "^8.1.0",

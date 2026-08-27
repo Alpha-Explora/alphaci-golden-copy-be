@@ -2,7 +2,11 @@ import yaml from 'js-yaml';
 
 import { ENV_GUARD_CHECK_CONTEXT } from '#modules/pipelines/index.js';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import { buildDeploymentWorkflowFragment } from '#modules/runtime/index.js';
+import type { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
+import {
+  buildDeploymentWorkflowFragment,
+  createDefaultWorkflowFragmentRegistry,
+} from '#modules/runtime/index.js';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
@@ -141,6 +145,7 @@ interface PackageDeploymentPlan {
 export function buildStagedWorkflowBundle(
   template: WorkflowTemplate,
   dto: StagedWorkflowOptions,
+  workflowFragmentRegistry = createDefaultWorkflowFragmentRegistry(),
 ): StagedWorkflowBundle {
   const serviceName = dto.serviceName;
   const servicePath = normalizeServicePath(dto.servicePath);
@@ -176,6 +181,7 @@ export function buildStagedWorkflowBundle(
     serviceName,
     servicePath,
     centralWorkflowRef,
+    workflowFragmentRegistry,
   );
 
   const files: StagedWorkflowFile[] = [
@@ -709,6 +715,7 @@ function buildPackageDeploymentPlan(
   serviceName: string,
   servicePath: string,
   centralWorkflowRef: string,
+  workflowFragmentRegistry: WorkflowFragmentRegistry,
 ): PackageDeploymentPlan {
   const jobs: Record<string, unknown> = {};
   const jobIds: string[] = [];
@@ -718,11 +725,16 @@ function buildPackageDeploymentPlan(
 
   for (const target of deploymentTargets) {
     for (const branch of resolveDeploymentBranches(target.branchName)) {
-      const fragment = buildDeploymentWorkflowFragment(target, branch, {
-        serviceName,
-        servicePath,
-        centralWorkflowRef,
-      });
+      const fragment = buildDeploymentWorkflowFragment(
+        target,
+        branch,
+        {
+          serviceName,
+          servicePath,
+          centralWorkflowRef,
+        },
+        workflowFragmentRegistry,
+      );
       if (!fragment || fragment.jobIds.some((jobId) => jobs[jobId])) {
         continue;
       }

@@ -14,6 +14,7 @@ import {
   type StagedWorkflowFile,
 } from './index';
 import type { DeploymentProviderId as DeploymentProvider } from '#modules/runtime/index.js';
+import { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
 
 interface GitHubContentsResponse {
   content: { html_url?: string };
@@ -30,7 +31,10 @@ interface GitHubContentsResponse {
  */
 @Injectable()
 export class ProjectWorkflowFilesService {
-  constructor(private readonly catalogService: CatalogService) {}
+  constructor(
+    private readonly catalogService: CatalogService,
+    private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,
+  ) {}
 
   async buildWorkflowBundle(options: {
     templateId: string;
@@ -78,19 +82,23 @@ export class ProjectWorkflowFilesService {
       throw new NotFoundException(`Template '${templateId}' not found`);
     }
 
-    const bundle = buildStagedWorkflowBundle(template, {
-      templateId,
-      serviceName,
-      ...(servicePath !== undefined && { servicePath }),
-      ...(nodeVersion !== undefined && { nodeVersion }),
-      ...(coverageThreshold !== undefined && { coverageThreshold }),
-      ...(enhancements !== undefined && { enhancements }),
-      ...(deploymentProvider !== undefined && { deploymentProvider }),
-      ...(deploymentTargets.length > 0 && { deploymentTargets }),
-      ...(workflowVariant !== undefined && { workflowVariant }),
-      ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
-      ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
-    });
+    const bundle = buildStagedWorkflowBundle(
+      template,
+      {
+        templateId,
+        serviceName,
+        ...(servicePath !== undefined && { servicePath }),
+        ...(nodeVersion !== undefined && { nodeVersion }),
+        ...(coverageThreshold !== undefined && { coverageThreshold }),
+        ...(enhancements !== undefined && { enhancements }),
+        ...(deploymentProvider !== undefined && { deploymentProvider }),
+        ...(deploymentTargets.length > 0 && { deploymentTargets }),
+        ...(workflowVariant !== undefined && { workflowVariant }),
+        ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
+        ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
+      },
+      this.workflowFragmentRegistry,
+    );
 
     const outputFileName = customOutputFileName ?? '00-alphaci-access.yml';
     return {

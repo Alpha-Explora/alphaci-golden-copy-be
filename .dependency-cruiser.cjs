@@ -149,6 +149,17 @@ module.exports = {
       }
     },
     {
+      "name": "gcp-provider-isolated",
+      "severity": "error",
+      "comment": "GCP provider implementation code must not import Render/Vercel adapters; shared behavior belongs in providers/core.",
+      "from": {
+        "path": "^src/modules/runtime/infrastructure/providers/gcp/"
+      },
+      "to": {
+        "path": "^src/modules/runtime/infrastructure/providers/(render|vercel)/"
+      }
+    },
+    {
       "name": "no-orphans",
       "severity": "warn",
       "comment": "Unreachable file - dead code, or a missing wire-up.",

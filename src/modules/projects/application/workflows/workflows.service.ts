@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import yaml from 'js-yaml';
 
 import {
@@ -11,6 +11,7 @@ import {
 import { WorkflowHistoryRepository } from './infrastructure/workflow-history.repository';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 import { buildStagedWorkflowBundle } from './staged-workflow.builder';
+import { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
 
 type Enhancement =
   | 'strictProductionApproval'
@@ -23,6 +24,8 @@ export class WorkflowsService {
   constructor(
     private readonly catalogService: CatalogService,
     private readonly workflowHistoryRepository: WorkflowHistoryRepository,
+    @Optional()
+    private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,
   ) {}
 
   async generate(userId: string, dto: GenerateWorkflowDto) {
@@ -34,7 +37,11 @@ export class WorkflowsService {
     const source = await readFile(template.workflowPath, 'utf8');
     const { generatedYaml, substitutionsApplied, enhancementsApplied } =
       this.buildWorkflow(source, template, dto);
-    const workflowBundle = buildStagedWorkflowBundle(template, dto);
+    const workflowBundle = buildStagedWorkflowBundle(
+      template,
+      dto,
+      this.workflowFragmentRegistry,
+    );
 
     const sha256 = createHash('sha256').update(generatedYaml).digest('hex');
     const lineCount = generatedYaml.split(/\r?\n/).length;

@@ -8,14 +8,19 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { GithubService } from '#modules/pipelines/index.js';
-import { EnvTokenEncryptionService } from './encryption.service';
+import { EnvTokenEncryptionService } from '../../../application/encryption.service';
 import type {
   DeploymentTargetSummary,
   EnvTargetSlot,
-} from '../core/deployments.types';
-import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+} from '../../../core/deployments.types';
+import { ProviderConnectionsRepository } from '../../../infrastructure/provider-connections.repository';
+import type {
+  ProviderCiSecretsInstaller,
+  ProviderCiSecretsInstallerInput,
+} from '../../../application/ports/provider-ci-secrets-installer.port';
 
 export interface RenderCiSecretNames {
+  [key: string]: string;
   apiKey: string;
   serviceId: string;
   ownerId: string;
@@ -25,7 +30,9 @@ export interface RenderCiSecretNames {
 }
 
 @Injectable()
-export class RenderCiSecretsService {
+export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
+  readonly provider = 'render';
+
   constructor(
     private readonly githubService: GithubService,
     private readonly providerConnectionsRepository: ProviderConnectionsRepository,
@@ -33,19 +40,19 @@ export class RenderCiSecretsService {
     private readonly configService: ConfigService,
   ) {}
 
-  async installForTarget(input: {
-    githubAccessToken: string;
-    repoFullName: string;
-    userId: string;
-    providerConnectionId: string | null;
-    target: DeploymentTargetSummary;
-  }): Promise<{ githubSecrets: RenderCiSecretNames }> {
-    if (
-      input.target.provider !== 'render' ||
-      !['render_image_pushed', 'render_existing_service'].includes(
-        input.target.deploymentStrategy,
+  supports(target: DeploymentTargetSummary): boolean {
+    return (
+      target.provider === this.provider &&
+      ['render_image_pushed', 'render_existing_service'].includes(
+        target.deploymentStrategy,
       )
-    ) {
+    );
+  }
+
+  async installForTarget(
+    input: ProviderCiSecretsInstallerInput,
+  ): Promise<{ githubSecrets: Record<string, string> }> {
+    if (!this.supports(input.target)) {
       return {
         githubSecrets: this.renderSecretNames(
           input.target.slot,

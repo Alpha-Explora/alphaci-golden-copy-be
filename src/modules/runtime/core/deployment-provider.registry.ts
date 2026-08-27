@@ -31,6 +31,10 @@ export class DeploymentProviderRegistry<
     return provider;
   }
 
+  find(id: string): Provider | undefined {
+    return this.providersById.get(id);
+  }
+
   list(): Provider[] {
     return [...this.providersById.values()];
   }

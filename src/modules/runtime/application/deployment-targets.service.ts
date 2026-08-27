@@ -33,7 +33,6 @@ import type {
 } from '../core/deployments.types';
 import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
 import { providerPublicUrl } from '../core/provider-public-url';
-import { RenderCostPolicyService } from './render-cost-policy.service';
 import {
   UsageQuotaService,
   type UsageLimitCode,
@@ -47,6 +46,12 @@ import {
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
 } from '../core/deployment-provisioning.contract';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import {
+  DEPLOYMENT_TARGET_DEFAULTS,
+  type DeploymentProvider,
+  type DeploymentTargetDefaultsPort,
+} from '../core/deployment-provider.contract';
 
 export interface DeploymentTargetLogEntry {
   timestamp: string;
@@ -54,10 +59,21 @@ export interface DeploymentTargetLogEntry {
   level: string;
 }
 
+/** Compatibility default used only by direct unit-test constructions. */
+const DEFAULT_TARGET_DEFAULTS: DeploymentTargetDefaultsPort = {
+  resolveDefaults(input) {
+    return {
+      serviceType: input.serviceType ?? 'web_service',
+      instanceType: input.instanceType?.trim() || 'free',
+      region: input.region?.trim() || 'singapore',
+    };
+  },
+};
+
 @Injectable()
 export class DeploymentTargetsService {
   private readonly logger = new Logger(DeploymentTargetsService.name);
-  private readonly renderCostPolicy: RenderCostPolicyService;
+  private readonly renderCostPolicy: DeploymentTargetDefaultsPort;
 
   constructor(
     @Inject(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP)
@@ -69,7 +85,9 @@ export class DeploymentTargetsService {
     private readonly clientRegistry: ProviderClientRegistryPort,
     private readonly configService: ConfigService,
     private readonly deploymentStrategyResolver: DeploymentStrategyResolver,
-    renderCostPolicyService?: RenderCostPolicyService,
+    @Optional()
+    @Inject(DEPLOYMENT_TARGET_DEFAULTS)
+    renderCostPolicyService?: DeploymentTargetDefaultsPort,
     @Optional()
     private readonly usageQuotaService?: UsageQuotaService,
     @Optional()
@@ -78,9 +96,10 @@ export class DeploymentTargetsService {
     private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventsService?: NotificationEventPublisher,
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {
-    this.renderCostPolicy =
-      renderCostPolicyService ?? new RenderCostPolicyService(configService);
+    this.renderCostPolicy = renderCostPolicyService ?? DEFAULT_TARGET_DEFAULTS;
   }
 
   async listDeploymentTargets(projectId: string, userId: string) {
@@ -92,7 +111,7 @@ export class DeploymentTargetsService {
     // dashboard, so the UI never has to re-derive provider URL conventions.
     return targets.map((target) => ({
       ...target,
-      publicUrl: providerPublicUrl(target),
+      publicUrl: this.providerPublicUrl(target),
       dashboardUrl: this.providerDashboardUrl(target),
     }));
   }
@@ -107,7 +126,11 @@ export class DeploymentTargetsService {
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     this.assertOwnershipModeAllowed(dto);
     try {
-      assertProviderSlotAllowed(dto.provider, dto.slot);
+      assertProviderSlotAllowed(
+        dto.provider,
+        dto.slot,
+        this.providerRegistry?.find(dto.provider),
+      );
     } catch (error) {
       if (error instanceof DeploymentPolicyViolation) {
         throw new BadRequestException(error.policyError.message);
@@ -296,7 +319,11 @@ export class DeploymentTargetsService {
     );
     if (input.slot !== undefined) {
       try {
-        assertProviderSlotAllowed(existingTarget.provider, input.slot);
+        assertProviderSlotAllowed(
+          existingTarget.provider,
+          input.slot,
+          this.providerRegistry?.find(existingTarget.provider),
+        );
       } catch (error) {
         if (error instanceof DeploymentPolicyViolation) {
           throw new BadRequestException(error.policyError.message);
@@ -792,6 +819,11 @@ export class DeploymentTargetsService {
   }
 
   private providerDashboardUrl(target: DeploymentTargetSummary): string | null {
+    const presentation = this.providerPresentation(target);
+    if (presentation) {
+      return presentation.dashboardUrl(this.presentationTarget(target));
+    }
+
     if (target.provider === 'vercel') {
       const teamSlug =
         typeof target.providerMetadata['vercelTeamSlug'] === 'string'
@@ -810,6 +842,11 @@ export class DeploymentTargetsService {
   }
 
   private providerConsoleUrl(target: DeploymentTargetSummary): string | null {
+    const presentation = this.providerPresentation(target);
+    if (presentation) {
+      return presentation.consoleUrl(this.presentationTarget(target));
+    }
+
     if (target.provider === 'vercel') {
       const teamSlug =
         typeof target.providerMetadata['vercelTeamSlug'] === 'string'
@@ -825,6 +862,31 @@ export class DeploymentTargetsService {
     }
 
     return null;
+  }
+
+  private providerPublicUrl(target: DeploymentTargetSummary): string | null {
+    const presentation = this.providerPresentation(target);
+    if (presentation) {
+      return presentation.publicUrl(this.presentationTarget(target));
+    }
+    return providerPublicUrl(target);
+  }
+
+  private providerPresentation(target: DeploymentTargetSummary) {
+    try {
+      return this.providerRegistry?.get(target.provider).presentation;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private presentationTarget(target: DeploymentTargetSummary) {
+    return {
+      providerProjectId: target.providerProjectId,
+      providerProjectName: target.providerProjectName,
+      providerMetadata: target.providerMetadata,
+      branchName: target.branchName,
+    };
   }
 
   private async resolveProviderToken(
@@ -932,8 +994,7 @@ export class DeploymentTargetsService {
     renderInstanceType: string | null;
     renderRegion: string | null;
     renderEnvironmentName:
-      | CreateDeploymentTargetDto['renderEnvironmentName']
-      | null;
+      CreateDeploymentTargetDto['renderEnvironmentName'] | null;
     dockerContext: string | null;
     dockerfilePath: string | null;
   } {

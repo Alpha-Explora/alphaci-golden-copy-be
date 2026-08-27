@@ -39,4 +39,50 @@ describeDatabase('Postgres schema integration', () => {
       await client.end();
     }
   }, 30_000);
+
+  it('couples an outbox insert and published acknowledgement to one transaction', async () => {
+    const client = new Client({
+      connectionString: dbUrl,
+      ssl: postgresSslConfig(dbUrl!, process.env['SUPABASE_DB_CA_CERT']),
+    });
+    await client.connect();
+
+    try {
+      await client.query('BEGIN');
+      const inserted = await client.query<{ id: string }>(
+        `
+          INSERT INTO platform.outbox_events (
+            topic, aggregate_type, aggregate_id, payload, status
+          )
+          VALUES ($1, $2, $3, $4::jsonb, 'pending')
+          RETURNING id;
+        `,
+        [
+          'platform.audit.recorded',
+          'architecture_test',
+          `rollback-${Date.now()}`,
+          JSON.stringify({ eventCode: 'architecture.test' }),
+        ],
+      );
+      const id = inserted.rows[0]?.id;
+      expect(id).toBeTruthy();
+
+      const published = await client.query<{ published_at: string | null }>(
+        `
+          UPDATE platform.outbox_events
+          SET status = 'published', published_at = NOW(), updated_at = NOW()
+          WHERE id = $1
+          RETURNING published_at;
+        `,
+        [id],
+      );
+      expect(published.rows[0]?.published_at).toBeTruthy();
+      await client.query('ROLLBACK');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      await client.end();
+    }
+  }, 30_000);
 });

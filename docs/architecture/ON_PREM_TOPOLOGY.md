@@ -95,7 +95,7 @@ versions behind turns this into their upgrade project first, not ours.
 
 ### 1.3 On-prem deployment provider — the new plugin
 
-A new provider folder under `src/modules/deployments/providers/` per
+A new provider folder under `src/modules/runtime/infrastructure/providers/` per
 `modular-architecture-deployments.md` §3, and the first provider to use the
 extension points that document deliberately relaxed in §12.
 

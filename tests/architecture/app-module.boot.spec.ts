@@ -1,7 +1,14 @@
 import { NestFactory } from '@nestjs/core';
+import 'reflect-metadata';
 import { OutboxDispatcher } from '#kernel/events/outbox-dispatcher';
-import { HIERARCHY_OUTBOX_TOPICS } from '#modules/identity-access/hierarchy/hierarchy.types';
-import { PLATFORM_EVENT_TOPICS } from '#kernel/events/platform-event.registry';
+import { OUTBOX_TOPICS } from '#kernel/events/outbox-topics';
+import { DeploymentProviderRegistry } from '../../src/modules/runtime/core/deployment-provider.registry';
+import { IdentityAccessModule } from '../../src/modules/identity-access/identity-access.module';
+import { BillingModule } from '../../src/modules/billing/billing.module';
+import { PipelinesModule } from '../../src/modules/pipelines/pipelines.module';
+import { ProjectsModule } from '../../src/modules/projects/projects.module';
+import { RuntimeModule } from '../../src/modules/runtime/runtime.module';
+import { PlatformOpsModule } from '../../src/modules/platform-ops/platform-ops.module';
 
 Object.assign(process.env, {
   NODE_ENV: 'test',
@@ -22,20 +29,39 @@ const { AppModule } =
   require('../../src/app.module.js') as typeof import('../../src/app.module.js');
 
 describe('AppModule boot smoke', () => {
+  it('keeps the six bounded-context roots at the application composition boundary', () => {
+    const imports = Reflect.getMetadata('imports', AppModule) as unknown[];
+    const contextRoots = [
+      IdentityAccessModule,
+      BillingModule,
+      PipelinesModule,
+      ProjectsModule,
+      RuntimeModule,
+      PlatformOpsModule,
+    ];
+
+    expect(imports).toEqual(expect.arrayContaining(contextRoots));
+    expect(
+      imports.filter((entry) => contextRoots.includes(entry as never)),
+    ).toHaveLength(contextRoots.length);
+  });
+
   it('constructs the full Nest application without listening or a database', async () => {
     const app = await NestFactory.createApplicationContext(AppModule, {
       logger: false,
       abortOnError: false,
     });
     const dispatcher = app.get(OutboxDispatcher);
-    expect(dispatcher.topics()).toEqual(
-      expect.arrayContaining([
-        PLATFORM_EVENT_TOPICS.auditRecorded,
-        PLATFORM_EVENT_TOPICS.notificationRequested,
-        HIERARCHY_OUTBOX_TOPICS.grant,
-        HIERARCHY_OUTBOX_TOPICS.revoke,
-      ]),
+    expect(dispatcher.topics().slice().sort()).toEqual(
+      Object.values(OUTBOX_TOPICS).sort(),
     );
+    expect(
+      app
+        .get(DeploymentProviderRegistry)
+        .list()
+        .map((provider) => provider.id)
+        .sort(),
+    ).toEqual(['gcp', 'render', 'vercel']);
     await app.close();
   }, 30_000);
 });

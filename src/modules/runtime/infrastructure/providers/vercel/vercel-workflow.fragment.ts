@@ -4,6 +4,8 @@ import type {
   WorkflowFragmentContext,
   WorkflowFragmentResult,
   WorkflowFragmentTarget,
+  WorkflowTargetExpansionContext,
+  WorkflowTargetExpansionInput,
 } from '../../../core/workflow-fragment.contract';
 import {
   branchCondition,
@@ -45,9 +47,37 @@ function buildVercelFragment(
   };
 }
 
+function expandVercelTargets(
+  target: WorkflowTargetExpansionInput,
+  context: WorkflowTargetExpansionContext,
+): readonly WorkflowFragmentTarget[] {
+  if (target.slot !== 'frontend') {
+    return [];
+  }
+
+  const rootDirectory =
+    target.rootDirectory?.trim() ||
+    context.fallbackRootDirectory?.trim() ||
+    undefined;
+  return [
+    {
+      slot: target.slot,
+      provider: 'vercel',
+      deploymentStrategy: 'vercel_ci_pushed',
+      secretNames: {
+        token: `VERCEL_${target.slot.toUpperCase()}_TOKEN`,
+        orgId: `VERCEL_${target.slot.toUpperCase()}_ORG_ID`,
+        projectId: `VERCEL_${target.slot.toUpperCase()}_PROJECT_ID`,
+      },
+      ...(rootDirectory ? { rootDirectory } : {}),
+    },
+  ];
+}
+
 /** Vercel's provider-owned workflow contribution. */
 export const vercelWorkflowFragment: WorkflowFragment = {
   provider: 'vercel',
+  expandTargets: expandVercelTargets,
   build: (target, branch, context) =>
     buildVercelFragment(target, branch, context),
 };

@@ -11,5 +11,6 @@ WHERE status = 'pending'
     'user.signed_in',
     'subscription.activated',
     'subscription.canceled',
-    'workflow.generated'
+    'workflow.generated',
+    'hierarchy.repository_assignment.reconcile'
   );

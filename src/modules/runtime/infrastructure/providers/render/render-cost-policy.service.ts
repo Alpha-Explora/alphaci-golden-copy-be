@@ -5,7 +5,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import type {
   EnvOwnershipMode,
   RenderServiceType,
-} from '../core/deployments.types';
+} from '../../../core/deployments.types';
 
 const FREE_SUPPORTED_SERVICE_TYPES: RenderServiceType[] = ['web_service'];
 

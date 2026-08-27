@@ -32,6 +32,8 @@ import {
 import { ProjectPreviewsApplicationService } from './application/dashboard/project-previews.service';
 import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 import { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
+import { ProjectReconciliationService } from './application/lifecycle/project-reconciliation.service';
+import { ProjectProvisioningApplicationService } from './application/lifecycle/project-provisioning-application.service';
 import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.repository';
 import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
 import { ProjectsRepository } from './projects.repository';
@@ -63,7 +65,7 @@ import { ProjectReferenceModule } from './project-reference.module';
     ProjectsService,
     {
       provide: PROJECT_PROVISIONING_PORT,
-      useExisting: ProjectsService,
+      useExisting: ProjectProvisioningApplicationService,
     },
     ProjectLifecycleService,
     ProjectDashboardService,
@@ -71,6 +73,8 @@ import { ProjectReferenceModule } from './project-reference.module';
     ProjectPreviewsApplicationService,
     ProjectDriftRepairApplicationService,
     ProjectProvisioningService,
+    ProjectReconciliationService,
+    ProjectProvisioningApplicationService,
     ProjectWorkspaceService,
     ProjectCiRunsService,
     ProjectPreviewsService,

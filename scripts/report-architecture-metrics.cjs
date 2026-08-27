@@ -75,8 +75,12 @@ function collectModuleMetrics(moduleName) {
   for (const file of productionFiles) {
     const rel = path.relative(ROOT, file).replace(/\\/g, '/');
     const content = fs.readFileSync(file, 'utf8');
-    const importRe = /(?:from|import\()\s*['"]([.][^'"]+)['"]/g;
-    const aliasImportRe = /(?:from|import\()\s*['"](#modules\/[^'"]+)['"]/g;
+    // This is a readable progress metric, not the authoritative dependency
+    // graph (dependency-cruiser is). Include ESM imports and CommonJS
+    // requires so an inter-context edge cannot disappear merely because a
+    // caller changes module syntax.
+    const importRe = /(?:from|import\s*\(|require\s*\()\s*['"]([.][^'"]+)['"]/g;
+    const aliasImportRe = /(?:from|import\s*\(|require\s*\()\s*['"](#modules\/[^'"]+)['"]/g;
     let match;
     for (const matcher of [importRe, aliasImportRe]) {
       while ((match = matcher.exec(content)) !== null) {

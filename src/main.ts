@@ -57,7 +57,7 @@ export async function createHttpApplication(): Promise<NestExpressApplication> {
     const PgStore = connectPg(session);
     // Connection budget: this pool shares the Supabase Supavisor session-mode
     // pooler (pool_size: 15 project-wide) with DatabaseService's app pool and
-    // the process-outbox cron job. Session reads/writes are cheap single-row
+    // the single scheduled outbox relay. Session reads/writes are cheap single-row
     // lookups, so a small cap is plenty — see the shared-budget comment on
     // DatabaseService's pool in database.service.ts for the full math. Left
     // unset, pg defaults `max` to 10, which alone was enough to blow the
@@ -171,9 +171,7 @@ async function bootstrap(): Promise<void> {
   const app = await createHttpApplication();
   const port = parseInt(process.env['PORT'] ?? '4000', 10);
   await app.listen(port, '0.0.0.0');
-  new Logger('Bootstrap').log(
-    `Application running on 0.0.0.0:${String(port)}`,
-  );
+  new Logger('Bootstrap').log(`Application running on 0.0.0.0:${String(port)}`);
 }
 
 // Importing main.ts from a test must not start a listener. The compiled entry

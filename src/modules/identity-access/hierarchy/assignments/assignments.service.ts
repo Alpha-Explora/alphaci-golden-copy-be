@@ -66,11 +66,12 @@ export class AssignmentsService {
       );
     }
 
-    const assignment = await this.assignmentsRepository.createOrReset({
-      repositoryId,
-      userId: dto.userId,
-      assignedBy: userId,
-    });
+    const assignment =
+      await this.githubSyncService.createAssignmentAndRequestGrant({
+        repositoryId,
+        userId: dto.userId,
+        assignedBy: userId,
+      });
 
     await this.auditEventsService.recordProjectEvent({
       workspaceId: groupId,
@@ -83,8 +84,6 @@ export class AssignmentsService {
         targetUserId: dto.userId,
       },
     });
-
-    await this.githubSyncService.requestGrant(assignment.id, userId);
 
     return assignment;
   }

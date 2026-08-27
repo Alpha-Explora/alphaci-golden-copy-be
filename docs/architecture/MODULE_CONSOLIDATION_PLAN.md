@@ -1,12 +1,17 @@
 # Module Consolidation Plan — Current State vs Future State
 
-**Status:** bounded-scope implementation complete. Tasks 0–10 are implemented;
-Task 11 remains gated on evidence, and Task 12 has an executable boot smoke plus
-a post-consolidation route inventory. A pre-Task-5 contract baseline was not
-captured and remains explicitly unavailable.
+**Status:** remediation trunk implementation complete; final verification is
+recorded. The six-context consolidation and review-closure slices are
+implemented on `codex/architecture-remediation-trunk`; the evidence ledger
+records the exact verification boundary. Task 11 remains gated on evidence. A
+pre-Task-5 contract baseline was not captured and remains explicitly
+unavailable.
 **Date:** 2026-08-27
-**Scope:** src/modules/** topology only. No endpoint, DTO, schema, provider
-behaviour, or deployment change is proposed here.
+**Scope:** `src/modules/**` topology plus behavior-preserving boundary
+remediation. No intentional endpoint, response, schema-value, provider
+behavior, or deployment contract change is proposed here; compatibility
+adapters and evidence gates are documented where implementation needed to
+close a review finding.
 
 ## 1. Why consolidate
 
@@ -65,12 +70,14 @@ src/
 ├── health/                         # application health entry point
 └── modules/
     ├── identity-access/            # auth + admin + capabilities + workspaces + hierarchy
+    │   ├── identity-access.module.ts
     │   ├── auth/
     │   ├── admin/
     │   ├── capabilities/
     │   ├── workspaces/
     │   └── hierarchy/
     ├── projects/                   # projects + catalog + workflows + existing-repos
+    │   ├── projects.module.ts
     │   ├── api/
     │   ├── application/
     │   │   ├── catalog/
@@ -82,18 +89,22 @@ src/
     │   │       └── infrastructure/
     │   └── contracts/
     ├── pipelines/                  # github + ci
+    │   ├── pipelines.module.ts
     │   ├── github/
     │   └── ci/
     ├── runtime/                    # deployments, provider registry, provider adapters
+    │   ├── runtime.module.ts
     │   ├── api/
     │   ├── application/
     │   ├── core/
     │   ├── domain/
     │   └── infrastructure/
     ├── billing/                    # subscription + usage
+    │   ├── billing.module.ts
     │   ├── subscription/
     │   └── usage/
     └── platform-ops/               # notifications + feedback + audit
+        ├── platform-ops.module.ts
         ├── notifications/
         ├── feedback/
         └── audit/
@@ -507,11 +518,10 @@ src/
 │   │   └── workspaces.service.ts
 │   └── README.md
 ├── scripts/
-│   └── process-outbox.ts         # planned; not present in this checkout
+│   ├── process-outbox.cjs        # compiled application-context relay
 │   └── reconcile-deleted-repos.ts
 ├── types/
 │   ├── express-session.d.ts
-│   ├── kafkajs.d.ts
 │   └── libsodium-wrappers.d.ts
 ├── app.controller.ts
 ├── app.module.ts
@@ -541,8 +551,8 @@ describing different systems.
 | Metric | Now | After | Delta |
 |---|---:|---:|---|
 | Modules | 17 | 6 | −65% |
-| Cross-boundary edges | 40 | 15 | −63% |
-| Cross-boundary imports | 135 | 107 | −21% |
+| Directional context pairs | 40 historical module edges | 16 measured context pairs | not directly comparable |
+| Cross-context import statements | 135 historical module imports | 115 alias-aware production imports | not directly comparable |
 
 28 import statements stop crossing a boundary entirely — they become ordinary
 intra-context calls:
@@ -558,32 +568,39 @@ intra-context calls:
 | 1 | `hierarchy -> auth` | `identity-access` |
 | 1 | `hierarchy -> workspaces` | `identity-access` |
 
-Remaining cross-context edges — this is the real API surface of a future split,
-and the list is short enough to govern:
+Current alias-aware production import edges — this is the measurable file-level
+surface that still needs to shrink behind serialisable contracts before a
+future split:
 
 | Count | Edge |
 |---:|---|
-| 18 | `projects -> pipelines` |
-| 15 | `identity-access -> platform-ops` |
-| 14 | `projects -> runtime` |
-| 10 | `projects -> platform-ops` |
+| 29 | `projects -> runtime` |
+| 23 | `projects -> pipelines` |
+| 9 | `projects -> identity-access` |
+| 8 | `projects -> billing` |
 | 7 | `identity-access -> pipelines` |
-| 7 | `projects -> billing` |
-| 7 | `runtime -> platform-ops` |
+| 7 | `identity-access -> platform-ops` |
+| 7 | `projects -> platform-ops` |
 | 5 | `runtime -> identity-access` |
 | 5 | `runtime -> pipelines` |
-| 5 | `projects -> identity-access` |
 | 4 | `runtime -> billing` |
 | 3 | `identity-access -> billing` |
-| 3 | `identity-access -> projects` |
-| 2 | `pipelines -> platform-ops` |
-| 2 | `pipelines -> identity-access` |
+| 3 | `identity-access -> runtime` |
+| 2 | `runtime -> platform-ops` |
+| 1 | `identity-access -> projects` |
+| 1 | `billing -> runtime` |
+| 1 | `pipelines -> platform-ops` |
 
-Consolidation does **not** reduce import volume much (135 → 107). That is the
-honest result: it reduces the number of *things you must reason about* from 40
-relationships to 15, and converts 28 imports from public-API traffic into
-private calls. Import volume only drops further when the contract seam in §4 is
-applied.
+These counts sum to 115 file-level imports across the 16 directional pairs;
+the contract register remains the governing list of conceptual edges.
+
+Consolidation does **not** reduce import volume much. The current alias-aware
+scanner reports 115 production import statements across 16 directional context
+pairs. That is the honest result: the six directories reduce the number of
+ownership units, but extraction work still requires reducing the relevant
+synchronous edges behind serialisable contracts and transport-swappable ports.
+The scanner is a trend report; dependency-cruiser remains authoritative for
+the actual file graph.
 
 ### 3.3 Two cycles that block extraction
 
@@ -604,22 +621,26 @@ module-level edges:
 | `identity-access -> pipelines` | `hierarchy/groups/groups.service.ts`, `hierarchy/repositories/repositories.service.ts`, `hierarchy/github-sync/providers/github-team-access.live.ts`, `hierarchy/config-broker/providers/github-secrets.provider.ts`, `auth/auth.service.ts` — all `-> github/index` |
 | `pipelines -> identity-access` | `github/github-team-role.service.ts -> admin/index`, `github/github.module.ts -> admin.module` |
 
-These are legal today (`no-circular` operates at file level, and each edge is a
-distinct file pair). They become illegal the moment contexts are the unit. They
-must be broken *before* the physical move, not after — see Phase 2.
+These were the pre-consolidation cycle surfaces. The current context roots and
+dependency-cruiser graph have no circular violations, but the remaining
+cross-context imports are still visible in the measured graph and are not an
+extraction proof. They must continue to be governed by the contract register.
 
 ### 3.4 Extraction readiness ranking
 
 Fan-in is what makes a service extractable; fan-out only makes it chatty.
 
-| Context | Inbound edges | Outbound edges | Verdict |
+| Context | Inbound context pairs | Outbound context pairs | Current posture |
 |---|---:|---:|---|
-| `platform-ops` | 4 | 0 | pure sink — extractable first, async-only |
-| `billing` | 4 | 0 | pure sink — extractable, but needs sync quota reads |
-| `runtime` | 1 | 4 | single caller (`projects`) — cleanest real extraction |
-| `pipelines` | 3 | 2 | needs Cycle B broken |
-| `identity-access` | 3 | 4 | needs both cycles broken; called by everything |
-| `projects` | 1 | 5 | orchestrator — extract last or never |
+| `platform-ops` | 4 | 0 | sink-shaped; event consumer, but still in the monolith |
+| `billing` | 3 | 1 | mostly sink-shaped; runtime compatibility read remains |
+| `runtime` | 3 | 4 | extraction candidate, not one-inbound/configuration-only |
+| `pipelines` | 3 | 1 | webhook/CI context with platform event output |
+| `identity-access` | 2 | 5 | high fan-out policy context |
+| `projects` | 1 | 5 | orchestrator; extract last or never |
+
+These are current directional context-pair counts from the alias-aware metric,
+not a claim that every pair is already a transport-swappable port.
 
 ## 4. The seam that makes a split cheap
 
@@ -644,8 +665,10 @@ of this plan; the folder moves are just how you get there.
 Corollary rules:
 
 - Cross-context reads that tolerate staleness should be **events**, not calls.
-  The 15 edges into `platform-ops` (audit, notifications) are all of this kind
-  and should be outbox events, which drops the sync edge count from 15 to 11.
+  The current event-sink edges into `platform-ops` (audit, notifications) are
+  all of this kind and should remain outbox events. This reduces synchronous
+  application coupling without pretending the remaining in-process graph is
+  already a service mesh.
 - Cross-context writes stay synchronous through a port. Do not invent sagas for
   a monolith.
 - No context may import another context's database tables. Schema ownership is
@@ -655,7 +678,9 @@ Corollary rules:
 
 "Modular" in this codebase means three different things that must not be
 conflated. Deployment providers are the clearest example: they are *not* a
-seventh context, and consolidation must leave them untouched.
+seventh context. They remain a variation axis inside `runtime`; the
+review-closure work improves their contribution seams without turning them
+into top-level contexts.
 
 | # | Axis | Unit | Count today | Governed by | Changes when |
 |---|---|---|---:|---|---|
@@ -663,83 +688,71 @@ seventh context, and consolidation must leave them untouched.
 | 2 | **Plugin** | variation point *inside* one context | 3 providers | `docs/modular-architecture-deployments.md` | a new vendor is integrated |
 | 3 | **Deployment mode** | which surface is enabled per install | ~20 `*_ENABLED` flags | `src/config/app.config.ts` | an edition (SaaS / edu / enterprise / on-prem) turns a feature on or off |
 
-Deployment providers are **axis 2**. The acceptance test for that claim:
+Deployment providers are **axis 2**. The acceptance test for that claim is now
+implemented at the registry/builder seam:
 
-> Adding a fourth provider must touch exactly one new folder under
-> `runtime/infrastructure/providers/<id>/` plus one module import. Zero files
-> in any other context.
+> A fourth provider can register metadata, a runtime client, a workflow
+> fragment, and a CI installer by id without changing another context or adding
+> a vendor branch to the workflow builder.
 
-That test does not pass today. §5.2 is why.
+The production composition still needs one Runtime provider-module binding, and
+legacy Render/Vercel compatibility fields remain. The fake-provider acceptance
+test proves the generic extension point, not zero-edit persistence migration.
 
 ### 5.1 The provider seam as it actually exists
 
-There are **two registries**, both real, doing different jobs:
+There are **four contribution registries**, each with one generic variation
+point:
 
 | Registry | Location | Purpose | Open/closed? |
 |---|---|---|---|
-| `DeploymentProviderRegistry` | `deployments/core/` | metadata: id, label, slots, capabilities, config + credential schemas | **yes** — each provider self-registers in `onModuleInit()` |
-| `ProviderClientRegistry` | `deployments/infrastructure/providers/core/` | runtime I/O client selection | **no** — hardcoded `if (provider === 'render') … else vercel`, both clients constructor-injected |
+| `DeploymentProviderRegistry` | `runtime/core/` | metadata: id, label, slots, capabilities, config + credential schemas | **yes** — providers register at Runtime composition |
+| `ProviderClientRegistry` | `runtime/infrastructure/providers/core/` | runtime I/O client selection | **yes** — map keyed by open provider id |
+| `ProviderCiSecretsInstallerRegistry` | `runtime/infrastructure/providers/core/` | provider-owned CI secret installation | **yes** — map keyed by open provider id |
+| `WorkflowFragmentRegistry` | `runtime/infrastructure/providers/core/` | provider-owned workflow target expansion and job fragments | **yes** — map keyed by open provider id; expansion fails closed when absent |
 
-And **two different interfaces both named `DeploymentProvider`**:
-
-- `core/deployment-provider.contract.ts` — metadata only (`isEnabled`, `validateConfig`, schemas)
-- `core/deployment-provider-runtime.contract.ts` — extends `RuntimeEnvProviderClient`, ~15 I/O methods with 8 of them optional
-
-Registered providers: `render`, `vercel` (both through a single
-`LegacyDeploymentProvider` metadata shim) and `gcp`.
-
-But GCP registers **metadata only**. Its runtime path bypasses
-`RuntimeEnvProviderClient` entirely and runs through a parallel stack:
-`GcpProvisioningService`, `GcpProvisioningExecutor`,
-`GcpDeploymentTargetsRepository`, and a `GCP_RUNTIME_ADAPTER` token.
-
-The data model is forked the same way:
-
-| Tables | Constraint |
-|---|---|
-| `env_provisioning.provider_connections`, `.project_deployment_targets`, `.project_env_var_metadata` | `CHECK (provider IN ('render','vercel'))` on all three |
-| `runtime_deployments.deployment_targets` | `CHECK (provider = 'gcp')`, with its own GCP-shaped columns |
-
-And the union that drives all of it — `EnvProvider = 'render' | 'vercel'`
-(`core/deployments.types.ts:1`) — **does not include `gcp`**.
-
-So the plugin seam is half-built: metadata is genuinely pluggable; runtime I/O,
-persistence, and the type union are still per-vendor forks. That is a known
-state, not a regression — GCP was added expand-only, on purpose.
+The provider id and workflow/deployment strategy types are open strings where
+the public API already accepts provider data. Render/Vercel compatibility
+classes and the parallel GCP runtime remain inside Runtime; they are not
+exposed to other contexts.
 
 ### 5.2 Provider identity leaks across the context boundary
 
-This is where axis 1 and axis 2 collide, and it is the reason the question
-matters for this plan. Provider literals appear outside `deployments`:
+This is where axis 1 and axis 2 used to collide. The historical leaks are
+listed below because they explain the compatibility debt; the current code
+keeps provider implementations and policy inside `runtime`:
 
-| File | Lands in context | Leak |
+| File | Lands in context | Current status |
 |---|---|---|
-| `usage/usage-quota.service.ts` | `billing` | raw SQL columns `managed_render_services` / `managed_vercel_projects`; `provider === 'render' ? renderManagedFleetMax : vercelManagedFleetMax` |
-| `capabilities/capabilities.controller.ts` | `identity-access` | `providers: ['render','vercel']` and `providers: ['vercel']` returned to the FE |
-| `workflows/staged-workflow.builder.ts` | `projects` | `vercelDeployJob()` / `renderDeployJob()`, provider-specific secret names, provider-specific `uses:` refs |
-| `projects/projects.service.ts` | `projects` | `deploymentProvider?: 'render' \| 'vercel'`, slot-to-provider assumptions in setup |
+| provider-specific workflow generation | `projects` | moved behind `WorkflowFragmentRegistry`; the builder has no vendor branches |
+| provider discovery | `identity-access` | reads Runtime registry; no hardcoded provider list |
+| provider DTO id | `projects` | open provider string; legacy provider-owned fields remain for wire compatibility |
+| usage/quota compatibility keys | `billing` | existing response keys remain; provider policy stays in Runtime-facing compatibility seams |
+| Render/Vercel target strategy and secret names | `projects`/`runtime` | workflow target expansion, slot wording, and provider metadata links are now provider-owned; legacy token/scope/storage/strategy mappings remain explicit compatibility code |
 
-Today these are intra-monolith untidiness. After consolidation they become
-something with a name: **three other contexts cannot compile without knowing
-`runtime`'s provider list.** Adding a provider would change `billing`,
-`identity-access`, and `projects`. That is the exact opposite of a plugin, and
-it would also mean the provider axis silently adds edges to the context graph.
-
-Consolidation does not cause this. It makes it visible and gives it a gate.
+The remaining provider-related imports are data contracts or compatibility
+fields, not provider adapters. A new provider must extend Runtime composition
+and its own contribution maps; it must not add vendor logic to another
+context. Provider metadata classes now live in their provider folders, slot
+validation is descriptor-driven, and workflow target expansion fails closed
+when a registered provider has no expansion contribution. Legacy token,
+scope, storage-column, and strategy identifiers stay in Runtime until the
+separate persistence/compatibility extraction is approved. The gate and
+fake-provider acceptance test make that rule visible.
 
 ### 5.3 The rule that keeps the axes independent
 
 > **Provider identity is private to `runtime`.** No other context's
 > `contracts/`, DTO, SQL, or workflow builder may name a provider.
 
-What each leak turns into:
+What each historical leak turns into:
 
 | Leak | Becomes |
 |---|---|
 | `billing` quota SQL | counts by ownership mode + a `DeploymentUsageFact` contract published by `runtime`, not by `provider = 'render'` |
 | `capabilities` provider list | reads the existing `GET /deployment-providers` discovery endpoint, which the metadata registry already backs |
 | `workflows` deploy jobs | each provider adapter contributes a workflow fragment + its own secret-name list; the builder composes fragments it does not understand |
-| `projects` DTO validation | `@IsIn(registry.list().map(p => p.id))` instead of a hardcoded union |
+| `projects` DTO validation | open provider data at the transport boundary; Runtime validates provider/slot/config against its registry |
 
 Note that three of the four fixes are *already possible* with the metadata
 registry that exists. This is mostly wiring, not new architecture.
@@ -748,11 +761,11 @@ registry that exists. This is mostly wiring, not new architecture.
 
 | Phase | Provider-axis work |
 |---|---|
-| 0 | Add gate `no-provider-literals-outside-runtime` at `warn`: `'render'`, `'vercel'`, `'gcp'` may not appear outside `modules/deployments/**` |
-| 1 | `DeploymentUsageFact` and `WorkflowFragment` are two of the 15 cross-context contracts |
-| 3.6 | Providers move with `runtime` unchanged — the folder tree under `infrastructure/providers/` is already correct |
+| 0 | Add gate `no-provider-literals-outside-runtime`; the current gate is an error with one documented public DTO exception |
+| 1 | `DeploymentUsageFact` and `WorkflowFragment` are two of the 16 cross-context contracts |
+| 3.6 | Providers move with `runtime`; Render/Vercel metadata adapters and workflow contributions remain under `infrastructure/providers/` |
 | 4 | Decide whether `env_provisioning.*` and `runtime_deployments.*` converge on one `provider_config JSONB` table, or stay forked |
-| — | **Not in this plan:** unifying the two registries and the two `DeploymentProvider` interfaces. That is `docs/modular-architecture-deployments.md` and should ship on its own schedule |
+| — | Provider persistence convergence and removal of legacy compatibility fields remain out of scope; see `docs/modular-architecture-deployments.md` |
 
 ### 5.5 The third axis: deployment mode
 
@@ -800,6 +813,8 @@ src/
 │   ├── events/
 │   │   ├── events.module.ts
 │   │   ├── outbox.repository.ts
+│   │   ├── outbox-dispatcher.ts
+│   │   ├── outbox-topics.ts
 │   │   ├── platform-event.registry.ts
 │   │   └── platform-event-publisher.ts
 │   ├── http/
@@ -898,7 +913,8 @@ src/
 │   │   │   └── dto/
 │   │   ├── application/
 │   │   │   ├── lifecycle/
-│   │   │   │   ├── projects.service.ts       # continue decomposition; still ~2,500 lines
+│   │   │   │   ├── projects.service.ts       # 504-line compatibility facade
+│   │   │   │   ├── project-provisioning-application.service.ts # largest focused setup orchestrator
 │   │   │   │   ├── project-lifecycle.service.ts
 │   │   │   │   ├── project-provisioning.service.ts
 │   │   │   │   ├── setup-branch.service.ts
@@ -1008,18 +1024,21 @@ src/
 │   │   │   ├── project-deployment-provisioning.service.ts
 │   │   │   ├── project-drift.service.ts
 │   │   │   ├── encryption.service.ts
-│   │   │   ├── render-ci-secrets.service.ts
-│   │   │   ├── vercel-ci-secrets.service.ts
-│   │   │   ├── render-cost-policy.service.ts
 │   │   │   └── ports/
 │   │   │       ├── project-reference.port.ts # -> projects (read-only reference)
 │   │   │       ├── quota.port.ts             # -> billing
-│   │   │       └── ci-secrets.port.ts        # -> pipelines
+│   │   │       └── provider-ci-secrets-installer.port.ts # provider-owned CI contribution
 │   │   ├── domain/
 │   │   │   ├── deployment-target.policy.ts
 │   │   │   ├── deployment-strategy.resolver.ts
 │   │   │   ├── environment-scope.ts
 │   │   │   └── provider-connection.ts
+│   │   ├── core/
+│   │   │   ├── deployment-provider.contract.ts
+│   │   │   ├── deployment-provider.registry.ts
+│   │   │   ├── deployment-provisioning.contract.ts
+│   │   │   ├── deployments.types.ts
+│   │   │   └── workflow-fragment.contract.ts
 │   │   ├── infrastructure/
 │   │   │   ├── repositories/
 │   │   │   │   ├── deployment-targets.repository.ts
@@ -1028,11 +1047,26 @@ src/
 │   │   │   │   ├── custom-domains.repository.ts
 │   │   │   │   └── project-sync-findings.repository.ts
 │   │   │   └── providers/
-│   │   │       ├── core/                     # contract, registry, conformance suite, retry
+│   │   │       ├── core/
+│   │   │       │   ├── default-workflow-fragment-registry.ts
+│   │   │       │   ├── legacy-provider.shared.ts
+│   │   │       │   ├── provider-client.registry.ts
+│   │   │       │   ├── provider-ci-secrets.registry.ts
+│   │   │       │   └── workflow-fragment.registry.ts
 │   │   │       ├── gcp/
 │   │   │       ├── render/
+│   │   │       │   ├── render-deployment.provider.ts
+│   │   │       │   ├── render-env.client.ts
+│   │   │       │   ├── render-ci-secrets.service.ts
+│   │   │       │   ├── render-cost-policy.service.ts
+│   │   │       │   └── render-workflow.fragment.ts
 │   │   │       ├── vercel/
+│   │   │       │   ├── vercel-deployment.provider.ts
+│   │   │       │   ├── vercel-env.client.ts
+│   │   │       │   ├── vercel-ci-secrets.service.ts
+│   │   │       │   └── vercel-workflow.fragment.ts
 │   │   │       └── legacy/
+│   │   │           └── legacy-deployment-providers.module.ts # compatibility composition only
 │   │   ├── contracts/
 │   │   │   ├── deployment-provider.contract.ts
 │   │   │   ├── deployment-provider-runtime.contract.ts
@@ -1107,8 +1141,10 @@ Notes on the tree:
 
 ## 7. Phased sequence
 
-Each phase is independently mergeable, behaviour-preserving, and green on
-`npm run typecheck && npm run lint && npm run test && npm run boundaries`.
+Each phase is independently mergeable and behaviour-preserving. The verification
+baseline is typecheck, changed-file lint, Jest, and dependency boundaries;
+global lint is reported separately when the repository's pre-existing baseline
+contains findings.
 
 ### Phase 0 — Freeze the rules (docs + gates, no moves)
 
@@ -1124,7 +1160,7 @@ Each phase is independently mergeable, behaviour-preserving, and green on
 
 ### Phase 1 — Introduce the seam, keep the folders
 
-- For each of the 15 cross-context edges, define the `contracts/` type and the
+- For each of the 16 current directional cross-context edges, define the `contracts/` type and the
   consumer-side port. Bind each port to a local adapter in the owning
   `*.module.ts`.
 - No file moves. Consumers switch from `import { XService } from '../x'` to an
@@ -1161,7 +1197,7 @@ phase; the known-violations baseline may shrink, never grow.
 
 ### Phase 4 — Schema ownership (implemented)
 
-- Tag every table in the 62 `supabase/` migration files with its owning context.
+- Tag every table in the 63 `supabase/` migration files with its owning context.
 - Add a SQL ownership gate: a repository under context X may not name a table
   owned by context Y. Import gates do not catch inline SQL — this is the known
   hole flagged in earlier architecture work.
@@ -1182,10 +1218,14 @@ phase; the known-violations baseline may shrink, never grow.
 
 Trigger conditions, at least one of which must be demonstrated before this
 phase is opened at all: independent scaling need, independent deploy cadence
-need, or a regulatory isolation requirement. First candidate is `runtime`
-(1 inbound edge). The work at that point is: swap one port binding to an HTTP
-adapter, publish `contracts/` as a package, split the schema. Nothing in
-`application/` or `domain/` changes.
+need, or a regulatory isolation requirement. Runtime remains the first
+candidate, but its current measured graph has three inbound context pairs and
+four outbound pairs, plus compatibility seams. The work at that point is:
+swap the relevant port bindings to an HTTP adapter, publish `contracts/` as a
+package, and split the schema. Nothing in `application/` or `domain/` changes.
+
+The current application is not represented as “nearly extractable” merely
+because the directory count is six; see the evidence and residual-gap reports.
 
 ## 8. Risks
 
@@ -1196,7 +1236,7 @@ adapter, publish `contracts/` as a package, split the schema. Nothing in
 | `projects` stays a god-context | Decomposition of `projects.service.ts` continues independently; consolidation is not a substitute |
 | Guards move and break auth | App-wide guards move to `kernel/auth` in Phase 0, not during 3.4 |
 | Contexts become the new "too many folders" | 6 is the ceiling. Adding a 7th requires a written justification in this doc |
-| Extraction never happens and the seam costs us | The seam is 15 port interfaces; that cost is repaid by testability alone |
+| Extraction never happens and the seam costs us | The current contract register and focused ports still pay for themselves through testability and explicit ownership |
 | Provider axis gets confused with the context axis | §5 states the rule and Phase 0 adds a gate; a new vendor must never become a seventh context |
 | Provider leaks make `billing`/`identity-access`/`projects` unbuildable without `runtime` | The four leaks in §5.2 are fixed in Phase 1 as ordinary cross-context contracts |
 

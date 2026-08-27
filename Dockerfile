@@ -85,4 +85,7 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:3000/api/v1/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
 
-CMD ["node", "dist/main"]
+# TypeScript's rootDir is the repository root, so Nest emits the entry point
+# under dist/src. Keep the web process and the cron runner on the same compiled
+# application tree; `dist/main` does not exist in this build layout.
+CMD ["node", "dist/src/main.js"]

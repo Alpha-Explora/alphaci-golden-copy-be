@@ -66,7 +66,8 @@ export class GithubAccessSyncRepository {
     );
   }
 
-  private async upsertPendingWithClient(
+  /** The caller owns the transaction when this method is used directly. */
+  async upsertPendingWithClient(
     client: Pick<PoolClient, 'query'>,
     assignmentId: string,
   ): Promise<GithubAccessSyncRecord> {
@@ -130,7 +131,8 @@ export class GithubAccessSyncRepository {
    * REVOCATION) so the FE only ever reads the boolean, never recomputes it.
    * LEFT JOINs github_access_sync defensively — a sync row is created
    * synchronously in the same request that creates the assignment
-   * (GithubSyncService.requestGrant -> upsertPending), but this view must
+   * (GithubSyncService.createAssignmentAndRequestGrant ->
+   * upsertPendingWithClient), but this view must
    * not 500 if that invariant is ever violated.
    */
   async listAccessStatusForRepository(repositoryId: string): Promise<

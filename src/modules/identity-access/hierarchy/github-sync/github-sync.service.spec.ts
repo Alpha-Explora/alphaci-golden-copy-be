@@ -1,6 +1,7 @@
 import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher';
 import type { SessionUserLookup } from '#kernel/auth/session-user-lookup.contract';
 import type { OutboxRepository } from '#kernel/events/outbox.repository';
+import type { DatabaseService } from '#kernel/db/database.service';
 import type {
   AssignmentRecord,
   AssignmentsRepository,
@@ -58,14 +59,18 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
   let sessionUserLookup: jest.Mocked<SessionUserLookup>;
   let provider: jest.Mocked<GithubTeamAccessProvider>;
   let auditEventsService: jest.Mocked<AuditEventPublisher>;
+  let databaseService: jest.Mocked<DatabaseService>;
   let service: GithubSyncService;
 
   beforeEach(() => {
     outboxRepository = {
       publishBestEffort: jest.fn(),
+      publishDurably: jest.fn(),
+      publishInTransaction: jest.fn(),
     } as unknown as jest.Mocked<OutboxRepository>;
     assignmentsRepository = {
       findById: jest.fn(),
+      createOrResetWithClient: jest.fn(),
       setDesiredUnassigned: jest.fn(),
       markGrantVerified: jest.fn(),
       markGrantFailed: jest.fn(),
@@ -74,6 +79,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     } as unknown as jest.Mocked<AssignmentsRepository>;
     syncRepository = {
       upsertPending: jest.fn(),
+      upsertPendingWithClient: jest.fn(),
       markSyncing: jest.fn(),
       markVerified: jest.fn(),
       markFailed: jest.fn(),
@@ -84,17 +90,20 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     } as unknown as jest.Mocked<RepositoriesRepository>;
     sessionUserLookup = {
       findSessionUser: jest.fn().mockResolvedValue(baseUser),
-    } as unknown as jest.Mocked<SessionUserLookup>;
+    };
     provider = {
       ensureTeam: jest.fn(),
       addMember: jest.fn(),
       removeMember: jest.fn(),
       verifyEffectivePermission: jest.fn(),
-    } as unknown as jest.Mocked<GithubTeamAccessProvider>;
+    };
     auditEventsService = {
       record: jest.fn(),
       recordProjectEvent: jest.fn(),
     } as unknown as jest.Mocked<AuditEventPublisher>;
+    databaseService = {
+      withTransaction: jest.fn(),
+    } as unknown as jest.Mocked<DatabaseService>;
 
     service = new GithubSyncService(
       outboxRepository,
@@ -104,6 +113,59 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
       sessionUserLookup,
       provider,
       auditEventsService,
+      databaseService,
+    );
+  });
+
+  it('creates the assignment, sync state, and grant outbox row in one transaction', async () => {
+    const client = { query: jest.fn() };
+    const assignment = baseAssignment();
+    assignmentsRepository.createOrResetWithClient.mockResolvedValue(assignment);
+    syncRepository.upsertPendingWithClient.mockResolvedValue({
+      id: 'sync-1',
+      assignmentId: assignment.id,
+      githubTeamId: null,
+      githubTeamSlug: null,
+      syncState: 'pending',
+      verificationResult: null,
+      lastSyncedAt: null,
+      lastError: null,
+      retryCount: 0,
+      createdAt: assignment.createdAt,
+      updatedAt: assignment.updatedAt,
+    });
+    databaseService.withTransaction.mockImplementation(async (fn) =>
+      fn(client as never),
+    );
+
+    await service.createAssignmentAndRequestGrant({
+      repositoryId: assignment.repositoryId,
+      userId: assignment.userId,
+      assignedBy: assignment.assignedBy,
+    });
+
+    expect(assignmentsRepository.createOrResetWithClient).toHaveBeenCalledWith(
+      client,
+      expect.objectContaining({
+        repositoryId: assignment.repositoryId,
+        userId: assignment.userId,
+        assignedBy: assignment.assignedBy,
+      }),
+    );
+    expect(syncRepository.upsertPendingWithClient).toHaveBeenCalledWith(
+      client,
+      assignment.id,
+    );
+    expect(outboxRepository.publishInTransaction).toHaveBeenCalledWith(
+      client,
+      expect.objectContaining({
+        topic: HIERARCHY_OUTBOX_TOPICS.grant,
+        aggregateId: assignment.id,
+        payload: {
+          assignmentId: assignment.id,
+          actingUserId: assignment.assignedBy,
+        },
+      }),
     );
   });
 
@@ -160,7 +222,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
       'assignment-1',
     );
     expect(assignmentsRepository.markGrantVerified).not.toHaveBeenCalled();
-    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
     );
   });
@@ -266,7 +328,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     expect(assignmentsRepository.markRevokeFailed).toHaveBeenCalledWith(
       'assignment-1',
     );
-    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
     );
   });
@@ -293,7 +355,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
 
     await service.requestReconcile('assignment-1', 'pm-1');
 
-    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
     );
   });
@@ -305,7 +367,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
 
     await service.requestReconcile('assignment-1', 'pm-1');
 
-    expect(outboxRepository.publishBestEffort).toHaveBeenCalledWith(
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
     );
   });

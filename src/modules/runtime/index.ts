@@ -33,12 +33,16 @@ export {
 export { DeploymentProviderRegistry } from './core/deployment-provider.registry';
 export {
   buildDeploymentWorkflowFragment,
+  WORKFLOW_FRAGMENTS,
   WorkflowFragmentRegistry,
   type WorkflowFragment,
   type WorkflowFragmentContext,
   type WorkflowFragmentResult,
   type WorkflowFragmentTarget,
+  type WorkflowTargetExpansionContext,
+  type WorkflowTargetExpansionInput,
 } from './infrastructure/providers/core/workflow-fragment.registry';
+export { createDefaultWorkflowFragmentRegistry } from './infrastructure/providers/core/default-workflow-fragment-registry';
 export type { DeploymentProviderContract } from './contracts/deployment-provider.contract';
 export type { DeploymentProvisioningContract } from './contracts/deployment-provisioning.contract';
 export {

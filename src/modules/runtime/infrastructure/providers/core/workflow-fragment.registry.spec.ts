@@ -40,8 +40,26 @@ describe('WorkflowFragmentRegistry', () => {
       build: jest.fn(),
     };
 
-    expect(
-      () => new WorkflowFragmentRegistry([fragment, fragment]),
-    ).toThrow('Duplicate workflow fragment provider: fake-cloud');
+    expect(() => new WorkflowFragmentRegistry([fragment, fragment])).toThrow(
+      'Duplicate workflow fragment provider: fake-cloud',
+    );
+  });
+
+  it('fails closed when target expansion is not supplied by the provider', () => {
+    const registry = new WorkflowFragmentRegistry([
+      {
+        provider: 'incomplete-cloud',
+        build: jest.fn(),
+      },
+    ]);
+
+    expect(() =>
+      registry.expandTargets(
+        { provider: 'incomplete-cloud', slot: 'backend' },
+        {},
+      ),
+    ).toThrow(
+      "Workflow fragment for provider 'incomplete-cloud' does not implement target expansion",
+    );
   });
 });

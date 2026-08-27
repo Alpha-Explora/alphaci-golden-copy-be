@@ -1,10 +1,34 @@
 # Deployment Provider Plugin Architecture
 
-**Status:** Proposed
+**Status:** Proposed target design; current implementation mapping is included below
 **Scope:** The deployment-provider subsystem only, targeting the backend exactly as it
 exists on `main` today — one NestJS application, one deployable, the module layout under
 `src/modules/`. Every file path, line reference and migration in this document is written
 against that codebase.
+
+> **Current implementation alignment (2026-08-27):** the repository has since
+> consolidated the subsystem under `src/modules/runtime/`. The generic
+> `DeploymentProviderRegistry`, `ProviderClientRegistry`,
+> `WorkflowFragmentRegistry`, and `ProviderCiSecretsInstallerRegistry` are now
+> open-id map registries, and the staged workflow builder composes provider
+> fragments without Render/Vercel branches. The provider-plugin acceptance test
+> exercises a fake provider through metadata, client, workflow, and CI seams.
+> Render/Vercel compatibility fields, target strategy mapping, and the parallel
+> GCP runtime remain intentionally inside Runtime so the existing HTTP and
+> database contracts do not change. The stronger promise in this document —
+> that a production provider is completely zero-edit outside its folder — is a
+> future target, not a claim about this refactor.
+
+> **Current seam status:** provider metadata adapters are split into the
+> provider folders; slot policy is descriptor-driven and fails closed; workflow
+> target expansion and provider workflow fragments are selected through the
+> generic `WorkflowFragmentRegistry`; and CI secret installation is registry
+> driven. Token/scope/storage/legacy strategy and DTO compatibility remain
+> Runtime-owned compatibility code. The full conformance suite below remains a
+> future hardening target; the current acceptance test covers the generic
+> metadata, client, workflow, and CI contribution seams.
+
+
 **Standalone:** This document is self-contained. It introduces no dependency on any other
 proposed change to this repository, and nothing in it needs to wait on one. It can be
 read, reviewed, approved and implemented entirely on its own.
@@ -14,9 +38,10 @@ no shared-file merge conflicts.
 
 ---
 
-## 1. Problem
+## 1. Problem (historical baseline before current remediation)
 
-Today the codebase is provider-*aware* but not provider-*pluggable*. A real plugin seam
+Before the current remediation, the codebase was provider-*aware* but not
+provider-*pluggable*. A real plugin seam
 already exists (`RuntimeEnvProviderClient` in
 `src/modules/env-provisioning/provider-clients/runtime-env-provider.client.ts`), but
 provider identity leaks through ~19 non-test files. Adding a third provider means both
@@ -534,9 +559,11 @@ Migration rules during the parallel window:
 
 ---
 
-## 8. Workflow builder inversion
+## 8. Workflow builder inversion (target design; current slice noted above)
 
-This is the highest-value change. Today `staged-workflow.builder.ts:708-890` hardcodes
+This was the highest-value leak in the historical baseline. The current builder
+composes provider fragments; the target design below remains the stronger
+zero-edit extension model. Previously, `staged-workflow.builder.ts:708-890` hardcoded
 `vercelDeployJob` and `renderDeployJob` inside a 1090-line file both devs would edit.
 
 **After:**

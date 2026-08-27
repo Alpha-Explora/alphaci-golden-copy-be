@@ -175,13 +175,11 @@ export function extractDeploymentProvider(
   slot: ProvisioningSlot,
 ): DeploymentProviderId | undefined {
   if (!request?.enabled || !request.targets?.length) return undefined;
-  const provider = request.targets.find(
-    (t) =>
-      t.slot === slot &&
-      t.provider === DEFAULT_BACKEND_PROVIDER_ID &&
-      slot === 'backend',
-  )?.provider;
-  return provider === DEFAULT_BACKEND_PROVIDER_ID ? provider : undefined;
+  // Provider identity is request data here. The historical Render default is
+  // applied only by withDefaultCreateDeploymentProvisioning(); once a caller
+  // supplies a target, the workflow metadata must preserve whichever provider
+  // owns that slot instead of silently dropping every non-Render provider.
+  return request.targets.find((target) => target.slot === slot)?.provider;
 }
 
 export function resolveSingleRepoDeploymentSlots(

@@ -19,6 +19,13 @@ describe('DeploymentProviderRegistry', () => {
     );
   });
 
+  it('finds an optional provider descriptor without throwing for plugin data', () => {
+    const registry = createRegistry(gcpProvider);
+
+    expect(registry.find('gcp')).toBe(gcpProvider);
+    expect(registry.find('unknown')).toBeUndefined();
+  });
+
   it('rejects duplicate provider ids', () => {
     expect(() =>
       createRegistry(gcpProvider, { id: 'gcp', label: 'Duplicate GCP' }),

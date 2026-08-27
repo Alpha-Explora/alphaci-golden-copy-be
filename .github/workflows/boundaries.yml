@@ -16,9 +16,9 @@ name: Boundaries
 
 on:
   pull_request:
-    branches: [main, codex/modular-monolith-trunk]
+    branches: [main, codex/architecture-remediation-trunk]
   push:
-    branches: [main, codex/modular-monolith-trunk]
+    branches: [main, codex/architecture-remediation-trunk]
 
 permissions:
   contents: read
@@ -51,4 +51,4 @@ jobs:
           echo "### Boundary debt: $COUNT known violations remaining" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Each one is a module reaching into another module's internals." >> "$GITHUB_STEP_SUMMARY"
-          echo "They are migrated away feature by feature — see docs/restructure.md." >> "$GITHUB_STEP_SUMMARY"
+          echo "They are migrated away feature by feature — see docs/architecture/MODULE_CONSOLIDATION_PLAN.md." >> "$GITHUB_STEP_SUMMARY"

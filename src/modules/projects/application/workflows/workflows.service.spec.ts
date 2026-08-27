@@ -5,6 +5,9 @@ import { WorkflowsService } from './workflows.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { WorkflowHistoryRepository } from './infrastructure/workflow-history.repository.js';
 import type { WorkflowTemplate } from '../catalog/catalog.service.js';
+import { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
+import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
+import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
 
 jest.mock('node:fs/promises');
 import * as fs from 'node:fs/promises';
@@ -77,6 +80,13 @@ describe('WorkflowsService', () => {
         WorkflowsService,
         { provide: CatalogService, useValue: catalogService },
         { provide: WorkflowHistoryRepository, useValue: historyRepo },
+        {
+          provide: WorkflowFragmentRegistry,
+          useValue: new WorkflowFragmentRegistry([
+            renderWorkflowFragment,
+            vercelWorkflowFragment,
+          ]),
+        },
       ],
     }).compile();
 

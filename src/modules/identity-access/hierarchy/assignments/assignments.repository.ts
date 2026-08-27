@@ -56,7 +56,25 @@ export class AssignmentsRepository {
     userId: string;
     assignedBy: string;
   }): Promise<AssignmentRecord> {
-    const result = await this.databaseService.query<AssignmentRow>(
+    return this.createOrResetWithClient(
+      this.databaseService as unknown as Pick<PoolClient, 'query'>,
+      input,
+    );
+  }
+
+  /**
+   * Transaction-aware variant used when assignment creation must be coupled
+   * to the sync state and grant outbox row. The caller owns the transaction.
+   */
+  async createOrResetWithClient(
+    client: Pick<PoolClient, 'query'>,
+    input: {
+      repositoryId: string;
+      userId: string;
+      assignedBy: string;
+    },
+  ): Promise<AssignmentRecord> {
+    const result = await client.query<AssignmentRow>(
       `
         INSERT INTO hierarchy.repository_assignments (
           repository_id, user_id, access_level, desired_state, effective_state, status, assigned_by

@@ -72,13 +72,13 @@ export class DatabaseService implements OnModuleDestroy {
       // process that connects — see EMAXCONNSESSION incident 2026-07-13).
       // Three separate `pg.Pool`s dial this same pool_size: this one, the
       // connect-pg-simple session-store pool in main.ts (max: 2), and the
-      // process-outbox cron job (max: 3, runs as its own process every
+      // single scheduled outbox relay (max: 3, runs as its own process every
       // minute). The repo has no render.yaml / IaC exposing the web
       // service's instance count, so this is sized conservatively assuming
       // up to 2 concurrent web instances (Render can briefly run old+new
       // instances during a rolling deploy even without autoscaling
       // enabled): 2 instances x (this pool's max=3 + session pool's max=2)
-      // + outbox's max=3 = 13, leaving 2 connections of headroom under the
+      // + relay's max=3 = 13, leaving 2 connections of headroom under the
       // pool_size: 15 ceiling for the deploy window/admin connections, and
       // 8 of 15 free in the (likely) single-instance steady state. If
       // Render's actual instance count is confirmed higher, or this pool is
@@ -309,9 +309,7 @@ export class DatabaseService implements OnModuleDestroy {
    * transaction. A rollback failure is logged but never replaces the original
    * application error, because that is the actionable failure for the caller.
    */
-  async withTransaction<T>(
-    fn: (client: PoolClient) => Promise<T>,
-  ): Promise<T> {
+  async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     return this.withClient(async (client) => {
       await client.query('BEGIN');
       try {

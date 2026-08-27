@@ -43,6 +43,27 @@ describe('DeploymentTargetsService', () => {
   const notificationEventsService = {
     record: jest.fn(),
   };
+  const providerRegistry = {
+    find: jest.fn((provider: string) => {
+      if (provider === 'render') {
+        return {
+          label: 'Render',
+          supportedSlots: ['backend', 'standalone'],
+          slotViolationMessage: () =>
+            'Render deployment targets are backend-only. Choose the backend slot for Render.',
+        };
+      }
+      if (provider === 'vercel') {
+        return {
+          label: 'Vercel',
+          supportedSlots: ['frontend'],
+          slotViolationMessage: () =>
+            'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
+        };
+      }
+      return undefined;
+    }),
+  };
 
   let service: DeploymentTargetsService;
 
@@ -86,11 +107,11 @@ describe('DeploymentTargetsService', () => {
     });
 
     service = new DeploymentTargetsService(
-      projectReferenceLookup as never,
+      projectReferenceLookup,
       deploymentTargetsRepository as never,
       providerConnectionsRepository as never,
       encryptionService as never,
-      clientRegistry as never,
+      clientRegistry,
       configService as never,
       new DeploymentStrategyResolver(),
       undefined,
@@ -98,6 +119,7 @@ describe('DeploymentTargetsService', () => {
       workspaceAccessService as never,
       auditEventsService as never,
       notificationEventsService as never,
+      providerRegistry as never,
     );
   });
 

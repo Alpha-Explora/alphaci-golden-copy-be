@@ -22,6 +22,7 @@ import {
   type WorkflowFileMetadata,
 } from './index';
 import { UsageQuotaService } from '#modules/billing/index.js';
+import { WorkflowFragmentRegistry } from '#modules/runtime/index.js';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -121,6 +122,8 @@ export class ProjectWorkflowsService {
     private readonly auditEventsService?: AuditEventSink,
     @Optional()
     private readonly notificationEventsService?: NotificationEventSink,
+    @Optional()
+    private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,
   ) {}
 
   async getWorkflowSettings(
@@ -355,14 +358,18 @@ export class ProjectWorkflowsService {
         `Template '${settings.templateId}' not found`,
       );
     }
-    const bundle = buildStagedWorkflowBundle(template, {
-      templateId: settings.templateId,
-      serviceName: settings.serviceName,
-      servicePath: settings.servicePath,
-      nodeVersion: settings.nodeVersion,
-      coverageThreshold: settings.coverageThreshold,
-      centralWorkflowRef: settings.centralWorkflowRef,
-    });
+    const bundle = buildStagedWorkflowBundle(
+      template,
+      {
+        templateId: settings.templateId,
+        serviceName: settings.serviceName,
+        servicePath: settings.servicePath,
+        nodeVersion: settings.nodeVersion,
+        coverageThreshold: settings.coverageThreshold,
+        centralWorkflowRef: settings.centralWorkflowRef,
+      },
+      this.workflowFragmentRegistry,
+    );
     return { workflowFiles: bundle.workflowFiles };
   }
 

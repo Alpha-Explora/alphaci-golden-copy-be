@@ -18,6 +18,8 @@ import {
 } from '../core/deployment-provisioning.contract';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
 /** One target's contribution to the live fetch. */
 interface TargetFetchOutcome {
@@ -44,6 +46,8 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     private readonly providerConnectionsRepository?: ProviderConnectionsRepository,
     @Optional()
     private readonly encryptionService?: EnvTokenEncryptionService,
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {}
 
   async listDeployments(
@@ -145,7 +149,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     }
 
     const names = [...failedProviders]
-      .map((provider) => (provider === 'vercel' ? 'Vercel' : 'Render'))
+      .map((provider) => this.providerLabel(provider))
       .sort();
     const list =
       names.length === 1
@@ -153,6 +157,15 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 
     return `Could not reach ${list} to load deployment history. The list may be incomplete.`;
+  }
+
+  private providerLabel(provider: string): string {
+    return (
+      this.providerRegistry?.find(provider)?.label ??
+      provider
+        .replace(/[-_]+/g, ' ')
+        .replace(/^./, (first) => first.toUpperCase())
+    );
   }
 
   private async fetchTargetDeployments(
@@ -202,7 +215,10 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         readyAt: event.readyAt,
         // Per-deployment hostname where the provider issues one, otherwise
         // the target's stable public URL.
-        deploymentUrl: event.deploymentUrl ?? providerPublicUrl(target),
+        deploymentUrl:
+          event.deploymentUrl ??
+          this.provider.publicUrl?.(target) ??
+          providerPublicUrl(target),
         pullRequestNumber: event.pullRequestNumber,
         inspectorUrl: event.inspectorUrl,
         dashboardUrl: this.provider.dashboardUrl(target),

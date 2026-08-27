@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import type {
   DeploymentProvisioningEnvSet as DeploymentProvisioningEnvSetDto,
@@ -12,8 +12,10 @@ import { DeploymentTargetsService } from './deployment-targets.service';
 import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
 import type { EnvLane, EnvVarScope } from '../core/deployments.types';
 import { EnvVarsService } from './env-vars.service';
-import { RenderCiSecretsService } from './render-ci-secrets.service';
-import { VercelCiSecretsService } from './vercel-ci-secrets.service';
+import {
+  PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+  type ProviderCiSecretsInstallerRegistryPort,
+} from './ports/provider-ci-secrets-installer.port';
 
 type ProvisionForProjectInput = DeploymentProvisioningInput;
 
@@ -75,8 +77,8 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
   constructor(
     private readonly deploymentTargetsService: DeploymentTargetsService,
     private readonly envVarsService: EnvVarsService,
-    private readonly vercelCiSecretsService: VercelCiSecretsService,
-    private readonly renderCiSecretsService?: RenderCiSecretsService,
+    @Inject(PROVIDER_CI_SECRETS_INSTALLER_REGISTRY)
+    private readonly ciSecretsInstallers: ProviderCiSecretsInstallerRegistryPort,
   ) {}
 
   async provisionForProject(
@@ -165,60 +167,25 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
           );
         let providerMetadata = target.providerMetadata;
 
-        if (target.deploymentStrategy === 'vercel_ci_pushed') {
+        const ciSecretsInstaller = this.ciSecretsInstallers.get(
+          target.provider,
+        );
+        if (ciSecretsInstaller?.supports(target)) {
           if (!input.githubAccessToken) {
             throw new Error(
-              'GitHub access token is required to install Vercel deployment secrets',
+              `GitHub access token is required to install ${target.provider} deployment secrets`,
             );
           }
 
-          const secretResult =
-            await this.vercelCiSecretsService.installForTarget({
-              githubAccessToken: input.githubAccessToken,
-              repoFullName: input.repoFullName,
-              userId: input.userId,
-              providerConnectionId:
-                requestedTarget.providerConnectionId ?? null,
-              target,
-            });
+          const secretResult = await ciSecretsInstaller.installForTarget({
+            githubAccessToken: input.githubAccessToken,
+            repoFullName: input.repoFullName,
+            userId: input.userId,
+            providerConnectionId: requestedTarget.providerConnectionId ?? null,
+            target,
+          });
           providerMetadata = {
             ...target.providerMetadata,
-            githubSecrets: secretResult.githubSecrets,
-          };
-          await this.deploymentTargetsService.updateProviderMetadata(
-            target.id,
-            providerMetadata,
-          );
-        }
-
-        if (
-          target.provider === 'render' &&
-          ['render_image_pushed', 'render_existing_service'].includes(
-            target.deploymentStrategy,
-          )
-        ) {
-          if (!input.githubAccessToken) {
-            throw new Error(
-              'GitHub access token is required to install Render deployment secrets',
-            );
-          }
-          if (!this.renderCiSecretsService) {
-            throw new Error(
-              'Render deployment secret installer is not configured',
-            );
-          }
-
-          const secretResult =
-            await this.renderCiSecretsService.installForTarget({
-              githubAccessToken: input.githubAccessToken,
-              repoFullName: input.repoFullName,
-              userId: input.userId,
-              providerConnectionId:
-                requestedTarget.providerConnectionId ?? null,
-              target,
-            });
-          providerMetadata = {
-            ...providerMetadata,
             githubSecrets: secretResult.githubSecrets,
           };
           await this.deploymentTargetsService.updateProviderMetadata(

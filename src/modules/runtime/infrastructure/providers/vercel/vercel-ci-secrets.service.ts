@@ -8,12 +8,16 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { GithubService } from '#modules/pipelines/index.js';
-import { EnvTokenEncryptionService } from './encryption.service';
+import { EnvTokenEncryptionService } from '../../../application/encryption.service';
 import type {
   DeploymentTargetSummary,
   EnvTargetSlot,
-} from '../core/deployments.types';
-import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+} from '../../../core/deployments.types';
+import { ProviderConnectionsRepository } from '../../../infrastructure/provider-connections.repository';
+import type {
+  ProviderCiSecretsInstaller,
+  ProviderCiSecretsInstallerInput,
+} from '../../../application/ports/provider-ci-secrets-installer.port';
 
 export interface InstallVercelCiSecretsInput {
   githubAccessToken: string;
@@ -24,13 +28,16 @@ export interface InstallVercelCiSecretsInput {
 }
 
 export interface VercelCiSecretNames {
+  [key: string]: string;
   token: string;
   orgId: string;
   projectId: string;
 }
 
 @Injectable()
-export class VercelCiSecretsService {
+export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
+  readonly provider = 'vercel';
+
   constructor(
     private readonly githubService: GithubService,
     private readonly providerConnectionsRepository: ProviderConnectionsRepository,
@@ -38,13 +45,17 @@ export class VercelCiSecretsService {
     private readonly configService: ConfigService,
   ) {}
 
+  supports(target: DeploymentTargetSummary): boolean {
+    return (
+      target.provider === this.provider &&
+      target.deploymentStrategy === 'vercel_ci_pushed'
+    );
+  }
+
   async installForTarget(
-    input: InstallVercelCiSecretsInput,
-  ): Promise<{ githubSecrets: VercelCiSecretNames }> {
-    if (
-      input.target.provider !== 'vercel' ||
-      input.target.deploymentStrategy !== 'vercel_ci_pushed'
-    ) {
+    input: ProviderCiSecretsInstallerInput,
+  ): Promise<{ githubSecrets: Record<string, string> }> {
+    if (!this.supports(input.target)) {
       return { githubSecrets: this.vercelSecretNames(input.target.slot) };
     }
 

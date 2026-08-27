@@ -3,6 +3,9 @@ import { Test } from '@nestjs/testing';
 
 import { RuntimeCoreModule } from '../../../core/runtime-core.module';
 import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
+import { WORKFLOW_FRAGMENTS } from '../../../core/workflow-fragment.contract';
+import { RenderDeploymentProvider } from '../render/render-deployment.provider';
+import { VercelDeploymentProvider } from '../vercel/vercel-deployment.provider';
 import { LegacyDeploymentProvidersModule } from './legacy-deployment-providers.module';
 
 describe('LegacyDeploymentProvidersModule', () => {
@@ -29,6 +32,14 @@ describe('LegacyDeploymentProvidersModule', () => {
 
     const registry = module.get(DeploymentProviderRegistry);
     expect(registry.list().map((provider) => provider.id)).toEqual([
+      'render',
+      'vercel',
+    ]);
+    expect(registry.get('render')).toBeInstanceOf(RenderDeploymentProvider);
+    expect(registry.get('vercel')).toBeInstanceOf(VercelDeploymentProvider);
+    const fragments =
+      module.get<Array<{ provider: string }>>(WORKFLOW_FRAGMENTS);
+    expect(fragments.map((fragment) => fragment.provider)).toEqual([
       'render',
       'vercel',
     ]);

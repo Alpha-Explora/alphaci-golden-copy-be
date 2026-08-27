@@ -1,4 +1,4 @@
-import { ProjectsService } from './projects.service';
+import { ProjectProvisioningApplicationService } from './application/lifecycle/project-provisioning-application.service';
 import type { CatalogService } from './application/catalog/catalog.service';
 import type { CiService } from '#modules/pipelines/ci/ci.service';
 import type { GithubService } from '#modules/pipelines/github/github.service';
@@ -91,6 +91,7 @@ const makeProjectDeploymentProvisioningService = () => ({
     status: 'skipped',
     targets: [],
   }),
+  crossLinkServiceUrls: jest.fn().mockResolvedValue(undefined),
 });
 
 const stagedWorkflowMetadata = stagedWorkflowFiles.map((file) => ({
@@ -100,8 +101,8 @@ const stagedWorkflowMetadata = stagedWorkflowFiles.map((file) => ({
   gated: file.gated,
 }));
 
-describe('ProjectsService workflow authorization', () => {
-  let service: ProjectsService;
+describe('ProjectProvisioningApplicationService workflow authorization', () => {
+  let service: ProjectProvisioningApplicationService;
   let githubService: GithubService;
   let projectsRepository: ProjectsRepository;
   let ciService: CiService;
@@ -111,12 +112,12 @@ describe('ProjectsService workflow authorization', () => {
     projectsRepository = makeProjectsRepository();
     ciService = makeCiService();
 
-    service = new ProjectsService(
+    service = new ProjectProvisioningApplicationService(
       makeCatalogService(),
       githubService,
       projectsRepository,
       ciService,
-      makeProjectDeploymentProvisioningService() as never,
+      makeProjectDeploymentProvisioningService(),
     );
 
     jest

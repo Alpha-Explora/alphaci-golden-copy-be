@@ -20,13 +20,14 @@ source for several tasks below. Take its **mechanisms**, not its topology.
 `noUncheckedIndexedAccess`), PostgreSQL via `pg` + Supabase, Jest + ts-jest,
 dependency-cruiser.
 
-**Execution status (2026-08-27):** Tasks 0–10 and the automatable portions of
-Task 12 are complete. The repository now has six bounded-context directories,
-all static gates are green, the full regression suite and boot smoke pass, and
-the compiled route inventory is recorded. Task 11 is intentionally not
-activated because no independent scaling, deployment-cadence, or regulatory
-isolation trigger has been evidenced. Historical contract snapshots could not
-be captured retroactively; the rollback rule remains a PR/review discipline.
+**Execution status (2026-08-27):** Tasks 0–10 and the review-closure slices are
+implemented on the named remediation trunk. Task 12 has current contract
+snapshots, a post-consolidation route reference with hashes, application-context
+and HTTP boot harnesses, and conditional Postgres integration coverage. A
+pre-Task-5 contract/route baseline was not captured retroactively. Task 11 is
+intentionally not activated because no independent scaling, deployment-cadence,
+or regulatory-isolation trigger has been evidenced. Final verification and the
+rollback evidence record are completed before this plan is marked complete.
 
 ---
 
@@ -34,8 +35,9 @@ be captured retroactively; the rollback rule remains a PR/review discipline.
 
 - No endpoint, request DTO, response DTO, status code, authorization rule,
   provider behaviour, database value, or existing event payload may change.
-- Every task ends green on: `npm run typecheck`, `npm run lint`, `npm test`,
-  `npm run boundaries`. A task is not done until all four pass.
+- Every task runs: `npm run typecheck`, changed-file lint, `npm test`, and
+  `npm run boundaries`. Global `npm run lint` is reported separately when
+  pre-existing baseline findings exist; it must not regress.
 - The dependency-cruiser known-violations baseline may shrink, never grow.
 - `kernel/` may never import from `src/modules/`.
 - Cross-context callers import only a context's `index.ts` or `contracts/`.
@@ -459,6 +461,15 @@ Three of the four fixes use the metadata registry that already exists.
     non-zero on findings; the workflow-generation DTO is an explicit API
     contract exception and is recorded as known debt above.
 
+    **Implementation note (2026-08-27):** provider metadata adapters now live
+    in provider-owned folders, the generic slot policy is descriptor-driven and
+    fails closed for unsupported slots, and workflow target expansion is
+    contributed by provider fragments through `WorkflowFragmentRegistry`.
+    The fake-provider acceptance test exercises those seams without changing
+    the builder. Historical token, scope, storage, strategy, and workflow DTO
+    compatibility fields remain inside `runtime` by design; removing them
+    would change existing API or database behavior.
+
 **Out of scope:** unifying the two registries (`DeploymentProviderRegistry` vs
 `ProviderClientRegistry`), the two interfaces both named `DeploymentProvider`,
 and the forked `env_provisioning.*` / `runtime_deployments.*` tables. That is
@@ -507,14 +518,16 @@ unit, so they must be broken **before** the moves.
 
     `no-cross-context-cycles` → `error`.
 
-**Exit:** zero context-level cycles; `runtime` is now genuinely extractable
-(1 inbound edge, all through contracts).
+**Exit:** zero context-level cycles. Runtime is the first extraction candidate,
+but the current measured graph still has three inbound context pairs, four
+outbound pairs, and compatibility seams; extraction is not a configuration-only
+claim yet.
 
 ---
 
 ## Task 7: Publish cross-context contracts
 
-All 15 cross-context edges get a `contracts/` type. Only the edges that pass
+All 16 current directional cross-context edges get a `contracts/` type. Only the edges that pass
 port discipline also get a port.
 
 **Files:**
@@ -558,7 +571,8 @@ port discipline also get a port.
 Note: **17 spec files import other modules' internals** to build mocks. They are invisible to production gates; fix them opportunistically here (mock the contract/port instead) so Task 8 does not trip over them.
 
 **Exit:** the contract register at
-`docs/architecture/CROSS_CONTEXT_CONTRACTS.md` covers all 15 future edges;
+`docs/architecture/CROSS_CONTEXT_CONTRACTS.md` covers all 16 current
+directional context pairs;
 provider/runtime facts are published as contracts, and the two cycle-forming
 service-class dependencies are port-inverted. Remaining synchronous service
 index calls are intentionally retained until the physical consolidation and
@@ -721,14 +735,14 @@ architecture work, and the sibling repo already built the fix.
 
 - [x] **Step 4: Wire into `package.json` and CI.**
 
-Implementation note (2026-08-27): 62 migrations were present, not 89. They
+Implementation note (2026-08-27): 63 migrations were present, not 89. They
 are now under the six owner folders. The replay runner globally sorts the
 timestamp basename, and the schema gate reports the explicit legacy
 cross-context migrations while rejecting new ownership violations. The owner
-table is published in `docs/architecture/SCHEMA_OWNERSHIP.md`.
-The gate's extended SQL-token scan currently applies to migration SQL; inline
-SQL in repositories still contains deliberate cross-context reads and needs
-the contract/port work before it can be made an error without false positives.
+table is published in `docs/architecture/SCHEMA_OWNERSHIP.md`. The extended
+SQL-token scan covers migration SQL and inline SQL in source; deliberate
+historical cross-context references are explicit per-file allowances, so a
+new reference fails without a blanket filename exemption.
 
 **Exit:** the ownership table is published, the gate is green, and no schema,
 DB role, or `search_path` change was made.
@@ -787,12 +801,15 @@ remain synchronous by design; they are not asynchronous sink edges.
 runtime payload validation are in `src/kernel/events/platform-event.registry.ts`.
 `AuditEventPublisher` and `NotificationEventPublisher` replace the write-side
 cross-context calls in identity-access, pipelines, projects, and runtime.
-`OutboxRelayService` consumes both topics, and
-`scripts/process-outbox.cjs` runs the compiled relay. PostgreSQL
-`pg_try_advisory_lock` gives the outbox one owner across processes; failed
-handlers remain pending for retry. Delivery is explicitly at-least-once, so
-handlers must be idempotent if a process dies after handling and before the
-published update. Registry, relay, and lock-behaviour tests are included.
+`OutboxRelayService` and `GithubSyncOutboxHandler` register all four owned
+topics with one dispatcher, and `scripts/process-outbox.cjs` runs the one
+compiled relay. PostgreSQL `pg_try_advisory_lock` gives the outbox one owner
+across processes; failed handlers remain pending for retry. Hierarchy grant
+and revoke state mutations, sync rows, and queue rows are transactionally
+coupled; audit/notification writes remain explicitly best-effort post-commit
+observability. Delivery is at-least-once, so handlers must be idempotent if a
+process dies after handling and before the published update. Registry, relay,
+lock-behaviour, and transaction-boundary tests are included.
 
 ---
 
@@ -802,7 +819,9 @@ Do **not** open this task without a demonstrated trigger: an independent
 scaling need, an independent deploy-cadence need, or a regulatory isolation
 requirement. "The architecture would be cleaner" is not a trigger.
 
-When a trigger exists, `runtime` goes first (1 inbound edge). The work is:
+When a trigger exists, `runtime` remains the first candidate, but the current
+measured graph has three inbound context pairs and four outbound pairs. The
+work is:
 
 - [ ] Swap the port binding to an HTTP adapter. Copy
   `alphaci-be/libs/platform/src/internal/service-http.factory.ts` —
@@ -825,36 +844,38 @@ extraction gate remains closed.
 
 Runs continuously alongside Tasks 5–10; it is work, not a phase.
 
-- [ ] **Contract snapshots.** Before Task 5 Step 1 (quota SQL) and Task 5
-  Step 3 (workflow YAML): capture current response bodies and generated YAML
-  into `tests/architecture/__snapshots__/`. Every refactor PR diffs against
-  them.
+- [x] **Contract snapshots (post-change reference).** Exact-shape workflow
+  metadata/YAML and provider discovery snapshots live in
+  `tests/architecture/__snapshots__/`. A pre-Task-5 snapshot was not captured,
+  so these protect the current contract from future drift but do not prove
+  retroactive equality with the old tree.
 
-- [x] **Route inventory.** Generate the full route table from the Nest app at
-  baseline and after each consolidation PR. Routes must be identical;
-  `github-webhook.controller.ts` especially.
+- [x] **Route inventory.** Generate the full route table after consolidation
+  and store it as the post-consolidation reference. A pre-consolidation route
+  baseline was not captured retroactively, so historical equality cannot be
+  claimed; `github-webhook.controller.ts` remains covered by the current
+  inventory test.
 
-- [x] **Boot smoke in CI.** Once Task 1 lands the wider workflow, add a step
-  that builds and boots the app against an ephemeral Postgres — or at minimum
-  a harness test that constructs `AppModule` through
-  `NestFactory.createApplicationContext`.
-  This is the only automated check that catches Nest-level miswiring, which
-  Jest and dependency-cruiser both miss.
+- [x] **Boot smoke.** The architecture suite boots the full `AppModule`
+  application context and a real HTTP/Express application. The no-database
+  harness accepts the documented 503 readiness envelope; the conditional
+  Postgres integration suite runs when `SUPABASE_DB_URL` is present.
 
-- [ ] **Rollback rule.** Every PR is independently revertible: no PR stacks
-  unmerged commits from another. If an 8.x PR shows a runtime failure that
-  review missed, `git revert` restores main without untangling.
+- [x] **Rollback evidence.** The remediation starts from checkpoint commit
+  `5b703e9` on the named trunk and ends as a normal revertible commit; no
+  reset, force-push, branch deletion, or worktree cleanup is required. PR
+  independence remains a review/process rule rather than something a local
+  repository test can prove.
 
-**Status (2026-08-27):** the post-change Jest suite is green (116 suites,
-1,208 tests when the separately run boot smoke is excluded), the Nest build is
-green, and `tests/architecture/app-module.boot.spec.ts` constructs the full
-application context with test-only configuration. The route table was generated
-from the compiled Nest application and saved to
-`docs/architecture/route-inventory.current.txt`. Contract snapshots remain
-unchecked because no pre-Task-5 baseline was captured; the current exact-shape
-tests are retained, but are not mislabeled as historical snapshots. The
-rollback rule remains an integration/review discipline rather than something a
-repository test can prove.
+**Status (2026-08-27):** current contract snapshots, the route reference and
+hash manifest, the full application-context boot, and the real HTTP boot
+harness are in the repository. The pre-consolidation route/contract baseline
+was unavailable, so the evidence record says exactly what is and is not
+proven. Rollback is evidenced procedurally by the checkpoint plus final normal
+commit; PR-level independence still requires the normal review process.
+
+See `docs/architecture/REMEDIATION_EVIDENCE.md` for the executed commands,
+measured coupling, environment-dependent checks, and final commit evidence.
 
 ---
 
@@ -868,7 +889,7 @@ repository test can prove.
 | 3 — move-proof imports | 3–5 d | mechanical | **saves ~2 weeks in Task 8** |
 | 4 — rules + guards + config | 2–3 d | config | regressions become impossible |
 | 5 — provider containment | 1 wk | design + SQL | providers become a real plugin |
-| 6 — break cycles | 3–5 d | surgical | `runtime` becomes extractable |
+| 6 — break cycles | 3–5 d | surgical | context cycles are removed; runtime remains an extraction candidate |
 | 7 — contracts + ports | 1–1.5 wk | design | **the actual decoupling** |
 | 8 — consolidation | 1.5–2 wk (+0.5 d/PR test debt) | mechanical | 6 folders, smaller mental model |
 | 9 — schema ownership | 1–2 wk | tedious | inline SQL gets a boundary |
@@ -889,10 +910,11 @@ tasks (3, 8). They are estimates, not measurements.
 - provider identity contained in `runtime`
 - five gates preventing regression
 
-You would still have 17 folders. But extractability is a property of the
-**seam**, not the folder count. After Task 7, `runtime` is extractable.
-Task 8 buys tidiness and a smaller mental model; it does not buy
-extractability.
+You would still have 17 folders. Extractability is a property of the **seam**,
+not the folder count, but a seam is not sufficient by itself: the current
+runtime graph and compatibility dependencies still need to be reduced before
+an out-of-process binding is a configuration-only change. Task 8 buys tidiness
+and a smaller mental model; it does not activate extraction.
 
 Given that module consolidation has already been deferred once on exactly this
 reasoning, taking the value in Tasks 0–7 and deferring 8 is the honest split.

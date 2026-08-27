@@ -9,9 +9,10 @@ import { WorkflowsController } from '../../api/workflows.controller';
 import { WorkflowsService } from './workflows.service';
 import { WorkflowHistoryRepository } from './infrastructure/workflow-history.repository';
 import { WORKFLOW_HISTORY_QUERY } from './workflows.contracts';
+import { RuntimeModule } from '#modules/runtime/runtime.module.js';
 
 @Module({
-  imports: [CatalogModule, SubscriptionModule, DatabaseModule],
+  imports: [CatalogModule, SubscriptionModule, DatabaseModule, RuntimeModule],
   controllers: [WorkflowsController],
   providers: [
     WorkflowHistoryRepository,

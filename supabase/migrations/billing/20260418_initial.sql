@@ -61,9 +61,12 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions (user_id);
 
--- ─── outbox_events ───────────────────────────────────────────────────────────
--- Transactional outbox for reliable event publishing (Kafka / downstream).
--- The process-outbox.ts script polls this table.
+-- ─── legacy public.outbox_events ─────────────────────────────────────────────
+-- Historical public-schema outbox retained only so the later domain-schema
+-- backfill can replay old rows. It is not the active application outbox and
+-- is not consumed by the current relay. The active table is
+-- platform.outbox_events from 20260606_domain_schema_bootstrap, acknowledged
+-- with published_at by scripts/process-outbox.cjs.
 
 CREATE TABLE IF NOT EXISTS outbox_events (
   id             UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,

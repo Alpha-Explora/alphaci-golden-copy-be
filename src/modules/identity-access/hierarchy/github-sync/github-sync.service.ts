@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import { DatabaseService } from '#kernel/db/database.service';
 import {
   SESSION_USER_LOOKUP,
   type SessionUserLookup,
@@ -43,14 +44,51 @@ export class GithubSyncService {
     private readonly sessionUserLookup: SessionUserLookup,
     private readonly provider: GithubTeamAccessProvider,
     private readonly auditEventsService: AuditEventPublisher,
+    @Optional() private readonly databaseService?: DatabaseService,
   ) {}
+
+  /**
+   * Transition #1 transaction boundary: create/reset the assignment, create
+   * its pending sync row, and enqueue the grant in one commit. Keeping this
+   * orchestration here makes the business mutation and its durable work item
+   * share the same client without changing the public assignment response.
+   */
+  async createAssignmentAndRequestGrant(input: {
+    repositoryId: string;
+    userId: string;
+    assignedBy: string;
+  }): Promise<Awaited<ReturnType<AssignmentsRepository['createOrReset']>>> {
+    if (!this.databaseService) {
+      throw new Error(
+        'DatabaseService is required for transactionally creating an assignment grant',
+      );
+    }
+
+    return this.databaseService.withTransaction(async (client) => {
+      const assignment =
+        await this.assignmentsRepository.createOrResetWithClient(client, input);
+      await this.syncRepository.upsertPendingWithClient(client, assignment.id);
+      await this.outboxRepository.publishInTransaction(
+        client,
+        this.grantEvent(assignment.id, input.assignedBy),
+      );
+      return assignment;
+    });
+  }
 
   /** Transition #1: PM assigns developer -> pending + enqueue grant job. */
   async requestGrant(
     assignmentId: string,
     actingUserId: string,
   ): Promise<void> {
-    await this.syncRepository.upsertPending(assignmentId, {
+    await this.syncRepository.upsertPending(
+      assignmentId,
+      this.grantEvent(assignmentId, actingUserId),
+    );
+  }
+
+  private grantEvent(assignmentId: string, actingUserId: string) {
+    return {
       topic: HIERARCHY_OUTBOX_TOPICS.grant,
       aggregateType: 'repository_assignment',
       aggregateId: assignmentId,
@@ -58,7 +96,7 @@ export class GithubSyncService {
         assignmentId,
         actingUserId,
       } satisfies HierarchyOutboxJobPayload,
-    });
+    } as const;
   }
 
   /** Transition #3: PM removes assignment / member removal cascade -> revoking + enqueue revoke job. */
@@ -66,8 +104,9 @@ export class GithubSyncService {
     assignmentId: string,
     actingUserId: string,
   ): Promise<void> {
-    const assignment =
-      await this.assignmentsRepository.setDesiredUnassigned(assignmentId, {
+    const assignment = await this.assignmentsRepository.setDesiredUnassigned(
+      assignmentId,
+      {
         topic: HIERARCHY_OUTBOX_TOPICS.revoke,
         aggregateType: 'repository_assignment',
         aggregateId: assignmentId,
@@ -75,7 +114,8 @@ export class GithubSyncService {
           assignmentId,
           actingUserId,
         } satisfies HierarchyOutboxJobPayload,
-      });
+      },
+    );
     if (!assignment) {
       return;
     }
@@ -94,7 +134,10 @@ export class GithubSyncService {
       assignment.desiredState === 'assigned'
         ? HIERARCHY_OUTBOX_TOPICS.grant
         : HIERARCHY_OUTBOX_TOPICS.revoke;
-    await this.outboxRepository.publishBestEffort({
+    // A manual reconcile is an explicit operator request. Do not silently
+    // lose it after the state lookup succeeds: the relay can retry the caller
+    // when the durable enqueue is unavailable.
+    await this.outboxRepository.publishDurably({
       topic,
       aggregateType: 'repository_assignment',
       aggregateId: assignmentId,
@@ -362,7 +405,11 @@ export class GithubSyncService {
     if (retryCount >= maxRetries || !actingUserId) {
       return; // stays failed/revoking indefinitely, surfaced on the admin view (plan §1.6).
     }
-    await this.outboxRepository.publishBestEffort({
+    // The state transition has already been recorded as failed/revoking, but
+    // the retry request itself is still durable work. Let the relay retain the
+    // failed event when this enqueue cannot be written rather than pretending
+    // the retry was scheduled.
+    await this.outboxRepository.publishDurably({
       topic:
         kind === 'grant'
           ? HIERARCHY_OUTBOX_TOPICS.grant
