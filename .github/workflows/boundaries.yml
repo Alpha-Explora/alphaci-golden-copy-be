@@ -51,4 +51,4 @@ jobs:
           echo "### Boundary debt: $COUNT known violations remaining" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Each one is a module reaching into another module's internals." >> "$GITHUB_STEP_SUMMARY"
-          echo "They are migrated away feature by feature — see docs/architecture/MODULE_CONSOLIDATION_PLAN.md." >> "$GITHUB_STEP_SUMMARY"
+          echo "Review current ownership and contracts in docs/architecture/index.md and docs/constitution.md." >> "$GITHUB_STEP_SUMMARY"

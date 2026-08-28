@@ -458,6 +458,28 @@ function sourceViolations() {
   return violations;
 }
 
+function schemaOwnershipSnapshot() {
+  return {
+    owners: Object.fromEntries(
+      Object.entries(ALLOWED_SCHEMAS_BY_OWNER).map(([owner, schemas]) => [
+        owner,
+        [...schemas].sort(),
+      ]),
+    ),
+    legacyMigrationReferences: Object.fromEntries(
+      [...LEGACY_MIGRATION_REFERENCES.entries()].map(([file, references]) => [
+        file,
+        [...references].sort(),
+      ]),
+    ),
+    transitionalSourceReferences: Object.fromEntries(
+      [...TRANSITIONAL_SOURCE_REFERENCES.entries()].map(
+        ([file, references]) => [file, [...references].sort()],
+      ),
+    ),
+  };
+}
+
 function main() {
   const migrationErrors = migrationViolations();
   const sourceErrors = sourceViolations();
@@ -500,4 +522,5 @@ module.exports = {
   resolveKnownUnqualifiedTable,
   isAllowedReference,
   stripSqlComments,
+  schemaOwnershipSnapshot,
 };

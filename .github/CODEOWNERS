@@ -17,20 +17,11 @@
 /.github/workflows/                 @Alpha-Explora/maintainers
 /supabase/migrations/               @Alpha-Explora/maintainers
 
-# ── Features ─────────────────────────────────────────────────────────────────
-# /src/modules/auth/                @handle
-# /src/modules/projects/            @handle
-# /src/modules/workflows/           @handle
-# /src/modules/ci/                  @handle
-# /src/modules/catalog/             @handle
-# /src/modules/github/              @handle
-# /src/modules/hierarchy/           @handle
-# /src/modules/workspaces/          @handle
-# /src/modules/env-provisioning/    @handle
-# /src/modules/notifications/       @handle
-# /src/modules/admin/               @handle
-# /src/modules/usage/               @handle
-# /src/modules/subscription/        @handle
-# /src/modules/feedback/            @handle
-# /src/modules/capabilities/        @handle
-# /src/modules/existing-repos/      @handle
+# ── Current bounded contexts ────────────────────────────────────────────────
+/src/modules/identity-access/       @Alpha-Explora/maintainers
+/src/modules/projects/              @Alpha-Explora/maintainers
+/src/modules/pipelines/             @Alpha-Explora/maintainers
+/src/modules/runtime/               @Alpha-Explora/maintainers
+/src/modules/billing/               @Alpha-Explora/maintainers
+/src/modules/platform-ops/          @Alpha-Explora/maintainers
+/docs/                              @Alpha-Explora/maintainers

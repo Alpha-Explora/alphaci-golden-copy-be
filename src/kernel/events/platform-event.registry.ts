@@ -2,8 +2,8 @@
  * Integration events emitted by the application-owned transactional outbox.
  *
  * The registry lives in kernel so producers do not import platform-ops.  It is
- * deliberately small and serialisable: these values are the contract a later
- * process or microservice will consume, not an internal Nest service API.
+ * deliberately small and serialisable: these values are the contract a
+ * separate consumer process can consume, not an internal Nest service API.
  */
 import { OUTBOX_TOPICS } from './outbox-topics';
 

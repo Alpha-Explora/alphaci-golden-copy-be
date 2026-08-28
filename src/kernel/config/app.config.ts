@@ -205,7 +205,7 @@ export interface AppConfig {
     // parent domain (e.g. app.example.com + api.example.com), set this to
     // ".example.com" so the session cookie is shared first-party across the
     // subdomains — this is what makes login work on Safari/iOS (no third-party
-    // cookie). See docs/AUTH_CUSTOM_DOMAIN_CUTOVER.md.
+    // cookie). See docs/runbooks/runbook-auth-custom-domain-cutover.md.
     cookieDomain?: string;
   };
   archivedAccountRetentionDays: number;

@@ -1,12 +1,12 @@
 name: CI
 
-# Full quality gate for the consolidation refactor.
+# Full quality gate for the current backend.
 #
 # GitHub Actions minutes are constrained on this account (the sibling
 # alphaci-be repo ships the same posture). The workflow remains dispatchable
 # on demand, and runs for the protected trunk/PR path as soon as Actions is
 # available. Until then, run the same loop locally:
-#   npm run typecheck && npm run lint && npm test && npm run boundaries
+#   npm run typecheck && npm run lint && npm test && npm run boundaries && npm run check:documentation
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Typecheck, lint, test, boundaries
+    name: Typecheck, lint, test, architecture, documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +35,12 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Documentation and generated maps
+        run: npm run check:documentation
+
+      - name: Documentation unit tests
+        run: npm run test:documentation
 
       - name: Typecheck
         run: npm run typecheck
