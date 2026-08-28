@@ -1,8 +1,8 @@
 # AlphaCI Enterprise Backend — current and future state
 
-**Status:** current target adopted; microservice extraction is future-only.
-This document describes the six-context modular monolith on the remediation
-trunk and the compatible shape to use if a real extraction trigger appears.
+**Status:** current architecture adopted; microservice extraction is
+future-only. This document describes the six-context modular monolith and the
+compatible shape to use if a real extraction trigger appears.
 
 ## Decision
 
@@ -146,7 +146,7 @@ references are explicit transition entries in
   locking. Delivery is at-least-once.
 - Hierarchy grant/revoke state changes and their queue rows use the same
   transaction. Audit/notification events are deliberately best-effort
-  post-commit observability writes, preserving their previous non-critical
+  post-commit observability writes, preserving their existing non-critical
   behavior; they are not advertised as transactionally coupled.
 - `ProjectsService` is now a compatibility facade. Project provisioning,
   dashboard, workflow, lifecycle, and reconciliation implementations live in
@@ -194,12 +194,12 @@ Application and domain logic should not change merely because transport changes.
 Only reopen this future option when an operational trigger is documented:
 independent scaling, independent deployment cadence, or regulatory isolation.
 Architecture cleanliness alone is not a trigger, and this option is outside the
-current consolidation plan.
+current deployment model.
 
 ## Explicit non-goals
 
 - no gateway, internal JWT, broker, or six independent connection pools now;
-- no database role/search-path redesign as part of this refactor;
+- no database role/search-path redesign as part of the current architecture;
 - no new provider-specific top-level module;
 - no claim that current synchronous edges or compatibility DTO/storage fields
   are already independently deployable.

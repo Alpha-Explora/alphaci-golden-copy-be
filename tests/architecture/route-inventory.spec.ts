@@ -49,10 +49,10 @@ describe('HTTP route inventory', () => {
         new DocumentBuilder().setTitle('AlphaCI route inventory').build(),
       );
       const actual = routeSet(document);
-      const baseline = readFileSync(
+      const reference = readFileSync(
         resolve(
           __dirname,
-          '../../docs/architecture/route-inventory.baseline.txt',
+          '../../docs/architecture/route-inventory.pre-consolidation.txt',
         ),
         'utf8',
       )
@@ -68,21 +68,14 @@ describe('HTTP route inventory', () => {
         ),
       ) as {
         routeCount: number;
-        baselineKind: string;
+        referenceKind: string;
         preConsolidationBaselineAvailable: boolean;
         preConsolidationBaselineFile: string;
         preConsolidationBaselineSha256: string;
         preConsolidationSourceCommit: string;
-        baselineSha256: string;
-        currentSha256: string;
+        referenceFile: string;
+        referenceSha256: string;
       };
-      const currentReference = readFileSync(
-        resolve(
-          __dirname,
-          '../../docs/architecture/route-inventory.current.txt',
-        ),
-        'utf8',
-      );
       const preConsolidationReference = readFileSync(
         resolve(
           __dirname,
@@ -93,11 +86,17 @@ describe('HTTP route inventory', () => {
       const sha256 = (value: string) =>
         createHash('sha256').update(value, 'utf8').digest('hex');
 
-      expect(actual).toEqual(baseline);
+      expect(actual).toEqual(reference);
       expect(actual).toHaveLength(manifest.routeCount);
-      expect(sha256(baseline.join('\n') + '\n')).toBe(manifest.baselineSha256);
-      expect(sha256(currentReference)).toBe(manifest.currentSha256);
-      expect(manifest.baselineKind).toBe('post-consolidation-reference');
+      expect(manifest.referenceFile).toBe(
+        'route-inventory.pre-consolidation.txt',
+      );
+      expect(sha256(reference.join('\n') + '\n')).toBe(
+        manifest.referenceSha256,
+      );
+      expect(manifest.referenceKind).toBe(
+        'pre-consolidation-reference-equals-current',
+      );
       expect(manifest.preConsolidationBaselineAvailable).toBe(true);
       expect(manifest.preConsolidationBaselineFile).toBe(
         'route-inventory.pre-consolidation.txt',
@@ -106,7 +105,7 @@ describe('HTTP route inventory', () => {
         manifest.preConsolidationBaselineSha256,
       );
       expect(manifest.preConsolidationSourceCommit).toBe('b175938');
-      expect(preConsolidationReference).toBe(currentReference);
+      expect(preConsolidationReference).toBe(reference.join('\n') + '\n');
     } finally {
       await app.close();
     }

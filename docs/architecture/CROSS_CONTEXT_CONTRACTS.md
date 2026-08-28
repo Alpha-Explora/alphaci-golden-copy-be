@@ -127,4 +127,5 @@ and revoke GitHub-sync work.
 If an operational trigger later justifies extraction, a context port can be
 rebound to an HTTP/gRPC adapter and the serialisable contract can become a
 versioned package. Callers and domain logic should remain unchanged. No broker,
-gateway, schema split, or service extraction is scheduled by this register.
+gateway, schema split, or service extraction is part of the current deployment
+model.

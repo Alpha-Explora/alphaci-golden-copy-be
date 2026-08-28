@@ -82,7 +82,7 @@ depth, not an omitted boundary.
 ## Future-only extraction posture
 
 The ports and contracts are local in-process seams today. If independent
-scaling, deployment cadence, or regulatory isolation is later demonstrated,
-bind the same ports to an HTTP/gRPC adapter and publish the serialisable
-contracts. Microservice extraction is outside the current consolidation plan
-and is not scheduled from this document alone.
+scaling, deployment cadence, or regulatory isolation becomes a demonstrated
+requirement, the same ports can be bound to an HTTP/gRPC adapter and the
+serialisable contracts can be published. Microservice extraction is not part of
+the current deployment model and requires an explicit operational trigger.

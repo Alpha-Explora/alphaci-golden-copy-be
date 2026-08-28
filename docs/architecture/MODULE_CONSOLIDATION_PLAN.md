@@ -1,12 +1,11 @@
 # Module Consolidation Plan — Current State vs Future State
 
-**Status:** remediation trunk implementation complete; current verification and
-evidence are recorded in `REMEDIATION_EVIDENCE.md`. The six-context
-consolidation and review-closure slices are implemented on
-`codex/architecture-remediation-trunk`. Microservice extraction is future-only
-and outside this plan. A pre-consolidation route baseline was recovered from
-`b175938`; a pre-consolidation contract baseline was not present in that source
-commit and remains explicitly unavailable.
+**Status:** implemented architecture record; current verification and evidence
+are recorded in `REMEDIATION_EVIDENCE.md`. The six-context consolidation and
+review-closure work is complete. Microservice extraction is future-only and
+outside the scope of this document. A pre-consolidation route baseline is
+available from source revision `b175938`; a pre-consolidation contract baseline
+was not present in that revision and remains unavailable.
 **Date:** 2026-08-28
 **Scope:** `src/modules/**` topology plus behavior-preserving boundary
 remediation. No intentional endpoint, response, schema-value, provider
@@ -25,18 +24,19 @@ Two goals, in priority order:
 2. **Preserve a safe future service-extraction option, without doing it now.**
    A service boundary is only extractable if the seam is already (a) a small
    number of coarse contracts, (b) serialisable, and (c) free of import cycles.
-   Those three properties are worth having in a monolith regardless. This plan
-   buys them without buying gateways, internal JWT, or six connection pools.
+   Those three properties are worth having in a monolith regardless. The
+   architecture gains them without adding gateways, internal JWT, or six
+   connection pools.
 
-Explicit non-goal: shipping microservices. `docs/architecture/FUTURE_STATE.md`
-already records that the split-services topology was **rejected**. This plan
-does not reopen that. It leaves the door unlocked; it does not walk through it.
+Explicit non-goal: shipping microservices. The split-services topology is a
+future-only option described in `docs/architecture/FUTURE_STATE.md`; it is not
+scheduled by the current architecture.
 
-## 2. Baseline state (measured 2026-08-26, HEAD `b175938`)
+## 2. Baseline state (measured 2026-08-26, source revision `b175938`)
 
 The inventory below is the pre-consolidation baseline retained for comparison.
-The authoritative implemented state is in §2.5 and in
-`docs/superpowers/plans/2026-08-26-module-consolidation-six-contexts.md`.
+The authoritative implemented state is in §2.5 and
+`docs/architecture/REMEDIATION_EVIDENCE.md`.
 
 ### 2.1 Module inventory
 
@@ -60,8 +60,9 @@ The authoritative implemented state is in §2.5 and in
 | `audit` | 6 | 342 | flat |
 | `feedback` | 7 | 279 | `dto` |
 
-17 modules, 343 files, ~58,300 lines. (Earlier notes say "19 modules"; the
-`database` and `persistence` modules have since been folded into `kernel/`.)
+17 feature modules, 343 files, and approximately 58,300 lines. Database and
+persistence concerns are represented in `kernel/` and are not counted as
+feature contexts.
 
 ### 2.5 Implemented current tree (2026-08-28)
 
@@ -188,7 +189,7 @@ src/
 │   └── app.config.ts
 ├── database/
 │   └── seeds/
-│       └── dummy-users.json
+│       └── [manual-only QA fixture removed during cleanup]
 ├── health/
 │   ├── health.controller.ts
 │   ├── health.module.ts
@@ -543,9 +544,8 @@ src/
 | `billing` | `subscription`, `usage` | 17 | 1,673 |
 | `platform-ops` | `notifications`, `feedback`, `audit` | 20 | 1,130 |
 
-Same six-context grouping as `DDD_CONTEXT_MAP.md` and the rejected
-split-services doc — deliberately, so the two documents cannot drift into
-describing different systems.
+The grouping matches `DDD_CONTEXT_MAP.md`. A single context taxonomy is used
+across architecture documentation so the documents describe the same system.
 
 ### 3.2 Coupling after consolidation
 
@@ -614,7 +614,8 @@ composition-only, with zero contract/application/actionable edges.
 
 ### 3.4 Extraction readiness ranking
 
-Fan-in is what makes a service extractable; fan-out only makes it chatty.
+Fan-in is the primary extraction-cost signal; fan-out increases coordination
+cost without making a context independently deployable.
 
 | Context | Inbound context pairs | Outbound context pairs | Current posture |
 |---|---:|---:|---|
@@ -646,8 +647,8 @@ Nest decorators, no `pg`, no vendor SDKs. Which gives:
 | `contracts/*.ts` imported directly | published as a shared package or generated from OpenAPI | build wiring only |
 | Domain events written to `kernel/events` outbox, dispatched in-process | same outbox, relayed to a broker | the relay, not the producers |
 
-Call-site code does not change in either case. That is the entire deliverable
-of this plan; the folder moves are just how you get there.
+Call-site code does not change in either case. The folder layout and local ports
+are implementation mechanisms; transport remains a composition concern.
 
 Corollary rules:
 
@@ -672,7 +673,7 @@ into top-level contexts.
 | # | Axis | Unit | Count today | Governed by | Changes when |
 |---|---|---|---:|---|---|
 | 1 | **Context** | bounded business capability | 17 → 6 | this document | the business gains a new capability |
-| 2 | **Plugin** | variation point *inside* one context | 3 providers | `docs/modular-architecture-deployments.md` | a new vendor is integrated |
+| 2 | **Plugin** | variation point *inside* one context | 3 providers | `docs/architecture/FUTURE_STATE.md` and `docs/architecture/CROSS_CONTEXT_CONTRACTS.md` | a new vendor is integrated |
 | 3 | **Deployment mode** | which surface is enabled per install | ~20 `*_ENABLED` flags | `src/config/app.config.ts` | an edition (SaaS / edu / enterprise / on-prem) turns a feature on or off |
 
 Deployment providers are **axis 2**. The acceptance test for that claim is now
@@ -741,18 +742,18 @@ What each historical leak turns into:
 | `workflows` deploy jobs | each provider adapter contributes a workflow fragment + its own secret-name list; the builder composes fragments it does not understand |
 | `projects` DTO validation | open provider data at the transport boundary; Runtime validates provider/slot/config against its registry |
 
-Note that three of the four fixes are *already possible* with the metadata
-registry that exists. This is mostly wiring, not new architecture.
+Three of the four fixes are already supported by the metadata registry. The
+remaining work is wiring and compatibility management, not a new context.
 
 ### 5.4 How provider work maps onto the phases
 
-| Phase | Provider-axis work |
+| Area | Provider-axis state |
 |---|---|
-| 0 | Add gate `no-provider-literals-outside-runtime`; the current gate is an error with one documented public DTO exception |
-| 1 | `DeploymentUsageFact` and `WorkflowFragment` are two of the 16 cross-context contracts |
-| 3.6 | Providers move with `runtime`; Render/Vercel metadata adapters and workflow contributions remain under `infrastructure/providers/` |
-| 4 | Decide whether `env_provisioning.*` and `runtime_deployments.*` converge on one `provider_config JSONB` table, or stay forked |
-| — | Provider persistence convergence and removal of legacy compatibility fields remain out of scope; see `docs/modular-architecture-deployments.md` |
+| Provider literal gate | Enforced with one documented public DTO compatibility exception |
+| Cross-context contracts | `DeploymentUsageFact` and `WorkflowFragment` are serialisable contract surfaces |
+| Provider composition | Providers are registered under `runtime/infrastructure/providers/` |
+| Schema convergence | `env_provisioning.*` and `runtime_deployments.*` remain separate until a persistence decision is made |
+| Compatibility fields | Provider persistence convergence and legacy-field removal are deferred; see `docs/architecture/FUTURE_STATE.md` |
 
 ### 5.5 The third axis: deployment mode
 
@@ -766,10 +767,10 @@ needs:
   `FakeGcpRuntimeAdapter` from the same flag — one image, two behaviours.
 
 That is the model: a capability is **compiled in and config-gated**, never
-forked per edition. Applied to contexts, it produces one consequence for this
-plan — a context that can be switched off must be **absent-tolerant at the port
-level**, so its consumers degrade rather than fail to construct. `billing` is
-the live case (open decision 3).
+forked per edition. Applied to contexts, it produces one consequence: a
+context that can be switched off must be **absent-tolerant at the port level**,
+so its consumers degrade rather than fail to construct. `billing` is the
+current example of an optionally available context.
 
 
 ## 6. Full future-state tree
@@ -1113,61 +1114,46 @@ src/
 └── types/
 ```
 
-Notes on the tree:
+Notes on the illustrative tree:
 
-- `src/common/` disappears: guards, filters, middleware, and config move to
-  `kernel/{auth,http,config}`. `src/config/` merges into `kernel/config/`.
+- `src/common/` and `src/config/` are not part of the target layout; guards,
+  filters, middleware, and configuration belong in `kernel/{auth,http,config}`.
 - `domain/` exists only where a named invariant exists. `platform-ops` gets no
   domain folder at all, and `billing` gets only `quota.policy.ts`. Empty layers
   are a violation, not a convention.
 - Naming is normalised to `api | application | domain | infrastructure |
   contracts`. The current `presentation/` and `infra/` spellings both go away.
-- `deployments` is renamed `runtime` to match the context map. This is the only
-  rename that touches a large number of import paths; it can be deferred behind
-  a re-export barrel if the diff is too large to review.
+- `deployments` is represented by `runtime` to match the context map.
 
-## 7. Phased sequence
+## 7. Implementation sequence and status
 
-Each phase is independently mergeable and behaviour-preserving. The verification
-baseline is typecheck, changed-file lint, Jest, and dependency boundaries;
-global lint is reported separately when the repository's pre-existing baseline
-contains findings.
+The sequence below records the completed implementation order and the controls
+that remain in force. It is an architecture record, not a pending work queue.
 
-### Phase 0 — Freeze the rules (docs + gates, no moves)
+### Phase 0 — Freeze the rules (complete)
 
-- Add a `context` tag per module in `.dependency-cruiser.cjs` so context-level
-  rules can be written while the folders are still 17.
-- Add rule `no-cross-context-cycles` at `warn` severity.
-- Add rule `contracts-are-dependency-free`: nothing under `*/contracts/` may
-  import `@nestjs/*`, `pg`, `@supabase/*`, or any `infrastructure/` path.
-- Move app-wide guards (`session-auth`, `subscription`, `dev-only`) from
-  `src/common/guards/` to `kernel/auth/` so Phase 3.4 does not have to.
-- Add rule `no-provider-literals-outside-runtime` at `warn` (see §5.4).
-- Exit: gates land green with the existing 0-violation baseline unchanged.
+- Context tags and dependency rules are defined in `.dependency-cruiser.cjs`.
+- Contract dependency restrictions and provider-literal restrictions are
+  enforced by repository checks.
+- Application-wide guards are located in `kernel/auth/`.
+- Exit criteria: architecture gates pass with zero violations.
 
-### Phase 1 — Introduce the seam, keep the folders
+### Phase 1 — Introduce the seam (complete)
 
-- For each of the 16 current directional cross-context edges, define the `contracts/` type and the
-  consumer-side port. Bind each port to a local adapter in the owning
-  `*.module.ts`.
-- No file moves. Consumers switch from `import { XService } from '../x'` to an
-  injected port token.
-- Exit: every cross-context import resolves to a `contracts/` path or a Nest
-  token, never a service class.
+- Cross-context contract types and consumer-side ports are defined for the
+  required inversions and transport seams.
+- Context roots bind ports to local adapters in the in-process Nest graph.
+- Production cross-context imports do not target concrete service classes.
 
-### Phase 2 — Break the two cycles
+### Phase 2 — Break the two cycles (complete)
 
-- **Cycle A:** invert `hierarchy -> projects`. `repositories.service.ts` gets a
-  `ProjectLookupPort`; `hierarchy.module.ts` and `auth.module.ts` stop importing
-  `projects.module.ts` (Nest composition imports count as cycles once contexts
-  are the unit).
-- **Cycle B:** invert `github -> admin`. `github-team-role.service.ts` takes a
-  `PlatformAdminPort` instead of importing `admin/index`.
-- Exit: `no-cross-context-cycles` promoted from `warn` to `error`.
+- **Cycle A:** `ProjectLookupPort` inverts the hierarchy-to-project lookup.
+- **Cycle B:** `PlatformAdminPort` inverts the GitHub-to-admin lookup.
+- Exit criteria: dependency-cruiser reports no circular violations.
 
-### Phase 3 — Physical consolidation, one context per PR
+### Phase 3 — Physical consolidation (complete)
 
-Ordered by ascending blast radius, so the pattern is proven on cheap moves:
+The contexts were consolidated in ascending blast-radius order:
 
 | # | Context | Modules folded | Risk |
 |---|---|---|---|
@@ -1178,20 +1164,17 @@ Ordered by ascending blast radius, so the pattern is proven on cheap moves:
 | 3.5 | `projects` | projects, catalog, workflows, existing-repos | high — 22k lines, 12 outbound edges |
 | 3.6 | `runtime` | deployments (rename) | medium — already layered; mostly a rename |
 
-Per-PR rules: `git mv` only, no logic edits in the same commit; keep
-compatibility re-exports at old `index.ts` paths until the last PR of the
-phase; the known-violations baseline may shrink, never grow.
+The resulting six context roots are the authoritative composition boundaries.
+Compatibility exports remain only where required by the existing public API.
 
-### Phase 4 — Schema ownership (implemented)
+### Phase 4 — Schema ownership (complete)
 
-- Tag every table in the 63 `supabase/` migration files with its owning context.
-- Add a SQL ownership gate: a repository under context X may not name a table
-  owned by context Y. Import gates do not catch inline SQL — this is the known
-  hole flagged in earlier architecture work.
-- Exit: the ownership table is published and the gate is green. No schema
-  change, no DB roles, no `search_path` tricks.
+- Migration and inline-SQL ownership are checked against the six-context map.
+- Existing cross-context references are explicit compatibility allowances.
+- Exit criteria: the ownership gate passes without changing schemas, database
+  roles, or `search_path` behavior.
 
-### Phase 5 — Async-ify the sink edges (implemented)
+### Phase 5 — Async-ify the sink edges (complete)
 
 - Audit and notification write edges now publish serialisable events through the
   kernel outbox and are consumed in-process by `platform-ops`.
@@ -1203,7 +1186,7 @@ phase; the known-violations baseline may shrink, never grow.
 
 ### Future-only reference — microservice extraction
 
-Microservice extraction is not a phase or deliverable of this consolidation.
+Microservice extraction is not a current phase or deliverable.
 The current application remains one NestJS deployable with six bounded
 contexts. If an independent scaling need, independent deploy cadence, or
 regulatory isolation requirement is later demonstrated, use
@@ -1213,8 +1196,8 @@ still has three inbound context pairs, four outbound pairs, and compatibility
 seams; the directory count is not extraction proof.
 
 Do not add HTTP transport adapters, service packages, broker infrastructure, or
-schema splits as part of this plan. Nothing in `application/` or `domain/`
-should change merely because a future transport eventually changes.
+schema splits to the current deployment model. Nothing in `application/` or
+`domain/` should change merely because a future transport eventually changes.
 
 ## 8. Risks
 
@@ -1229,32 +1212,26 @@ should change merely because a future transport eventually changes.
 | Provider axis gets confused with the context axis | §5 states the rule and Phase 0 adds a gate; a new vendor must never become a seventh context |
 | Provider leaks make `billing`/`identity-access`/`projects` unbuildable without `runtime` | The four leaks in §5.2 are fixed in Phase 1 as ordinary cross-context contracts |
 
-## 9. Open decisions
+## 9. Deferred architecture questions
 
-1. **`deployments` → `runtime` rename** — do it in Phase 3.6, or keep the name
-   and accept the mismatch with the context map?
-2. **`hierarchy` inside `identity-access`** — the earlier decision said yes. It
-   is 7,146 lines and would make `identity-access` the third-largest context.
-   Keep as agreed, or promote it to a seventh context?
-3. **`billing` in enterprise installations** — still unresolved from the
-   future-state doc. If billing ships only in SaaS, it is a config-gated context
-   and its ports must tolerate absence.
-4. **Does `capabilities` belong in `identity-access`?** It is 378 lines and
-   reads as a platform-wide feature-flag surface, which is arguably
-   `platform-ops`.
-5. **Phase 4 sequencing** — schema ownership before or after the physical moves?
-   Before is safer; after is faster.
-6. **Do the two provider registries and the two `DeploymentProvider` interfaces
-   converge?** (§5.1) Out of scope here, but the answer changes what `runtime`
-   publishes in `contracts/`.
-7. **Does `gcp` join `EnvProvider` and the `env_provisioning` tables, or stay a
-   parallel stack?** Convergence makes the provider axis genuinely open;
-   staying forked means every new provider picks a side.
+These questions do not block the current six-context modular monolith:
+
+1. Should billing be optional in enterprise deployments, and if so, which
+   consumer ports require absent-context behavior?
+2. Should the provider registries and `DeploymentProvider` interfaces converge?
+3. Should `gcp` join `EnvProvider` and the `env_provisioning` tables, or remain
+   a parallel runtime stack?
+4. Should `env_provisioning.*` and `runtime_deployments.*` converge on a shared
+   `provider_config JSONB` representation?
+
+Any new bounded context requires a written ownership and operational
+justification; providers and deployment modes do not qualify by themselves.
 
 ## 10. Related documents
 
 - `docs/architecture/FUTURE_STATE.md` — records the rejection of split services
 - `docs/architecture/DDD_CONTEXT_MAP.md` — bounded contexts and ubiquitous language
-- `docs/superpowers/plans/2026-08-25-modular-monolith-boundary-restoration.md` — the boundary work this builds on
-- `docs/modular-architecture-deployments.md` — the provider plugin architecture (axis 2)
-- `src/modules/README.md` — the per-module convention this plan supersedes
+- `docs/architecture/CROSS_CONTEXT_CONTRACTS.md` — context seams and event contracts
+- `docs/architecture/SCHEMA_OWNERSHIP.md` — migration ownership rules
+- `docs/architecture/REMEDIATION_EVIDENCE.md` — current verification evidence
+- `src/modules/README.md` — current context module conventions

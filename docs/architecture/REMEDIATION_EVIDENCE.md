@@ -1,17 +1,15 @@
 # Architecture remediation evidence
 
 **Date:** 2026-08-28
-**Trunk:** `codex/architecture-remediation-trunk`
-**Worktree:** `C:\Users\anton\Codes\Alpha Explora\AlphaCi Enterprise\worktrees\alphaci-enterprise-be\merry-prism\alphaci-enterprise-be`
-**Follow-up starting checkpoint:** `f9db7a80f1ebdce27d319121e5610f7f6e54d134`
-**Scope:** close the follow-up architecture findings without changing public
+**Evidence type:** repository verification record
+**Scope:** close the architecture findings without changing public
 API, business state-machine semantics, provider compatibility values, or
 migration replay order.
 
 This is an evidence ledger for the six-context modular monolith. It does not
 claim that the application has become independently deployable microservices.
 Microservice extraction is a future-only option and is outside the current
-consolidation plan.
+deployment model.
 
 ## 1. Outbox ownership and guarantees
 
@@ -119,8 +117,8 @@ allowlist for compatibility and security; neither is provider orchestration.
   provider through metadata, policy, runtime client, workflow fragment, CI
   installer, and the staged workflow builder.
 - `tests/integration/database.integration.spec.ts` is a live PostgreSQL
-  integration test when `SUPABASE_DB_URL` is supplied. The current worktree
-  has no database URL, so the live test is intentionally skipped; static SQL
+  integration test when `SUPABASE_DB_URL` is supplied. No database URL is
+  configured in the verification environment, so the live test is intentionally skipped; static SQL
   checks and migration dry-run do not pretend to prove live connectivity.
 
 ## 4. Projects and provider posture
@@ -136,8 +134,8 @@ provisioning hotspot is split by actual use case:
 | Microservices-shaped project provisioner | 340 |
 | Multi-repository provisioner | 460 |
 
-The `microservices` name above describes a project repository shape handled by
-the existing product workflow; it is not microservice extraction.
+The `microservices` label in the table describes a project repository shape
+handled by the existing product workflow; it is not microservice extraction.
 
 Dashboard, workflow, lifecycle, reconciliation, and provisioning behavior is
 owned by focused application services. Remaining facade methods are
@@ -157,7 +155,7 @@ compatibility forwarding, not a second implementation.
   covered by `tests/architecture/outbox-scheduler.spec.ts`. Actual execution
   of the deployed cron still requires the deployment environment.
 - No local production rollback rehearsal or external scheduler execution was
-  possible in this worktree.
+  performed in the verification environment.
 
 ## 6. Evidence limits
 
@@ -178,8 +176,8 @@ compatibility forwarding, not a second implementation.
 ## 7. Future-only extraction posture
 
 No independent scaling requirement, independent deployment cadence, or
-regulatory-isolation trigger has been supplied. Microservice extraction remains
-a future composition/transport decision, not a deliverable of this
-consolidation. Reopen it only after an operational trigger is documented and
-the measured application edges justify the added deployment and data
+regulatory-isolation trigger is part of the current system requirements.
+Microservice extraction remains a future composition/transport decision, not a
+current deliverable. Reopen it only after an operational trigger is documented
+and the measured application edges justify the added deployment and data
 ownership complexity.
