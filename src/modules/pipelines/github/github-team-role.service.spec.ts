@@ -16,6 +16,8 @@ import { GithubTeamRoleService } from './github-team-role.service';
 
 const LEAD_TEAM = 'team-lead';
 const DEV_TEAM = 'developers';
+/** Distinct from the user token so a mock can answer differently per reader. */
+const INSTALLATION_TOKEN = 'installation-token';
 
 function makeConfigService(mode: GithubTeamRoleSyncMode): ConfigService {
   const config = {
@@ -39,24 +41,43 @@ function makeConfigService(mode: GithubTeamRoleSyncMode): ConfigService {
 function makeGithubService(
   memberships: Record<string, boolean | null>,
   rosters: Record<string, string[]> = {},
+  appMemberships?: Record<string, boolean | null>,
 ): {
   service: GithubService;
   getTeamMembership: jest.Mock;
+  createInstallationAccessToken: jest.Mock;
 } {
+  // Answers depend on WHICH token is asking: `appMemberships` is what the App
+  // installation can see, `memberships` is what the user's OAuth token can.
+  // Defaulting to the same map matters — the webhook and sweep paths read as
+  // the App by design, so a test that does not care about the distinction must
+  // still see its own `memberships` through an installation token.
+  const appAnswers = appMemberships ?? memberships;
   const getTeamMembership = jest.fn(
-    (teamSlug: string): Promise<boolean | null> =>
-      Promise.resolve(memberships[teamSlug] ?? null),
+    (
+      teamSlug: string,
+      _login: string,
+      token: string,
+    ): Promise<boolean | null> =>
+      Promise.resolve(
+        token === INSTALLATION_TOKEN
+          ? (appAnswers[teamSlug] ?? null)
+          : (memberships[teamSlug] ?? null),
+      ),
+  );
+  const createInstallationAccessToken = jest.fn(() =>
+    Promise.resolve(INSTALLATION_TOKEN),
   );
   const service = {
     on: jest.fn(),
     getTeamMembership,
     getEnforcedOrg: jest.fn(() => 'Alpha-Explora'),
-    createInstallationAccessToken: jest.fn(() => Promise.resolve('tok')),
+    createInstallationAccessToken,
     listTeamMembersWithToken: jest.fn((teamSlug: string) =>
       Promise.resolve(rosters[teamSlug] ?? []),
     ),
   } as unknown as GithubService;
-  return { service, getTeamMembership };
+  return { service, getTeamMembership, createInstallationAccessToken };
 }
 
 function makeRepository(
@@ -102,10 +123,16 @@ function build(options: {
   rosters?: Record<string, string[]>;
   syncedUsers?: Array<{ id: string; login: string; appRole: AppRole }>;
   installationId?: number | null;
+  appMemberships?: Record<string, boolean | null>;
 }) {
-  const { service: githubService, getTeamMembership } = makeGithubService(
+  const {
+    service: githubService,
+    getTeamMembership,
+    createInstallationAccessToken,
+  } = makeGithubService(
     options.memberships ?? {},
     options.rosters ?? {},
+    options.appMemberships,
   );
   const { repository, setAppRole, setAppRoleSource } = makeRepository(
     options.current ?? { role: 'member', source: 'github_team' },
@@ -120,7 +147,13 @@ function build(options: {
       options.installationId === undefined ? 42 : options.installationId,
     ),
   );
-  return { service, setAppRole, setAppRoleSource, getTeamMembership };
+  return {
+    service,
+    setAppRole,
+    setAppRoleSource,
+    getTeamMembership,
+    createInstallationAccessToken,
+  };
 }
 
 describe('GithubTeamRoleService', () => {
@@ -336,6 +369,60 @@ describe('GithubTeamRoleService', () => {
       await expect(service.resolveSeedRole('ada', 'tok', true)).resolves.toBe(
         'admin',
       );
+    });
+
+    /*
+     * The regression these four cover: a first login is the ONE path with no
+     * prior role to fall back on, so its caller converts null into 'member'
+     * and stamps it app_role_source='github_team'. A lead whose own token
+     * cannot read the org teams (no read:org scope, or OAuth App access
+     * restrictions) was seeded as a Member and had no in-app way back.
+     */
+    it('asks the App when the user token cannot read the teams', async () => {
+      const { service, createInstallationAccessToken } = build({
+        mode: 'enforce',
+        memberships: { [LEAD_TEAM]: null, [DEV_TEAM]: null },
+        appMemberships: { [LEAD_TEAM]: true },
+      });
+      await expect(service.resolveSeedRole('ada', 'tok', false)).resolves.toBe(
+        'lead',
+      );
+      expect(createInstallationAccessToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not consult the App when the user token already answered', async () => {
+      const { service, createInstallationAccessToken } = build({
+        mode: 'enforce',
+        memberships: { [DEV_TEAM]: true },
+        appMemberships: { [LEAD_TEAM]: true },
+      });
+      await expect(service.resolveSeedRole('ada', 'tok', false)).resolves.toBe(
+        'member',
+      );
+      expect(createInstallationAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('stays null when neither reader can see the teams', async () => {
+      const { service } = build({
+        mode: 'enforce',
+        memberships: { [LEAD_TEAM]: null, [DEV_TEAM]: null },
+      });
+      await expect(
+        service.resolveSeedRole('ada', 'tok', false),
+      ).resolves.toBeNull();
+    });
+
+    it('stays null when the org has no App installation', async () => {
+      const { service, createInstallationAccessToken } = build({
+        mode: 'enforce',
+        memberships: { [LEAD_TEAM]: null, [DEV_TEAM]: null },
+        appMemberships: { [LEAD_TEAM]: true },
+        installationId: null,
+      });
+      await expect(
+        service.resolveSeedRole('ada', 'tok', false),
+      ).resolves.toBeNull();
+      expect(createInstallationAccessToken).not.toHaveBeenCalled();
     });
   });
 
