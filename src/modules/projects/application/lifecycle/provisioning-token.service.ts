@@ -1,10 +1,14 @@
 import {
+  Inject,
   Injectable,
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 import type { CreateProjectDto } from '../../dto/create-project.dto';
 
 /**
@@ -16,7 +20,10 @@ import type { CreateProjectDto } from '../../dto/create-project.dto';
  */
 @Injectable()
 export class ProvisioningTokenService {
-  constructor(private readonly githubService: GithubService) {}
+  constructor(
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
+  ) {}
 
   /**
    * Token used to CREATE a repository. Personal accounts require the user's

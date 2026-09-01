@@ -7,7 +7,6 @@ import type {
   SubscriptionPlan,
   SubscriptionState,
 } from '#kernel/auth/session-user.interface';
-import { OutboxRepository } from '#kernel/events/outbox.repository';
 import { type SubscriptionAccessPort } from '#kernel/auth/subscription-access.port';
 import { SubscriptionsRepository } from './infra/subscriptions.repository';
 
@@ -18,7 +17,6 @@ export class SubscriptionService implements SubscriptionAccessPort {
   constructor(
     private readonly configService: ConfigService,
     private readonly subscriptionsRepository: SubscriptionsRepository,
-    private readonly outboxRepository: OutboxRepository,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
   }
@@ -77,20 +75,7 @@ export class SubscriptionService implements SubscriptionAccessPort {
   }
 
   async cancelForUser(user: SessionUser): Promise<SubscriptionState> {
-    const nextState = await this.subscriptionsRepository.cancelCurrent(user.id);
-
-    await this.outboxRepository.publishLater({
-      topic: 'subscription.canceled',
-      aggregateType: 'subscription',
-      aggregateId: user.id,
-      payload: {
-        userId: user.id,
-        plan: nextState.plan,
-        planCode: nextState.planCode,
-      },
-    });
-
-    return nextState;
+    return this.subscriptionsRepository.cancelCurrent(user.id);
   }
 
   private assertMockEnabled(): void {
@@ -103,24 +88,11 @@ export class SubscriptionService implements SubscriptionAccessPort {
     userId: string,
     provider: 'manual' = 'manual',
   ): Promise<SubscriptionState> {
-    const nextState = await this.subscriptionsRepository.activateMonthlyPlan(
+    return this.subscriptionsRepository.activateMonthlyPlan(
       userId,
       'pro_monthly',
       this.config.subscription.proMonthlyPricePhp,
       provider,
     );
-
-    await this.outboxRepository.publishLater({
-      topic: 'subscription.activated',
-      aggregateType: 'subscription',
-      aggregateId: userId,
-      payload: {
-        userId,
-        plan: nextState.plan,
-        planCode: nextState.planCode,
-      },
-    });
-
-    return nextState;
   }
 }

@@ -1,17 +1,19 @@
 name: CI
 
-# Full quality gate for the consolidation refactor.
+# Full quality gate for the current backend.
 #
 # GitHub Actions minutes are constrained on this account (the sibling
-# alphaci-be repo ships the same posture). The workflow is dispatchable on
-# demand and also runs on pushes to main so it activates automatically if
-# minutes become available. Until then, run the loop locally:
-#   npm run typecheck && npm run lint && npm test && npm run boundaries
+# alphaci-be repo ships the same posture). The workflow remains dispatchable
+# on demand, and runs for the protected trunk/PR path as soon as Actions is
+# available. Until then, run the same loop locally:
+#   npm run typecheck && npm run lint && npm test && npm run boundaries && npm run check:documentation
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main, codex/architecture-remediation-trunk]
   push:
-    branches: [main]
+    branches: [main, codex/architecture-remediation-trunk]
 
 permissions:
   contents: read
@@ -22,7 +24,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Typecheck, lint, test, boundaries
+    name: Typecheck, lint, test, architecture, documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +35,12 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Documentation and generated maps
+        run: npm run check:documentation
+
+      - name: Documentation unit tests
+        run: npm run test:documentation
 
       - name: Typecheck
         run: npm run typecheck
@@ -60,3 +68,12 @@ jobs:
 
       - name: Schema ownership
         run: npm run check:schema-ownership
+
+      - name: Migration replay order
+        run: npm run db:apply:all -- --dry-run
+
+      - name: Live Postgres integration (when configured)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_CA_CERT: ${{ secrets.SUPABASE_DB_CA_CERT }}
+        run: npm test -- --ci --runInBand tests/integration/database.integration.spec.ts

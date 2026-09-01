@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import type { ProjectLinkPort } from '#kernel/ports/project-link.port';
 import { HierarchyProjectLinkRepository } from './hierarchy-project-link.repository';
 
 export interface EnsureProjectLinkInput {
@@ -31,7 +32,7 @@ export interface EnsureProjectLinkInput {
  * backfill and a re-link are the recovery paths.
  */
 @Injectable()
-export class HierarchyProjectLinkService {
+export class HierarchyProjectLinkService implements ProjectLinkPort {
   private readonly logger = new Logger(HierarchyProjectLinkService.name);
 
   constructor(private readonly repository: HierarchyProjectLinkRepository) {}

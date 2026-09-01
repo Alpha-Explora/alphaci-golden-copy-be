@@ -11,8 +11,8 @@ import {
   AuditEventPublisher,
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher';
-import { UsageQuotaService } from '#modules/billing/usage/usage-quota.service';
-import { WorkspaceAccessService } from '#modules/identity-access/workspaces/workspace-access.service';
+import { USAGE_QUOTA } from '#kernel/ports/usage-quota.port';
+import { WORKSPACE_ACCESS_PORT } from '#kernel/ports/workspaces.port';
 
 describe('EnvVarsService', () => {
   async function createService(
@@ -61,6 +61,18 @@ describe('EnvVarsService', () => {
       }),
       ...overrides.providerClient,
     };
+    const usageQuotaService = {
+      assertWithinLimit: jest.fn(),
+      ...overrides.usageQuotaService,
+    };
+    const workspaceAccessService = {
+      assertProjectRole: jest.fn().mockResolvedValue({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        role: 'member',
+      }),
+      ...overrides.workspaceAccessService,
+    };
     const module = await Test.createTestingModule({
       providers: [
         EnvVarsService,
@@ -94,24 +106,8 @@ describe('EnvVarsService', () => {
             }),
           },
         },
-        {
-          provide: UsageQuotaService,
-          useValue: {
-            assertWithinLimit: jest.fn(),
-            ...overrides.usageQuotaService,
-          },
-        },
-        {
-          provide: WorkspaceAccessService,
-          useValue: {
-            assertProjectRole: jest.fn().mockResolvedValue({
-              workspaceId: 'workspace-1',
-              userId: 'user-1',
-              role: 'member',
-            }),
-            ...overrides.workspaceAccessService,
-          },
-        },
+        { provide: USAGE_QUOTA, useValue: usageQuotaService },
+        { provide: WORKSPACE_ACCESS_PORT, useValue: workspaceAccessService },
         {
           provide: AuditEventPublisher,
           useValue: {
@@ -135,8 +131,8 @@ describe('EnvVarsService', () => {
       envVarsRepository,
       notificationEventsService: module.get(NotificationEventPublisher),
       providerClient,
-      usageQuotaService: module.get(UsageQuotaService),
-      workspaceAccessService: module.get(WorkspaceAccessService),
+      usageQuotaService,
+      workspaceAccessService,
       service: module.get(EnvVarsService),
     };
   }

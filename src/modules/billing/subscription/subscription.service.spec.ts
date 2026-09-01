@@ -4,7 +4,6 @@ import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionService } from './subscription.service.js';
 import { SubscriptionsRepository } from './infra/subscriptions.repository.js';
-import { OutboxRepository } from '#kernel/events/outbox.repository.js';
 import type {
   SessionUser,
   SubscriptionState,
@@ -70,30 +69,22 @@ const makeSubsRepo = () =>
     cancelCurrent: jest.fn().mockResolvedValue(fakeFreeSub),
   }) as unknown as SubscriptionsRepository;
 
-const makeOutboxRepo = () =>
-  ({
-    publishLater: jest.fn().mockResolvedValue(undefined),
-  }) as unknown as OutboxRepository;
-
 async function createService(
   configOverrides: Parameters<typeof makeConfig>[0] = {},
 ) {
   const subsRepo = makeSubsRepo();
-  const outboxRepo = makeOutboxRepo();
 
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       SubscriptionService,
       { provide: ConfigService, useValue: makeConfig(configOverrides) },
       { provide: SubscriptionsRepository, useValue: subsRepo },
-      { provide: OutboxRepository, useValue: outboxRepo },
     ],
   }).compile();
 
   return {
     service: module.get(SubscriptionService),
     subsRepo,
-    outboxRepo,
   };
 }
 
@@ -103,7 +94,7 @@ describe('SubscriptionService', () => {
 
   beforeEach(() => {
     fetchMock = jest.fn();
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
   });
 
   afterEach(() => {
@@ -167,41 +158,40 @@ describe('SubscriptionService', () => {
       );
     });
 
-    it('activates pro plan and publishes event', async () => {
-      const { service, outboxRepo } = await createService({
+    it('activates pro plan', async () => {
+      const { service, subsRepo } = await createService({
         mockEnabled: true,
       });
       const result = await service.activateForUser(fakeUser, 'pro');
 
       expect(result.plan).toBe('pro');
-      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: 'subscription.activated' }),
+      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
+        'user-1',
+        'pro_monthly',
+        300,
+        'manual',
       );
     });
   });
 
   describe('cancelForUser', () => {
     it('cancels even when mock activation is disabled', async () => {
-      const { service, outboxRepo } = await createService({
+      const { service, subsRepo } = await createService({
         mockEnabled: false,
       });
       const result = await service.cancelForUser(fakeUser);
 
       expect(result.plan).toBe('free');
-      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: 'subscription.canceled' }),
-      );
+      expect(subsRepo.cancelCurrent).toHaveBeenCalledWith('user-1');
     });
 
-    it('cancels and publishes event', async () => {
-      const { service, outboxRepo } = await createService({
+    it('cancels when mock activation is enabled', async () => {
+      const { service, subsRepo } = await createService({
         mockEnabled: true,
       });
       await service.cancelForUser(fakeUser);
 
-      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: 'subscription.canceled' }),
-      );
+      expect(subsRepo.cancelCurrent).toHaveBeenCalledWith('user-1');
     });
   });
 });

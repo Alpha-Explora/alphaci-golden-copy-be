@@ -31,7 +31,7 @@ describe('GoogleCloudRuntimeAdapter', () => {
             .mockResolvedValue({ Authorization: 'Bearer test' }),
         }),
       },
-      fetchFn as unknown as typeof fetch,
+      fetchFn,
     );
 
     await expect(
@@ -69,7 +69,7 @@ describe('GoogleCloudRuntimeAdapter', () => {
           getRequestHeaders: jest.fn().mockResolvedValue({}),
         }),
       },
-      fetchFn as unknown as typeof fetch,
+      fetchFn,
     );
 
     await expect(
@@ -108,7 +108,7 @@ describe('GoogleCloudRuntimeAdapter', () => {
           getRequestHeaders: jest.fn().mockResolvedValue({}),
         }),
       },
-      fetchFn as unknown as typeof fetch,
+      fetchFn,
       delay,
     );
 

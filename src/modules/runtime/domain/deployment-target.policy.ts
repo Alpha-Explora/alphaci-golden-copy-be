@@ -1,15 +1,21 @@
 /**
  * Provider/slot compatibility rules (framework- and vendor-independent).
  *
- * A deployment target pairs exactly one provider with one slot. Render hosts
- * backend services only; Vercel hosts frontend apps only. Enforced at target
- * creation and whenever a metadata update tries to change the slot.
+ * A deployment target pairs exactly one provider with one slot. Slot support
+ * comes from the registered provider descriptor rather than a closed vendor
+ * list, so a new provider can contribute its own capabilities without editing
+ * this policy.
  */
+
+export interface ProviderSlotDefinition {
+  label: string;
+  supportedSlots: readonly string[];
+  slotViolationMessage?: (slot: string) => string;
+}
 
 export type DeploymentPolicyError = {
   code:
-    | 'render_backend_only'
-    | 'vercel_frontend_only'
+    | 'provider_slot_not_supported'
     | 'invalid_lane'
     | 'production_has_branch'
     | 'preview_requires_branch'
@@ -28,24 +34,20 @@ export class DeploymentPolicyViolation extends Error {
 }
 
 export function assertProviderSlotAllowed(
-  provider: 'render' | 'vercel',
+  _provider: string,
   slot: 'backend' | 'frontend' | 'standalone',
+  definition?: ProviderSlotDefinition,
 ): void {
-  if (provider === 'render' && slot !== 'backend') {
-    throw new DeploymentPolicyViolation({
-      code: 'render_backend_only',
-      message:
-        'Render deployment targets are backend-only. Choose the backend slot for Render.',
-    });
+  if (!definition || definition.supportedSlots.includes(slot)) {
+    return;
   }
 
-  if (provider === 'vercel' && slot !== 'frontend') {
-    throw new DeploymentPolicyViolation({
-      code: 'vercel_frontend_only',
-      message:
-        'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
-    });
-  }
+  throw new DeploymentPolicyViolation({
+    code: 'provider_slot_not_supported',
+    message:
+      definition.slotViolationMessage?.(slot) ??
+      `${definition.label} deployment targets do not support the ${slot} slot.`,
+  });
 }
 
 /**

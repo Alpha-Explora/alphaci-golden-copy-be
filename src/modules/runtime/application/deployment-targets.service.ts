@@ -11,6 +11,10 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '#kernel/config/app.config';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  USAGE_QUOTA,
+  type UsageQuotaPort,
+} from '#kernel/ports/usage-quota.port';
 import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import {
@@ -32,32 +36,35 @@ import type {
   RenderEnvironmentName,
 } from '../core/deployments.types';
 import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
-import { providerPublicUrl } from '../core/provider-public-url';
-import { RenderCostPolicyService } from './render-cost-policy.service';
 import {
-  UsageQuotaService,
-  type UsageLimitCode,
-} from '#modules/billing/index.js';
-import {
-  WorkspaceAccessService,
+  WORKSPACE_ACCESS_PORT,
+  type WorkspaceAccessPort,
   type WorkspaceRole,
-} from '#modules/identity-access/index.js';
+} from '#kernel/ports/workspaces.port';
 import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
 } from '../core/deployment-provisioning.contract';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
+import type {
+  DeploymentProviderLogEntry,
+  DeploymentProviderPolicy,
+  DeploymentProviderTargetPolicyResult,
+} from '../core/deployment-provider.policy';
 
-export interface DeploymentTargetLogEntry {
-  timestamp: string;
-  message: string;
-  level: string;
-}
+export type DeploymentTargetLogEntry = DeploymentProviderLogEntry;
+
+const EMPTY_PROVIDER_TARGET_POLICY: DeploymentProviderTargetPolicyResult = {
+  storage: {},
+  providerInput: {},
+  providerMetadata: {},
+} as const;
 
 @Injectable()
 export class DeploymentTargetsService {
   private readonly logger = new Logger(DeploymentTargetsService.name);
-  private readonly renderCostPolicy: RenderCostPolicyService;
 
   constructor(
     @Inject(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP)
@@ -69,19 +76,23 @@ export class DeploymentTargetsService {
     private readonly clientRegistry: ProviderClientRegistryPort,
     private readonly configService: ConfigService,
     private readonly deploymentStrategyResolver: DeploymentStrategyResolver,
-    renderCostPolicyService?: RenderCostPolicyService,
+    /** Retained in the constructor order for direct callers during the seam migration. */
     @Optional()
-    private readonly usageQuotaService?: UsageQuotaService,
+    @Inject('LegacyDeploymentTargetDefaults')
+    _legacyTargetDefaults?: unknown,
     @Optional()
-    private readonly workspaceAccessService?: WorkspaceAccessService,
+    @Inject(USAGE_QUOTA)
+    private readonly usageQuotaService?: UsageQuotaPort,
+    @Optional()
+    @Inject(WORKSPACE_ACCESS_PORT)
+    private readonly workspaceAccessService?: WorkspaceAccessPort,
     @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventsService?: NotificationEventPublisher,
-  ) {
-    this.renderCostPolicy =
-      renderCostPolicyService ?? new RenderCostPolicyService(configService);
-  }
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
+  ) {}
 
   async listDeploymentTargets(projectId: string, userId: string) {
     await this.getProjectOrThrow(projectId, userId);
@@ -92,7 +103,7 @@ export class DeploymentTargetsService {
     // dashboard, so the UI never has to re-derive provider URL conventions.
     return targets.map((target) => ({
       ...target,
-      publicUrl: providerPublicUrl(target),
+      publicUrl: this.providerPublicUrl(target),
       dashboardUrl: this.providerDashboardUrl(target),
     }));
   }
@@ -107,32 +118,39 @@ export class DeploymentTargetsService {
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     this.assertOwnershipModeAllowed(dto);
     try {
-      assertProviderSlotAllowed(dto.provider, dto.slot);
+      assertProviderSlotAllowed(
+        dto.provider,
+        dto.slot,
+        this.providerRegistry?.find(dto.provider),
+      );
     } catch (error) {
       if (error instanceof DeploymentPolicyViolation) {
         throw new BadRequestException(error.policyError.message);
       }
       throw error;
     }
-    if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
+    const providerPolicy = this.providerPolicy(dto.provider);
+    if (
+      dto.ownershipMode === 'flowci_managed' &&
+      providerPolicy?.managedQuota
+    ) {
       await this.assertWithinQuota(
         userId,
         projectId,
-        'managed_render_services',
+        providerPolicy.managedQuota.quotaCode,
       );
     }
-    if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'vercel') {
-      await this.assertWithinQuota(
-        userId,
-        projectId,
-        'managed_vercel_projects',
-      );
-    }
-    // Platform-wide capacity guard: managed targets share one Render/Vercel
-    // account, so cap the aggregate across all users (per-user quotas above
-    // cannot protect the shared account). Runs even if per-user quotas are off.
-    if (dto.ownershipMode === 'flowci_managed') {
-      await this.usageQuotaService?.assertManagedFleetCapacity(dto.provider);
+    // Platform-wide capacity guard: managed targets share provider accounts, so
+    // cap the aggregate across all users. The provider id is data here; quota
+    // policy stays inside the provider plugin.
+    if (
+      dto.ownershipMode === 'flowci_managed' &&
+      providerPolicy?.managedQuota
+    ) {
+      await this.usageQuotaService?.assertManagedFleetCapacity({
+        providerId: dto.provider,
+        ...providerPolicy.managedQuota,
+      });
     }
     const tokenInput: {
       ownershipMode: string;
@@ -152,12 +170,32 @@ export class DeploymentTargetsService {
       action: dto.action,
       renderDeployMethod: dto.renderDeployMethod,
     });
-    const vercelScope = this.resolveVercelScope(
-      dto.provider,
-      dto.ownershipMode,
-      providerAuth.connectionMetadata,
-    );
-    const renderDefaults = this.resolveRenderDefaults(dto);
+    const providerTargetPolicy =
+      providerPolicy?.resolveTarget({
+        ownershipMode: dto.ownershipMode,
+        action: dto.action,
+        branchName: dto.branchName?.trim() || 'uat',
+        ...(dto.rootDirectory ? { rootDirectory: dto.rootDirectory } : {}),
+        ...(dto.imageUrl ? { imageUrl: dto.imageUrl } : {}),
+        ...(dto.renderDeployMethod
+          ? { renderDeployMethod: dto.renderDeployMethod }
+          : {}),
+        ...(dto.renderServiceType
+          ? { renderServiceType: dto.renderServiceType }
+          : {}),
+        ...(dto.renderRuntime ? { renderRuntime: dto.renderRuntime } : {}),
+        ...(dto.renderInstanceType
+          ? { renderInstanceType: dto.renderInstanceType }
+          : {}),
+        ...(dto.renderRegion ? { renderRegion: dto.renderRegion } : {}),
+        ...(dto.renderEnvironmentName
+          ? { renderEnvironmentName: dto.renderEnvironmentName }
+          : {}),
+        ...(dto.dockerContext ? { dockerContext: dto.dockerContext } : {}),
+        ...(dto.dockerfilePath ? { dockerfilePath: dto.dockerfilePath } : {}),
+        connectionMetadata: providerAuth.connectionMetadata,
+        managedConfig: this.managedProviderConfig(),
+      }) ?? EMPTY_PROVIDER_TARGET_POLICY;
 
     const target =
       dto.action === 'create'
@@ -176,37 +214,8 @@ export class DeploymentTargetsService {
               ? { startCommand: dto.startCommand.trim() }
               : {}),
             deploymentStrategy,
-            ...(renderDefaults.renderServiceType
-              ? { renderServiceType: renderDefaults.renderServiceType }
-              : {}),
-            ...(renderDefaults.renderRuntime
-              ? { renderRuntime: renderDefaults.renderRuntime }
-              : {}),
-            ...(renderDefaults.renderInstanceType
-              ? { renderInstanceType: renderDefaults.renderInstanceType }
-              : {}),
-            ...(renderDefaults.renderRegion
-              ? { renderRegion: renderDefaults.renderRegion }
-              : {}),
-            ...(renderDefaults.renderEnvironmentName
-              ? { renderEnvironmentName: renderDefaults.renderEnvironmentName }
-              : {}),
-            ...(renderDefaults.dockerContext
-              ? { dockerContext: renderDefaults.dockerContext }
-              : {}),
-            ...(renderDefaults.dockerfilePath
-              ? { dockerfilePath: renderDefaults.dockerfilePath }
-              : {}),
+            ...providerTargetPolicy.providerInput,
             ...(dto.imageUrl?.trim() ? { imageUrl: dto.imageUrl.trim() } : {}),
-            ...(vercelScope.vercelTeamId
-              ? { vercelTeamId: vercelScope.vercelTeamId }
-              : {}),
-            ...(vercelScope.vercelOrgId
-              ? { vercelOrgId: vercelScope.vercelOrgId }
-              : {}),
-            ...(vercelScope.vercelTeamSlug
-              ? { vercelTeamSlug: vercelScope.vercelTeamSlug }
-              : {}),
           })
         : {
             id: this.requireString(dto.providerProjectId, 'providerProjectId'),
@@ -215,7 +224,7 @@ export class DeploymentTargetsService {
               'providerProjectName',
             ),
             provider: dto.provider,
-            metadata: this.registerExistingMetadata(dto, renderDefaults),
+            metadata: providerTargetPolicy.providerMetadata,
           };
 
     const created =
@@ -235,19 +244,22 @@ export class DeploymentTargetsService {
         rootDirectory: dto.rootDirectory?.trim() || null,
         buildCommand: dto.buildCommand?.trim() || null,
         startCommand: dto.startCommand?.trim() || null,
-        renderServiceType: renderDefaults.renderServiceType,
-        renderInstanceType: renderDefaults.renderInstanceType,
-        renderRegion: renderDefaults.renderRegion,
-        renderEnvironmentName: renderDefaults.renderEnvironmentName,
-        dockerContext: renderDefaults.dockerContext,
-        dockerfilePath: renderDefaults.dockerfilePath,
+        renderServiceType:
+          providerTargetPolicy.storage.renderServiceType ?? null,
+        renderInstanceType:
+          providerTargetPolicy.storage.renderInstanceType ?? null,
+        renderRegion: providerTargetPolicy.storage.renderRegion ?? null,
+        renderEnvironmentName:
+          providerTargetPolicy.storage.renderEnvironmentName ?? null,
+        dockerContext: providerTargetPolicy.storage.dockerContext ?? null,
+        dockerfilePath: providerTargetPolicy.storage.dockerfilePath ?? null,
         imageUrl: dto.imageUrl?.trim() || null,
         environmentMap: dto.environmentMap ?? {},
         deploymentStrategy,
         providerMetadata: {
           ...(target.metadata ?? {}),
-          ...(renderDefaults.renderRuntime
-            ? { renderRuntime: renderDefaults.renderRuntime }
+          ...(providerTargetPolicy.storage.renderRuntime
+            ? { renderRuntime: providerTargetPolicy.storage.renderRuntime }
             : {}),
         },
       });
@@ -296,7 +308,11 @@ export class DeploymentTargetsService {
     );
     if (input.slot !== undefined) {
       try {
-        assertProviderSlotAllowed(existingTarget.provider, input.slot);
+        assertProviderSlotAllowed(
+          existingTarget.provider,
+          input.slot,
+          this.providerRegistry?.find(existingTarget.provider),
+        );
       } catch (error) {
         if (error instanceof DeploymentPolicyViolation) {
           throw new BadRequestException(error.policyError.message);
@@ -384,7 +400,7 @@ export class DeploymentTargetsService {
           .getTargetStatus({
             token,
             targetId: target.providerProjectId,
-            ...this.vercelScopeFor(target),
+            ...this.providerOperationInput(target),
           });
         mode = 'provider_live';
         if (!status.exists) {
@@ -629,7 +645,7 @@ export class DeploymentTargetsService {
   private async assertWithinQuota(
     userId: string,
     projectId: string,
-    limitCode: UsageLimitCode,
+    limitCode: string,
   ): Promise<void> {
     try {
       await this.usageQuotaService?.assertWithinLimit(userId, limitCode);
@@ -792,39 +808,39 @@ export class DeploymentTargetsService {
   }
 
   private providerDashboardUrl(target: DeploymentTargetSummary): string | null {
-    if (target.provider === 'vercel') {
-      const teamSlug =
-        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
-          ? target.providerMetadata['vercelTeamSlug'].trim()
-          : '';
-      return teamSlug
-        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}`
-        : `https://vercel.com/dashboard/project/${target.providerProjectId}`;
-    }
-
-    if (target.provider === 'render') {
-      return `https://dashboard.render.com/web/${target.providerProjectId}`;
-    }
-
-    return null;
+    const presentation = this.providerPresentation(target);
+    return presentation?.dashboardUrl(this.presentationTarget(target)) ?? null;
   }
 
   private providerConsoleUrl(target: DeploymentTargetSummary): string | null {
-    if (target.provider === 'vercel') {
-      const teamSlug =
-        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
-          ? target.providerMetadata['vercelTeamSlug'].trim()
-          : '';
-      return teamSlug
-        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}/deployments`
-        : `https://vercel.com/dashboard/project/${target.providerProjectId}/deployments`;
-    }
+    const presentation = this.providerPresentation(target);
+    return presentation?.consoleUrl(this.presentationTarget(target)) ?? null;
+  }
 
-    if (target.provider === 'render') {
-      return `https://dashboard.render.com/web/${target.providerProjectId}/logs`;
-    }
+  private providerPublicUrl(target: DeploymentTargetSummary): string | null {
+    const presentation = this.providerPresentation(target);
+    return (
+      presentation?.publicUrl(
+        this.presentationTarget(target),
+        target.renderEnvironmentName === 'production' ||
+          target.branchName === 'main'
+          ? 'production'
+          : 'preview',
+      ) ?? null
+    );
+  }
 
-    return null;
+  private providerPresentation(target: DeploymentTargetSummary) {
+    return this.providerRegistry?.find(target.provider)?.presentation;
+  }
+
+  private presentationTarget(target: DeploymentTargetSummary) {
+    return {
+      providerProjectId: target.providerProjectId,
+      providerProjectName: target.providerProjectName,
+      providerMetadata: target.providerMetadata,
+      branchName: target.branchName,
+    };
   }
 
   private async resolveProviderToken(
@@ -837,17 +853,18 @@ export class DeploymentTargetsService {
   ): Promise<{ token: string; connectionMetadata: Record<string, unknown> }> {
     if (input.ownershipMode === 'flowci_managed') {
       const config = this.configService.getOrThrow<AppConfig>('app');
-      const token =
-        provider === 'render'
-          ? config.envProvisioning.flowciManaged.renderToken
-          : config.envProvisioning.flowciManaged.vercelToken;
-      if (!token) {
+      const policy = this.providerPolicy(provider);
+      if (!policy) {
         throw new BadRequestException(
-          `ALPHACI-managed ${provider} token is not configured`,
+          `ALPHACI-managed ${provider} provisioning is not supported`,
         );
       }
-
-      return { token, connectionMetadata: {} };
+      return {
+        token: policy.resolveManagedToken({
+          managedConfig: this.managedProviderConfig(config),
+        }),
+        connectionMetadata: {},
+      };
     }
 
     if (!input.providerConnectionId) {
@@ -868,144 +885,16 @@ export class DeploymentTargetsService {
     };
   }
 
-  private resolveVercelScope(
+  private providerPolicy(
     provider: EnvProvider,
-    ownershipMode: string,
-    connectionMetadata: Record<string, unknown>,
-  ): {
-    vercelOrgId?: string;
-    vercelTeamId?: string;
-    vercelTeamSlug?: string;
-  } {
-    if (provider !== 'vercel') {
-      return {};
-    }
-
-    if (ownershipMode === 'flowci_managed') {
-      const config = this.configService.getOrThrow<AppConfig>('app');
-      const teamId =
-        config.envProvisioning.flowciManaged.vercelTeamId?.trim() ?? '';
-      const teamSlug =
-        config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
-      if (!teamId) {
-        throw new BadRequestException(
-          'ALPHACI_VERCEL_TEAM_ID is required for ALPHACI-managed Vercel deployment targets',
-        );
-      }
-
-      return {
-        vercelOrgId: teamId,
-        vercelTeamId: teamId,
-        ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
-      };
-    }
-
-    const teamId =
-      typeof connectionMetadata['teamId'] === 'string'
-        ? connectionMetadata['teamId'].trim()
-        : '';
-    const teamSlug =
-      typeof connectionMetadata['teamSlug'] === 'string'
-        ? connectionMetadata['teamSlug'].trim()
-        : '';
-    const orgId =
-      typeof connectionMetadata['orgId'] === 'string'
-        ? connectionMetadata['orgId'].trim()
-        : '';
-
-    if (!orgId && !teamId) {
-      throw new BadRequestException(
-        'Vercel provider connection is missing org metadata. Reconnect the Vercel account before provisioning deployment targets.',
-      );
-    }
-
-    return {
-      vercelOrgId: orgId || teamId,
-      ...(teamId ? { vercelTeamId: teamId } : {}),
-      ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
-    };
+  ): DeploymentProviderPolicy | undefined {
+    return this.providerRegistry?.find(provider)?.policy;
   }
 
-  private resolveRenderDefaults(dto: CreateDeploymentTargetDto): {
-    renderServiceType: CreateDeploymentTargetDto['renderServiceType'] | null;
-    renderRuntime: CreateDeploymentTargetDto['renderRuntime'] | null;
-    renderInstanceType: string | null;
-    renderRegion: string | null;
-    renderEnvironmentName:
-      | CreateDeploymentTargetDto['renderEnvironmentName']
-      | null;
-    dockerContext: string | null;
-    dockerfilePath: string | null;
-  } {
-    if (dto.provider !== 'render') {
-      return {
-        renderServiceType: null,
-        renderRuntime: null,
-        renderInstanceType: null,
-        renderRegion: null,
-        renderEnvironmentName: null,
-        dockerContext: null,
-        dockerfilePath: null,
-      };
-    }
-
-    const defaults = this.renderCostPolicy.resolveDefaults({
-      ownershipMode: dto.ownershipMode,
-      serviceType: dto.renderServiceType,
-      instanceType: dto.renderInstanceType,
-      region: dto.renderRegion,
-    });
-    const rootDirectory = dto.rootDirectory?.trim() || '.';
-    const dockerContext =
-      dto.dockerContext?.trim() ||
-      (rootDirectory === '.' ? '.' : rootDirectory);
-
-    return {
-      renderServiceType: defaults.serviceType,
-      renderRuntime: dto.renderRuntime ?? 'node',
-      renderInstanceType: defaults.instanceType,
-      renderRegion: defaults.region,
-      renderEnvironmentName:
-        dto.renderEnvironmentName ?? this.environmentFromBranch(dto.branchName),
-      dockerContext,
-      dockerfilePath: dto.dockerfilePath?.trim() || 'Dockerfile',
-    };
-  }
-
-  private environmentFromBranch(
-    branchName: string | undefined,
-  ): CreateDeploymentTargetDto['renderEnvironmentName'] {
-    const branch = branchName?.trim();
-    if (branch === 'main') {
-      return 'production';
-    }
-    if (branch === 'uat' || branch === 'production') {
-      return branch;
-    }
-
-    return 'test';
-  }
-
-  private registerExistingMetadata(
-    dto: CreateDeploymentTargetDto,
-    renderDefaults: ReturnType<
-      DeploymentTargetsService['resolveRenderDefaults']
-    >,
+  private managedProviderConfig(
+    config = this.configService.getOrThrow<AppConfig>('app'),
   ): Record<string, unknown> {
-    if (dto.provider !== 'render') {
-      return {};
-    }
-
-    return {
-      deploymentStrategy: 'render_existing_service',
-      renderServiceType: renderDefaults.renderServiceType,
-      renderRuntime: renderDefaults.renderRuntime,
-      renderInstanceType: renderDefaults.renderInstanceType,
-      renderRegion: renderDefaults.renderRegion,
-      renderEnvironmentName: renderDefaults.renderEnvironmentName,
-      dockerContext: renderDefaults.dockerContext,
-      dockerfilePath: renderDefaults.dockerfilePath,
-    };
+    return config.envProvisioning.flowciManaged;
   }
 
   private requireString(value: string | undefined, field: string): string {
@@ -1055,17 +944,11 @@ export class DeploymentTargetsService {
             : {}),
         },
       );
-      const ownerId =
-        target.providerMetadata?.['renderOwnerId'] ??
-        target.providerMetadata?.['ownerId'];
       const logs = await client.getLogs({
         token,
         targetId: target.providerProjectId,
         ...filters,
-        ...(typeof ownerId === 'string' && ownerId.trim()
-          ? { renderOwnerId: ownerId }
-          : {}),
-        ...this.vercelScopeFor(target),
+        ...this.providerOperationInput(target),
       });
       // An empty array here is a legitimate live result (a quiet deployment
       // with no recent log lines) — getLogs() throws instead of returning []
@@ -1114,117 +997,42 @@ export class DeploymentTargetsService {
       this.tokenResolutionInputFor(target),
     );
 
-    return { target, token, scope: this.vercelScopeFor(target) };
-  }
-  private vercelScopeFor(target: DeploymentTargetSummary): {
-    vercelTeamId?: string;
-    vercelTeamSlug?: string;
-  } {
-    const teamId = target.providerMetadata?.['vercelTeamId'];
-    const slug = target.providerMetadata?.['vercelTeamSlug'];
     return {
-      ...(typeof teamId === 'string' && teamId.trim()
-        ? { vercelTeamId: teamId.trim() }
-        : {}),
-      ...(typeof slug === 'string' && slug.trim()
-        ? { vercelTeamSlug: slug.trim() }
-        : {}),
+      target,
+      token,
+      scope: this.providerOperationInput(target),
     };
+  }
+  private providerOperationInput(
+    target: DeploymentTargetSummary,
+  ): Record<string, unknown> {
+    const policy = this.providerPolicy(target.provider);
+    if (!policy) {
+      return {};
+    }
+    return policy.resolveOperationInput({
+      ownershipMode: target.ownershipMode ?? 'byo',
+      providerMetadata: target.providerMetadata ?? {},
+      managedConfig: this.managedProviderConfig(),
+    });
   }
 
   private getMockLogs(
     target: DeploymentTargetSummary,
   ): DeploymentTargetLogEntry[] {
-    const now = new Date();
-    const offsetDate = (secondsAgo: number) => {
-      return new Date(now.getTime() - secondsAgo * 1000).toISOString();
-    };
+    const providerLogs = this.providerPolicy(
+      target.provider,
+    )?.resolveMockLogs?.({
+      providerProjectName: target.providerProjectName || null,
+      now: new Date(),
+    });
+    if (providerLogs) return [...providerLogs];
 
-    if (target.provider === 'vercel') {
-      return [
-        {
-          timestamp: offsetDate(70),
-          message:
-            ' ready   - started server on 0.0.0.0:3000, url: http://localhost:3000',
-          level: 'info',
-        },
-        {
-          timestamp: offsetDate(68),
-          message: ' info    - Loaded env from /app/.env',
-          level: 'info',
-        },
-        {
-          timestamp: offsetDate(60),
-          message:
-            ' event   - compiled client and server successfully in 835ms (192 modules)',
-          level: 'info',
-        },
-        {
-          timestamp: offsetDate(50),
-          message: ' info    - [request] GET / 200 in 89ms',
-          level: 'info',
-        },
-        {
-          timestamp: offsetDate(40),
-          message: ' info    - [request] GET /api/capabilities 200 in 12ms',
-          level: 'info',
-        },
-        {
-          timestamp: offsetDate(30),
-          message:
-            ' warn    - [warning] Large page data detected in /projects/[projectId] (120kb)',
-          level: 'warn',
-        },
-        {
-          timestamp: offsetDate(15),
-          message:
-            ' error   - [problem] Failed to proxy socket connection: connection timeout at /api/ws',
-          level: 'error',
-        },
-      ];
-    }
-
-    const dateStr = now.toLocaleDateString('en-US');
     return [
       {
-        timestamp: offsetDate(90),
-        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [RouterExplorer] Mapped {/api/v1/capabilities, GET} route +1ms`,
+        timestamp: new Date().toISOString(),
+        message: `Live logs are not available for ${target.provider}.`,
         level: 'info',
-      },
-      {
-        timestamp: offsetDate(88),
-        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [NestApplication] Nest application successfully started +402ms`,
-        level: 'info',
-      },
-      {
-        timestamp: offsetDate(86),
-        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [Bootstrap] Application running on 0.0.0.0:10000`,
-        level: 'info',
-      },
-      {
-        timestamp: offsetDate(75),
-        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:41 AM    WARN [AllExceptionsFilter] HTTP 404 on HEAD /: Cannot HEAD /`,
-        level: 'warn',
-      },
-      {
-        timestamp: offsetDate(65),
-        message: `==> Your service is live 🚀`,
-        level: 'system',
-      },
-      {
-        timestamp: offsetDate(64),
-        message: `==> Available at your primary URL https://${target.providerProjectName || 'flowci-be-test'}.onrender.com`,
-        level: 'system',
-      },
-      {
-        timestamp: offsetDate(60),
-        message: `==> //////////////////////////////////////////////////////`,
-        level: 'system',
-      },
-      {
-        timestamp: offsetDate(30),
-        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:13:27 AM    WARN [CatalogService] Could not fetch central-workflow tags from GitHub; falling back to the default ref only; GitHub tags request failed with status 403`,
-        level: 'warn',
       },
     ];
   }

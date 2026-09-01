@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '#kernel/config/app.config';
 import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
 import type { DeploymentTargetSummary } from '../core/deployments.types';
-import { providerPublicUrl } from '../core/provider-public-url';
 import { EnvTokenEncryptionService } from '../application/encryption.service';
 import {
   PROVIDER_CLIENT_REGISTRY,
@@ -18,6 +17,8 @@ import {
 } from '../core/deployment-provisioning.contract';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
 /** One target's contribution to the live fetch. */
 interface TargetFetchOutcome {
@@ -44,6 +45,8 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     private readonly providerConnectionsRepository?: ProviderConnectionsRepository,
     @Optional()
     private readonly encryptionService?: EnvTokenEncryptionService,
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {}
 
   async listDeployments(
@@ -145,7 +148,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     }
 
     const names = [...failedProviders]
-      .map((provider) => (provider === 'vercel' ? 'Vercel' : 'Render'))
+      .map((provider) => this.providerLabel(provider))
       .sort();
     const list =
       names.length === 1
@@ -153,6 +156,15 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 
     return `Could not reach ${list} to load deployment history. The list may be incomplete.`;
+  }
+
+  private providerLabel(provider: string): string {
+    return (
+      this.providerRegistry?.find(provider)?.label ??
+      provider
+        .replace(/[-_]+/g, ' ')
+        .replace(/^./, (first) => first.toUpperCase())
+    );
   }
 
   private async fetchTargetDeployments(
@@ -181,7 +193,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
       const events = await client.getDeployHistory({
         token,
         targetId: target.providerProjectId,
-        ...this.vercelScopeFor(target),
+        ...this.providerOperationInput(target),
       });
       const items = events.map((event) => ({
         id: event.id,
@@ -202,7 +214,17 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         readyAt: event.readyAt,
         // Per-deployment hostname where the provider issues one, otherwise
         // the target's stable public URL.
-        deploymentUrl: event.deploymentUrl ?? providerPublicUrl(target),
+        deploymentUrl:
+          event.deploymentUrl ??
+          this.providerRegistry
+            ?.find(target.provider)
+            ?.presentation?.publicUrl(
+              this.presentationTarget(target),
+              event.environment === 'production' || target.branchName === 'main'
+                ? 'production'
+                : 'preview',
+            ) ??
+          null,
         pullRequestNumber: event.pullRequestNumber,
         inspectorUrl: event.inspectorUrl,
         dashboardUrl: this.provider.dashboardUrl(target),
@@ -228,20 +250,28 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     return raw.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0, 500);
   }
 
-  private vercelScopeFor(target: DeploymentTargetSummary): {
-    vercelTeamId?: string;
-    vercelTeamSlug?: string;
-  } {
-    const teamId = target.providerMetadata['vercelTeamId'];
-    const slug = target.providerMetadata['vercelTeamSlug'];
+  private presentationTarget(target: DeploymentTargetSummary) {
     return {
-      ...(typeof teamId === 'string' && teamId.trim()
-        ? { vercelTeamId: teamId.trim() }
-        : {}),
-      ...(typeof slug === 'string' && slug.trim()
-        ? { vercelTeamSlug: slug.trim() }
-        : {}),
+      providerProjectId: target.providerProjectId,
+      providerProjectName: target.providerProjectName,
+      providerMetadata: target.providerMetadata,
+      branchName: target.branchName,
     };
+  }
+
+  private providerOperationInput(
+    target: DeploymentTargetSummary,
+  ): Record<string, unknown> {
+    const policy = this.providerRegistry?.find(target.provider)?.policy;
+    if (!policy) {
+      return {};
+    }
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return policy.resolveOperationInput({
+      ownershipMode: target.ownershipMode,
+      providerMetadata: target.providerMetadata,
+      managedConfig: config?.envProvisioning.flowciManaged ?? {},
+    });
   }
 
   private async resolveProviderToken(
@@ -250,11 +280,11 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
   ): Promise<string | null> {
     if (target.ownershipMode === 'flowci_managed') {
       const config = this.configService?.getOrThrow<AppConfig>('app');
-      const token =
-        target.provider === 'render'
-          ? config?.envProvisioning.flowciManaged.renderToken
-          : config?.envProvisioning.flowciManaged.vercelToken;
-      return token ?? null;
+      const managedConfig = config?.envProvisioning.flowciManaged as unknown as
+        | Record<string, unknown>
+        | undefined;
+      const token = managedConfig?.[`${target.provider}Token`];
+      return typeof token === 'string' && token.trim() ? token.trim() : null;
     }
 
     if (

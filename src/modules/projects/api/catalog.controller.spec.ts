@@ -5,6 +5,7 @@ import { CatalogController } from './catalog.controller.js';
 import { CatalogService } from '../application/catalog/catalog.service.js';
 import type { WorkflowTemplate } from '../application/catalog/catalog.service.js';
 import { GithubService } from '#modules/pipelines/github/github.service.js';
+import { GITHUB_PROJECT_PORT } from '#kernel/ports/github.port.js';
 
 const fakeTemplate: WorkflowTemplate = {
   id: 'nestjs-be',
@@ -47,7 +48,7 @@ describe('CatalogController', () => {
       controllers: [CatalogController],
       providers: [
         { provide: CatalogService, useValue: service },
-        { provide: GithubService, useValue: githubService },
+        { provide: GITHUB_PROJECT_PORT, useValue: githubService },
       ],
     })
       .overrideGuard(

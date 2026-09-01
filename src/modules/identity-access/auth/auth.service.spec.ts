@@ -5,9 +5,9 @@ import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { UsersRepository } from './infra/users.repository.js';
 import { SubscriptionsRepository } from '#modules/billing/subscription/infra/subscriptions.repository.js';
-import { OutboxRepository } from '#kernel/events/outbox.repository.js';
 import { OAuthStateRepository } from './infra/oauth-state.repository.js';
 import { SUBSCRIPTION_BOOTSTRAP } from '#modules/billing/subscription/subscription.contracts.js';
+import { GITHUB_TEAM_ROLE_PORT } from '#kernel/ports/github-team-role.port.js';
 import { GithubTeamRoleService } from '#modules/pipelines/github/github-team-role.service.js';
 import type { Request } from 'express';
 import type {
@@ -73,11 +73,6 @@ const makeSubsRepo = () =>
     ensureDefaultFreeSubscription: jest.fn().mockResolvedValue(fakeFreeSub),
   }) as unknown as SubscriptionsRepository;
 
-const makeOutboxRepo = () =>
-  ({
-    publishLater: jest.fn().mockResolvedValue(undefined),
-  }) as unknown as OutboxRepository;
-
 /**
  * Default OAuthStateRepository mock: save() succeeds, findAndDelete() returns
  * a matching github record. Tests override these per-case as needed.
@@ -128,7 +123,6 @@ async function createService(
 ) {
   const usersRepo = makeUsersRepo(usersRepoOverrides);
   const subsRepo = makeSubsRepo();
-  const outboxRepo = makeOutboxRepo();
   const oauthStateRepo = makeOAuthStateRepo(oauthStateOverrides);
 
   const module: TestingModule = await Test.createTestingModule({
@@ -138,12 +132,11 @@ async function createService(
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: SUBSCRIPTION_BOOTSTRAP, useValue: subsRepo },
-      { provide: OutboxRepository, useValue: outboxRepo },
       { provide: OAuthStateRepository, useValue: oauthStateRepo },
       // Sync disabled by default so these tests continue to exercise the
       // legacy org-ownership seeding path unchanged.
       {
-        provide: GithubTeamRoleService,
+        provide: GITHUB_TEAM_ROLE_PORT,
         useValue: makeGithubTeamRoleService(),
       },
     ],
@@ -153,7 +146,6 @@ async function createService(
     service: module.get(AuthService),
     usersRepo,
     subsRepo,
-    outboxRepo,
     oauthStateRepo,
   };
 }
@@ -168,7 +160,7 @@ function mockSuccessfulGitHubFetch(
     .mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ access_token: 'gh-token-123' }),
-    } as unknown as Response)
+    })
     .mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -180,7 +172,7 @@ function mockSuccessfulGitHubFetch(
           avatar_url: 'https://example.com/avatar.png',
           ...profile,
         }),
-    } as unknown as Response);
+    });
 }
 
 interface GitHubProfilePayload {
@@ -449,7 +441,7 @@ describe('AuthService', () => {
         ok: false,
         status: 404,
         json: () => Promise.resolve({}),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -484,7 +476,7 @@ describe('AuthService', () => {
         ok: true,
         status: 200,
         json: () => Promise.resolve({ state: 'pending' }),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -522,7 +514,7 @@ describe('AuthService', () => {
         ok: false,
         status: 403,
         json: () => Promise.resolve({}),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -585,7 +577,7 @@ describe('AuthService', () => {
         ok: true,
         status: 200,
         json: () => Promise.resolve({ state: 'active' }),
-      } as unknown as Response);
+      });
 
       const { service, usersRepo } = await createService(
         true,
@@ -701,7 +693,7 @@ describe('AuthService', () => {
       expect(upsertSpy).not.toHaveBeenCalled();
     });
 
-    it('does NOT call ensureDefaultFreeSubscription or publishLater for archived accounts', async () => {
+    it('does NOT call ensureDefaultFreeSubscription or publishBestEffort for archived accounts', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
 
       const archivedRow: ArchivedUserLookup = {
@@ -710,30 +702,24 @@ describe('AuthService', () => {
         archivedAt: '2026-05-01T00:00:00Z',
         githubUserId: '12345',
       };
-      const { service, subsRepo, outboxRepo } = await createService(
-        true,
-        undefined,
-        {
-          findByGithubUserIdIncludingArchived: jest
-            .fn()
-            .mockResolvedValue(archivedRow),
-        },
-      );
+      const { service, subsRepo } = await createService(true, undefined, {
+        findByGithubUserIdIncludingArchived: jest
+          .fn()
+          .mockResolvedValue(archivedRow),
+      });
 
       const req = makeRequest();
       await service.handleGitHubCallback(req, 'code123', 'valid-state');
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(subsRepo.ensureDefaultFreeSubscription).not.toHaveBeenCalled();
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(outboxRepo.publishLater).not.toHaveBeenCalled();
     });
 
     it('returns failed when token exchange fails', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
         json: () => Promise.resolve({}),
-      } as unknown as Response);
+      });
 
       const { service } = await createService();
       const req = makeRequest();
@@ -751,7 +737,7 @@ describe('AuthService', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ access_token: 'gh-token' }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: () =>
@@ -761,14 +747,14 @@ describe('AuthService', () => {
               name: 'User',
               email: null,
             }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: () =>
             Promise.resolve([
               { email: 'primary@example.com', primary: true, verified: true },
             ]),
-        } as unknown as Response);
+        });
 
       const { service } = await createService();
       const req = makeRequest();

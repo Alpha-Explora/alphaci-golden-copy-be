@@ -10,7 +10,10 @@ import {
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { WorkspaceAccessService } from '#modules/identity-access/index.js';
+import {
+  WORKSPACE_ACCESS_PORT,
+  type WorkspaceAccessPort,
+} from '#kernel/ports/workspaces.port';
 import { CustomDomainsRepository } from '../infrastructure/custom-domains.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import {
@@ -47,7 +50,8 @@ export class CustomDomainsService {
     @Inject(PROVIDER_CLIENT_REGISTRY)
     private readonly clientRegistry: ProviderClientRegistryPort,
     @Optional()
-    private readonly workspaceAccessService?: WorkspaceAccessService,
+    @Inject(WORKSPACE_ACCESS_PORT)
+    private readonly workspaceAccessService?: WorkspaceAccessPort,
     @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
   ) {}
@@ -250,7 +254,7 @@ export class CustomDomainsService {
   }
 
   private requireDomainClient(provider: string) {
-    const client = this.clientRegistry.getClient(provider as never);
+    const client = this.clientRegistry.getClient(provider);
     if (!client.addDomain || !client.verifyDomain) {
       throw new ServiceUnavailableException(
         `Custom domains are not supported for ${provider} in this deployment.`,

@@ -41,10 +41,10 @@ const ROLE_RANK: Record<GroupRole, number> = {
  * method here throws — none return null/undefined and let a caller
  * accidentally proceed unauthorized. This is a deliberate, explicit fix for
  * the known fail-open shape in WorkspaceAccessService.assertProjectRole
- * (returns null on missing membership; see plan §3.3 check 1) — that bug is
+ * (returns null on missing membership; see last-owner safety rule check 1) — that bug is
  * NOT repeated here.
  *
- * 404-vs-403 convention (plan §2.0): a caller who cannot see a resource at
+ * 404-vs-403 convention (resource visibility rule): a caller who cannot see a resource at
  * all gets 404 ("not found"); a caller who can see it but lacks the required
  * role gets 403 ("insufficient role").
  */
@@ -178,8 +178,8 @@ export class HierarchyAccessService {
 
   /**
    * Group management roles (default owner/admin) OR platform admin.
-   * Platform admin bypasses the membership requirement entirely (source plan
-   * §3: "Platform administrators have full system-wide authority").
+   * Platform admin bypasses the membership requirement entirely because
+   * platform administrators have full system-wide authority.
    */
   async assertGroupManagerOrPlatformAdmin(
     groupId: string,
@@ -292,11 +292,11 @@ export class HierarchyAccessService {
 
   /**
    * The ONE choke point for "is this developer allowed to touch this exact
-   * repository" (plan §3.2 key implementation note). Every developer-facing
+   * repository" (repository access contract key implementation note). Every developer-facing
    * repository/config endpoint must call this — no ad-hoc role checks
    * duplicated inline. Repository non-existence and "exists but no active
    * assignment" are deliberately indistinguishable (both 404) so an
-   * unassigned developer cannot fingerprint repository existence (plan §9).
+   * unassigned developer cannot fingerprint repository existence (security contract).
    */
   async assertActiveRepositoryAssignment(
     repositoryId: string,

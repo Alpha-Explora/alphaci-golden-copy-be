@@ -1,4 +1,7 @@
 import yaml from 'js-yaml';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
+import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
@@ -40,6 +43,10 @@ interface ParsedWorkflow {
 }
 
 describe('buildStagedWorkflowBundle', () => {
+  const workflowFragmentRegistry = new WorkflowFragmentRegistry([
+    renderWorkflowFragment,
+    vercelWorkflowFragment,
+  ]);
   it('resolves platform callback URLs from deployment configuration', () => {
     expect(
       resolvePlatformBaseUrl({
@@ -409,22 +416,26 @@ describe('buildStagedWorkflowBundle', () => {
   });
 
   it('emits branch-scoped Vercel deploy jobs when deployment targets are present', () => {
-    const bundle = buildStagedWorkflowBundle(makeTemplate('nextjs'), {
-      templateId: 'fe-nextjs',
-      serviceName: 'orders-web',
-      deploymentTargets: [
-        {
-          slot: 'standalone',
-          provider: 'vercel',
-          deploymentStrategy: 'vercel_ci_pushed',
-          secretNames: {
-            token: 'VERCEL_TOKEN_STANDALONE',
-            orgId: 'VERCEL_ORG_ID_STANDALONE',
-            projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate('nextjs'),
+      {
+        templateId: 'fe-nextjs',
+        serviceName: 'orders-web',
+        deploymentTargets: [
+          {
+            slot: 'standalone',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            secretNames: {
+              token: 'VERCEL_TOKEN_STANDALONE',
+              orgId: 'VERCEL_ORG_ID_STANDALONE',
+              projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+            },
           },
-        },
-      ],
-    });
+        ],
+      },
+      workflowFragmentRegistry,
+    );
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
     const packageYaml = bundle.workflowFiles[2]!.yaml;
@@ -456,25 +467,29 @@ describe('buildStagedWorkflowBundle', () => {
   });
 
   it('emits Render docker and deploy jobs per branch when targets are present', () => {
-    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
-      templateId: 'be-nestjs',
-      serviceName: 'orders-api',
-      deploymentTargets: [
-        {
-          slot: 'backend',
-          provider: 'render',
-          branchName: 'uat',
-          deploymentStrategy: 'render_image_pushed',
-          dockerContext: 'backend',
-          dockerfilePath: 'Dockerfile',
-          imageName: 'alphaci-backend-uat-orders-api',
-          secretNames: {
-            deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
-            healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate(),
+      {
+        templateId: 'be-nestjs',
+        serviceName: 'orders-api',
+        deploymentTargets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            branchName: 'uat',
+            deploymentStrategy: 'render_image_pushed',
+            dockerContext: 'backend',
+            dockerfilePath: 'Dockerfile',
+            imageName: 'alphaci-backend-uat-orders-api',
+            secretNames: {
+              deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
+              healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
+            },
           },
-        },
-      ],
-    });
+        ],
+      },
+      workflowFragmentRegistry,
+    );
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
 

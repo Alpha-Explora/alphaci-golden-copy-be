@@ -205,7 +205,7 @@ export interface AppConfig {
     // parent domain (e.g. app.example.com + api.example.com), set this to
     // ".example.com" so the session cookie is shared first-party across the
     // subdomains — this is what makes login work on Safari/iOS (no third-party
-    // cookie). See docs/AUTH_CUSTOM_DOMAIN_CUTOVER.md.
+    // cookie). See docs/runbooks/runbook-auth-custom-domain-cutover.md.
     cookieDomain?: string;
   };
   archivedAccountRetentionDays: number;
@@ -216,8 +216,8 @@ export interface AppConfig {
      * outbox lifecycle against a no-op GitHub client that always reports
      * success. 'live' switches GithubSyncService's injected
      * GithubTeamAccessProvider to real GitHub Team API calls. See
-     * docs/HIERARCHY_IMPLEMENTATION_PLAN.md §1.7 — no environment should be
-     * flipped to 'live' without an explicit operator decision.
+     * The current hierarchy and GitHub team-access contract require an
+     * explicit operator decision before an environment is flipped to 'live'.
      */
     githubSyncMode: 'stub' | 'live';
     encryptionKeyEnvVar: string;
@@ -487,7 +487,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
       enabled: env['HIERARCHY_ENABLED'] !== 'false',
       // Defaults to 'stub' regardless of what an unrecognized value is set
       // to — an environment must explicitly set 'live' to enable real
-      // GitHub Team API calls (plan §1.7 hard requirement: default stub
+      // GitHub Team API calls (explicit GitHub sync configuration hard requirement: default stub
       // everywhere).
       githubSyncMode:
         env['HIERARCHY_GITHUB_SYNC_MODE'] === 'live' ? 'live' : 'stub',

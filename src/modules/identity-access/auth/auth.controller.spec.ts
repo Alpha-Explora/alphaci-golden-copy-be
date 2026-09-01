@@ -7,6 +7,7 @@ import { SubscriptionService } from '#modules/billing/subscription/subscription.
 import { ConfigService } from '@nestjs/config';
 import { PlatformAdminAccessService } from '#modules/identity-access/admin/platform-admin-access.service.js';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard.js';
+import { SUBSCRIPTION_ACCESS } from '#kernel/auth/subscription-access.port.js';
 import type { Request, Response } from 'express';
 import type {
   SessionUser,
@@ -100,7 +101,7 @@ describe('AuthController', () => {
       controllers: [AuthController],
       providers: [
         { provide: AuthService, useValue: authService },
-        { provide: SubscriptionService, useValue: subscriptionService },
+        { provide: SUBSCRIPTION_ACCESS, useValue: subscriptionService },
         {
           provide: PlatformAdminAccessService,
           useValue: makePlatformAdminAccessService(),

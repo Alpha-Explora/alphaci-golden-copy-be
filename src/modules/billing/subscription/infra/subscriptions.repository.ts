@@ -158,10 +158,11 @@ export class SubscriptionsRepository {
           [userId, planCode, provider, amountPhp],
         );
 
-        await client.query('COMMIT');
         const insertedRow = insert.rows[0];
         if (!insertedRow) throw new Error('Activate plan returned no row');
-        return this.toSubscriptionState(insertedRow);
+        const state = this.toSubscriptionState(insertedRow);
+        await client.query('COMMIT');
+        return state;
       } catch (error) {
         await client.query('ROLLBACK');
         throw error;

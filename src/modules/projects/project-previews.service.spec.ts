@@ -2,7 +2,7 @@ import { ProjectPreviewsService } from './project-previews.service';
 import type {
   DeploymentHistoryItem as ProjectDeploymentHistoryItem,
   DeploymentProjectReference,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 
 const projectReference: DeploymentProjectReference = {
   projectId: 'project-1',
@@ -58,7 +58,7 @@ describe('ProjectPreviewsService', () => {
 
   function createService() {
     return new ProjectPreviewsService(
-      deploymentsService as never,
+      deploymentsService,
       embeddabilityProbe as never,
       configService as never,
     );

@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 import {
   PROJECT_LOOKUP,
   type ProjectLookupPort,
@@ -27,7 +30,8 @@ export class RepositoriesService {
     private readonly repositoriesRepository: RepositoriesRepository,
     private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
     private readonly accessService: HierarchyAccessService,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     @Inject(PROJECT_LOOKUP)
     private readonly projectLookup: ProjectLookupPort,
     private readonly auditEventsService: AuditEventPublisher,
@@ -35,7 +39,7 @@ export class RepositoriesService {
 
   /**
    * Creates the GitHub repository (reuses GithubService.createRepo — does
-   * not reimplement GitHub repo creation, plan §1.5), the hierarchy record,
+   * not reimplement GitHub repo creation, the hierarchy record,
    * and a projects.provisioned_projects row wired to it so the repository
    * immediately gets dashboard/CI/deployment functionality for free.
    */
@@ -87,7 +91,7 @@ export class RepositoriesService {
       eventCode: HIERARCHY_EVENT_CODES.repositoryCreated,
       message: `Repository "${repository.name}" created`,
       // provisionedProject.id is safe to set as projectId (real FK target);
-      // hierarchy identifiers otherwise live in metadata only (plan §2.2
+      // hierarchy identifiers otherwise live in metadata only (hierarchy persistence contract
       // critical note — a repository with no provisioned_project_id link
       // cannot be passed as projectId, but this one always has one).
       projectId: provisionedProject.id,

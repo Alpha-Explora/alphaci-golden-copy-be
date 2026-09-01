@@ -7,25 +7,22 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { DatabaseService } from '#kernel/db/database.service';
-import {
-  DEPLOYMENT_USAGE_FACTS,
-  type DeploymentUsageProviderId,
-} from '#modules/runtime/index.js';
+import type {
+  ManagedFleetCapacityFact,
+  ManagedQuotaDefinition,
+  UsageQuotaPort,
+} from '#kernel/ports/usage-quota.port';
 import type { UsageLimitCode, UsageMeResponse } from './usage.types';
 
-const DEFAULT_LIMITS: Record<'free' | 'pro', Record<UsageLimitCode, number>> = {
+const DEFAULT_LIMITS: Record<'free' | 'pro', Record<string, number>> = {
   free: {
     projects: 3,
-    managed_render_services: 1,
-    managed_vercel_projects: 1,
     deployment_targets: 5,
     env_keys: 25,
     workflow_prs: 5,
   },
   pro: {
     projects: 50,
-    managed_render_services: 10,
-    managed_vercel_projects: 10,
     deployment_targets: 100,
     env_keys: 500,
     workflow_prs: 100,
@@ -33,11 +30,31 @@ const DEFAULT_LIMITS: Record<'free' | 'pro', Record<UsageLimitCode, number>> = {
 };
 
 @Injectable()
-export class UsageQuotaService {
+export class UsageQuotaService implements UsageQuotaPort {
+  private readonly managedQuotaDefinitions = new Map<
+    string,
+    ManagedQuotaDefinition
+  >();
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
   ) {}
+
+  /**
+   * Called by runtime composition after provider policies are constructed.
+   * Keeping registration one-way means billing never imports runtime or a
+   * provider implementation just to render the usage screen.
+   */
+  registerManagedQuota(definition: ManagedQuotaDefinition): void {
+    const existing = this.managedQuotaDefinitions.get(definition.providerId);
+    if (existing && existing.quotaCode !== definition.quotaCode) {
+      throw new Error(
+        `Managed quota already registered for provider '${definition.providerId}'`,
+      );
+    }
+    this.managedQuotaDefinitions.set(definition.providerId, definition);
+  }
 
   async getUsage(userId: string): Promise<UsageMeResponse> {
     const internal = await this.isInternalUser(userId);
@@ -53,7 +70,7 @@ export class UsageQuotaService {
     const enabled = this.enabled() && !internal;
     const plan = await this.resolvePlan(userId);
     const counts = await this.loadCounts(userId);
-    const limits = DEFAULT_LIMITS[plan];
+    const limits = this.limitsForPlan(plan);
 
     return {
       enabled,
@@ -61,15 +78,16 @@ export class UsageQuotaService {
       items: (Object.keys(limits) as UsageLimitCode[]).map((code) => ({
         code,
         current: counts[code] ?? 0,
-        limit: limits[code],
-        upgradeRequired: !internal && (counts[code] ?? 0) >= limits[code],
+        limit: limits[code] ?? 0,
+        upgradeRequired:
+          !internal && (counts[code] ?? 0) >= (limits[code] ?? 0),
       })),
     };
   }
 
   async assertWithinLimit(
     userId: string,
-    limitCode: UsageLimitCode,
+    limitCode: string,
     increment = 1,
   ): Promise<void> {
     if (!this.enabled()) {
@@ -116,21 +134,20 @@ export class UsageQuotaService {
    * coarse safety ceiling; the per-user quota remains the hard per-tenant limit.
    */
   async assertManagedFleetCapacity(
-    provider: DeploymentUsageProviderId,
+    fact: ManagedFleetCapacityFact,
   ): Promise<void> {
     if (!this.databaseService.isEnabled()) {
       return;
     }
 
     const config = this.configService.getOrThrow<AppConfig>('app');
-    const fact = DEPLOYMENT_USAGE_FACTS.find(
-      (candidate) => candidate.providerId === provider,
-    );
-    if (!fact) {
-      return;
-    }
+    const managedConfig = config.envProvisioning.flowciManaged;
+    const configuredCap =
+      managedConfig[fact.fleetCapConfigKey as keyof typeof managedConfig];
     const cap =
-      config.envProvisioning.flowciManaged[fact.fleetCapConfigKey] ?? 0;
+      typeof configuredCap === 'number'
+        ? configuredCap
+        : Number(configuredCap ?? 0);
 
     if (!Number.isFinite(cap) || cap <= 0) {
       return;
@@ -144,7 +161,7 @@ export class UsageQuotaService {
         FROM env_provisioning.project_deployment_targets
         WHERE ownership_mode = 'flowci_managed' AND provider = $1;
       `,
-      [provider],
+      [fact.providerId],
     );
     const current = this.toNumber(result.rows[0]?.count);
 
@@ -153,7 +170,7 @@ export class UsageQuotaService {
         message:
           `Managed ${fact.providerLabel} provisioning is at capacity. ` +
           `Connect your own ${fact.providerLabel} account (BYO) to continue, or try again later.`,
-        provider,
+        provider: fact.providerId,
         current,
         limit: cap,
         managedFleetExhausted: true,
@@ -198,13 +215,9 @@ export class UsageQuotaService {
     return planCode === 'pro' || planCode === 'pro_monthly' ? 'pro' : 'free';
   }
 
-  private async loadCounts(
-    userId: string,
-  ): Promise<Record<UsageLimitCode, number>> {
+  private async loadCounts(userId: string): Promise<Record<string, number>> {
     const result = await this.databaseService.query<{
       projects: string | number;
-      managed_render_services?: string | number;
-      managed_vercel_projects?: string | number;
       deployment_targets: string | number;
       env_keys: string | number;
       workflow_prs: string | number;
@@ -247,16 +260,14 @@ export class UsageQuotaService {
       [userId],
     );
     const row = result.rows[0];
-    const counts: Record<UsageLimitCode, number> = {
+    const counts: Record<string, number> = {
       projects: this.toNumber(row?.projects),
-      managed_render_services: this.toNumber(row?.managed_render_services),
-      managed_vercel_projects: this.toNumber(row?.managed_vercel_projects),
       deployment_targets: this.toNumber(row?.deployment_targets),
       env_keys: this.toNumber(row?.env_keys),
       workflow_prs: this.toNumber(row?.workflow_prs),
     };
 
-    for (const fact of DEPLOYMENT_USAGE_FACTS) {
+    for (const fact of this.managedQuotaDefinitions.values()) {
       const providerRow = result.rows.find(
         (candidate) => candidate.managed_provider === fact.providerId,
       );
@@ -266,6 +277,25 @@ export class UsageQuotaService {
     }
 
     return counts;
+  }
+
+  private limitsForPlan(plan: 'free' | 'pro'): Record<string, number> {
+    const base = DEFAULT_LIMITS[plan];
+    const limits: Record<string, number> = {
+      projects: base.projects ?? 0,
+    };
+    for (const definition of this.managedQuotaDefinitions.values()) {
+      limits[definition.quotaCode] =
+        plan === 'free' ? definition.freeLimit : definition.proLimit;
+    }
+    for (const code of [
+      'deployment_targets',
+      'env_keys',
+      'workflow_prs',
+    ] as const) {
+      limits[code] = base[code] ?? 0;
+    }
+    return limits;
   }
 
   private toNumber(value: string | number | null | undefined): number {

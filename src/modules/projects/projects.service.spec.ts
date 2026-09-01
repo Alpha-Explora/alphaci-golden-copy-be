@@ -15,6 +15,9 @@ import type { WorkspacesService } from '#modules/identity-access/workspaces/work
 import type { WorkspaceAccessService } from '#modules/identity-access/workspaces/workspace-access.service.js';
 import type { ProjectsRepository } from './projects.repository.js';
 import { ProjectsService } from './projects.service.js';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
+import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
 
 jest.mock('node:fs/promises', () => ({
   readFile: jest.fn(),
@@ -281,6 +284,63 @@ const makeProjectFeatureConfig = (options?: {
     }),
   }) as never;
 
+const workflowFragmentRegistry = new WorkflowFragmentRegistry([
+  renderWorkflowFragment,
+  vercelWorkflowFragment,
+]);
+
+const deploymentProvisioningDefaults = {
+  resolveDefaultCreateTarget: ({
+    serviceName,
+    repoName,
+    servicePath,
+  }: {
+    serviceName: string;
+    repoName: string;
+    servicePath?: string;
+  }) => {
+    const base = (serviceName || repoName || 'backend')
+      .trim()
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9._-]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
+    const rootDirectory = servicePath?.trim() || '.';
+    return {
+      slot: 'backend' as const,
+      provider: 'render',
+      ownershipMode: 'flowci_managed' as const,
+      projectName: `${base || 'backend'}-uat`,
+      branchName: 'uat',
+      rootDirectory,
+      buildCommand: 'npm ci && npm run build',
+      startCommand: 'npm run start:prod',
+      renderDeployMethod: 'managed_image' as const,
+      renderServiceType: 'web_service' as const,
+      renderRuntime: 'docker' as const,
+      renderInstanceType: 'free',
+      renderRegion: 'singapore',
+      dockerContext: rootDirectory,
+      dockerfilePath: 'Dockerfile',
+      env: [],
+    };
+  },
+};
+
+/**
+ * Direct unit tests intentionally bypass Nest's module graph. Pad the legacy
+ * positional constructor so those tests still receive the same provider
+ * fragment registry that ProjectsModule injects in production.
+ */
+const makeProjectsService = (...args: unknown[]): ProjectsService => {
+  const padded = [...args];
+  while (padded.length < 26) padded.push(undefined);
+  padded[23] ??= workflowFragmentRegistry;
+  padded[25] ??= deploymentProvisioningDefaults;
+  return new (ProjectsService as unknown as new (
+    ...constructorArgs: unknown[]
+  ) => ProjectsService)(...padded);
+};
+
 describe('ProjectsService', () => {
   let service: ProjectsService;
   let githubService: GithubService;
@@ -339,12 +399,12 @@ jobs:
         targets: [],
       }),
     };
-    service = new ProjectsService(
+    service = makeProjectsService(
       makeCatalogService(),
       githubService,
       makeProjectsRepository(),
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
     );
 
     pushWorkflowFileSpy = jest
@@ -517,12 +577,12 @@ jobs:
     const notificationEventsService = {
       record: jest.fn(),
     };
-    const eventService = new ProjectsService(
+    const eventService = makeProjectsService(
       makeCatalogService(),
       githubService,
       makeProjectsRepository(),
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
       undefined,
       undefined,
       undefined,
@@ -532,9 +592,9 @@ jobs:
       undefined,
       undefined,
       undefined,
-      auditEventsService as never,
+      auditEventsService,
       makeWorkspacesService(),
-      notificationEventsService as never,
+      notificationEventsService,
     );
     jest
       .spyOn(
@@ -596,12 +656,12 @@ jobs:
     const notificationEventsService = {
       record: jest.fn(),
     };
-    const quotaService = new ProjectsService(
+    const quotaService = makeProjectsService(
       makeCatalogService(),
       githubService,
       makeProjectsRepository(),
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
       undefined,
       undefined,
       undefined,
@@ -610,10 +670,10 @@ jobs:
       makeProjectFeatureConfig(),
       undefined,
       undefined,
-      usageQuotaService as never,
-      auditEventsService as never,
+      usageQuotaService,
+      auditEventsService,
       makeWorkspacesService(),
-      notificationEventsService as never,
+      notificationEventsService,
     );
 
     await expect(
@@ -651,12 +711,12 @@ jobs:
       makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
     const workspacesService =
       makeWorkspacesService() as jest.Mocked<WorkspacesService>;
-    const workspaceService = new ProjectsService(
+    const workspaceService = makeProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
       undefined,
       undefined,
       undefined,
@@ -741,12 +801,12 @@ jobs:
   it('passes selected workspace id into project listing', async () => {
     const projectsRepository =
       makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
-    const listService = new ProjectsService(
+    const listService = makeProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
     );
 
     await listService.listProjects('user-1', 25, 'workspace-1');
@@ -807,12 +867,12 @@ jobs:
         },
       ]),
     } as unknown as jest.Mocked<ProjectsRepository>;
-    const listService = new ProjectsService(
+    const listService = makeProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
     );
 
     const result = await listService.listProjects('admin-1', 25);
@@ -1047,9 +1107,9 @@ jobs:
         serviceName: 'orders-api',
       });
 
-      const written = (
-        githubServiceMock.setActionsSecret as unknown as jest.Mock
-      ).mock.calls.map((call) => call[3] as string);
+      const written = githubServiceMock.setActionsSecret.mock.calls.map(
+        (call) => call[3] as string,
+      );
       expect(written).not.toContain('SONAR_TOKEN');
       expect(written).not.toContain('SONAR_PROJECT_KEY');
     });
@@ -1066,9 +1126,9 @@ jobs:
         }),
       ).rejects.toThrow();
 
-      const removed = (
-        githubServiceMock.deleteActionsSecret as unknown as jest.Mock
-      ).mock.calls.map((call) => call[3] as string);
+      const removed = githubServiceMock.deleteActionsSecret.mock.calls.map(
+        (call) => call[3] as string,
+      );
       expect(removed).toEqual(
         expect.arrayContaining(['ALPHACI_TOKEN', 'ALPHACI_REPORT_URL']),
       );
@@ -1086,9 +1146,9 @@ jobs:
         }),
       ).rejects.toThrow();
 
-      const removed = (
-        githubServiceMock.deleteActionsSecret as unknown as jest.Mock
-      ).mock.calls.map((call) => call[3] as string);
+      const removed = githubServiceMock.deleteActionsSecret.mock.calls.map(
+        (call) => call[3] as string,
+      );
       expect(removed).not.toContain('SONAR_TOKEN');
     });
 
@@ -1635,10 +1695,7 @@ jobs:
         updated_at: '2026-06-12T00:00:00.000Z',
       }),
     };
-    const OverviewProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const overviewService = new OverviewProjectsService(
+    const overviewService = makeProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
@@ -1752,12 +1809,12 @@ jobs:
         ],
       }),
     };
-    const auditService = new ProjectsService(
+    const auditService = makeProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
       undefined,
       undefined,
       undefined,
@@ -1767,7 +1824,7 @@ jobs:
       undefined,
       undefined,
       undefined,
-      auditEventsService as never,
+      auditEventsService,
     );
 
     await expect(
@@ -1866,10 +1923,7 @@ jobs:
     const notificationEventsService = {
       record: jest.fn(),
     };
-    const OverviewProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const overviewService = new OverviewProjectsService(
+    const overviewService = makeProjectsService(
       makeCatalogService(),
       githubWithLiveChecks,
       projectsRepository,
@@ -1973,10 +2027,7 @@ jobs:
         updated_at: '2026-06-12T00:00:00.000Z',
       }),
     };
-    const PreviewProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const previewService = new PreviewProjectsService(
+    const previewService = makeProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
@@ -2063,10 +2114,7 @@ jobs:
       pushWorkflowFile: jest.fn(),
       createBranch: jest.fn(),
     };
-    const PreviewProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const previewService = new PreviewProjectsService(
+    const previewService = makeProjectsService(
       makeCatalogService(),
       githubWithWrites,
       projectsRepository,
@@ -2148,10 +2196,7 @@ jobs:
         updated_at: '2026-06-12T00:00:00.000Z',
       }),
     };
-    const PreviewProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const previewService = new PreviewProjectsService(
+    const previewService = makeProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
@@ -2232,27 +2277,27 @@ jobs:
     const notificationEventsService = {
       record: jest.fn().mockResolvedValue(undefined),
     };
-    const prService = new ProjectsService(
+    const prService = makeProjectsService(
       makeCatalogService(),
       githubWrites,
       projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService as never,
-      overviewRepos.ciTokensRepository as never,
-      overviewRepos.deploymentTargetsRepository as never,
-      overviewRepos.envVarsRepository as never,
-      overviewRepos.workflowHistoryRepository as never,
-      overviewRepos.dashboardSnapshotsRepository as never,
+      projectDeploymentProvisioningService,
+      overviewRepos.ciTokensRepository,
+      overviewRepos.deploymentTargetsRepository,
+      overviewRepos.envVarsRepository,
+      overviewRepos.workflowHistoryRepository,
+      overviewRepos.dashboardSnapshotsRepository,
       makeProjectFeatureConfig({
         workflowSettingsPreview: true,
         workflowUpdatePr: true,
       }),
-      overviewRepos.workflowSettingsRepository as never,
-      overviewRepos.workflowUpdateRequestsRepository as never,
+      overviewRepos.workflowSettingsRepository,
+      overviewRepos.workflowUpdateRequestsRepository,
       undefined,
-      auditEventsService as never,
+      auditEventsService,
       undefined,
-      notificationEventsService as never,
+      notificationEventsService,
     ) as ProjectsService & {
       createWorkflowUpdatePullRequest: (
         projectId: string,
@@ -2377,10 +2422,7 @@ jobs:
       defaultBranch: 'master',
       private: false,
     });
-    const PrProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const prService = new PrProjectsService(
+    const prService = makeProjectsService(
       makeCatalogService(),
       githubWrites,
       projectsRepository,
@@ -2452,10 +2494,7 @@ jobs:
     githubWrites.createPullRequest.mockRejectedValueOnce(
       new Error('GitHub pull request creation failed (422): Validation Failed'),
     );
-    const PrProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const prService = new PrProjectsService(
+    const prService = makeProjectsService(
       makeCatalogService(),
       githubWrites,
       projectsRepository,
@@ -2495,10 +2534,7 @@ jobs:
 
   it('throws not found when overview is requested for a project outside the user scope', async () => {
     const overviewRepos = makeOverviewReadRepositories();
-    const OverviewProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const overviewService = new OverviewProjectsService(
+    const overviewService = makeProjectsService(
       makeCatalogService(),
       githubService,
       { create: jest.fn(), findByIdAndUser: jest.fn().mockResolvedValue(null) },
@@ -2528,12 +2564,12 @@ jobs:
       findByIdAndUser: jest.fn(),
     };
     const githubServiceSpy = makeGithubService();
-    const disconnectService = new ProjectsService(
+    const disconnectService = makeProjectsService(
       makeCatalogService(),
       githubServiceSpy,
-      projectsRepository as never,
+      projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
     );
 
     await expect(
@@ -2553,12 +2589,12 @@ jobs:
   });
 
   it('throws not found when disconnecting a project outside the user scope', async () => {
-    const disconnectService = new ProjectsService(
+    const disconnectService = makeProjectsService(
       makeCatalogService(),
       githubService,
-      { deleteByIdAndUser: jest.fn().mockResolvedValue(false) } as never,
+      { deleteByIdAndUser: jest.fn().mockResolvedValue(false) },
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
     );
 
     await expect(
@@ -2588,12 +2624,12 @@ jobs:
         ...options.projectsRepositoryOverride,
       } as unknown as ProjectsRepository;
 
-      const service = new ProjectsService(
+      const service = makeProjectsService(
         makeCatalogService(),
         githubServiceMock,
         projectsRepository,
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
         undefined, // ciTokensRepository
         undefined, // deploymentTargetsRepository
         undefined, // envVarsRepository
@@ -2603,9 +2639,9 @@ jobs:
         undefined, // workflowSettingsRepository
         undefined, // workflowUpdateRequestsRepository
         undefined, // usageQuotaService
-        (options.auditEventsService as never) ?? undefined, // auditEventsService
+        options.auditEventsService ?? undefined, // auditEventsService
         undefined, // workspacesService
-        (options.notificationEventsService as never) ?? undefined, // notificationEventsService
+        options.notificationEventsService ?? undefined, // notificationEventsService
         options.workspaceAccessService, // workspaceAccessService
       );
 
@@ -2871,12 +2907,12 @@ jobs:
     const notificationEventsService = {
       record: jest.fn(),
     };
-    const syncService = new ProjectsService(
+    const syncService = makeProjectsService(
       makeCatalogService(),
       githubService,
-      { listByUser: jest.fn().mockResolvedValue([]) } as never,
+      { listByUser: jest.fn().mockResolvedValue([]) },
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
       undefined,
       undefined,
       undefined,
@@ -2886,9 +2922,9 @@ jobs:
       undefined,
       undefined,
       undefined,
-      auditEventsService as never,
+      auditEventsService,
       undefined,
-      notificationEventsService as never,
+      notificationEventsService,
     );
 
     await expect(
@@ -2939,12 +2975,12 @@ jobs:
     const notificationEventsService = {
       record: jest.fn(),
     };
-    const syncService = new ProjectsService(
+    const syncService = makeProjectsService(
       makeCatalogService(),
       syncGithubService,
-      projectsRepository as never,
+      projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService as never,
+      projectDeploymentProvisioningService,
       undefined,
       undefined,
       undefined,
@@ -2954,9 +2990,9 @@ jobs:
       undefined,
       undefined,
       undefined,
-      auditEventsService as never,
+      auditEventsService,
       undefined,
-      notificationEventsService as never,
+      notificationEventsService,
     );
 
     await expect(
@@ -3000,12 +3036,12 @@ jobs:
       const projectsRepository = {
         listAllRepoFullNames: jest.fn().mockResolvedValue([]),
       };
-      const reconcileService = new ProjectsService(
+      const reconcileService = makeProjectsService(
         makeCatalogService(),
         reconcileGithubService,
-        projectsRepository as never,
+        projectsRepository,
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
       );
 
       await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
@@ -3057,12 +3093,12 @@ jobs:
       };
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const notificationEventsService = { record: jest.fn() };
-      const reconcileService = new ProjectsService(
+      const reconcileService = makeProjectsService(
         makeCatalogService(),
         reconcileGithubService,
-        projectsRepository as never,
+        projectsRepository,
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
         undefined,
         undefined,
         undefined,
@@ -3072,9 +3108,9 @@ jobs:
         undefined,
         undefined,
         undefined,
-        auditEventsService as never,
+        auditEventsService,
         undefined,
-        notificationEventsService as never,
+        notificationEventsService,
       );
 
       await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
@@ -3127,12 +3163,12 @@ jobs:
       };
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const notificationEventsService = { record: jest.fn() };
-      const reconcileService = new ProjectsService(
+      const reconcileService = makeProjectsService(
         makeCatalogService(),
         reconcileGithubService,
-        projectsRepository as never,
+        projectsRepository,
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
         undefined,
         undefined,
         undefined,
@@ -3142,9 +3178,9 @@ jobs:
         undefined,
         undefined,
         undefined,
-        auditEventsService as never,
+        auditEventsService,
         undefined,
-        notificationEventsService as never,
+        notificationEventsService,
       );
 
       await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
@@ -3194,12 +3230,12 @@ jobs:
           .fn()
           .mockResolvedValue([{ id: 'project-2', user_id: 'user-2' }]),
       };
-      const reconcileService = new ProjectsService(
+      const reconcileService = makeProjectsService(
         makeCatalogService(),
         reconcileGithubService,
-        projectsRepository as never,
+        projectsRepository,
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
       );
 
       await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
@@ -3230,12 +3266,12 @@ jobs:
         on: onSpy,
       } as unknown as GithubService;
 
-      new ProjectsService(
+      makeProjectsService(
         makeCatalogService(),
         webhookGithubService,
         makeProjectsRepository(),
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
       );
 
       expect(onSpy).toHaveBeenCalledWith(
@@ -3265,12 +3301,12 @@ jobs:
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const notificationEventsService = { record: jest.fn() };
 
-      new ProjectsService(
+      makeProjectsService(
         makeCatalogService(),
         webhookGithubService,
-        projectsRepository as never,
+        projectsRepository,
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
         undefined,
         undefined,
         undefined,
@@ -3280,9 +3316,9 @@ jobs:
         undefined,
         undefined,
         undefined,
-        auditEventsService as never,
+        auditEventsService,
         undefined,
-        notificationEventsService as never,
+        notificationEventsService,
       );
 
       expect(capturedHandler).toBeDefined();
@@ -3339,12 +3375,12 @@ jobs:
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const notificationEventsService = { record: jest.fn() };
 
-      new ProjectsService(
+      makeProjectsService(
         makeCatalogService(),
         webhookGithubService,
-        projectsRepository as never,
+        projectsRepository,
         makeCiService(),
-        projectDeploymentProvisioningService as never,
+        projectDeploymentProvisioningService,
         undefined,
         undefined,
         undefined,
@@ -3354,9 +3390,9 @@ jobs:
         undefined,
         undefined,
         undefined,
-        auditEventsService as never,
+        auditEventsService,
         undefined,
-        notificationEventsService as never,
+        notificationEventsService,
       );
 
       capturedHandler?.({ repoFullName: 'tone/never-provisioned' });

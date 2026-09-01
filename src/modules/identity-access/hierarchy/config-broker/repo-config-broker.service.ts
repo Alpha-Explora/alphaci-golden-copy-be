@@ -203,7 +203,7 @@ export class RepoConfigBrokerService {
           ? HIERARCHY_EVENT_CODES.configurationVariableWritten
           : HIERARCHY_EVENT_CODES.configurationSecretWritten,
       message: `Repository ${input.configurationType} "${input.name}" written`,
-      // Value never recorded — name/metadata only (plan §9 "secret values
+      // Value never recorded — name/metadata only (security contract "secret values
       // must never be recorded, displayed, or made exportable").
       metadata: {
         repositoryId,
@@ -217,9 +217,9 @@ export class RepoConfigBrokerService {
   }
 
   /**
-   * Production is hard-blocked this session regardless of role (plan §1.8) —
+   * Production is hard-blocked this session regardless of role (configuration safety rule) —
    * checked AFTER confirming the caller can see the repository at all, so an
-   * unrelated caller still gets 404 (existence-hiding, plan §2.0) rather than
+   * unrelated caller still gets 404 (existence-hiding, resource visibility rule) rather than
    * a 403 that would confirm the repository exists.
    */
   private async assertWriteAccess(

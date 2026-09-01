@@ -1,11 +1,15 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
 } from '@nestjs/common';
 
 import { ProjectsRepository } from '../../projects.repository';
-import { WorkspacesService } from '#modules/identity-access/index.js';
+import {
+  WORKSPACES_PORT,
+  type WorkspacesPort,
+} from '#kernel/ports/workspaces.port';
 
 /**
  * Workspace gating for project creation.
@@ -18,7 +22,8 @@ import { WorkspacesService } from '#modules/identity-access/index.js';
 export class WorkspaceGateService {
   constructor(
     private readonly projectsRepository: ProjectsRepository,
-    private readonly workspacesService: WorkspacesService | undefined,
+    @Inject(WORKSPACES_PORT)
+    private readonly workspacesService: WorkspacesPort | undefined,
   ) {}
 
   /**

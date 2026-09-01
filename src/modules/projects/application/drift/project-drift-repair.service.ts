@@ -4,7 +4,7 @@ import { ProjectDriftRepairService } from '../../project-drift-repair.service';
 import type {
   ProjectDriftRepairAction,
   ProjectDriftRepairResponse,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 
 /** Application boundary for user-approved project drift repairs. */
 @Injectable()

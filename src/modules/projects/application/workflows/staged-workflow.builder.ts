@@ -1,8 +1,8 @@
 import yaml from 'js-yaml';
 
-import { ENV_GUARD_CHECK_CONTEXT } from '#modules/pipelines/index.js';
+import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import { buildDeploymentWorkflowFragment } from '#modules/runtime/index.js';
+import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
@@ -141,6 +141,7 @@ interface PackageDeploymentPlan {
 export function buildStagedWorkflowBundle(
   template: WorkflowTemplate,
   dto: StagedWorkflowOptions,
+  workflowFragmentRegistry?: WorkflowFragmentRegistry,
 ): StagedWorkflowBundle {
   const serviceName = dto.serviceName;
   const servicePath = normalizeServicePath(dto.servicePath);
@@ -176,6 +177,7 @@ export function buildStagedWorkflowBundle(
     serviceName,
     servicePath,
     centralWorkflowRef,
+    workflowFragmentRegistry,
   );
 
   const files: StagedWorkflowFile[] = [
@@ -709,6 +711,7 @@ function buildPackageDeploymentPlan(
   serviceName: string,
   servicePath: string,
   centralWorkflowRef: string,
+  workflowFragmentRegistry: WorkflowFragmentRegistry | undefined,
 ): PackageDeploymentPlan {
   const jobs: Record<string, unknown> = {};
   const jobIds: string[] = [];
@@ -716,9 +719,15 @@ function buildPackageDeploymentPlan(
     uat: [],
   };
 
+  if (deploymentTargets.length > 0 && !workflowFragmentRegistry) {
+    throw new Error(
+      'A workflow fragment registry is required when deployment targets are configured',
+    );
+  }
+
   for (const target of deploymentTargets) {
     for (const branch of resolveDeploymentBranches(target.branchName)) {
-      const fragment = buildDeploymentWorkflowFragment(target, branch, {
+      const fragment = workflowFragmentRegistry!.build(target, branch, {
         serviceName,
         servicePath,
         centralWorkflowRef,

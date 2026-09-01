@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type {
@@ -18,7 +19,7 @@ export interface GroupRecord {
   archivedBy: string | null;
   createdAt: string;
   role?: GroupRole;
-  /** Active member / active-system counts — at-a-glance chips (UI_LAYOUTS.md §6.5). */
+  /** Active member / active-system counts — at-a-glance chips (current hierarchy summary contract). */
   memberCount: number;
   systemCount: number;
 }
@@ -28,7 +29,7 @@ export interface GroupMemberRecord {
   /**
    * NOTE: named groupId (not workspaceId) on purpose — the API path segment
    * is /groups and every hierarchy response uses the product term
-   * (HIERARCHY_IMPLEMENTATION_PLAN.md §2.0/§2.3, UI_LAYOUTS.md §6.1). Only the
+   * (the current hierarchy contract). Only the
    * underlying orgs.workspaces/workspace_members SQL keeps the internal name.
    */
   groupId: string;
@@ -252,7 +253,7 @@ export class GroupsRepository {
 
   /**
    * Active-member / active-system counts for the "at a glance" chips on
-   * GroupSummary (UI_LAYOUTS.md §6.5) — batched by group id to stay N+1-free
+   * GroupSummary (current hierarchy summary contract) — batched by group id to stay N+1-free
    * when called from listForUser.
    */
   private async getCountsForGroups(
@@ -453,7 +454,7 @@ export class GroupsRepository {
     return this.findMemberById(groupId, memberId);
   }
 
-  /** Offboarding — recorded event, not a hard delete (plan §2.4). */
+  /** Offboarding — recorded event, not a hard delete (member-management contract). */
   async markMemberRemoved(
     groupId: string,
     memberId: string,
@@ -472,7 +473,7 @@ export class GroupsRepository {
   }
 
   /**
-   * Race-free "last owner" guard for a role change (ciso finding, plan §3.3
+   * Race-free "last owner" guard for a role change (ciso finding, last-owner safety rule
    * "last-manager protection ... race-condition safety in the transaction
    * handling"). The naive check-then-act pattern (SELECT count, then
    * UPDATE in two separate statements — see the now-unused combination of
@@ -557,7 +558,7 @@ export class GroupsRepository {
   /**
    * Same race-free lock pattern as changeMemberRoleGuarded (see that
    * method's comment), applied to member removal — the other path that can
-   * orphan a Group of its last owner (source plan §11 "must keep at least
+   * orphan a Group of its last owner (hierarchy ownership contract "must keep at least
    * one owner").
    */
   async removeMemberGuarded(
@@ -566,72 +567,84 @@ export class GroupsRepository {
     removedBy: string,
     reason?: string | null,
   ): Promise<{ member: GroupMemberRecord | null; blockedLastOwner: boolean }> {
-    return this.databaseService.withClient(async (client) => {
-      await client.query('BEGIN');
-      try {
-        await client.query(
-          `
-            SELECT id FROM orgs.workspace_members
-            WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active'
-            FOR UPDATE;
-          `,
-          [groupId],
-        );
+    return this.databaseService.withTransaction((client) =>
+      this.removeMemberGuardedWithClient(
+        client,
+        groupId,
+        memberId,
+        removedBy,
+        reason,
+      ),
+    );
+  }
 
-        const targetResult = await client.query<MemberRow>(
-          `
-            SELECT
-              member.id, member.workspace_id, member.user_id, member.role, member.member_status,
-              member.invited_by, member.invited_at, member.removed_at, member.removed_by, member.removal_reason,
-              member.created_at,
-              user_profile.login, user_profile.display_name, user_profile.email, user_profile.avatar_url
-            FROM orgs.workspace_members AS member
-            JOIN identity.app_users AS user_profile ON user_profile.id = member.user_id
-            WHERE member.workspace_id = $1 AND member.id = $2
-            FOR UPDATE OF member;
-          `,
-          [groupId, memberId],
-        );
-        const target = targetResult.rows[0];
-        if (!target) {
-          await client.query('ROLLBACK');
-          return { member: null, blockedLastOwner: false };
-        }
+  /**
+   * Removes a member against a caller-owned transaction. The caller can use
+   * the same transaction to enqueue the member's assignment revokes, so a
+   * partial offboarding cannot commit without its durable follow-up work.
+   */
+  async removeMemberGuardedWithClient(
+    client: Pick<PoolClient, 'query'>,
+    groupId: string,
+    memberId: string,
+    removedBy: string,
+    reason?: string | null,
+  ): Promise<{ member: GroupMemberRecord | null; blockedLastOwner: boolean }> {
+    await client.query(
+      `
+        SELECT id FROM orgs.workspace_members
+        WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active'
+        FOR UPDATE;
+      `,
+      [groupId],
+    );
 
-        if (target.role === 'admin') {
-          const countResult = await client.query<{ count: number }>(
-            `
-              SELECT count(*)::int AS count FROM orgs.workspace_members
-              WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active';
-            `,
-            [groupId],
-          );
-          const ownerCount = Number(countResult.rows[0]?.count ?? 0);
-          if (ownerCount <= 1) {
-            await client.query('ROLLBACK');
-            return { member: this.toMember(target), blockedLastOwner: true };
-          }
-        }
+    const targetResult = await client.query<MemberRow>(
+      `
+        SELECT
+          member.id, member.workspace_id, member.user_id, member.role, member.member_status,
+          member.invited_by, member.invited_at, member.removed_at, member.removed_by, member.removal_reason,
+          member.created_at,
+          user_profile.login, user_profile.display_name, user_profile.email, user_profile.avatar_url
+        FROM orgs.workspace_members AS member
+        JOIN identity.app_users AS user_profile ON user_profile.id = member.user_id
+        WHERE member.workspace_id = $1 AND member.id = $2
+        FOR UPDATE OF member;
+      `,
+      [groupId, memberId],
+    );
+    const target = targetResult.rows[0];
+    if (!target) {
+      return { member: null, blockedLastOwner: false };
+    }
 
-        await client.query(
-          `
-            UPDATE orgs.workspace_members
-            SET member_status = 'removed', removed_at = NOW(), removed_by = $3, removal_reason = $4
-            WHERE workspace_id = $1 AND id = $2;
-          `,
-          [groupId, memberId, removedBy, reason ?? null],
-        );
-        await client.query('COMMIT');
-
-        return {
-          member: this.toMember({ ...target, member_status: 'removed' }),
-          blockedLastOwner: false,
-        };
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
+    if (target.role === 'admin') {
+      const countResult = await client.query<{ count: number }>(
+        `
+          SELECT count(*)::int AS count FROM orgs.workspace_members
+          WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active';
+        `,
+        [groupId],
+      );
+      const ownerCount = Number(countResult.rows[0]?.count ?? 0);
+      if (ownerCount <= 1) {
+        return { member: this.toMember(target), blockedLastOwner: true };
       }
-    });
+    }
+
+    await client.query(
+      `
+        UPDATE orgs.workspace_members
+        SET member_status = 'removed', removed_at = NOW(), removed_by = $3, removal_reason = $4
+        WHERE workspace_id = $1 AND id = $2;
+      `,
+      [groupId, memberId, removedBy, reason ?? null],
+    );
+
+    return {
+      member: this.toMember({ ...target, member_status: 'removed' }),
+      blockedLastOwner: false,
+    };
   }
 
   /**
@@ -660,7 +673,7 @@ export class GroupsRepository {
     );
   }
 
-  /** Resolves an internal user by login or email (approved internal directory, plan §6 open question #2). */
+  /** Resolves an internal user by login or email (approved internal directory, approved directory policy). */
   async findInternalUserByLoginOrEmail(
     loginOrEmail: string,
   ): Promise<{ id: string } | null> {

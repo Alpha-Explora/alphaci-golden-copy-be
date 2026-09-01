@@ -11,6 +11,10 @@ import type { AppConfig } from '#kernel/config/app.config';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
+  USAGE_QUOTA,
+  type UsageQuotaPort,
+} from '#kernel/ports/usage-quota.port';
+import {
   DeploymentPolicyViolation,
   validateEnvironmentScope,
 } from '../domain/deployment-target.policy';
@@ -31,10 +35,11 @@ import type {
 } from '../core/deployments.types';
 import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
 import {
-  UsageQuotaService,
-  type UsageLimitCode,
-} from '#modules/billing/index.js';
-import { WorkspaceAccessService } from '#modules/identity-access/index.js';
+  WORKSPACE_ACCESS_PORT,
+  type WorkspaceAccessPort,
+} from '#kernel/ports/workspaces.port';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
 const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{1,127}$/;
 const MAX_ENV_VALUE_LENGTH = 16_384;
@@ -65,13 +70,17 @@ export class EnvVarsService {
     private readonly encryptionService: EnvTokenEncryptionService,
     private readonly configService: ConfigService,
     @Optional()
-    private readonly usageQuotaService?: UsageQuotaService,
+    @Inject(USAGE_QUOTA)
+    private readonly usageQuotaService?: UsageQuotaPort,
     @Optional()
-    private readonly workspaceAccessService?: WorkspaceAccessService,
+    @Inject(WORKSPACE_ACCESS_PORT)
+    private readonly workspaceAccessService?: WorkspaceAccessPort,
     @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventsService?: NotificationEventPublisher,
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {}
 
   async listEnvMetadata(projectId: string, userId: string) {
@@ -290,7 +299,7 @@ export class EnvVarsService {
   private async assertWithinQuota(
     userId: string,
     projectId: string,
-    limitCode: UsageLimitCode,
+    limitCode: string,
     increment: number,
   ): Promise<void> {
     try {
@@ -405,10 +414,12 @@ export class EnvVarsService {
   ): Promise<string> {
     if (target.ownershipMode === 'flowci_managed') {
       const config = this.configService.getOrThrow<AppConfig>('app');
-      const token = this.getManagedToken(
-        target.provider,
-        config.envProvisioning.flowciManaged,
-      );
+      const managedConfig = config.envProvisioning
+        .flowciManaged as unknown as Record<string, unknown>;
+      const policy = this.providerRegistry?.find(target.provider)?.policy;
+      const token = policy
+        ? policy.resolveManagedToken({ managedConfig })
+        : this.getManagedToken(target.provider, managedConfig);
       if (!token) {
         throw new BadRequestException(
           `ALPHACI-managed ${target.provider} token is not configured`,
@@ -435,9 +446,10 @@ export class EnvVarsService {
 
   private getManagedToken(
     provider: EnvProvider,
-    config: AppConfig['envProvisioning']['flowciManaged'],
+    config: Record<string, unknown>,
   ): string {
-    return provider === 'render' ? config.renderToken : config.vercelToken;
+    const token = config[`${provider}Token`];
+    return typeof token === 'string' ? token.trim() : '';
   }
 
   private sanitizeError(error: string): string {

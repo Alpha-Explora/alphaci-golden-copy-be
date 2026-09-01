@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 
 import type { DatabaseService } from '#kernel/db/database.service';
+import type { ManagedQuotaDefinition } from '#kernel/ports/usage-quota.port';
 import { UsageQuotaService } from './usage-quota.service';
 
 const makeDatabaseService = (query: jest.Mock, isEnabled = true) =>
@@ -11,6 +12,31 @@ const makeDatabaseService = (query: jest.Mock, isEnabled = true) =>
     query,
     isEnabled: () => isEnabled,
   }) as unknown as DatabaseService;
+
+const managedQuotaDefinitions: readonly ManagedQuotaDefinition[] = [
+  {
+    providerId: 'render',
+    quotaCode: 'managed_render_services',
+    fleetCapConfigKey: 'renderManagedFleetMax',
+    providerLabel: 'Render',
+    freeLimit: 1,
+    proLimit: 10,
+  },
+  {
+    providerId: 'vercel',
+    quotaCode: 'managed_vercel_projects',
+    fleetCapConfigKey: 'vercelManagedFleetMax',
+    providerLabel: 'Vercel',
+    freeLimit: 1,
+    proLimit: 10,
+  },
+];
+
+function registerManagedQuotas(service: UsageQuotaService): void {
+  managedQuotaDefinitions.forEach((definition) =>
+    service.registerManagedQuota(definition),
+  );
+}
 
 describe('UsageQuotaService', () => {
   const configService = {
@@ -28,6 +54,7 @@ describe('UsageQuotaService', () => {
       makeDatabaseService(query),
       configService as never,
     );
+    registerManagedQuotas(service);
   });
 
   it('returns local usage counters and free plan limits', async () => {
@@ -38,11 +65,19 @@ describe('UsageQuotaService', () => {
         rows: [
           {
             projects: '2',
-            managed_render_services: '1',
-            managed_vercel_projects: '0',
             deployment_targets: '2',
             env_keys: '4',
             workflow_prs: '1',
+            managed_provider: 'render',
+            managed_count: '1',
+          },
+          {
+            projects: '2',
+            deployment_targets: '2',
+            env_keys: '4',
+            workflow_prs: '1',
+            managed_provider: 'vercel',
+            managed_count: '0',
           },
         ],
       });
@@ -70,11 +105,19 @@ describe('UsageQuotaService', () => {
         rows: [
           {
             projects: '4',
-            managed_render_services: '2',
-            managed_vercel_projects: '2',
             deployment_targets: '6',
             env_keys: '26',
             workflow_prs: '6',
+            managed_provider: 'render',
+            managed_count: '2',
+          },
+          {
+            projects: '4',
+            deployment_targets: '6',
+            env_keys: '26',
+            workflow_prs: '6',
+            managed_provider: 'vercel',
+            managed_count: '2',
           },
         ],
       });
@@ -95,11 +138,11 @@ describe('UsageQuotaService', () => {
         rows: [
           {
             projects: '3',
-            managed_render_services: '0',
-            managed_vercel_projects: '0',
             deployment_targets: '0',
             env_keys: '0',
             workflow_prs: '0',
+            managed_provider: 'render',
+            managed_count: '0',
           },
         ],
       });
@@ -127,11 +170,11 @@ describe('UsageQuotaService', () => {
         rows: [
           {
             projects: '99',
-            managed_render_services: '99',
-            managed_vercel_projects: '99',
             deployment_targets: '99',
             env_keys: '99',
             workflow_prs: '99',
+            managed_provider: 'render',
+            managed_count: '99',
           },
         ],
       });
@@ -172,7 +215,12 @@ describe('UsageQuotaService', () => {
       query.mockResolvedValueOnce({ rows: [{ count: '2' }] });
 
       await expect(
-        service.assertManagedFleetCapacity('render'),
+        service.assertManagedFleetCapacity({
+          providerId: 'render',
+          quotaCode: 'managed_render_services',
+          fleetCapConfigKey: 'renderManagedFleetMax',
+          providerLabel: 'Render',
+        }),
       ).rejects.toThrow(ServiceUnavailableException);
     });
 
@@ -181,7 +229,12 @@ describe('UsageQuotaService', () => {
       query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
 
       await expect(
-        service.assertManagedFleetCapacity('vercel'),
+        service.assertManagedFleetCapacity({
+          providerId: 'vercel',
+          quotaCode: 'managed_vercel_projects',
+          fleetCapConfigKey: 'vercelManagedFleetMax',
+          providerLabel: 'Vercel',
+        }),
       ).resolves.toBeUndefined();
     });
 
@@ -189,7 +242,12 @@ describe('UsageQuotaService', () => {
       withFleetCap('render', 0);
 
       await expect(
-        service.assertManagedFleetCapacity('render'),
+        service.assertManagedFleetCapacity({
+          providerId: 'render',
+          quotaCode: 'managed_render_services',
+          fleetCapConfigKey: 'renderManagedFleetMax',
+          providerLabel: 'Render',
+        }),
       ).resolves.toBeUndefined();
       expect(query).not.toHaveBeenCalled();
     });
@@ -199,9 +257,15 @@ describe('UsageQuotaService', () => {
         makeDatabaseService(query, false),
         configService as never,
       );
+      registerManagedQuotas(service);
 
       await expect(
-        service.assertManagedFleetCapacity('render'),
+        service.assertManagedFleetCapacity({
+          providerId: 'render',
+          quotaCode: 'managed_render_services',
+          fleetCapConfigKey: 'renderManagedFleetMax',
+          providerLabel: 'Render',
+        }),
       ).resolves.toBeUndefined();
       expect(query).not.toHaveBeenCalled();
     });

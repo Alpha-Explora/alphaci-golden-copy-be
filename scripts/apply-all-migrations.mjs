@@ -3,8 +3,8 @@
  * Apply every migration in supabase/migrations, in filename order.
  *
  * scripts/apply-migrations.ts takes explicit filenames and applies each in its
- * own transaction. That is the right primitive, but there are 59 files and
- * typing them out is where a bootstrap goes wrong. This wraps it.
+ * own transaction. That is the right primitive; typing the owner-folder
+ * migration list out by hand is where a bootstrap goes wrong. This wraps it.
  *
  *   node scripts/apply-all-migrations.mjs --dry-run   # list, touch nothing
  *   node scripts/apply-all-migrations.mjs             # apply all, in order

@@ -1,24 +1,21 @@
-# kernel
+# Technical kernel
 
-Cross-cutting infrastructure with no feature owner. Every module may import
-from here; **this directory may never import from `src/modules/`.**
+`src/kernel/` contains cross-cutting technical infrastructure with no business
+context owner. Bounded contexts may depend on the kernel; **kernel code must
+never import from `src/modules/`.**
 
-| Folder    | Holds                                                        |
-|-----------|--------------------------------------------------------------|
-| `db/`     | `database.service`, `postgres-ssl.config`, Supabase client (`db/supabase/`) |
-| `events/` | `outbox.repository` — the only genuinely shared repository    |
-| `auth/`   | session-user lookup contract                                  |
-
-`config/` (app config, env validation) and `http/` (guards, filters,
-correlation middleware) remain in the historical `src/common/` and `src/config/`
-paths until a
-second module needs them — see the admission rule below.
+| Folder | Responsibility |
+|---|---|
+| `auth/` | session lookup contracts and application-wide authentication guards |
+| `config/` | environment validation and application/security configuration |
+| `db/` | database services, PostgreSQL configuration, and Supabase access |
+| `events/` | outbox persistence, topic registration, and event dispatching |
+| `http/` | exception filters and HTTP middleware shared by the application |
+| `ports/` | small dependency-inversion ports used to break genuine context cycles |
 
 ## Admission rule
 
-Something belongs here only when a **second** module needs it. One consumer
-means it lives inside that module. This rule is what stops `kernel/` becoming
-the next `persistence/`.
-
-Migration status: db + events + auth contract landed; the rest of the old plan
-lives in `docs/architecture/FUTURE_STATE.md`.
+Add a capability to the kernel only when it is technical infrastructure needed
+by at least two bounded contexts. A capability used by one context belongs in
+that context. This rule prevents the kernel from becoming an unowned business
+module or a second persistence layer.

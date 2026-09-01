@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
   Optional,
@@ -9,9 +10,16 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 import { CatalogService } from '../catalog/catalog.service';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  USAGE_QUOTA,
+  type UsageQuotaPort,
+} from '#kernel/ports/usage-quota.port';
 
 type AuditEventSink = Pick<AuditEventPublisher, 'recordProjectEvent'>;
 type NotificationEventSink = Pick<NotificationEventPublisher, 'record'>;
@@ -21,7 +29,7 @@ import {
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
 } from './index';
-import { UsageQuotaService } from '#modules/billing/index.js';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -107,7 +115,8 @@ export interface WorkflowUpdatePullRequestResponse {
 export class ProjectWorkflowsService {
   constructor(
     private readonly projectsRepository: ProjectsRepository,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     private readonly catalogService: CatalogService,
     @Optional()
     private readonly configService?: ConfigService,
@@ -116,11 +125,14 @@ export class ProjectWorkflowsService {
     @Optional()
     private readonly workflowUpdateRequestsRepository?: ProjectWorkflowUpdateRequestsRepository,
     @Optional()
-    private readonly usageQuotaService?: UsageQuotaService,
+    @Inject(USAGE_QUOTA)
+    private readonly usageQuotaService?: UsageQuotaPort,
     @Optional()
     private readonly auditEventsService?: AuditEventSink,
     @Optional()
     private readonly notificationEventsService?: NotificationEventSink,
+    @Optional()
+    private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,
   ) {}
 
   async getWorkflowSettings(
@@ -355,14 +367,18 @@ export class ProjectWorkflowsService {
         `Template '${settings.templateId}' not found`,
       );
     }
-    const bundle = buildStagedWorkflowBundle(template, {
-      templateId: settings.templateId,
-      serviceName: settings.serviceName,
-      servicePath: settings.servicePath,
-      nodeVersion: settings.nodeVersion,
-      coverageThreshold: settings.coverageThreshold,
-      centralWorkflowRef: settings.centralWorkflowRef,
-    });
+    const bundle = buildStagedWorkflowBundle(
+      template,
+      {
+        templateId: settings.templateId,
+        serviceName: settings.serviceName,
+        servicePath: settings.servicePath,
+        nodeVersion: settings.nodeVersion,
+        coverageThreshold: settings.coverageThreshold,
+        centralWorkflowRef: settings.centralWorkflowRef,
+      },
+      this.workflowFragmentRegistry,
+    );
     return { workflowFiles: bundle.workflowFiles };
   }
 

@@ -1,0 +1,177 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`post-consolidation public contract snapshots records the provider discovery contract independently of implementation classes 1`] = `
+{
+  "providers": [
+    {
+      "capabilities": {
+        "connectivity": "direct",
+        "credentialCustody": "platform",
+        "deployHistory": true,
+        "enumerable": true,
+        "envProvisioning": true,
+        "envVars": true,
+        "liveStatus": true,
+        "logs": true,
+        "managedMode": true,
+        "previewDeployments": false,
+        "teardown": true,
+      },
+      "configSchema": {
+        "fields": [],
+      },
+      "credentialSchema": {
+        "fields": [],
+      },
+      "enabled": true,
+      "id": "render",
+      "label": "Render",
+      "supportedSlots": [
+        "backend",
+      ],
+    },
+    {
+      "capabilities": {
+        "connectivity": "direct",
+        "credentialCustody": "platform",
+        "deployHistory": true,
+        "enumerable": true,
+        "envProvisioning": true,
+        "envVars": true,
+        "liveStatus": true,
+        "logs": true,
+        "managedMode": true,
+        "previewDeployments": true,
+        "teardown": true,
+      },
+      "configSchema": {
+        "fields": [],
+      },
+      "credentialSchema": {
+        "fields": [],
+      },
+      "enabled": true,
+      "id": "vercel",
+      "label": "Vercel",
+      "supportedSlots": [
+        "frontend",
+      ],
+    },
+  ],
+}
+`;
+
+exports[`post-consolidation public contract snapshots records the staged workflow file contract and provider job shape 1`] = `
+{
+  "files": [
+    {
+      "gated": true,
+      "name": "ALPHACI Access Gate",
+      "path": ".github/workflows/00-alphaci-access.yml",
+      "stage": "access",
+    },
+    {
+      "gated": true,
+      "name": "ALPHACI Quality",
+      "path": ".github/workflows/10-alphaci-quality.yml",
+      "stage": "quality",
+    },
+    {
+      "gated": true,
+      "name": "ALPHACI Package",
+      "path": ".github/workflows/20-alphaci-package.yml",
+      "stage": "package",
+    },
+    {
+      "gated": false,
+      "name": "ALPHACI Env Guard",
+      "path": ".github/workflows/05-alphaci-env-guard.yml",
+      "stage": "guard",
+    },
+  ],
+  "providerJobs": {
+    "deploy-render-backend-uat": {
+      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'uat' }}",
+      "needs": [
+        "docker-backend-uat",
+      ],
+      "secrets": {
+        "RENDER_DEPLOY_HOOK_URL_MAIN": "\${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}",
+        "RENDER_DEPLOY_HOOK_URL_TEST": "\${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}",
+        "RENDER_DEPLOY_HOOK_URL_UAT": "\${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}",
+        "RENDER_HEALTHCHECK_URL_MAIN": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
+        "RENDER_HEALTHCHECK_URL_TEST": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
+        "RENDER_HEALTHCHECK_URL_UAT": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
+      },
+      "uses": "cicd-external-project/cicd-workflow/.github/workflows/render-deploy.yml@v1",
+      "with": {
+        "branch": "uat",
+        "deploy-mode": "auto",
+        "environment": "uat",
+        "healthcheck-path": "/api/v1/health",
+        "require-api-center-check": true,
+        "system-name": "orders-api",
+      },
+    },
+    "deploy-vercel-frontend-main": {
+      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' }}",
+      "needs": [
+        "build",
+        "production-gate",
+      ],
+      "secrets": {
+        "GH_PR_TOKEN": "\${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
+        "VERCEL_ORG_ID": "\${{ secrets.VERCEL_FRONTEND_ORG_ID }}",
+        "VERCEL_PROJECT_ID": "\${{ secrets.VERCEL_FRONTEND_PROJECT_ID }}",
+        "VERCEL_TOKEN": "\${{ secrets.VERCEL_FRONTEND_TOKEN }}",
+      },
+      "uses": "cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1",
+      "with": {
+        "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
+        "environment": "production",
+        "system-name": "orders-api",
+        "working-directory": "frontend",
+      },
+    },
+    "deploy-vercel-frontend-uat": {
+      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'uat' }}",
+      "needs": [
+        "build",
+      ],
+      "secrets": {
+        "GH_PR_TOKEN": "\${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
+        "VERCEL_ORG_ID": "\${{ secrets.VERCEL_FRONTEND_ORG_ID }}",
+        "VERCEL_PROJECT_ID": "\${{ secrets.VERCEL_FRONTEND_PROJECT_ID }}",
+        "VERCEL_TOKEN": "\${{ secrets.VERCEL_FRONTEND_TOKEN }}",
+      },
+      "uses": "cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1",
+      "with": {
+        "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
+        "environment": "preview",
+        "system-name": "orders-api",
+        "working-directory": "frontend",
+      },
+    },
+    "docker-backend-uat": {
+      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'uat' }}",
+      "needs": [
+        "build",
+      ],
+      "permissions": {
+        "contents": "read",
+        "packages": "write",
+        "security-events": "write",
+      },
+      "uses": "cicd-external-project/cicd-workflow/.github/workflows/docker-build.yml@v1",
+      "with": {
+        "dockerfile-path": "Dockerfile",
+        "fail-on-vulnerabilities": true,
+        "image-name": "alphaci-backend-uat-orders-api",
+        "push-image": true,
+        "scan-vulnerabilities": true,
+        "working-directory": "backend",
+      },
+    },
+  },
+}
+`;

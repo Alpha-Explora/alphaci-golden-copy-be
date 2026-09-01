@@ -1,0 +1,11 @@
+{
+  "routeCount": 145,
+  "referenceFile": "route-inventory.baseline.txt",
+  "referenceSha256": "d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a",
+  "referenceKind": "pre-pr-baseline-equals-current",
+  "baselineAvailable": true,
+  "baselineFile": "route-inventory.baseline.txt",
+  "baselineSha256": "d11dcda02cd737f38612b0b19f932b8e30d4b992d8c011d1a61e77415ddbf23a",
+  "baselineSourceCommit": "95b734c64d521797a7bb58541be2a9389bdc19e4",
+  "capturedAtCheckpoint": "071f56222f0c8d3170c1a407494e504f6f6afe6b"
+}

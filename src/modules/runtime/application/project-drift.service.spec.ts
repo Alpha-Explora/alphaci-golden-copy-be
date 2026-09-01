@@ -62,7 +62,7 @@ describe('ProjectDriftService', () => {
       findingsRepository as never,
       deploymentTargetsRepository as never,
       envVarsRepository as never,
-      ciTokensRepository as never,
+      ciTokensRepository,
       configService as never,
     );
   }

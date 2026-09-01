@@ -1,21 +1,29 @@
 -- Rollback for 20260824000000_branch_scoped_env_vars.sql
 --
--- LOSSY IN TWO WAYS. Read both before running it.
---
--- 1. Which branch a preview value belonged to is dropped with the column. Every
---    preview row collapses back to the single 'uat' bucket, so N branches'
---    values become one branch's values and only one survives per key.
--- 2. The forward migration already deleted the duplicate test/uat rows it
---    collapsed. Nothing here brings those back.
---
--- The forward direction is recoverable from the provider (the values live on
--- Vercel, not here — value_stored is CHECKed false); this direction is not. Run
--- it only to unblock a deployment that has to go back to the old backend, and
--- expect to re-provision afterwards.
+-- This rollback fails closed when the active data contains any preview row.
+-- The old schema has no column in which to preserve preview branch identity,
+-- so automatically mapping even one row to uat would silently discard which
+-- branch produced the value. Resolve the data with an approved backup or
+-- re-provision plan before retrying.
 --
 -- 'uat' rather than 'test' because the old frontend rewrote test -> uat before
 -- displaying it (activeEnvironment in project-env-panel.tsx), so uat is the
 -- bucket the old UI could actually see.
+
+BEGIN;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM env_provisioning.project_env_var_metadata
+    WHERE environment = 'preview'
+  ) THEN
+    RAISE EXCEPTION
+      'Rollback refused: preview branch identity would be discarded; restore from backup or re-provision preview values before retrying';
+  END IF;
+END
+$$;
 
 ALTER TABLE env_provisioning.project_env_var_metadata
   DROP CONSTRAINT IF EXISTS project_env_var_metadata_lane_branch_check;
@@ -27,22 +35,6 @@ UPDATE env_provisioning.project_env_var_metadata
 SET environment = 'uat',
     updated_at = NOW()
 WHERE environment = 'preview';
-
--- Collapsing every branch into one bucket recreates duplicates on
--- (target, environment, key); keep the newest so the old UNIQUE can go back on.
-DELETE FROM env_provisioning.project_env_var_metadata
-WHERE id IN (
-  SELECT id
-  FROM (
-    SELECT id,
-           ROW_NUMBER() OVER (
-             PARTITION BY deployment_target_id, environment, key
-             ORDER BY last_provisioned_at DESC, id DESC
-           ) AS rank
-    FROM env_provisioning.project_env_var_metadata
-  ) AS ranked
-  WHERE ranked.rank > 1
-);
 
 ALTER TABLE env_provisioning.project_env_var_metadata
   DROP CONSTRAINT IF EXISTS project_env_var_metadata_target_lane_branch_key_key;
@@ -70,3 +62,5 @@ CREATE INDEX IF NOT EXISTS idx_project_env_var_metadata_project
   ON env_provisioning.project_env_var_metadata (
     project_id, deployment_target_id, environment
   );
+
+COMMIT;

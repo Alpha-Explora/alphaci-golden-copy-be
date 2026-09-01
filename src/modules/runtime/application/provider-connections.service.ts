@@ -9,16 +9,17 @@ import {
 
 import { EnvTokenEncryptionService } from './encryption.service';
 import {
+  WORKSPACES_PORT,
+  type WorkspacesPort,
+} from '#kernel/ports/workspaces.port';
+import {
   PROVIDER_CLIENT_REGISTRY,
   type ProviderClientRegistryPort,
 } from './ports/provider-client-registry.port';
 import type { CreateProviderConnectionDto } from '../dto/create-provider-connection.dto';
-import type { EnvProvider } from '../core/deployments.types';
 import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
-import { WorkspacesService } from '#modules/identity-access/index.js';
-
-const PROVIDERS: EnvProvider[] = ['render', 'vercel'];
-type ProviderTeamSummary = { id: string; slug?: string; name?: string };
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
 @Injectable()
 export class ProviderConnectionsService {
@@ -28,7 +29,10 @@ export class ProviderConnectionsService {
     @Inject(PROVIDER_CLIENT_REGISTRY)
     private readonly clientRegistry: ProviderClientRegistryPort,
     @Optional()
-    private readonly workspacesService?: WorkspacesService,
+    @Inject(WORKSPACES_PORT)
+    private readonly workspacesService?: WorkspacesPort,
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {}
 
   async createProviderConnection(
@@ -36,7 +40,8 @@ export class ProviderConnectionsService {
     dto: CreateProviderConnectionDto,
   ) {
     await this.assertCanManageProviderConnections(userId);
-    if (!PROVIDERS.includes(dto.provider)) {
+    const provider = this.findProvider(dto.provider);
+    if (!provider) {
       throw new BadRequestException('Unsupported provider');
     }
     if (!dto.label?.trim() || !dto.token?.trim()) {
@@ -46,11 +51,14 @@ export class ProviderConnectionsService {
     const token = dto.token.trim();
     const client = this.clientRegistry.getClient(dto.provider);
     const account = await client.validateConnection(token);
-    const teamId = dto.vercelTeamId?.trim();
-    const team =
-      dto.provider === 'vercel' && teamId
-        ? await this.validateVercelTeamAccess(client, token, teamId)
-        : undefined;
+    const metadata = provider.prepareConnection
+      ? await provider.prepareConnection({
+          token,
+          config: dto as unknown as Record<string, unknown>,
+          account,
+          client,
+        })
+      : {};
 
     return this.repository.createProviderConnection({
       userId,
@@ -58,7 +66,7 @@ export class ProviderConnectionsService {
       label: dto.label.trim(),
       encryptedToken: this.encryptionService.encrypt(token),
       tokenLastFour: token.slice(-4),
-      metadata: this.buildConnectionMetadata(dto, account, team),
+      metadata,
     });
   }
 
@@ -95,54 +103,14 @@ export class ProviderConnectionsService {
     }
   }
 
-  private buildConnectionMetadata(
-    dto: CreateProviderConnectionDto,
-    account: { id: string; metadata?: Record<string, unknown> },
-    team?: ProviderTeamSummary,
-  ): Record<string, unknown> {
-    if (dto.provider !== 'vercel') {
-      return {};
+  private findProvider(providerId: string) {
+    if (!this.providerRegistry) {
+      return undefined;
     }
-
-    const teamId = team?.id ?? dto.vercelTeamId?.trim();
-    const teamSlug = team?.slug ?? dto.vercelTeamSlug?.trim();
-    if (teamSlug && !teamId) {
-      throw new BadRequestException(
-        'vercelTeamId is required when connecting a Vercel team',
-      );
+    try {
+      return this.providerRegistry.get(providerId);
+    } catch {
+      return undefined;
     }
-
-    if (teamId) {
-      return {
-        accountType: 'team',
-        orgId: teamId,
-        teamId,
-        ...(teamSlug ? { teamSlug } : {}),
-      };
-    }
-
-    return {
-      accountType: 'user',
-      orgId: account.metadata?.['orgId'] ?? account.id,
-    };
-  }
-
-  private validateVercelTeamAccess(
-    client: {
-      validateTeamAccess?: (
-        token: string,
-        teamId: string,
-      ) => Promise<ProviderTeamSummary>;
-    },
-    token: string,
-    teamId: string,
-  ): Promise<ProviderTeamSummary> {
-    if (!client.validateTeamAccess) {
-      throw new BadRequestException(
-        'Vercel team validation is not supported by this provider client',
-      );
-    }
-
-    return client.validateTeamAccess(token, teamId);
   }
 }

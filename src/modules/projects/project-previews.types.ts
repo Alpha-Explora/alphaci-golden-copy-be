@@ -1,7 +1,7 @@
 import type {
   DeploymentHistoryStatus,
   EnvProvider,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 
 /**
  * One branch's current deployment.

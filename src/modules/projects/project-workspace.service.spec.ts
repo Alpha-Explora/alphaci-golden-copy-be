@@ -116,7 +116,7 @@ describe('ProjectWorkspaceService', () => {
     it('reads through the enforced org installation with nothing linked to the user', async () => {
       const { service, github } = build({
         installationToken: null,
-        github: { getEnforcedOrg: jest.fn(() => 'Alpha-Explora') } as never,
+        github: { getEnforcedOrg: jest.fn(() => 'Alpha-Explora') },
       });
 
       await service.listBranches('p1', 'u1', null);
@@ -133,7 +133,7 @@ describe('ProjectWorkspaceService', () => {
     it('leaves a repository outside the enforced org to the other strategies', async () => {
       const { service, github } = build({
         row: { repo_full_name: 'other-co/orders-api' },
-        github: { getEnforcedOrg: jest.fn(() => 'Alpha-Explora') } as never,
+        github: { getEnforcedOrg: jest.fn(() => 'Alpha-Explora') },
       });
 
       await service.listBranches('p1', 'u1', null);
@@ -154,7 +154,7 @@ describe('ProjectWorkspaceService', () => {
           getOrganizationProvisioningContextByLogin: jest.fn(() =>
             Promise.reject(new Error('App not installed')),
           ),
-        } as never,
+        },
       });
 
       await service.listBranches('p1', 'u1', null);
@@ -183,7 +183,7 @@ describe('ProjectWorkspaceService', () => {
               { name: 'trunk', protected: false, commitSha: 'a' },
             ]),
           ),
-        } as Partial<GithubService>,
+        },
       });
       await expect(service.listBranches('p1', 'u1', null)).resolves.toEqual(
         expect.objectContaining({ defaultBranch: 'trunk' }),
@@ -194,7 +194,7 @@ describe('ProjectWorkspaceService', () => {
       const { service } = build({
         github: {
           listBranches: jest.fn(() => Promise.resolve([])),
-        } as Partial<GithubService>,
+        },
       });
       await expect(service.listBranches('p1', 'u1', null)).resolves.toEqual(
         expect.objectContaining({ defaultBranch: 'main' }),
@@ -232,7 +232,7 @@ describe('ProjectWorkspaceService', () => {
       const { service } = build({
         github: {
           getJobLogs: jest.fn(() => Promise.resolve(null)),
-        } as Partial<GithubService>,
+        },
       });
       await expect(service.getJobLog('p1', 'u1', null, 5)).resolves.toEqual({
         available: false,
@@ -247,7 +247,7 @@ describe('ProjectWorkspaceService', () => {
           getJobLogs: jest.fn(() =>
             Promise.resolve({ content: 'tail', truncated: true }),
           ),
-        } as Partial<GithubService>,
+        },
       });
       await expect(service.getJobLog('p1', 'u1', null, 5)).resolves.toEqual({
         available: true,

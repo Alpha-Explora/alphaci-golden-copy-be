@@ -76,7 +76,7 @@ describe('GcpProvisioningExecutor', () => {
     const jobs = { complete: jest.fn(), fail: jest.fn() };
     const targets = { markProvisioned: jest.fn(), markFailed: jest.fn() };
     const executor = new GcpProvisioningExecutor(
-      runtime as never,
+      runtime,
       jobs as never,
       targets as never,
     );

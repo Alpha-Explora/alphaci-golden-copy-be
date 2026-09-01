@@ -2,7 +2,7 @@
  * scripts/check-github-team-setup.ts
  *
  * Read-only preflight for the GitHub team role sync
- * (docs/GITHUB-TEAMS-INTEGRATION-PLAN.md).
+ * (the current hierarchy and GitHub team-access contract).
  *
  * Phase 0 — adding org "Members: Read" to the GitHub App and subscribing it to
  * Member/Team webhook events — happens in GitHub's UI, outside this codebase.

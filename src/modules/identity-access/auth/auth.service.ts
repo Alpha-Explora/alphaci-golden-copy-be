@@ -11,13 +11,15 @@ import type { Request } from 'express';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import type { SessionUser } from '#kernel/auth/session-user.interface';
-import { GithubTeamRoleService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_TEAM_ROLE_PORT,
+  type GithubTeamRolePort,
+} from '#kernel/ports/github-team-role.port';
 import { OAuthStateRepository } from './infra/oauth-state.repository';
-import { OutboxRepository } from '#kernel/events/outbox.repository';
 import {
   SUBSCRIPTION_BOOTSTRAP,
-  type SubscriptionBootstrap,
-} from '#modules/billing/index.js';
+  type SubscriptionBootstrapPort,
+} from '#kernel/ports/subscription-bootstrap.port';
 import { UsersRepository } from './infra/users.repository';
 
 interface GitHubTokenResponse {
@@ -100,10 +102,10 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly usersRepository: UsersRepository,
     @Inject(SUBSCRIPTION_BOOTSTRAP)
-    private readonly subscriptionsRepository: SubscriptionBootstrap,
-    private readonly outboxRepository: OutboxRepository,
+    private readonly subscriptionsRepository: SubscriptionBootstrapPort,
     private readonly oauthStateRepository: OAuthStateRepository,
-    private readonly githubTeamRoleService: GithubTeamRoleService,
+    @Inject(GITHUB_TEAM_ROLE_PORT)
+    private readonly githubTeamRoleService: GithubTeamRolePort,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
     this.returnToOrigins = this.buildReturnToOrigins(
@@ -449,16 +451,6 @@ export class AuthService {
       // required to guarantee the token reaches the session store before we
       // redirect the browser.
       await this.saveSession(request);
-
-      await this.outboxRepository.publishLater({
-        topic: 'user.signed_in',
-        aggregateType: 'user',
-        aggregateId: persistedUser.id,
-        payload: {
-          provider: 'github',
-          login: persistedUser.login,
-        },
-      });
 
       return this.withQuery(returnTo, 'auth', 'success');
     } catch (err) {

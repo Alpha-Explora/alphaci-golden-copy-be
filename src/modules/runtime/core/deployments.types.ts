@@ -1,4 +1,8 @@
-import type { DeploymentProviderId } from './deployment-provider.contract';
+import type { DeploymentProviderId } from './deployment-provider-id';
+import type { RenderServiceType } from './deployment-target.types';
+
+export type { DeploymentProviderId } from './deployment-provider-id';
+export type { RenderServiceType } from './deployment-target.types';
 
 export type EnvProvider = DeploymentProviderId;
 
@@ -38,15 +42,8 @@ export type RenderDeploymentStrategy =
 export type VercelDeploymentStrategy =
   | 'vercel_git_connected'
   | 'vercel_ci_pushed';
-export type DeploymentStrategy =
-  | 'provider_native'
-  | VercelDeploymentStrategy
-  | RenderDeploymentStrategy;
-export type RenderServiceType =
-  | 'web_service'
-  | 'private_service'
-  | 'background_worker'
-  | 'cron_job';
+/** Strategy identifiers are owned by the provider plugin that implements them. */
+export type DeploymentStrategy = string;
 export type RenderRuntime =
   | 'node'
   | 'python'

@@ -1,15 +1,15 @@
 // Response shapes (match FE contracts exactly).
 // Shared with the application-layer view mappers; keep free of runtime imports.
 import type { WorkflowFileMetadata } from './application/workflows/index';
-import type { GithubRepoDeleteErrorCode } from '#modules/pipelines/index.js';
-import type { DeploymentProvisioningResult } from '#modules/runtime/index.js';
+import type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
+import type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
 import type { StagedWorkflowFile } from './application/workflows/index';
 import type { ProvisionedProjectStatus } from './projects.repository';
 import type { WorkflowHistoryEntry } from './application/workflows/index';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
-} from '#modules/runtime/index.js';
+} from '#kernel/ports/deployment-runtime.port';
 import type { ProjectDashboardSnapshot } from './project-dashboard-snapshots.repository';
 import type { WorkflowUpdateRequestRecord } from './project-workflow-update-requests.repository';
 
@@ -41,7 +41,7 @@ export interface SetupProjectResponse {
   deploymentProvisioning: DeploymentProvisioningResult;
 }
 
-export type { DeploymentProvisioningResult } from '#modules/runtime/index.js';
+export type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
 
 export interface ProvisionedProject {
   id: string;

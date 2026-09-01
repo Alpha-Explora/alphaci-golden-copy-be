@@ -1,6 +1,14 @@
-import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_ORGANIZATION_PORT,
+  type GithubOrganizationPort,
+} from '#kernel/ports/github.port';
 import {
   GithubTeamAccessProvider,
   type EnsureTeamResult,
@@ -14,25 +22,28 @@ const USER_AGENT = 'cicd-workflow-product';
  * Real Octokit-equivalent calls (plain fetch, matching this codebase's
  * existing GithubService style — no Octokit SDK dependency here). NOT
  * exercised by default: HIERARCHY_GITHUB_SYNC_MODE defaults to 'stub' in
- * every environment (plan §1.7); this class only runs once an operator
+ * every environment (explicit GitHub sync configuration); this class only runs once an operator
  * explicitly opts an environment into 'live'.
  *
  * Known limitation (documented, not silently incurred): resolving the
- * "centrally governed GitHub App credential" (source plan §5) ideally uses
+ * "centrally governed GitHub App credential" (current hierarchy integration contract) ideally uses
  * an org-level installation lookup independent of any one user. This
  * module cannot add that lookup without modifying
- * GithubInstallationsRepository (out of scope — plan §3.2 restricts GitHub
+ * GithubInstallationsRepository (out of scope — repository access contract restricts GitHub
  * module changes to *calling* existing public methods). Instead, the caller
  * supplies the acting PM's userId and this provider resolves their
  * installation token via the existing
  * GithubService.getInstallationAccessTokenForUser. This is adequate for a
- * pilot (source plan Phase 6) but should be revisited before broad rollout.
+ * pilot (future operational work) but should be revisited before broad rollout.
  */
 @Injectable()
 export class GithubTeamAccessLiveProvider extends GithubTeamAccessProvider {
   private readonly logger = new Logger(GithubTeamAccessLiveProvider.name);
 
-  constructor(private readonly githubService: GithubService) {
+  constructor(
+    @Inject(GITHUB_ORGANIZATION_PORT)
+    private readonly githubService: GithubOrganizationPort,
+  ) {
     super();
   }
 

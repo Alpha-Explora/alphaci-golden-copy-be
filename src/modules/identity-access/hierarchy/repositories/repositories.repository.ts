@@ -17,9 +17,9 @@ export interface RepositoryRecord {
   provisionedProjectId: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Active-assignment ("developers") count — at-a-glance chip (UI_LAYOUTS.md §6.5). */
+  /** Active-assignment ("developers") count — at-a-glance chip (current hierarchy summary contract). */
   assignmentCount: number;
-  /** Derived from repoFullName — null until the GitHub repo is created (plan §1.5). */
+  /** Derived from repoFullName — null until the GitHub repo is created. */
   htmlUrl: string | null;
 }
 
@@ -98,7 +98,7 @@ export class RepositoriesRepository {
 
   /**
    * Developer/viewer visibility: only repositories where the caller holds an
-   * assignment with status='active' (plan §2.6 — server-side filtering, never
+   * assignment with status='active' (current hierarchy API contract — server-side filtering, never
    * "returned then hidden by the FE").
    */
   async listByDeliveryProjectForAssignee(
@@ -143,7 +143,7 @@ export class RepositoriesRepository {
     return this.toRecord(row, counts.get(row.id) ?? 0);
   }
 
-  /** Active-assignment counts, batched by repository id (UI_LAYOUTS.md §6.5). */
+  /** Active-assignment counts, batched by repository id (current hierarchy summary contract). */
   private async getAssignmentCounts(
     repositoryIds: string[],
   ): Promise<Map<string, number>> {
@@ -231,7 +231,7 @@ export class RepositoriesRepository {
       // GitHub always assigns https://github.com/<owner>/<repo> as the repo
       // URL for a repo created through the normal API — deriving it from
       // repo_full_name avoids a second persisted column for a value that's
-      // fully determined by an existing one (plan §1.5).
+      // fully determined by an existing one.
       htmlUrl: row.repo_full_name
         ? `https://github.com/${row.repo_full_name}`
         : null,

@@ -21,7 +21,7 @@ export class GroupActivityRepository {
    * Cursor-paginated activity list. Fetches one extra row beyond `limit` to
    * detect whether a next page exists, then trims back down to `limit` —
    * the caller (GroupActivityService) turns the trimmed-off row's
-   * created_at into `nextCursor` (plan §2.8's { items, nextCursor } shape).
+   * created_at into `nextCursor` (activity-feed contract's { items, nextCursor } shape).
    * Without this, the FE's "Load more" button — gated on nextCursor being
    * non-null — never renders, silently hard-capping the feed at `limit`
    * items with no way to reach older activity.
@@ -58,10 +58,10 @@ export class GroupActivityRepository {
       );
     }
     if (query.activityType) {
-      // Maps the FE's coarse activityType filter (plan §2.8) onto the
+      // Maps the FE's coarse activityType filter (activity-feed contract) onto the
       // hierarchy.* event_code namespace. 'github' intentionally matches
       // nothing yet — no hierarchy event_code originates from a GitHub
-      // webhook this session (plan §2.8: "out of scope to *originate* this
+      // webhook this session (activity-feed contract: "out of scope to *originate* this
       // session"); the filter option exists so the UI doesn't need a
       // breaking change once webhook-sourced rows are added later.
       const eventCodePrefixes: Record<string, string[]> = {

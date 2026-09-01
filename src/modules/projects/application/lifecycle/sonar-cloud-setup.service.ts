@@ -1,8 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 
 /**
  * Installs the SonarCloud secrets this product's Quality stage reads.
@@ -19,7 +22,8 @@ export class SonarCloudSetupService {
   private readonly logger = new Logger(SonarCloudSetupService.name);
 
   constructor(
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
     private readonly configService: ConfigService,
   ) {}
 

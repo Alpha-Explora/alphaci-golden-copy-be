@@ -18,7 +18,15 @@ import {
 import type { AppConfig } from '#kernel/config/app.config.js';
 import { postgresSslConfig } from '#kernel/db/postgres-ssl.config.js';
 
-async function bootstrap(): Promise<void> {
+/**
+ * Build the HTTP application without binding a port.
+ *
+ * Keeping the complete Express/Nest configuration in a callable factory lets
+ * the architecture tests exercise the real middleware stack instead of only
+ * constructing an application context. Production still uses the same path;
+ * only the final listen step remains in bootstrap().
+ */
+export async function createHttpApplication(): Promise<NestExpressApplication> {
   const logger = new Logger('Bootstrap');
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -49,7 +57,7 @@ async function bootstrap(): Promise<void> {
     const PgStore = connectPg(session);
     // Connection budget: this pool shares the Supabase Supavisor session-mode
     // pooler (pool_size: 15 project-wide) with DatabaseService's app pool and
-    // the process-outbox cron job. Session reads/writes are cheap single-row
+    // the single scheduled outbox relay. Session reads/writes are cheap single-row
     // lookups, so a small cap is plenty — see the shared-budget comment on
     // DatabaseService's pool in database.service.ts for the full math. Left
     // unset, pg defaults `max` to 10, which alone was enough to blow the
@@ -156,9 +164,18 @@ async function bootstrap(): Promise<void> {
     logger.log('Swagger docs available at /api/v1/docs');
   }
 
-  const port = parseInt(process.env['PORT'] ?? '4000', 10);
-  await app.listen(port, '0.0.0.0');
-  logger.log(`Application running on 0.0.0.0:${String(port)}`);
+  return app;
 }
 
-void bootstrap();
+async function bootstrap(): Promise<void> {
+  const app = await createHttpApplication();
+  const port = parseInt(process.env['PORT'] ?? '4000', 10);
+  await app.listen(port, '0.0.0.0');
+  new Logger('Bootstrap').log(`Application running on 0.0.0.0:${String(port)}`);
+}
+
+// Importing main.ts from a test must not start a listener. The compiled entry
+// point remains executable with `node dist/src/main.js`.
+if (require.main === module) {
+  void bootstrap();
+}

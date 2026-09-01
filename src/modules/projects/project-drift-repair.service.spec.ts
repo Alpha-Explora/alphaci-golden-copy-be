@@ -16,7 +16,7 @@ describe('ProjectDriftRepairService', () => {
   const deploymentTargetsRepository = {
     deleteDeploymentTargetForUser: jest.fn(),
   };
-  const projectsService = {
+  const projectWorkflowsService = {
     previewWorkflowSettings: jest.fn(),
     createWorkflowUpdatePullRequest: jest.fn(),
   };
@@ -56,11 +56,11 @@ describe('ProjectDriftRepairService', () => {
     deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValue(
       true,
     );
-    projectsService.previewWorkflowSettings.mockResolvedValue({
+    projectWorkflowsService.previewWorkflowSettings.mockResolvedValue({
       workflowFiles: [{ path: '.github/workflows/00-alphaci-access.yml' }],
       validationWarnings: [],
     });
-    projectsService.createWorkflowUpdatePullRequest.mockResolvedValue({
+    projectWorkflowsService.createWorkflowUpdatePullRequest.mockResolvedValue({
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
     });
@@ -74,9 +74,9 @@ describe('ProjectDriftRepairService', () => {
     return new ProjectDriftRepairService(
       projectsRepository as never,
       findingsRepository as never,
-      ciService as never,
-      deploymentTargetsRepository as never,
-      projectsService as never,
+      ciService,
+      deploymentTargetsRepository,
+      projectWorkflowsService as never,
       configService as never,
       auditEventsService as never,
       notificationEventsService as never,
@@ -415,7 +415,7 @@ describe('ProjectDriftRepairService', () => {
       },
     });
     expect(
-      projectsService.createWorkflowUpdatePullRequest,
+      projectWorkflowsService.createWorkflowUpdatePullRequest,
     ).toHaveBeenCalledWith('project-1', 'user-1', 'gh-token', {});
     expect(findingsRepository.markStatus).toHaveBeenCalledWith(
       'finding-7',

@@ -31,7 +31,7 @@ export class AssignmentsService {
     private readonly configService: ConfigService,
   ) {}
 
-  /** Transition #1 (plan §1.6): verifies group membership, creates the pending row, enqueues the grant job. */
+  /** Transition #1 (hierarchy state-machine contract): verifies group membership, creates the pending row, enqueues the grant job. */
   async createAssignment(
     repositoryId: string,
     userId: string,
@@ -49,8 +49,8 @@ export class AssignmentsService {
         userId,
       );
 
-    // Source plan §5 step 1: "AlphaCI verifies that the developer belongs to
-    // the PM's group" before an assignment can be created.
+    // Verify that the developer belongs to the PM's group before an
+    // assignment can be created.
     const targetMembership = await this.groupsRepository.findActiveMembership(
       groupId,
       dto.userId,
@@ -66,11 +66,12 @@ export class AssignmentsService {
       );
     }
 
-    const assignment = await this.assignmentsRepository.createOrReset({
-      repositoryId,
-      userId: dto.userId,
-      assignedBy: userId,
-    });
+    const assignment =
+      await this.githubSyncService.createAssignmentAndRequestGrant({
+        repositoryId,
+        userId: dto.userId,
+        assignedBy: userId,
+      });
 
     await this.auditEventsService.recordProjectEvent({
       workspaceId: groupId,
@@ -83,8 +84,6 @@ export class AssignmentsService {
         targetUserId: dto.userId,
       },
     });
-
-    await this.githubSyncService.requestGrant(assignment.id, userId);
 
     return assignment;
   }
@@ -133,7 +132,7 @@ export class AssignmentsService {
     return updated;
   }
 
-  /** Manual drift-repair trigger (periodic cron is a Phase 6 follow-up, plan §1.6 row 5). */
+  /** Manual drift-repair trigger (periodic cron is a future operational enhancement, manual reconciliation path). */
   async reconcile(
     repositoryId: string,
     userId: string,

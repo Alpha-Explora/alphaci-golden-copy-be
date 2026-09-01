@@ -29,6 +29,21 @@ const makeDatabaseService = () => {
         async (fn: (c: typeof clientMock) => Promise<unknown>) =>
           fn(clientMock),
       ),
+    withTransaction: jest
+      .fn()
+      .mockImplementation(
+        async (fn: (c: typeof clientMock) => Promise<unknown>) => {
+          await clientMock.query('BEGIN');
+          try {
+            const result = await fn(clientMock);
+            await clientMock.query('COMMIT');
+            return result;
+          } catch (error) {
+            await clientMock.query('ROLLBACK');
+            throw error;
+          }
+        },
+      ),
     _clientMock: clientMock,
   } as unknown as DatabaseService & { _clientMock: typeof clientMock };
 };

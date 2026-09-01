@@ -24,7 +24,7 @@
     }
   },
   "scripts": {
-    "build": "nest build",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "start": "nest start",
@@ -40,7 +40,6 @@
     "test:e2e": "jest --config ./tests/e2e/jest-e2e.json",
     "db:hierarchy:verify": "node scripts/hierarchy-migrations.cjs verify",
     "db:hierarchy:apply": "node scripts/hierarchy-migrations.cjs apply",
-    "dummy:show": "node ./scripts/show-dummy-account.cjs",
     "check:github-teams": "node --env-file=.env -r ts-node/register scripts/check-github-team-setup.ts",
     "db:apply": "node --env-file=.env -r ts-node/register scripts/apply-migrations.ts",
     "boundaries": "depcruise src tests --config .dependency-cruiser.cjs --ignore-known",
@@ -49,10 +48,14 @@
     "check:provider-encapsulation": "node ./scripts/check-provider-encapsulation.cjs",
     "boundaries:graph": "depcruise src --config .dependency-cruiser.cjs --output-type dot > dependency-graph.dot",
     "boundaries:new": "depcruise src tests --config .dependency-cruiser.cjs",
-      "db:apply:all": "node scripts/apply-all-migrations.mjs",
-      "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
-      "process:outbox": "npm run build && node scripts/process-outbox.cjs",
-      "routes:inventory": "npm run build && node scripts/route-inventory.cjs"
+    "db:apply:all": "node scripts/apply-all-migrations.mjs",
+    "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
+    "generate:architecture-maps": "node scripts/generate-architecture-maps.mjs",
+    "check:okf": "node scripts/check-okf-bundle.cjs docs",
+    "check:documentation": "node scripts/check-documentation.cjs",
+    "test:documentation": "node --test tests/architecture/check-okf-bundle.test.cjs",
+    "process:outbox": "npm run build && node scripts/process-outbox.cjs",
+    "routes:inventory": "npm run build && node scripts/route-inventory.cjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -62,10 +65,10 @@
     "@nestjs/swagger": "^11.4.3",
     "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.100.1",
-
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "connect-pg-simple": "^10.0.0",
+    "express": "5.2.1",
     "express-session": "^1.19.0",
     "google-auth-library": "^10.9.1",
     "helmet": "^8.1.0",

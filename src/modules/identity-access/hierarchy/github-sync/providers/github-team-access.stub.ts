@@ -8,7 +8,7 @@ import {
 
 /**
  * Always-succeeds mock used when HIERARCHY_GITHUB_SYNC_MODE=stub (default in
- * every environment, plan §1.7). Runs the full state-machine and outbox
+ * every environment, explicit GitHub sync configuration). Runs the full state-machine and outbox
  * lifecycle against a no-op GitHub client — lets the PM/developer UI and
  * audit trail be built, reviewed, and tested before real GitHub Team API
  * calls are turned on.

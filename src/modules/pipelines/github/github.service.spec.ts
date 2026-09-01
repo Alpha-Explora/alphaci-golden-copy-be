@@ -176,7 +176,7 @@ describe('GithubService', () => {
     installationsRepository = makeInstallationsRepository();
     service = new GithubService(makeConfigService(), installationsRepository);
     fetchMock = jest.fn();
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
   });
 
   afterEach(() => {
@@ -261,7 +261,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ token: 'installation-token' }),
-      } as unknown as Response);
+      });
 
       await expect(service.createInstallationAccessToken(12345)).resolves.toBe(
         'installation-token',
@@ -283,7 +283,7 @@ describe('GithubService', () => {
         ok: false,
         status: 502,
         text: async () => 'bad gateway',
-      } as unknown as Response);
+      });
 
       await expect(
         service.createInstallationAccessToken(12345),
@@ -296,7 +296,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({}),
-      } as unknown as Response);
+      });
 
       await expect(
         service.createInstallationAccessToken(12345),
@@ -315,11 +315,11 @@ describe('GithubService', () => {
             account: { login: 'tone', id: 99, type: 'Organization' },
             repository_selection: 'all',
           }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({ token: 'installation-token' }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
@@ -328,7 +328,7 @@ describe('GithubService', () => {
               { full_name: 'tone/web' },
             ],
           }),
-        } as unknown as Response);
+        });
 
       const result = await service.linkInstallation('user-1', 12345);
 
@@ -354,7 +354,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ token: 'installation-token' }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getInstallationAccessTokenForUser('user-1'),
@@ -382,7 +382,7 @@ describe('GithubService', () => {
         ok: false,
         status: 500,
         text: async () => 'github down',
-      } as unknown as Response);
+      });
 
       await expect(
         service.getInstallationAccessTokenForUser('user-1'),
@@ -395,7 +395,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ token: 'owner-installation-token' }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getInstallationAccessTokenForUserRepo('user-1', 'tone/api'),
@@ -439,7 +439,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ token: 'selected-installation-token' }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getInstallationAccessTokenForUserRepo(
@@ -471,7 +471,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ token: 'organization-token' }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getOrganizationProvisioningContext('user-1', 12345),
@@ -492,12 +492,12 @@ describe('GithubService', () => {
           target_type: 'Organization',
           repository_selection: 'all',
         }),
-      } as unknown as Response);
+      });
       // 2) POST installation access token.
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ token: 'organization-token' }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getOrganizationProvisioningContextByLogin('TONE'),
@@ -523,7 +523,7 @@ describe('GithubService', () => {
         status: 404,
         json: async () => ({}),
         text: async () => 'Not Found',
-      } as unknown as Response);
+      });
 
       await expect(
         service.getOrganizationProvisioningContextByLogin('Alpha-Explora'),
@@ -542,7 +542,7 @@ describe('GithubService', () => {
           target_type: 'Organization',
           repository_selection: 'selected',
         }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getOrganizationProvisioningContextByLogin('TONE'),
@@ -736,7 +736,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         status,
         text: async () => '',
-      } as unknown as Response);
+      });
 
       await expect(
         service.repoExists('gh-token', 'tone/orders-api'),
@@ -749,7 +749,7 @@ describe('GithubService', () => {
         fetchMock.mockResolvedValueOnce({
           status,
           text: async () => 'denied',
-        } as unknown as Response);
+        });
 
         await expect(
           service.repoExists('gh-token', 'tone/orders-api'),
@@ -765,7 +765,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         status: 204,
         text: async () => '',
-      } as unknown as Response);
+      });
 
       await expect(
         service.deleteRepoForUser('gh-token', 'tone', 'orders-api'),
@@ -780,7 +780,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         status: 404,
         text: async () => 'Not Found',
-      } as unknown as Response);
+      });
 
       const error = await service
         .deleteRepoForUser('gh-token', 'tone', 'orders-api')
@@ -796,7 +796,7 @@ describe('GithubService', () => {
         fetchMock.mockResolvedValueOnce({
           status,
           text: async () => 'Resource not accessible by integration',
-        } as unknown as Response);
+        });
 
         const error = await service
           .deleteRepoForUser('gh-token', 'tone', 'orders-api')
@@ -814,7 +814,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         status: 503,
         text: async () => 'unavailable',
-      } as unknown as Response);
+      });
 
       const error = await service
         .deleteRepoForUser('gh-token', 'tone', 'orders-api')
@@ -828,7 +828,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         status: 403,
         text: async () => '',
-      } as unknown as Response);
+      });
 
       // deleteRepo() would resolve to `false` here; deleteRepoForUser() must
       // reject so the caller can surface the failure reason to the user.
@@ -843,7 +843,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => makeRepo({ default_branch: 'master' }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getRepo('gh-token', 'user', 'my-repo'),
@@ -866,7 +866,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => [makeRepo()],
-      } as unknown as Response);
+      });
 
       const result = await service.listRepos('gh-token');
 
@@ -897,7 +897,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
         json: async () => ({ message: 'Unauthorized' }),
-      } as unknown as Response);
+      });
 
       const result = await service.listRepos('bad-token');
       expect(result).toEqual([]);
@@ -907,7 +907,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => [makeRepo({ description: null })],
-      } as unknown as Response);
+      });
 
       const result = await service.listRepos('gh-token');
       expect(result[0]?.description).toBeNull();
@@ -917,7 +917,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => [makeRepo({ private: true })],
-      } as unknown as Response);
+      });
 
       const result = await service.listRepos('gh-token');
       expect(result[0]?.private).toBe(true);
@@ -927,7 +927,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => [],
-      } as unknown as Response);
+      });
 
       const result = await service.listRepos('gh-token');
       expect(result).toEqual([]);
@@ -940,7 +940,7 @@ describe('GithubService', () => {
         ok: false,
         status: 404,
         text: async () => 'not found',
-      } as unknown as Response);
+      });
 
       await expect(
         service.getRepo('gh-token', 'tone', 'missing'),
@@ -956,7 +956,7 @@ describe('GithubService', () => {
           owner: { login: 'Alpha-Explora' },
           name: 'orders-api',
         }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.createRepo('gh-token', {
@@ -999,7 +999,7 @@ describe('GithubService', () => {
           owner: { login: 'Alpha-Explora' },
           name: 'orders-api',
         }),
-      } as unknown as Response);
+      });
 
       await service.createRepo('gh-token', {
         repoName: 'orders-api',
@@ -1027,7 +1027,7 @@ describe('GithubService', () => {
           ok: false,
           status,
           text: async () => 'failure body',
-        } as unknown as Response);
+        });
 
         await expect(
           service.createRepo('gh-token', {
@@ -1050,7 +1050,7 @@ describe('GithubService', () => {
           status,
           text: async () =>
             '{"message":"Although you appear to have the correct authorization credentials, the `Alphaexplora-Sandbox` organization has an IP allow list enabled"}',
-        } as unknown as Response);
+        });
 
         await expect(
           service.createRepo('gh-token', {
@@ -1099,7 +1099,7 @@ describe('GithubService', () => {
           owner: { login: 'tone' },
           name: 'orders-api',
         }),
-      } as unknown as Response);
+      });
 
       await service.createRepo(
         'oauth-user-token',
@@ -1129,7 +1129,7 @@ describe('GithubService', () => {
           owner: { login: 'Alpha-Explora' },
           name: 'orders-api',
         }),
-      } as unknown as Response);
+      });
 
       await expect(
         enforcedService.createRepo('gh-token', {
@@ -1154,10 +1154,10 @@ describe('GithubService', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({ object: { sha: 'base-sha' } }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
-        } as unknown as Response);
+        });
 
       await expect(
         service.createBranch('gh-token', 'tone', 'orders-api', 'test', 'main'),
@@ -1179,12 +1179,12 @@ describe('GithubService', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({ object: { sha: 'base-sha' } }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: false,
           status: 422,
           text: async () => 'already exists',
-        } as unknown as Response);
+        });
 
       await expect(
         service.createBranch('gh-token', 'tone', 'orders-api', 'test', 'main'),
@@ -1194,7 +1194,7 @@ describe('GithubService', () => {
 
   describe('file and pull request operations', () => {
     it('returns null when a GitHub file is missing', async () => {
-      fetchMock.mockResolvedValueOnce({ status: 404 } as unknown as Response);
+      fetchMock.mockResolvedValueOnce({ status: 404 });
 
       await expect(
         service.getFileContent(
@@ -1215,7 +1215,7 @@ describe('GithubService', () => {
           content: Buffer.from('name: CI').toString('base64'),
           encoding: 'base64',
         }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getFileContent(
@@ -1233,7 +1233,7 @@ describe('GithubService', () => {
         status: 200,
         ok: true,
         json: async () => ({ content: 'plain', encoding: 'utf-8' }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.getFileContent(
@@ -1251,7 +1251,7 @@ describe('GithubService', () => {
         status: 500,
         ok: false,
         text: async () => 'server error',
-      } as unknown as Response);
+      });
 
       await expect(
         service.getFileContent(
@@ -1269,7 +1269,7 @@ describe('GithubService', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({ sha: 'existing-sha' }),
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
@@ -1278,7 +1278,7 @@ describe('GithubService', () => {
               html_url: 'https://github.com/tone/orders-api/commit/commit-sha',
             },
           }),
-        } as unknown as Response);
+        });
 
       await expect(
         service.putFileContent(
@@ -1308,7 +1308,7 @@ describe('GithubService', () => {
         .mockResolvedValueOnce({
           ok: false,
           status: 404,
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
@@ -1317,7 +1317,7 @@ describe('GithubService', () => {
             },
             commit: { sha: 'commit-sha' },
           }),
-        } as unknown as Response);
+        });
 
       await expect(
         service.putFileContent(
@@ -1346,7 +1346,7 @@ describe('GithubService', () => {
         ok: false,
         status: 500,
         text: async () => 'lookup failed',
-      } as unknown as Response);
+      });
 
       await expect(
         service.putFileContent(
@@ -1366,12 +1366,12 @@ describe('GithubService', () => {
         .mockResolvedValueOnce({
           ok: false,
           status: 404,
-        } as unknown as Response)
+        })
         .mockResolvedValueOnce({
           ok: false,
           status: 500,
           text: async () => 'write failed',
-        } as unknown as Response);
+        });
 
       await expect(
         service.putFileContent(
@@ -1393,7 +1393,7 @@ describe('GithubService', () => {
           number: 42,
           html_url: 'https://github.com/tone/orders-api/pull/42',
         }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
@@ -1412,7 +1412,7 @@ describe('GithubService', () => {
         ok: false,
         status: 422,
         text: async () => 'validation failed',
-      } as unknown as Response);
+      });
 
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
@@ -1429,7 +1429,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ number: 42 }),
-      } as unknown as Response);
+      });
 
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
@@ -1475,7 +1475,7 @@ describe('GithubService', () => {
         ok: false,
         status: 404,
         text: async () => 'missing',
-      } as unknown as Response);
+      });
 
       await expect(
         service.setActionsSecret(
@@ -1493,7 +1493,7 @@ describe('GithubService', () => {
         ok: false,
         status: 500,
         text: async () => 'key failed',
-      } as unknown as Response);
+      });
 
       await expect(
         service.setActionsSecretStrict(
@@ -1507,7 +1507,7 @@ describe('GithubService', () => {
     });
 
     it('applies branch protection with the expected GitHub endpoint', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true } as unknown as Response);
+      fetchMock.mockResolvedValueOnce({ ok: true });
 
       await expect(
         service.applyBranchProtection('gh-token', 'tone', 'orders-api', 'test'),
@@ -1519,7 +1519,7 @@ describe('GithubService', () => {
     });
 
     it('requires the env-guard status check on protected branches by default', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true } as unknown as Response);
+      fetchMock.mockResolvedValueOnce({ ok: true });
 
       await service.applyBranchProtection(
         'gh-token',
@@ -1539,7 +1539,7 @@ describe('GithubService', () => {
     });
 
     it('omits required status checks when explicitly given none', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true } as unknown as Response);
+      fetchMock.mockResolvedValueOnce({ ok: true });
 
       await service.applyBranchProtection(
         'gh-token',
@@ -1560,7 +1560,7 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
         status: 403,
-      } as unknown as Response);
+      });
 
       await expect(
         service.applyBranchProtection('gh-token', 'tone', 'orders-api', 'main'),

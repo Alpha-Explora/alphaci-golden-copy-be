@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import type {
   DeploymentProvisioningEnvSet as DeploymentProvisioningEnvSetDto,
@@ -11,9 +11,12 @@ import type {
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
 import type { EnvLane, EnvVarScope } from '../core/deployments.types';
+import { DeploymentProviderPolicyRegistry } from '../core/deployment-provider.policy';
 import { EnvVarsService } from './env-vars.service';
-import { RenderCiSecretsService } from './render-ci-secrets.service';
-import { VercelCiSecretsService } from './vercel-ci-secrets.service';
+import {
+  PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+  type ProviderCiSecretsInstallerRegistryPort,
+} from './ports/provider-ci-secrets-installer.port';
 
 type ProvisionForProjectInput = DeploymentProvisioningInput;
 
@@ -75,8 +78,10 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
   constructor(
     private readonly deploymentTargetsService: DeploymentTargetsService,
     private readonly envVarsService: EnvVarsService,
-    private readonly vercelCiSecretsService: VercelCiSecretsService,
-    private readonly renderCiSecretsService?: RenderCiSecretsService,
+    @Inject(PROVIDER_CI_SECRETS_INSTALLER_REGISTRY)
+    private readonly ciSecretsInstallers: ProviderCiSecretsInstallerRegistryPort,
+    @Optional()
+    private readonly providerPolicyRegistry?: DeploymentProviderPolicyRegistry,
   ) {}
 
   async provisionForProject(
@@ -87,11 +92,11 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     }
 
     const targets: DeploymentProvisioningResult['targets'] = [];
-    const requestedTargets = this.expandManagedRenderTargets(input.request);
+    const requestedTargets = this.expandTargets(input.request);
 
     for (const requestedTarget of requestedTargets) {
       try {
-        const defaultImageUrl = this.defaultManagedRenderImageUrl(
+        const defaultImageUrl = this.defaultManagedImageUrl(
           input.repoFullName,
           requestedTarget,
         );
@@ -165,60 +170,25 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
           );
         let providerMetadata = target.providerMetadata;
 
-        if (target.deploymentStrategy === 'vercel_ci_pushed') {
+        const ciSecretsInstaller = this.ciSecretsInstallers.get(
+          target.provider,
+        );
+        if (ciSecretsInstaller?.supports(target)) {
           if (!input.githubAccessToken) {
             throw new Error(
-              'GitHub access token is required to install Vercel deployment secrets',
+              `GitHub access token is required to install ${target.provider} deployment secrets`,
             );
           }
 
-          const secretResult =
-            await this.vercelCiSecretsService.installForTarget({
-              githubAccessToken: input.githubAccessToken,
-              repoFullName: input.repoFullName,
-              userId: input.userId,
-              providerConnectionId:
-                requestedTarget.providerConnectionId ?? null,
-              target,
-            });
+          const secretResult = await ciSecretsInstaller.installForTarget({
+            githubAccessToken: input.githubAccessToken,
+            repoFullName: input.repoFullName,
+            userId: input.userId,
+            providerConnectionId: requestedTarget.providerConnectionId ?? null,
+            target,
+          });
           providerMetadata = {
             ...target.providerMetadata,
-            githubSecrets: secretResult.githubSecrets,
-          };
-          await this.deploymentTargetsService.updateProviderMetadata(
-            target.id,
-            providerMetadata,
-          );
-        }
-
-        if (
-          target.provider === 'render' &&
-          ['render_image_pushed', 'render_existing_service'].includes(
-            target.deploymentStrategy,
-          )
-        ) {
-          if (!input.githubAccessToken) {
-            throw new Error(
-              'GitHub access token is required to install Render deployment secrets',
-            );
-          }
-          if (!this.renderCiSecretsService) {
-            throw new Error(
-              'Render deployment secret installer is not configured',
-            );
-          }
-
-          const secretResult =
-            await this.renderCiSecretsService.installForTarget({
-              githubAccessToken: input.githubAccessToken,
-              repoFullName: input.repoFullName,
-              userId: input.userId,
-              providerConnectionId:
-                requestedTarget.providerConnectionId ?? null,
-              target,
-            });
-          providerMetadata = {
-            ...providerMetadata,
             githubSecrets: secretResult.githubSecrets,
           };
           await this.deploymentTargetsService.updateProviderMetadata(
@@ -458,27 +428,28 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     }
   }
 
-  /**
-   * Slot names win; 'standalone' targets fall back to the provider's typical
-   * role (Render hosts services, Vercel hosts frontends).
-   */
+  /** Slot names win; a provider supplies the default for standalone targets. */
   private targetRole(target: ProvisionedTarget): 'backend' | 'frontend' {
     if (target.slot === 'backend' || target.slot === 'frontend') {
       return target.slot;
     }
-    return target.provider === 'vercel' ? 'frontend' : 'backend';
+    return (
+      this.providerPolicyRegistry
+        ?.find(target.provider)
+        ?.provisioning?.resolveDefaultTargetRole() ?? 'backend'
+    );
   }
 
-  /**
-   * The lane a target serves, or null when one provider target covers both
-   * (Vercel: preview + production in one project).
-   */
+  /** The lane a target serves, or null when it covers both lanes. */
   private crossLinkLane(target: ProvisionedTarget): EnvLane | null {
-    if (target.provider === 'vercel') {
-      return null;
-    }
-    return target.renderEnvironmentName === 'production'
-      ? 'production'
+    const provisioning = this.providerPolicyRegistry?.find(
+      target.provider,
+    )?.provisioning;
+    return provisioning
+      ? provisioning.resolveCrossLinkLane({
+          branchName: target.branchName ?? null,
+          renderEnvironmentName: target.renderEnvironmentName ?? null,
+        })
       : 'preview';
   }
 
@@ -486,40 +457,17 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     target: ProvisionedTarget,
     lane: EnvLane,
   ): string | null {
-    const metadata = target.providerMetadata ?? {};
-    if (target.provider === 'render') {
-      const metadataUrl = metadata['renderServiceUrl'];
-      if (typeof metadataUrl === 'string' && metadataUrl.trim()) {
-        return metadataUrl.trim();
-      }
-      return target.providerProjectName
-        ? `https://${target.providerProjectName}.onrender.com`
-        : null;
-    }
-
-    if (!target.providerProjectName) {
-      return null;
-    }
-    const productionUrl = `https://${target.providerProjectName}.vercel.app`;
-    if (lane === 'production') {
-      return productionUrl;
-    }
-    // Vercel's branch alias needs both the team slug and the branch. The
-    // branch used to be hardcoded to 'uat' here, which pointed every preview
-    // cross-link at a branch that no longer exists; it now follows the target.
-    const teamSlug = metadata['vercelTeamSlug'];
-    const branch = target.branchName?.trim();
-    return typeof teamSlug === 'string' && teamSlug.trim() && branch
-      ? `https://${target.providerProjectName}-git-${this.vercelBranchSlug(branch)}-${teamSlug.trim()}.vercel.app`
-      : productionUrl;
-  }
-
-  /** Vercel lowercases a branch and replaces every non-alphanumeric run with '-'. */
-  private vercelBranchSlug(branch: string): string {
-    return branch
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
+    return (
+      this.providerPolicyRegistry
+        ?.find(target.provider)
+        ?.provisioning?.resolvePublicUrl({
+          providerProjectId: target.providerProjectId,
+          providerProjectName: target.providerProjectName,
+          providerMetadata: target.providerMetadata ?? {},
+          branchName: target.branchName ?? null,
+          lane,
+        }) ?? null
+    );
   }
 
   /** Keys the user set anywhere in the request, per scope, so the cross-link
@@ -547,7 +495,7 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     // target's branch", which differs per target.
     // The expanded list, not request.targets: managed Render targets fan out
     // to one target per branch, and each fan-out branch is its own scope.
-    for (const target of this.expandManagedRenderTargets(request)) {
+    for (const target of this.expandTargets(request)) {
       collect(request.sharedEnv, target);
       for (const group of request.variableGroups ?? []) {
         collect(group.env, target);
@@ -600,113 +548,37 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     );
   }
 
-  private expandManagedRenderTargets(
+  private expandTargets(
     request: DeploymentProvisioningRequestDto,
   ): DeploymentProvisioningTargetDto[] {
     const normalizedTargets = request.targets.map((target) => {
-      if (target.branchName !== 'test') {
-        return target;
-      }
-
-      const projectName = this.renderProjectNameForBranch(target, 'uat');
-      return {
-        ...target,
-        branchName: 'uat' as const,
-        ...(projectName ? { projectName } : {}),
-        ...(target.provider === 'render'
-          ? { renderEnvironmentName: 'uat' as const }
-          : {}),
-      };
+      return (
+        this.providerPolicyRegistry
+          ?.find(target.provider)
+          ?.provisioning?.normalizeTarget(target) ?? target
+      );
     });
 
     return normalizedTargets.flatMap((target) => {
-      if (!this.shouldFanOutRenderTarget(target, normalizedTargets)) {
-        return [target];
-      }
-
-      return (['uat', 'main'] as const).map((branchName) => {
-        const projectName = this.renderProjectNameForBranch(target, branchName);
-        return {
-          ...target,
-          branchName,
-          ...(projectName ? { projectName } : {}),
-          renderEnvironmentName:
-            branchName === 'main' ? 'production' : branchName,
-        };
-      });
+      return (
+        this.providerPolicyRegistry
+          ?.find(target.provider)
+          ?.provisioning?.expandTargets({
+            target,
+            allTargets: normalizedTargets,
+          }) ?? [target]
+      );
     });
   }
-
-  private shouldFanOutRenderTarget(
-    target: DeploymentProvisioningTargetDto,
-    allTargets: DeploymentProvisioningTargetDto[],
-  ): boolean {
-    if (
-      target.provider !== 'render' ||
-      target.ownershipMode !== 'flowci_managed' ||
-      target.renderDeployMethod === 'existing_service'
-    ) {
-      return false;
-    }
-
-    const renderSiblings = allTargets.filter(
-      (candidate) =>
-        candidate.provider === 'render' &&
-        candidate.ownershipMode === target.ownershipMode &&
-        candidate.slot === target.slot,
-    );
-    const explicitlyStaged = new Set(
-      renderSiblings
-        .map((candidate) => candidate.branchName)
-        .filter((branch): branch is string => Boolean(branch)),
-    );
-
-    return explicitlyStaged.size <= 1;
-  }
-
-  private renderProjectNameForBranch(
-    target: DeploymentProvisioningTargetDto,
-    branchName: 'uat' | 'main',
-  ): string | undefined {
-    const raw = target.projectName?.trim();
-    if (!raw) {
-      return undefined;
-    }
-
-    const base = raw.replace(/-(test|uat|main|production)$/i, '');
-    return `${base}-${branchName}`;
-  }
-
-  private defaultManagedRenderImageUrl(
+  private defaultManagedImageUrl(
     repoFullName: string,
     target: DeploymentProvisioningTargetDto,
   ): string | null {
-    if (
-      target.provider !== 'render' ||
-      target.ownershipMode !== 'flowci_managed' ||
-      target.renderDeployMethod === 'native_git' ||
-      target.renderDeployMethod === 'existing_service'
-    ) {
-      return null;
-    }
-
-    const [owner] = repoFullName.split('/');
-    if (!owner) {
-      return null;
-    }
-
-    const branchName =
-      target.branchName === 'uat' || target.branchName === 'main'
-        ? target.branchName
-        : 'uat';
-    const imageName = `alphaci-${target.slot}-${branchName}-${
-      target.projectName ?? target.slot
-    }`
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '');
-
-    return `ghcr.io/${owner.toLowerCase()}/${imageName}:${branchName}`;
+    return (
+      this.providerPolicyRegistry
+        ?.find(target.provider)
+        ?.provisioning?.defaultImageUrl({ repoFullName, target }) ?? null
+    );
   }
 
   private variableGroupAppliesToTarget(

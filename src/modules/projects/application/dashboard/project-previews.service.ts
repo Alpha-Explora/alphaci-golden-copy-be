@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { ProjectPreviewsService } from '../../project-previews.service';
 import type { ProjectPreviewsResponse } from '../../project-previews.types';
-import type { DeploymentProjectReference } from '#modules/runtime/index.js';
+import type { DeploymentProjectReference } from '#kernel/ports/deployment-runtime.port';
 
 /** Application boundary for the project preview read model. */
 @Injectable()

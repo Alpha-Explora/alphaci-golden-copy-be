@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
+import type { CiProjectPort } from '#kernel/ports/ci-project.port';
 import { CiTokensRepository } from './infra/ci-tokens.repository';
 import type { CiValidationContextRow } from './infra/ci-tokens.repository';
 
@@ -32,7 +33,7 @@ export interface ValidateRunResult {
 }
 
 @Injectable()
-export class CiService {
+export class CiService implements CiProjectPort {
   private readonly config: AppConfig;
 
   constructor(

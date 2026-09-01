@@ -2,9 +2,11 @@
 'use strict';
 
 /**
- * Diagnostic provider-identity gate. Provider implementations and provider
- * policy belong to runtime; this reports literal provider identifiers that
- * still leak into the other contexts before Task 5 removes them.
+ * Provider-identity gate. Provider implementations and provider policy belong
+ * to runtime. This fails when a vendor identifier leaks into another bounded
+ * context, with one explicit compatibility exception for the public workflow
+ * DTO whose provider field is part of the existing HTTP contract. Runtime may
+ * contain provider-specific compatibility code; it is the ownership context.
  */
 
 const fs = require('node:fs');

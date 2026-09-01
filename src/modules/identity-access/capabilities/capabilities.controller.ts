@@ -1,18 +1,18 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import {
-  DEPLOYMENT_PROVIDER_IDS,
-  PREVIEW_DEPLOYMENT_PROVIDER_IDS,
-  DeploymentProviderRegistry,
-} from '#modules/runtime/index.js';
+  DEPLOYMENT_PROVIDER_CATALOG,
+  type DeploymentProviderCatalogPort,
+} from '#kernel/ports/deployment-provider-catalog.port';
 
 @Controller('capabilities')
 export class CapabilitiesController {
   constructor(
     private readonly configService: ConfigService,
-    private readonly providerRegistry: DeploymentProviderRegistry,
+    @Inject(DEPLOYMENT_PROVIDER_CATALOG)
+    private readonly providerCatalog: DeploymentProviderCatalogPort,
   ) {}
 
   @Get()
@@ -20,12 +20,21 @@ export class CapabilitiesController {
     const config = this.configService.getOrThrow<AppConfig>('app');
     const enabled = config.envProvisioning.enabled;
     const liveAdaptersImplemented = false;
+    const registeredProviders = this.providerCatalog.list();
     const registeredProviderIds = new Set(
-      this.providerRegistry.list().map((provider) => provider.id),
+      registeredProviders.map((provider) => provider.id),
     );
-    const providers = DEPLOYMENT_PROVIDER_IDS.filter((providerId) =>
-      registeredProviderIds.has(providerId),
-    );
+    const providers = registeredProviders
+      .filter(
+        (provider) =>
+          provider.envProvisioning &&
+          provider.enabled &&
+          registeredProviderIds.has(provider.id),
+      )
+      .map((provider) => provider.id);
+    const previewProviders = registeredProviders
+      .filter((provider) => provider.previewDeployments)
+      .map((provider) => provider.id);
 
     return {
       envProvisioning: {
@@ -76,7 +85,7 @@ export class CapabilitiesController {
           config.previewDeployments.enabled && config.deploymentHistory.enabled,
         // Per-branch previews come from the provider's own preview lane, which
         // only Vercel reports today.
-        providers: PREVIEW_DEPLOYMENT_PROVIDER_IDS,
+        providers: previewProviders,
       },
       driftDetection: {
         enabled: config.driftDetection.enabled,

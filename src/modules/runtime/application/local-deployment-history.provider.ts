@@ -1,7 +1,8 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import type { DeploymentTargetSummary } from '../core/deployments.types';
-import { providerPublicUrl } from '../core/provider-public-url';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import type { DeploymentHistoryStatus } from '../core/deployment-provisioning.contract';
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
 
@@ -20,6 +21,8 @@ export class LocalDeploymentHistoryProvider {
     @Optional()
     @Inject(LOCAL_DEPLOYMENT_HISTORY_OPTIONS)
     options: LocalDeploymentHistoryProviderOptions = {},
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {
     this.fixtureMode =
       options.fixtureMode ??
@@ -47,7 +50,7 @@ export class LocalDeploymentHistoryProvider {
         status: 'ready' as const,
         createdAt: now,
         readyAt: now,
-        deploymentUrl: providerPublicUrl(target),
+        deploymentUrl: this.publicUrl(target),
         // The fixture feed stands in for provider history that hasn't been
         // connected yet, so it has no pull request or per-deployment console
         // to point at.
@@ -81,30 +84,48 @@ export class LocalDeploymentHistoryProvider {
   }
 
   dashboardUrl(target: DeploymentTargetSummary): string {
-    if (target.provider === 'vercel') {
-      const teamSlug =
-        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
-          ? target.providerMetadata['vercelTeamSlug'].trim()
-          : '';
-      return teamSlug
-        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}`
-        : `https://vercel.com/dashboard/project/${target.providerProjectId}`;
+    const presentation = this.providerPresentation(target);
+    if (presentation) {
+      return presentation.dashboardUrl(this.presentationTarget(target)) ?? '';
     }
-
-    return `https://dashboard.render.com/web/${target.providerProjectId}`;
+    return '';
   }
 
   consoleUrl(target: DeploymentTargetSummary): string {
-    if (target.provider === 'vercel') {
-      const teamSlug =
-        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
-          ? target.providerMetadata['vercelTeamSlug'].trim()
-          : '';
-      return teamSlug
-        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}/deployments`
-        : `https://vercel.com/dashboard/project/${target.providerProjectId}/deployments`;
+    const presentation = this.providerPresentation(target);
+    if (presentation) {
+      return presentation.consoleUrl(this.presentationTarget(target)) ?? '';
     }
+    return '';
+  }
 
-    return `https://dashboard.render.com/web/${target.providerProjectId}/logs`;
+  publicUrl(target: DeploymentTargetSummary): string | null {
+    const presentation = this.providerPresentation(target);
+    return (
+      presentation?.publicUrl(
+        this.presentationTarget(target),
+        target.renderEnvironmentName === 'production' ||
+          target.branchName === 'main'
+          ? 'production'
+          : 'preview',
+      ) ?? null
+    );
+  }
+
+  private providerPresentation(target: DeploymentTargetSummary) {
+    try {
+      return this.providerRegistry?.get(target.provider).presentation;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private presentationTarget(target: DeploymentTargetSummary) {
+    return {
+      providerProjectId: target.providerProjectId,
+      providerProjectName: target.providerProjectName,
+      providerMetadata: target.providerMetadata,
+      branchName: target.branchName,
+    };
   }
 }

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  OutboxRepository,
+  type OutboxEventInput,
+} from '#kernel/events/outbox.repository';
 import type {
   AssignmentStatus,
   DesiredState,
@@ -35,12 +40,15 @@ interface AssignmentRow {
 
 @Injectable()
 export class AssignmentsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly outboxRepository: OutboxRepository,
+  ) {}
 
   /**
    * Creates (or reactivates) an assignment. `UNIQUE (repository_id, user_id)`
    * means history is preserved via state transitions on the same row, not new
-   * rows (plan §1.6/§2.6) — re-assigning after a revoke resets the state
+   * rows (hierarchy state and response contract) — re-assigning after a revoke resets the state
    * machine back to pending.
    */
   async createOrReset(input: {
@@ -48,7 +56,25 @@ export class AssignmentsRepository {
     userId: string;
     assignedBy: string;
   }): Promise<AssignmentRecord> {
-    const result = await this.databaseService.query<AssignmentRow>(
+    return this.createOrResetWithClient(
+      this.databaseService as unknown as Pick<PoolClient, 'query'>,
+      input,
+    );
+  }
+
+  /**
+   * Transaction-aware variant used when assignment creation must be coupled
+   * to the sync state and grant outbox row. The caller owns the transaction.
+   */
+  async createOrResetWithClient(
+    client: Pick<PoolClient, 'query'>,
+    input: {
+      repositoryId: string;
+      userId: string;
+      assignedBy: string;
+    },
+  ): Promise<AssignmentRecord> {
+    const result = await client.query<AssignmentRow>(
       `
         INSERT INTO hierarchy.repository_assignments (
           repository_id, user_id, access_level, desired_state, effective_state, status, assigned_by
@@ -112,12 +138,25 @@ export class AssignmentsRepository {
     return result.rows.map((row) => this.toRecord(row));
   }
 
-  /** Every currently-assigned (desired_state='assigned') row for a user across a whole group's repositories — cascade-on-removal (plan §4). */
+  /** Every currently-assigned (desired_state='assigned') row for a user across a whole group's repositories — cascade-on-removal (assignment cascade contract). */
   async listAssignedByUserWithinGroup(
     groupId: string,
     userId: string,
   ): Promise<AssignmentRecord[]> {
-    const result = await this.databaseService.query<AssignmentRow>(
+    return this.listAssignedByUserWithinGroupWithClient(
+      this.databaseService as unknown as Pick<PoolClient, 'query'>,
+      groupId,
+      userId,
+    );
+  }
+
+  /** Reads the cascade set using the caller's transaction connection. */
+  async listAssignedByUserWithinGroupWithClient(
+    client: Pick<PoolClient, 'query'>,
+    groupId: string,
+    userId: string,
+  ): Promise<AssignmentRecord[]> {
+    const result = await client.query<AssignmentRow>(
       `
         SELECT a.id, a.repository_id, a.user_id, a.access_level, a.desired_state, a.effective_state, a.status, a.assigned_by, a.created_at, a.updated_at
         FROM hierarchy.repository_assignments AS a
@@ -147,7 +186,7 @@ export class AssignmentsRepository {
   }
 
   /**
-   * Developer dashboard "My assigned repositories" (plan §2.6 GET
+   * Developer dashboard "My assigned repositories" (current hierarchy API contract GET
    * /me/assigned-repositories). Field names match FE's MyAssignedRepository
    * contract exactly (assignmentId, not the raw assignment id; groupId/
    * systemId/deliveryProjectId + their *Name siblings for the breadcrumb;
@@ -228,8 +267,32 @@ export class AssignmentsRepository {
 
   async setDesiredUnassigned(
     assignmentId: string,
+    outboxEvent?: OutboxEventInput,
   ): Promise<AssignmentRecord | null> {
-    const result = await this.databaseService.query<AssignmentRow>(
+    if (outboxEvent) {
+      return this.databaseService.withTransaction(async (client) => {
+        const record = await this.setDesiredUnassignedWithClient(
+          client,
+          assignmentId,
+        );
+        if (record) {
+          await this.outboxRepository.publishInTransaction(client, outboxEvent);
+        }
+        return record;
+      });
+    }
+
+    return this.setDesiredUnassignedWithClient(
+      this.databaseService as unknown as Pick<PoolClient, 'query'>,
+      assignmentId,
+    );
+  }
+
+  async setDesiredUnassignedWithClient(
+    client: Pick<PoolClient, 'query'>,
+    assignmentId: string,
+  ): Promise<AssignmentRecord | null> {
+    const result = await client.query<AssignmentRow>(
       `
         UPDATE hierarchy.repository_assignments
         SET desired_state = 'unassigned', effective_state = 'revoking', updated_at = NOW()
@@ -292,7 +355,7 @@ export class AssignmentsRepository {
 
   /**
    * A failed revoke stays 'revoking' — status is left untouched (never
-   * silently promoted to 'revoked') per plan §1.6 row 4b.
+   * silently promoted to 'revoked') per hierarchy state-machine contract.
    */
   async markRevokeFailed(
     assignmentId: string,

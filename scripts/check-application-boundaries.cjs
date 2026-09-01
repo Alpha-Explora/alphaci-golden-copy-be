@@ -43,6 +43,20 @@ function isOwnSchemaRepository(normalizedTarget) {
   return /\/infrastructure\/[^/]*\.repository$/.test(target);
 }
 
+function resolveImportTarget(sourceRel, importPath) {
+  if (importPath.startsWith('#modules/')) {
+    return path.posix.normalize(
+      `src/modules/${importPath.slice('#modules/'.length)}`,
+    );
+  }
+  if (importPath.startsWith('.')) {
+    return path.posix.normalize(
+      path.posix.join(path.posix.dirname(sourceRel), importPath),
+    );
+  }
+  return null;
+}
+
 function collectViolations() {
   const violations = [];
 
@@ -68,12 +82,11 @@ function collectViolations() {
       });
     }
 
-    const importRe = /(?:from|import\()\s*['"]([.][^'"]+)['"]/g;
+    const importRe = /(?:from|import\()\s*['"]([.#][^'"]+)['"]/g;
     let match;
     while ((match = importRe.exec(content)) !== null) {
-      const normalized = path.posix.normalize(
-        path.posix.join(path.posix.dirname(rel), match[1]),
-      );
+      const normalized = resolveImportTarget(rel, match[1]);
+      if (!normalized) continue;
       if (
         normalized.includes('/infrastructure/') &&
         !isOwnSchemaRepository(normalized)

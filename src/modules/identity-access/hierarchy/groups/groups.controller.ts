@@ -41,7 +41,7 @@ export class GroupsController {
     // group, Members may not (groups.service.ts).
     //
     // There used to be an additional `session.user.isInternal !== true` gate
-    // here, from Plan §2.4's "any authenticated internal user". It could never
+    // here, from member-management contract's "any authenticated internal user". It could never
     // authorize anything, in either direction:
     //
     //   - INTERNAL deployment (GITHUB_INTERNAL_ORG set): sign-in already
@@ -99,7 +99,7 @@ export class GroupsController {
     return this.groupsService.reopenGroup(groupId, this.requireUserId(req));
   }
 
-  // Platform-admin-only (plan §2.4) — method-level guard override, tighter
+  // Platform-admin-only (member-management contract) — method-level guard override, tighter
   // than the class-level SessionAuthGuard-only default.
   @Post(':groupId/transfer')
   @UseGuards(SessionAuthGuard, PlatformAdminGuard)

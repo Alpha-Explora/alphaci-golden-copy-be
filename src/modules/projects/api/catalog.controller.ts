@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Inject,
   NotFoundException,
   Param,
   Query,
@@ -8,7 +9,10 @@ import {
 } from '@nestjs/common';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
-import { GithubService } from '#modules/pipelines/index.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
 import { ListCatalogQueryDto } from '../application/catalog/dto/list-catalog-query.dto';
 import { CatalogService } from '../application/catalog/catalog.service';
 
@@ -17,7 +21,8 @@ import { CatalogService } from '../application/catalog/catalog.service';
 export class CatalogController {
   constructor(
     private readonly catalogService: CatalogService,
-    private readonly githubService: GithubService,
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService: GithubProjectPort,
   ) {}
 
   /**

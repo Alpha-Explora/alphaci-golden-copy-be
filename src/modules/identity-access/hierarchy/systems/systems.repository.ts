@@ -13,7 +13,7 @@ export interface SystemRecord {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Active delivery-project count — at-a-glance chip (UI_LAYOUTS.md §6.5). */
+  /** Active delivery-project count — at-a-glance chip (current hierarchy summary contract). */
   deliveryProjectCount: number;
 }
 
@@ -86,7 +86,7 @@ export class SystemsRepository {
     return this.toRecord(row, counts.get(row.id) ?? 0);
   }
 
-  /** Active delivery-project counts, batched by system id (UI_LAYOUTS.md §6.5). */
+  /** Active delivery-project counts, batched by system id (current hierarchy summary contract). */
   private async getDeliveryProjectCounts(
     systemIds: string[],
   ): Promise<Map<string, number>> {

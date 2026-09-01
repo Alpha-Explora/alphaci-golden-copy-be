@@ -6,6 +6,7 @@ import { AuditModule } from '#modules/platform-ops/audit/audit.module.js';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
+import { GithubService } from '#modules/pipelines/index.js';
 import { NotificationsModule } from '#modules/platform-ops/notifications/notifications.module.js';
 import { SubscriptionModule } from '#modules/billing/subscription/subscription.module.js';
 import { UsageModule } from '#modules/billing/usage/usage.module.js';
@@ -30,24 +31,61 @@ import { EnvVarsController } from './api/env-vars.controller';
 import { EnvVarsRepository } from './infrastructure/env-vars.repository';
 import { EnvVarsService } from './application/env-vars.service';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
+import {
+  PROVIDER_CI_SECRETS_INSTALLERS,
+  PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+} from './application/ports/provider-ci-secrets-installer.port';
+import { ProviderCiSecretsInstallerRegistry } from './infrastructure/providers/core/provider-ci-secrets.registry';
 import { ProjectDeploymentProvisioningService } from './application/project-deployment-provisioning.service';
-import { RenderCiSecretsService } from './application/render-ci-secrets.service';
-import { RenderCostPolicyService } from './application/render-cost-policy.service';
+import { DeploymentProvisioningDefaultsService } from './application/deployment-provisioning-defaults.service';
+import { RenderCiSecretsService } from './infrastructure/providers/render/render-ci-secrets.service';
+import { RenderCostPolicyService } from './infrastructure/providers/render/render-cost-policy.service';
 import { RenderEnvClient } from './infrastructure/providers/render/render-env.client';
-import { VercelEnvClient } from './infrastructure/providers/vercel/vercel-env.client';
 import { ProviderConnectionsController } from './api/provider-connections.controller';
 import { ProviderConnectionsRepository } from './infrastructure/provider-connections.repository';
 import { ProviderConnectionsService } from './application/provider-connections.service';
 import { CustomDomainsController } from './api/custom-domains.controller';
 import { CustomDomainsRepository } from './infrastructure/custom-domains.repository';
 import { CustomDomainsService } from './application/custom-domains.service';
-import { VercelCiSecretsService } from './application/vercel-ci-secrets.service';
+import { VercelCiSecretsService } from './infrastructure/providers/vercel/vercel-ci-secrets.service';
+import { VercelEnvClient } from './infrastructure/providers/vercel/vercel-env.client';
 import { LegacyDeploymentProvidersModule } from './infrastructure/providers/legacy/legacy-deployment-providers.module';
 import { LocalDeploymentHistoryProvider } from './application/local-deployment-history.provider';
 import { ProjectDeploymentsService } from './application/project-deployments.service';
 import { ProjectDriftService } from './application/project-drift.service';
 import { ProjectSyncFindingsRepository } from './infrastructure/repositories/project-sync-findings.repository';
 import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-registry.port';
+import { RuntimeCoreModule } from './core/runtime-core.module';
+import { DEPLOYMENT_TARGET_DEFAULTS } from './core/deployment-provider.contract';
+import { DEPLOYMENT_PROVISIONING_DEFAULTS } from './core/deployment-provisioning.defaults';
+import { DeploymentProviderPolicyRegistry } from './core/deployment-provider.policy';
+import { RenderDeploymentPolicy } from './infrastructure/providers/render/render-deployment.policy';
+import { VercelDeploymentPolicy } from './infrastructure/providers/vercel/vercel-deployment.policy';
+import { RENDER_DEPLOYMENT_PROVIDER } from './infrastructure/providers/render/render-deployment.provider';
+import { VERCEL_DEPLOYMENT_PROVIDER } from './infrastructure/providers/vercel/vercel-deployment.provider';
+import { GcpDeploymentProvider } from './infrastructure/providers/gcp/gcp.provider';
+import {
+  RUNTIME_PROVIDER_PACKS,
+  RuntimeProviderPackRegistry,
+} from './core/provider-pack';
+import type { DeploymentProvider } from './core/deployment-provider.contract';
+import { createGcpProviderPack } from './infrastructure/providers/gcp/gcp-provider.pack';
+import { createRenderProviderPack } from './infrastructure/providers/render/render-provider.pack';
+import { createVercelProviderPack } from './infrastructure/providers/vercel/vercel-provider.pack';
+import {
+  MANAGED_QUOTA_REGISTRAR,
+  type ManagedQuotaRegistrar,
+} from '#kernel/ports/usage-quota.port';
+import {
+  WORKFLOW_FRAGMENTS,
+  WorkflowFragmentRegistry,
+  type WorkflowFragment,
+} from './core/workflow-fragment.contract';
+import { GcpDeploymentModule } from './infrastructure/providers/gcp/gcp.module';
+import {
+  GITHUB_ACTIONS_SECRETS,
+  type GithubActionsSecretsPort,
+} from './application/ports/github-actions-secrets.port';
 
 @Module({
   imports: [
@@ -61,6 +99,8 @@ import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-re
     WorkspacesModule,
     CiModule,
     LegacyDeploymentProvidersModule,
+    RuntimeCoreModule,
+    GcpDeploymentModule,
   ],
   controllers: [
     ProviderConnectionsController,
@@ -89,14 +129,113 @@ import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-re
     ProviderConnectionsService,
     DeploymentTargetsService,
     DeploymentStrategyResolver,
+    {
+      provide: RUNTIME_PROVIDER_PACKS,
+      useFactory: (
+        renderProvider: DeploymentProvider,
+        renderPolicy: RenderDeploymentPolicy,
+        renderClient: RenderEnvClient,
+        renderCiSecretsInstaller: RenderCiSecretsService,
+        vercelProvider: DeploymentProvider,
+        vercelPolicy: VercelDeploymentPolicy,
+        vercelClient: VercelEnvClient,
+        vercelCiSecretsInstaller: VercelCiSecretsService,
+        gcpProvider: GcpDeploymentProvider,
+        workflowFragments: readonly WorkflowFragment[],
+      ) => [
+        createRenderProviderPack({
+          provider: renderProvider,
+          policy: renderPolicy,
+          client: renderClient,
+          workflowFragment: workflowFragments.find(
+            (fragment) => fragment.provider === 'render',
+          ),
+          ciSecretsInstaller: renderCiSecretsInstaller,
+        }),
+        createVercelProviderPack({
+          provider: vercelProvider,
+          policy: vercelPolicy,
+          client: vercelClient,
+          workflowFragment: workflowFragments.find(
+            (fragment) => fragment.provider === 'vercel',
+          ),
+          ciSecretsInstaller: vercelCiSecretsInstaller,
+        }),
+        createGcpProviderPack({ provider: gcpProvider }),
+      ],
+      inject: [
+        RENDER_DEPLOYMENT_PROVIDER,
+        RenderDeploymentPolicy,
+        RenderEnvClient,
+        RenderCiSecretsService,
+        VERCEL_DEPLOYMENT_PROVIDER,
+        VercelDeploymentPolicy,
+        VercelEnvClient,
+        VercelCiSecretsService,
+        GcpDeploymentProvider,
+        WORKFLOW_FRAGMENTS,
+      ],
+    },
+    RuntimeProviderPackRegistry,
+    {
+      provide: DeploymentProviderPolicyRegistry,
+      useFactory: (
+        providerPacks: RuntimeProviderPackRegistry,
+        usageQuotaRegistrar: ManagedQuotaRegistrar,
+      ) => {
+        const policies = providerPacks
+          .list()
+          .flatMap((pack) => (pack.policy ? [pack.policy] : []));
+        for (const policy of policies) {
+          if (policy.managedQuota) {
+            usageQuotaRegistrar.registerManagedQuota({
+              providerId: policy.providerId,
+              ...policy.managedQuota,
+            });
+          }
+        }
+        return new DeploymentProviderPolicyRegistry(policies);
+      },
+      inject: [RuntimeProviderPackRegistry, MANAGED_QUOTA_REGISTRAR],
+    },
     EnvVarsService,
     EnvTokenEncryptionService,
-    RenderEnvClient,
-    VercelEnvClient,
-    ProviderClientRegistry,
+    {
+      provide: GITHUB_ACTIONS_SECRETS,
+      inject: [GithubService],
+      useFactory: (githubService: GithubService): GithubActionsSecretsPort => ({
+        setActionsSecretStrict: (...args) =>
+          githubService.setActionsSecretStrict(...args),
+      }),
+    },
+    {
+      provide: ProviderClientRegistry,
+      useFactory: (providerPacks: RuntimeProviderPackRegistry) =>
+        new ProviderClientRegistry(
+          providerPacks
+            .list()
+            .flatMap((pack) => (pack.client ? [pack.client] : [])),
+        ),
+      inject: [RuntimeProviderPackRegistry],
+    },
     {
       provide: PROVIDER_CLIENT_REGISTRY,
       useExisting: ProviderClientRegistry,
+    },
+    {
+      provide: PROVIDER_CI_SECRETS_INSTALLERS,
+      useFactory: (providerPacks: RuntimeProviderPackRegistry) =>
+        providerPacks
+          .list()
+          .flatMap((pack) =>
+            pack.ciSecretsInstaller ? [pack.ciSecretsInstaller] : [],
+          ),
+      inject: [RuntimeProviderPackRegistry],
+    },
+    ProviderCiSecretsInstallerRegistry,
+    {
+      provide: PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+      useExisting: ProviderCiSecretsInstallerRegistry,
     },
     LocalDeploymentHistoryProvider,
     ProjectSyncFindingsRepository,
@@ -115,12 +254,32 @@ import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-re
       useExisting: ProjectSyncFindingsRepository,
     },
     ProjectDeploymentProvisioningService,
+    DeploymentProvisioningDefaultsService,
+    {
+      provide: DEPLOYMENT_PROVISIONING_DEFAULTS,
+      useExisting: DeploymentProvisioningDefaultsService,
+    },
     {
       provide: DEPLOYMENT_PROVISIONING_FACADE,
       useExisting: ProjectDeploymentProvisioningService,
     },
     RenderCiSecretsService,
-    RenderCostPolicyService,
+    {
+      provide: DEPLOYMENT_TARGET_DEFAULTS,
+      useExisting: RenderCostPolicyService,
+    },
+    {
+      provide: WorkflowFragmentRegistry,
+      useFactory: (providerPacks: RuntimeProviderPackRegistry) =>
+        new WorkflowFragmentRegistry(
+          providerPacks
+            .list()
+            .flatMap((pack) =>
+              pack.workflowFragment ? [pack.workflowFragment] : [],
+            ),
+        ),
+      inject: [RuntimeProviderPackRegistry],
+    },
     VercelCiSecretsService,
     EnvFeatureGuard,
     SessionAuthGuard,
@@ -142,6 +301,8 @@ import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-re
     EnvTokenEncryptionService,
     ProviderClientRegistry,
     PROVIDER_CLIENT_REGISTRY,
+    PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+    WorkflowFragmentRegistry,
   ],
 })
 export class RuntimeModule {}

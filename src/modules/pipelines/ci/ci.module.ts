@@ -7,6 +7,7 @@ import { CiReportsService } from './ci-reports.service';
 import { CiRunReportsRepository } from './ci-run-reports.repository';
 import { CiService } from './ci.service';
 import { CI_TOKEN_STATUS_LOOKUP } from './ci.contracts';
+import { CI_PROJECT_PORT } from '#kernel/ports/ci-project.port';
 import { CiTokensRepository } from './infra/ci-tokens.repository';
 
 @Module({
@@ -14,6 +15,7 @@ import { CiTokensRepository } from './infra/ci-tokens.repository';
   controllers: [CiController],
   providers: [
     CiService,
+    { provide: CI_PROJECT_PORT, useExisting: CiService },
     CiTokensRepository,
     {
       provide: CI_TOKEN_STATUS_LOOKUP,
@@ -23,6 +25,11 @@ import { CiTokensRepository } from './infra/ci-tokens.repository';
     CiRunReportsRepository,
     SessionAuthGuard,
   ],
-  exports: [CiService, CiTokensRepository, CI_TOKEN_STATUS_LOOKUP],
+  exports: [
+    CiService,
+    CI_PROJECT_PORT,
+    CiTokensRepository,
+    CI_TOKEN_STATUS_LOOKUP,
+  ],
 })
 export class CiModule {}

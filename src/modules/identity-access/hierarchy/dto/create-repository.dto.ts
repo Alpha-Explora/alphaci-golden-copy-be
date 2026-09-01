@@ -6,7 +6,7 @@ export class CreateRepositoryDto {
   @MaxLength(100)
   name: string = '';
 
-  // Private only — enforced, not just defaulted (plan §2.6).
+  // Private only — enforced, not just defaulted (current hierarchy API contract).
   @IsIn(['private'])
   visibility = 'private' as const;
 }
