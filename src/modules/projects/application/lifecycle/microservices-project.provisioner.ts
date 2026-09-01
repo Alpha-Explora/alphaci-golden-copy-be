@@ -209,7 +209,8 @@ export class MicroservicesProjectProvisioner {
 
       // 7. Push frontend workflow file to main (wrapped: failure should not block backend)
       let frontendPushResult:
-        { commitSha: string; commitUrl: string | null } | undefined;
+        | { commitSha: string; commitUrl: string | null }
+        | undefined;
       try {
         frontendPushResult = await this.support.pushWorkflowFiles(
           provisioningToken,

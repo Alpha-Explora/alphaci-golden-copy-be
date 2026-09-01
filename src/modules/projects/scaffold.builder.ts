@@ -14,7 +14,10 @@ export interface ScaffoldFile {
 }
 
 export type CanonicalRepoShape =
-  'standalone' | 'monorepo' | 'microservices' | 'multi-repo';
+  | 'standalone'
+  | 'monorepo'
+  | 'microservices'
+  | 'multi-repo';
 
 export type CanonicalStack = 'nestjs' | 'nodejs' | 'nextjs' | 'react';
 

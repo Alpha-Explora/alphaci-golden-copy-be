@@ -1,5 +1,8 @@
 export type NotificationSeverityContract =
-  'info' | 'success' | 'warning' | 'error';
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'error';
 
 export interface NotificationContract {
   id: string;

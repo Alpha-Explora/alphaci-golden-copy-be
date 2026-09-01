@@ -281,7 +281,8 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     if (target.ownershipMode === 'flowci_managed') {
       const config = this.configService?.getOrThrow<AppConfig>('app');
       const managedConfig = config?.envProvisioning.flowciManaged as unknown as
-        Record<string, unknown> | undefined;
+        | Record<string, unknown>
+        | undefined;
       const token = managedConfig?.[`${target.provider}Token`];
       return typeof token === 'string' && token.trim() ? token.trim() : null;
     }

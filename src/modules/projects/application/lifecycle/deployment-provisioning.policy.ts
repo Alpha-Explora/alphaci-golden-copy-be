@@ -83,7 +83,8 @@ export function withDefaultCreateDeploymentProvisioning(input: {
   repoName: string;
   servicePath?: string | undefined;
   deploymentProvisioningDefaults?:
-    DeploymentProvisioningDefaultsPort | undefined;
+    | DeploymentProvisioningDefaultsPort
+    | undefined;
 }): DeploymentProvisioningRequestDto | undefined {
   if (!isBackendProjectType(input.projectTypeId)) {
     return input.request;

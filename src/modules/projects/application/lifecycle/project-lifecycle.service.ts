@@ -139,7 +139,8 @@ export class ProjectLifecycleService {
 
     let githubRepoDeleted = false;
     let githubRepoDeleteError:
-      { code: GithubRepoDeleteErrorCode; message: string } | undefined;
+      | { code: GithubRepoDeleteErrorCode; message: string }
+      | undefined;
 
     if (deleteGithubRepo) {
       const project = await this.projectsRepository.findByIdAndUser(

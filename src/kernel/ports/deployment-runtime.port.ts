@@ -20,7 +20,12 @@ export type EnvTargetSlot = DeploymentSlot;
 export type EnvOwnershipMode = DeploymentOwnershipMode;
 export type DeploymentStrategy = string;
 export type DeploymentHistoryStatus =
-  'queued' | 'building' | 'ready' | 'failed' | 'canceled' | 'unknown';
+  | 'queued'
+  | 'building'
+  | 'ready'
+  | 'failed'
+  | 'canceled'
+  | 'unknown';
 export type DeploymentHistoryMode = 'local_mock' | 'live' | 'unavailable';
 export type DeploymentDriftSeverity = 'info' | 'warning' | 'error';
 export type DeploymentDriftStatus = 'active' | 'resolved' | 'ignored';
@@ -101,11 +106,23 @@ export interface DeploymentProvisioningTarget {
   buildCommand?: string;
   startCommand?: string;
   renderDeployMethod?:
-    'managed_image' | 'byo_image' | 'native_git' | 'existing_service';
+    | 'managed_image'
+    | 'byo_image'
+    | 'native_git'
+    | 'existing_service';
   renderServiceType?:
-    'web_service' | 'private_service' | 'background_worker' | 'cron_job';
+    | 'web_service'
+    | 'private_service'
+    | 'background_worker'
+    | 'cron_job';
   renderRuntime?:
-    'node' | 'python' | 'ruby' | 'go' | 'rust' | 'elixir' | 'docker';
+    | 'node'
+    | 'python'
+    | 'ruby'
+    | 'go'
+    | 'rust'
+    | 'elixir'
+    | 'docker';
   renderInstanceType?: string;
   renderRegion?: string;
   renderEnvironmentName?: 'test' | 'uat' | 'production';

@@ -36,15 +36,27 @@ export interface EnvVarScope {
 export type EnvOwnershipMode = 'byo' | 'flowci_managed';
 export type EnvTargetSlot = 'backend' | 'frontend' | 'standalone';
 export type RenderDeploymentStrategy =
-  'render_git_connected' | 'render_image_pushed' | 'render_existing_service';
+  | 'render_git_connected'
+  | 'render_image_pushed'
+  | 'render_existing_service';
 export type VercelDeploymentStrategy =
-  'vercel_git_connected' | 'vercel_ci_pushed';
+  | 'vercel_git_connected'
+  | 'vercel_ci_pushed';
 /** Strategy identifiers are owned by the provider plugin that implements them. */
 export type DeploymentStrategy = string;
 export type RenderRuntime =
-  'node' | 'python' | 'ruby' | 'go' | 'rust' | 'elixir' | 'docker';
+  | 'node'
+  | 'python'
+  | 'ruby'
+  | 'go'
+  | 'rust'
+  | 'elixir'
+  | 'docker';
 export type RenderDeployMethod =
-  'managed_image' | 'byo_image' | 'native_git' | 'existing_service';
+  | 'managed_image'
+  | 'byo_image'
+  | 'native_git'
+  | 'existing_service';
 /**
  * Render's own environment naming on a deployment target.
  *

@@ -96,7 +96,8 @@ export class ProjectProvisioningSupport {
   readonly ciService: CiProjectPort;
   readonly projectDeploymentProvisioningService: DeploymentProvisioningFacade;
   readonly deploymentProvisioningDefaults:
-    DeploymentProvisioningDefaultsPort | undefined;
+    | DeploymentProvisioningDefaultsPort
+    | undefined;
   readonly configService: ConfigService | undefined;
   readonly usageQuotaService: UsageQuotaPort | undefined;
   readonly auditEventsService: AuditEventPublisher | undefined;
@@ -121,7 +122,8 @@ export class ProjectProvisioningSupport {
     ciService: CiProjectPort;
     projectDeploymentProvisioningService: DeploymentProvisioningFacade;
     deploymentProvisioningDefaults:
-      DeploymentProvisioningDefaultsPort | undefined;
+      | DeploymentProvisioningDefaultsPort
+      | undefined;
     configService: ConfigService | undefined;
     usageQuotaService: UsageQuotaPort | undefined;
     auditEventsService: AuditEventPublisher | undefined;

@@ -1,5 +1,9 @@
 export type FeedbackCategory =
-  'general' | 'bug' | 'feature_request' | 'billing' | 'other';
+  | 'general'
+  | 'bug'
+  | 'feature_request'
+  | 'billing'
+  | 'other';
 
 export type FeedbackStatus = 'open' | 'in_review' | 'resolved' | 'dismissed';
 

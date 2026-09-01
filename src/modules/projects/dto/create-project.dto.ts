@@ -107,17 +107,29 @@ export class DeploymentProvisioningTargetDto {
   @IsOptional()
   @IsIn(['managed_image', 'byo_image', 'native_git', 'existing_service'])
   renderDeployMethod?:
-    'managed_image' | 'byo_image' | 'native_git' | 'existing_service';
+    | 'managed_image'
+    | 'byo_image'
+    | 'native_git'
+    | 'existing_service';
 
   @IsOptional()
   @IsIn(['web_service', 'private_service', 'background_worker', 'cron_job'])
   renderServiceType?:
-    'web_service' | 'private_service' | 'background_worker' | 'cron_job';
+    | 'web_service'
+    | 'private_service'
+    | 'background_worker'
+    | 'cron_job';
 
   @IsOptional()
   @IsIn(['node', 'python', 'ruby', 'go', 'rust', 'elixir', 'docker'])
   renderRuntime?:
-    'node' | 'python' | 'ruby' | 'go' | 'rust' | 'elixir' | 'docker';
+    | 'node'
+    | 'python'
+    | 'ruby'
+    | 'go'
+    | 'rust'
+    | 'elixir'
+    | 'docker';
 
   @IsOptional()
   @IsString()

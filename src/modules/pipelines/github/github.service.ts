@@ -1689,13 +1689,15 @@ export class GithubService
 
     if (Array.isArray(payload)) {
       const entries = (payload as GitHubContentsRow[])
-        .map((row): GitHubContentEntry => ({
-          name: row.name ?? '',
-          path: row.path ?? '',
-          type: (row.type ?? 'file') as GitHubContentEntryType,
-          size: row.size ?? 0,
-          sha: row.sha ?? '',
-        }))
+        .map(
+          (row): GitHubContentEntry => ({
+            name: row.name ?? '',
+            path: row.path ?? '',
+            type: (row.type ?? 'file') as GitHubContentEntryType,
+            size: row.size ?? 0,
+            sha: row.sha ?? '',
+          }),
+        )
         // Directories first, then alphabetical — the ordering every file
         // browser uses, and one GitHub does not guarantee.
         .sort((a, b) => {

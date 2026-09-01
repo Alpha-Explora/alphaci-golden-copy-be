@@ -78,7 +78,10 @@ type AccountState =
 
 /** Result of checking GitHub org membership for the internal gate. */
 type OrgMembershipCheck =
-  'member' | 'not_member' | 'invitation_pending' | 'verification_failed';
+  | 'member'
+  | 'not_member'
+  | 'invitation_pending'
+  | 'verification_failed';
 
 export interface PendingAccountInfo {
   pending: true;
