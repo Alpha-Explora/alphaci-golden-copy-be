@@ -50,4 +50,10 @@ Use the repository's normal Supabase CLI procedure when the linked environment r
 
 Do not infer that a rollback is safe from a clean dry-run. Review the matching `supabase/rollbacks/` file, data-loss behavior, foreign keys, RLS, and external consumers. Record the migration names, database target, operator, start/end time, result, and any follow-up reconciliation.
 
+The rollback for `20260824000000_branch_scoped_env_vars.sql` fails closed for
+any preview row because the old schema cannot preserve preview branch identity.
+Do not remove that guard or add an automatic winner-selection step: take an
+approved backup/re-provisioning action, then retry the rollback only after the
+preview data has been resolved.
+
 For ledger drift, use the [migration reconciliation runbook](runbook-migration-reconciliation.md). For the ownership table, use the generated [schema map](/architecture/schema-ownership.generated.md).

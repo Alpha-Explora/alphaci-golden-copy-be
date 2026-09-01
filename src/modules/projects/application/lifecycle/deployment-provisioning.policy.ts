@@ -101,12 +101,12 @@ export function withDefaultCreateDeploymentProvisioning(input: {
   }
 
   const existingTargets = input.request?.targets ?? [];
-  const hasBackendRenderTarget = existingTargets.some(
+  const hasDefaultProviderTarget = existingTargets.some(
     (target) =>
       ['backend', 'standalone'].includes(target.slot) &&
       target.provider === defaultTarget.provider,
   );
-  if (hasBackendRenderTarget) {
+  if (hasDefaultProviderTarget) {
     return {
       ...input.request,
       enabled: true,

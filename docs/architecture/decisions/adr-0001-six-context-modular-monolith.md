@@ -41,7 +41,7 @@ The backend is organized as six bounded contexts in one NestJS deployable:
 ## Consequences
 
 - Context ownership and migration ownership are visible in the source tree.
-- The current process, database connection model, HTTP routes, and application behavior remain unchanged.
+- The application remains one process with the same public HTTP routes, DTO compatibility, and product workflows. Internal reliability changes are explicit: the outbox now uses leased claims and the migration tree includes the supporting columns and rollback procedures documented in the [outbox decision](/architecture/decisions/adr-0005-postgresql-outbox-delivery.md).
 - Nest composition imports can connect contexts, but application code must not reach through another context's private implementation.
 - The [context contract register](/architecture/context-contracts.md) and [architecture checks](/architecture/architecture-checks.generated.md) are part of the review surface.
 

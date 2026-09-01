@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import { DatabaseService } from '#kernel/db/database.service';
 import {
   GITHUB_ORGANIZATION_PORT,
   type GithubOrganizationPort,
@@ -34,6 +35,7 @@ export class GroupsService {
     @Inject(GITHUB_ORGANIZATION_PORT)
     private readonly githubService: GithubOrganizationPort,
     private readonly auditEventsService: AuditEventPublisher,
+    private readonly databaseService: DatabaseService,
   ) {}
 
   async createGroup(
@@ -213,8 +215,7 @@ export class GroupsService {
   /**
    * Platform-admin-only (enforced by PlatformAdminGuard at the controller).
    * Promotes newManagerUserId to owner, demotes every other current owner to
-   * admin — a Group can never lose its final active manager (source plan
-   * §4.4/§11).
+   * admin — a Group can never lose its final active manager.
    */
   async transferManager(
     groupId: string,
@@ -375,7 +376,7 @@ export class GroupsService {
     // on every active owner of the Group for the duration of the check +
     // write, so two concurrent demotions of two different owners can no
     // longer both read "2 owners" and both proceed to zero (ciso finding,
-    // plan §3.3 "last-manager protection ... race-condition safety").
+    // last-owner safety rule "last-manager protection ... race-condition safety").
     const { member: updated, blockedLastOwner } =
       await this.groupsRepository.changeMemberRoleGuarded(
         groupId,
@@ -409,7 +410,7 @@ export class GroupsService {
   /**
    * Offboarding event, not a hard delete. Cascades to a revoke job for every
    * active repository assignment this member holds anywhere in the Group
-   * (plan §2.4, source §4/§11 "removing a member must immediately trigger
+   * (member-management contract, hierarchy offboarding contract "removing a member must immediately trigger
    * the repository-assignment access review").
    */
   async removeMember(
@@ -431,29 +432,46 @@ export class GroupsService {
       throw new NotFoundException('Member not found');
     }
 
-    // Race-free last-owner guard — same locked check-then-act pattern as
-    // updateMemberRole above (ciso finding, plan §3.3).
-    const { member: removed, blockedLastOwner } =
-      await this.groupsRepository.removeMemberGuarded(
+    // Keep the member mutation, assignment transitions, and durable revoke
+    // events in one transaction. If any enqueue fails, the member remains
+    // active and no earlier assignment transition is left half-committed.
+    const {
+      member: removed,
+      blockedLastOwner,
+      assignments,
+    } = await this.databaseService.withTransaction(async (client) => {
+      const removal = await this.groupsRepository.removeMemberGuardedWithClient(
+        client,
         groupId,
         memberId,
         userId,
         reason,
       );
+      if (removal.blockedLastOwner || !removal.member) {
+        return { ...removal, assignments: [] };
+      }
+
+      const cascade =
+        await this.assignmentsRepository.listAssignedByUserWithinGroupWithClient(
+          client,
+          groupId,
+          target.userId,
+        );
+      for (const assignment of cascade) {
+        await this.githubSyncService.requestRevokeWithClient(
+          client,
+          assignment.id,
+          userId,
+        );
+      }
+
+      return { ...removal, assignments: cascade };
+    });
     if (blockedLastOwner) {
       throw new BadRequestException('Group must keep at least one owner');
     }
     if (!removed) {
       throw new NotFoundException('Member not found');
-    }
-
-    const assignments =
-      await this.assignmentsRepository.listAssignedByUserWithinGroup(
-        groupId,
-        target.userId,
-      );
-    for (const assignment of assignments) {
-      await this.githubSyncService.requestRevoke(assignment.id, userId);
     }
 
     await this.auditEventsService.recordProjectEvent({

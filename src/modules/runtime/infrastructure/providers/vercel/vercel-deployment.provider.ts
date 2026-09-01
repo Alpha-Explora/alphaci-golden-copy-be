@@ -45,6 +45,9 @@ const VERCEL_PRESENTATION: DeploymentProviderPresentation = {
   },
 };
 
+/** Runtime composition token for the Vercel provider descriptor. */
+export const VERCEL_DEPLOYMENT_PROVIDER = Symbol('VercelDeploymentProvider');
+
 /** Compatibility descriptor for Vercel's existing runtime adapter. */
 @Injectable()
 export class VercelDeploymentProvider

@@ -9,7 +9,7 @@ const GITHUB_API = 'https://api.github.com';
 const USER_AGENT = 'cicd-workflow-product';
 
 /**
- * Write-only GitHub configuration broker (plan §1.8). Secrets are sealed
+ * Write-only GitHub configuration broker (configuration safety rule). Secrets are sealed
  * with libsodium before leaving the process — reuses
  * GithubService.setActionsSecretStrict (the existing, already-tested sealed-
  * box + PUT implementation, see github.service.ts:1243) rather than

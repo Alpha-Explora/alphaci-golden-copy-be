@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import { OutboxDispatcher } from '#kernel/events/outbox-dispatcher';
 import { OUTBOX_TOPICS } from '#kernel/events/outbox-topics';
 import { DeploymentProviderRegistry } from '../../src/modules/runtime/core/deployment-provider.registry';
+import { RuntimeProviderPackRegistry } from '../../src/modules/runtime/core/provider-pack';
 import { IdentityAccessModule } from '../../src/modules/identity-access/identity-access.module';
 import { BillingModule } from '../../src/modules/billing/billing.module';
 import { PipelinesModule } from '../../src/modules/pipelines/pipelines.module';
@@ -62,6 +63,18 @@ describe('AppModule boot smoke', () => {
         .map((provider) => provider.id)
         .sort(),
     ).toEqual(['gcp', 'render', 'vercel']);
+    const providerPacks = app.get(RuntimeProviderPackRegistry);
+    expect(
+      providerPacks
+        .list()
+        .map((pack) => pack.id)
+        .sort(),
+    ).toEqual(['gcp', 'render', 'vercel']);
+    expect(providerPacks.get('render').client?.provider).toBe('render');
+    expect(providerPacks.get('vercel').workflowFragment?.provider).toBe(
+      'vercel',
+    );
+    expect(providerPacks.get('gcp').client).toBeUndefined();
     await app.close();
   }, 30_000);
 });

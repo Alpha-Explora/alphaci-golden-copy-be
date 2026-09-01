@@ -14,7 +14,7 @@ export interface DeliveryProjectRecord {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Non-archived repository count — at-a-glance chip (UI_LAYOUTS.md §6.5). */
+  /** Non-archived repository count — at-a-glance chip (current hierarchy summary contract). */
   repositoryCount: number;
 }
 
@@ -97,7 +97,7 @@ export class DeliveryProjectsRepository {
     return this.toRecord(row, counts.get(row.id) ?? 0);
   }
 
-  /** Non-archived repository counts, batched by delivery-project id (UI_LAYOUTS.md §6.5). */
+  /** Non-archived repository counts, batched by delivery-project id (current hierarchy summary contract). */
   private async getRepositoryCounts(
     deliveryProjectIds: string[],
   ): Promise<Map<string, number>> {

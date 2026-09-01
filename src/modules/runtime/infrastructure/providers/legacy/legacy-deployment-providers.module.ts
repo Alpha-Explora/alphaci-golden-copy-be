@@ -8,12 +8,18 @@ import { WORKFLOW_FRAGMENTS } from '../../../core/workflow-fragment.contract';
 import { PROVIDER_CLIENTS } from '../core/provider-client.registry';
 import { RenderEnvClient } from '../render/render-env.client';
 import { renderWorkflowFragment } from '../render/render-workflow.fragment';
-import { RenderDeploymentProvider } from '../render/render-deployment.provider';
+import {
+  RENDER_DEPLOYMENT_PROVIDER,
+  RenderDeploymentProvider,
+} from '../render/render-deployment.provider';
 import { RenderCostPolicyService } from '../render/render-cost-policy.service';
 import { RenderDeploymentPolicy } from '../render/render-deployment.policy';
 import { VercelEnvClient } from '../vercel/vercel-env.client';
 import { vercelWorkflowFragment } from '../vercel/vercel-workflow.fragment';
-import { VercelDeploymentProvider } from '../vercel/vercel-deployment.provider';
+import {
+  VERCEL_DEPLOYMENT_PROVIDER,
+  VercelDeploymentProvider,
+} from '../vercel/vercel-deployment.provider';
 import { VercelDeploymentPolicy } from '../vercel/vercel-deployment.policy';
 
 @Module({
@@ -37,7 +43,7 @@ import { VercelDeploymentPolicy } from '../vercel/vercel-deployment.policy';
       useValue: [renderWorkflowFragment, vercelWorkflowFragment],
     },
     {
-      provide: 'renderDeploymentProvider',
+      provide: RENDER_DEPLOYMENT_PROVIDER,
       inject: [
         ConfigService,
         DeploymentProviderRegistry,
@@ -66,7 +72,7 @@ import { VercelDeploymentPolicy } from '../vercel/vercel-deployment.policy';
       },
     },
     {
-      provide: 'vercelDeploymentProvider',
+      provide: VERCEL_DEPLOYMENT_PROVIDER,
       inject: [
         ConfigService,
         DeploymentProviderRegistry,
@@ -94,6 +100,10 @@ import { VercelDeploymentPolicy } from '../vercel/vercel-deployment.policy';
   exports: [
     PROVIDER_CLIENTS,
     WORKFLOW_FRAGMENTS,
+    RENDER_DEPLOYMENT_PROVIDER,
+    VERCEL_DEPLOYMENT_PROVIDER,
+    RenderEnvClient,
+    VercelEnvClient,
     RenderCostPolicyService,
     RenderDeploymentPolicy,
     VercelDeploymentPolicy,

@@ -38,11 +38,13 @@ The registered topics are:
 
 Critical hierarchy state changes and their outbox inserts use the same PostgreSQL transaction. Audit and notification writes use explicit best-effort post-commit methods because they are non-critical observability effects.
 
-The relay uses an advisory lock, selects only topics owned by registered handlers, orders pending rows by creation time and ID, acknowledges successful rows with `published_at`, retries failures with backoff, and quarantines terminal failures. Delivery is at-least-once and downstream handlers must be idempotent.
+The relay claims only topics owned by registered handlers, orders pending rows by creation time and ID, and uses a short `FOR UPDATE SKIP LOCKED` transaction to assign an expiring lease. External handlers run after the claim transaction commits. Acknowledgements, retries, and quarantine updates require the claim token, so a late worker cannot overwrite a newer claim. Successful rows are acknowledged with `published_at`; failures retry with backoff and then become quarantined. Delivery is at-least-once and downstream handlers must be idempotent.
+
+The configured lease must be longer than the handler timeout after bounds are applied. The relay rejects an unsafe timing configuration rather than allowing a handler to outlive its claim and run concurrently with a reclaiming worker.
 
 ## Rejected alternatives
 
-- A second runner for the same table was rejected.
+- A second scheduler for the same table was rejected.
 - An unfiltered relay that acknowledges topics without a registered owner was rejected.
 - Describing best-effort audit/notification writes as transactionally coupled was rejected.
 - Introducing a broker is not part of the current delivery mechanism.
@@ -52,6 +54,8 @@ The relay uses an advisory lock, selects only topics owned by registered handler
 - Business state and critical hierarchy events commit together.
 - Non-critical event loss remains visible as a warning rather than changing the business mutation result.
 - A process crash can cause a handler to run again; handler idempotency is required.
+- A handler timeout or expired lease can cause a handler to run again; provider calls must have bounded timeouts and safe replay behavior.
+- The lease/timeout invariant is enforced at relay configuration time; an invalid configuration fails closed before a row is claimed.
 - Operators have one scheduler, one command, one table, and one runbook to inspect.
 
 ## Verification

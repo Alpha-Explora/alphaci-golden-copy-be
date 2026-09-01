@@ -30,6 +30,9 @@ const RENDER_PRESENTATION: DeploymentProviderPresentation = {
       : null,
 };
 
+/** Runtime composition token for the Render provider descriptor. */
+export const RENDER_DEPLOYMENT_PROVIDER = Symbol('RenderDeploymentProvider');
+
 /** Compatibility descriptor for Render's existing runtime adapter. */
 @Injectable()
 export class RenderDeploymentProvider

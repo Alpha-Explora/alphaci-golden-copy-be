@@ -38,7 +38,7 @@ interface ConfigurationChangeRow {
 /**
  * NOTE: this table (hierarchy.repository_configuration_changes) is
  * structurally incapable of storing a secret/variable *value* — name only
- * (plan §2.2, §3.1 file 4 acceptance check). Never add a value column here.
+ * (hierarchy persistence contract, §3.1 file 4 acceptance check). Never add a value column here.
  */
 @Injectable()
 export class RepoConfigurationChangesRepository {
@@ -82,7 +82,7 @@ export class RepoConfigurationChangesRepository {
   }
 
   /**
-   * Distinct current names — "list metadata only, never values" (plan §2.7).
+   * Distinct current names — "list metadata only, never values" (configuration metadata contract).
    * Only the *latest* change per (name, environment_scope) is considered;
    * names whose latest action was 'delete' are excluded (no longer present).
    */

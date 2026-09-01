@@ -39,7 +39,7 @@ export class RepositoriesService {
 
   /**
    * Creates the GitHub repository (reuses GithubService.createRepo — does
-   * not reimplement GitHub repo creation, plan §1.5), the hierarchy record,
+   * not reimplement GitHub repo creation, the hierarchy record,
    * and a projects.provisioned_projects row wired to it so the repository
    * immediately gets dashboard/CI/deployment functionality for free.
    */
@@ -91,7 +91,7 @@ export class RepositoriesService {
       eventCode: HIERARCHY_EVENT_CODES.repositoryCreated,
       message: `Repository "${repository.name}" created`,
       // provisionedProject.id is safe to set as projectId (real FK target);
-      // hierarchy identifiers otherwise live in metadata only (plan §2.2
+      // hierarchy identifiers otherwise live in metadata only (hierarchy persistence contract
       // critical note — a repository with no provisioned_project_id link
       // cannot be passed as projectId, but this one always has one).
       projectId: provisionedProject.id,

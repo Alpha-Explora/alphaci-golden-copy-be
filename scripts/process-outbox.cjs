@@ -5,6 +5,7 @@ const {
 } = require('../dist/src/modules/platform-ops/application/outbox-relay.service.js');
 
 async function main() {
+  requireExplicitHierarchySyncMode();
   const limit = positiveInteger(process.env.OUTBOX_BATCH_SIZE, 50, 500);
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn'],
@@ -16,6 +17,15 @@ async function main() {
     console.log(`Processed ${processed} outbox event(s).`);
   } finally {
     await app.close();
+  }
+}
+
+function requireExplicitHierarchySyncMode() {
+  const mode = process.env.HIERARCHY_GITHUB_SYNC_MODE;
+  if (mode !== 'live' && mode !== 'stub') {
+    throw new Error(
+      'HIERARCHY_GITHUB_SYNC_MODE must be explicitly set to live or stub for the outbox relay',
+    );
   }
 }
 

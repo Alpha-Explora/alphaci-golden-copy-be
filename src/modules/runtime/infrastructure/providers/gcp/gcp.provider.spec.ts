@@ -38,4 +38,25 @@ describe('GcpDeploymentProvider', () => {
       provider.validateConfig({ projectId: 'alpha-runtime' }),
     ).toThrow('GCP deployment configuration requires region and service');
   });
+
+  it('does not advertise runtime-client capabilities without a runtime adapter', () => {
+    const provider = new GcpDeploymentProvider(
+      {
+        enabled: true,
+        projectId: 'alpha-runtime',
+        region: 'asia-southeast1',
+        artifactRegistryRepository: 'alphaci-images',
+      },
+      new DeploymentProviderRegistry(),
+    );
+
+    expect(provider.capabilities).toMatchObject({
+      envProvisioning: false,
+      envVars: false,
+      logs: false,
+      deployHistory: false,
+      teardown: false,
+      liveStatus: false,
+    });
+  });
 });

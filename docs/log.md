@@ -1,5 +1,12 @@
 # Directory Update Log
 
+## 2026-09-01
+
+* **Update**: Documented the current leased PostgreSQL outbox relay, explicit hierarchy sync mode, topic ownership, and recovery procedures.
+* **Update**: Recorded provider-pack composition as the current Runtime boundary without changing provider behavior or public compatibility fields.
+* **Update**: Added rollback-safety guidance for branch-scoped environment data and aligned the architecture references with the active migration and transaction behavior.
+* **Update**: Tightened rollback preflight to reject any preview data whose branch identity cannot survive the legacy schema, and made outbox topic filtering fail closed for unregistered strings.
+
 ## 2026-08-28
 
 * **Creation**: Established the current-state OKF v0.2 documentation bundle.

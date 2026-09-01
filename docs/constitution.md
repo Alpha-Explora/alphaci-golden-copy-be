@@ -42,7 +42,7 @@ The [capability contract](/capabilities/capability-contract.md) and [pack contra
 
 ## Runtime providers
 
-Provider implementations belong to Runtime under `src/modules/runtime/infrastructure/providers/`. Other contexts consume provider-neutral contracts and catalog data. Provider-specific credentials, policies, workflow fragments, and adapters do not become shared business logic. The [provider map](/architecture/provider-map.generated.md) records the current registered providers.
+Provider implementations belong to Runtime under `src/modules/runtime/infrastructure/providers/`. Each provider is composed as one validated `RuntimeProviderPack`; a provider that advertises environment provisioning must contribute a matching runtime client. Other contexts consume provider-neutral contracts and catalog data. Provider-specific credentials, policies, workflow fragments, and adapters do not become shared business logic. The [provider map](/architecture/provider-map.generated.md) records the current registered providers.
 
 ## Events and outbox
 
@@ -51,7 +51,7 @@ The active event mechanism is the PostgreSQL table `platform.outbox_events`, pro
 - The kernel topic registry is the allow-list and every registered topic has one handler.
 - Critical hierarchy assignment transitions insert the state change and outbox row in one transaction.
 - Audit and notification writes are explicit best-effort post-commit observability writes.
-- Delivery is at-least-once. The relay uses an advisory lock, retry scheduling, and quarantine; handlers must be idempotent.
+- Delivery is at-least-once. The relay uses short row leases, retry scheduling, and quarantine; handlers must be idempotent.
 
 See the [event map](/architecture/events-map.generated.md) and [outbox relay runbook](/runbooks/runbook-outbox-relay.md).
 

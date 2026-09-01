@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
+import type { DatabaseService } from '#kernel/db/database.service';
 import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher';
 import type { PlatformAdminAccessService } from '#modules/identity-access/admin/platform-admin-access.service';
 import type { AssignmentsRepository } from '../assignments/assignments.repository';
@@ -54,6 +56,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
   let assignmentsRepository: jest.Mocked<AssignmentsRepository>;
   let githubSyncService: jest.Mocked<GithubSyncService>;
   let auditEventsService: jest.Mocked<AuditEventPublisher>;
+  let databaseService: jest.Mocked<DatabaseService>;
   let service: GroupsService;
 
   beforeEach(() => {
@@ -69,6 +72,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       markMemberRemoved: jest.fn(),
       changeMemberRoleGuarded: jest.fn(),
       removeMemberGuarded: jest.fn(),
+      removeMemberGuardedWithClient: jest.fn(),
       listMembers: jest.fn(),
     } as unknown as jest.Mocked<GroupsRepository>;
 
@@ -88,9 +92,11 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
 
     assignmentsRepository = {
       listAssignedByUserWithinGroup: jest.fn().mockResolvedValue([]),
+      listAssignedByUserWithinGroupWithClient: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<AssignmentsRepository>;
     githubSyncService = {
       requestRevoke: jest.fn(),
+      requestRevokeWithClient: jest.fn(),
     } as unknown as jest.Mocked<GithubSyncService>;
     auditEventsService = {
       record: jest.fn(),
@@ -99,6 +105,13 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
     const githubService = {
       listOrganizationMembers: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<GithubService>;
+    const transactionClient = { query: jest.fn() };
+    databaseService = {
+      withTransaction: jest.fn(
+        async (fn: (client: PoolClient) => Promise<unknown>) =>
+          fn(transactionClient as never),
+      ),
+    } as unknown as jest.Mocked<DatabaseService>;
 
     service = new GroupsService(
       groupsRepository,
@@ -107,6 +120,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       githubSyncService,
       githubService,
       auditEventsService,
+      databaseService,
     );
   });
 
@@ -196,7 +210,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       memberId: owner.id,
     });
     groupsRepository.findMemberById.mockResolvedValue(owner);
-    groupsRepository.removeMemberGuarded.mockResolvedValue({
+    groupsRepository.removeMemberGuardedWithClient.mockResolvedValue({
       member: owner,
       blockedLastOwner: true,
     });
@@ -295,7 +309,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
     expect(groupsRepository.changeMemberRoleGuarded).not.toHaveBeenCalled();
   });
 
-  it('cascades a revoke job for every active assignment the removed member holds in the group (plan §2.4/§9)', async () => {
+  it('cascades a revoke job for every active assignment the removed member holds in the group (member-management contract/§9)', async () => {
     groupsRepository.findActiveMembership.mockResolvedValue({
       workspaceId: 'group-1',
       userId: 'owner-1',
@@ -303,36 +317,38 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       memberId: owner.id,
     });
     groupsRepository.findMemberById.mockResolvedValue(developer);
-    groupsRepository.removeMemberGuarded.mockResolvedValue({
+    groupsRepository.removeMemberGuardedWithClient.mockResolvedValue({
       member: { ...developer, memberStatus: 'removed' },
       blockedLastOwner: false,
     });
-    assignmentsRepository.listAssignedByUserWithinGroup.mockResolvedValue([
-      {
-        id: 'assignment-1',
-        repositoryId: 'repo-1',
-        userId: 'dev-1',
-        accessLevel: 'write',
-        desiredState: 'assigned',
-        effectiveState: 'active',
-        status: 'active',
-        assignedBy: 'owner-1',
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-01T00:00:00Z',
-      },
-      {
-        id: 'assignment-2',
-        repositoryId: 'repo-2',
-        userId: 'dev-1',
-        accessLevel: 'write',
-        desiredState: 'assigned',
-        effectiveState: 'pending',
-        status: 'pending',
-        assignedBy: 'owner-1',
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-01T00:00:00Z',
-      },
-    ]);
+    assignmentsRepository.listAssignedByUserWithinGroupWithClient.mockResolvedValue(
+      [
+        {
+          id: 'assignment-1',
+          repositoryId: 'repo-1',
+          userId: 'dev-1',
+          accessLevel: 'write',
+          desiredState: 'assigned',
+          effectiveState: 'active',
+          status: 'active',
+          assignedBy: 'owner-1',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          id: 'assignment-2',
+          repositoryId: 'repo-2',
+          userId: 'dev-1',
+          accessLevel: 'write',
+          desiredState: 'assigned',
+          effectiveState: 'pending',
+          status: 'pending',
+          assignedBy: 'owner-1',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    );
 
     await service.removeMember(
       'group-1',
@@ -341,15 +357,71 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       'offboarded',
     );
 
-    expect(githubSyncService.requestRevoke).toHaveBeenCalledTimes(2);
-    expect(githubSyncService.requestRevoke).toHaveBeenCalledWith(
+    expect(githubSyncService.requestRevokeWithClient).toHaveBeenCalledTimes(2);
+    expect(githubSyncService.requestRevokeWithClient).toHaveBeenCalledWith(
+      expect.anything(),
       'assignment-1',
       'owner-1',
     );
-    expect(githubSyncService.requestRevoke).toHaveBeenCalledWith(
+    expect(githubSyncService.requestRevokeWithClient).toHaveBeenCalledWith(
+      expect.anything(),
       'assignment-2',
       'owner-1',
     );
+  });
+
+  it('rolls back member removal when a revoke cannot be durably enqueued', async () => {
+    groupsRepository.findActiveMembership.mockResolvedValue({
+      workspaceId: 'group-1',
+      userId: 'owner-1',
+      role: 'admin',
+      memberId: owner.id,
+    });
+    groupsRepository.findMemberById.mockResolvedValue(developer);
+    groupsRepository.removeMemberGuardedWithClient.mockResolvedValue({
+      member: { ...developer, memberStatus: 'removed' },
+      blockedLastOwner: false,
+    });
+    assignmentsRepository.listAssignedByUserWithinGroupWithClient.mockResolvedValue(
+      [
+        {
+          id: 'assignment-1',
+          repositoryId: 'repo-1',
+          userId: 'dev-1',
+          accessLevel: 'write',
+          desiredState: 'assigned',
+          effectiveState: 'active',
+          status: 'active',
+          assignedBy: 'owner-1',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          id: 'assignment-2',
+          repositoryId: 'repo-2',
+          userId: 'dev-1',
+          accessLevel: 'write',
+          desiredState: 'assigned',
+          effectiveState: 'active',
+          status: 'active',
+          assignedBy: 'owner-1',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    );
+    githubSyncService.requestRevokeWithClient.mockRejectedValue(
+      new Error('outbox unavailable'),
+    );
+
+    await expect(
+      service.removeMember('group-1', 'owner-1', 'member-dev'),
+    ).rejects.toThrow('outbox unavailable');
+
+    expect(databaseService.withTransaction).toHaveBeenCalled();
+    expect(githubSyncService.requestRevokeWithClient).toHaveBeenCalledTimes(1);
+    expect(githubSyncService.requestRevoke).not.toHaveBeenCalled();
+    expect(auditEventsService.recordProjectEvent).not.toHaveBeenCalled();
   });
 
   /* ── Group creation authorization ─────────────────────────────────────────

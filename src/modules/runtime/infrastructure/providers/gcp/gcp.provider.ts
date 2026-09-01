@@ -15,12 +15,15 @@ export interface GcpDeploymentProviderConfig {
 }
 
 const capabilities: ProviderCapabilities = {
-  envVars: true,
-  logs: true,
-  deployHistory: true,
-  teardown: true,
+  // GCP provisioning is currently exposed by GcpProvisioningService, not by
+  // the RuntimeEnvProviderClient surface. Keep the catalog honest until a
+  // provider client owns these operations.
+  envVars: false,
+  logs: false,
+  deployHistory: false,
+  teardown: false,
   managedMode: true,
-  liveStatus: true,
+  liveStatus: false,
   connectivity: 'direct',
   enumerable: false,
   credentialCustody: 'platform',

@@ -35,10 +35,12 @@ contracts/       serialisable cross-context types and focused ports
    Nest graph needs to be assembled. This is composition wiring, not a public
    business dependency.
 3. `kernel/` may be used by contexts, but `kernel/` may never import a context.
-4. Provider implementations live under `runtime/infrastructure/providers/<id>`.
-   Adding a provider uses the generic registries and one composition binding;
-   it must not create a seventh context or add vendor literals to another
-   context.
+4. Provider implementations and their contribution pack live under
+   `runtime/infrastructure/providers/<id>`. Adding a provider requires one
+   Runtime composition binding for its pack, but does not require edits to the
+   generic registries, contracts, or another context. Public compatibility DTO
+   fields may remain at the Runtime boundary when they preserve an existing
+   API or storage contract.
 5. No circular dependencies exist between contexts or within their module
    graphs.
 

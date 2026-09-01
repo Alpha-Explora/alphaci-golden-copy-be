@@ -29,7 +29,7 @@ Runtime can create provider deployment targets during project setup and push ini
 | Render | managed or configured connection through Runtime | image-pushed, Git-connected, or existing-service strategies according to target policy |
 | GCP | GCP deployment module and Runtime registry | Cloud Run and Artifact Registry provisioning when enabled |
 
-Provider selection, policy, credentials, and workflow fragments remain inside Runtime. Use the [provider map](/architecture/provider-map.generated.md) for the current source locations.
+Provider selection, policy, credentials, workflow fragments, and client availability remain inside Runtime provider packs. Use the [provider map](/architecture/provider-map.generated.md) for the current source locations and capability limits.
 
 ## Managed Render
 

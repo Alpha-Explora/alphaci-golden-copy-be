@@ -290,7 +290,7 @@ The report should remain readable and portable. The detailed records can contain
 | Automated proof | Document format, naming, generated maps, product boundaries, hosting boundaries, data ownership, migration order, tests, and builds can be checked. |
 | Enterprise readiness | Shared foundations are in place, but several Enterprise-specific integrations and real-environment proofs are not complete. |
 | Live limits | Database, hosting, scheduled-task, rollback, and recovery checks require approved environment access. |
-| Known baseline issue | Existing formatting-tool errors remain in the repository; this report does not claim a clean formatting baseline. |
+| Known baseline issue | Repository-wide lint and formatting verification is tracked by the local verification runbook; this report does not claim an external CI result. |
 
 ## Recommended executive actions
 

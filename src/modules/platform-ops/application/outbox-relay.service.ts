@@ -4,6 +4,7 @@ import {
   OutboxRepository,
   type PendingOutboxEvent,
   type OutboxProcessingOptions,
+  resolveOutboxProcessingTiming,
 } from '#kernel/events/outbox.repository';
 import {
   OutboxDispatcher,
@@ -71,9 +72,23 @@ export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
     const retryDelaySeconds = positiveIntegerFromEnv(
       'OUTBOX_RETRY_DELAY_SECONDS',
     );
+    const leaseSeconds = positiveIntegerFromEnv('OUTBOX_LEASE_SECONDS');
+    const handlerTimeoutMs = positiveIntegerFromEnv(
+      'OUTBOX_HANDLER_TIMEOUT_MS',
+    );
+    const timing = resolveOutboxProcessingTiming({
+      leaseSeconds,
+      handlerTimeoutMs,
+    });
     return {
       ...(maxAttempts === undefined ? {} : { maxAttempts }),
       ...(retryDelaySeconds === undefined ? {} : { retryDelaySeconds }),
+      ...(leaseSeconds === undefined
+        ? {}
+        : { leaseSeconds: timing.leaseSeconds }),
+      ...(handlerTimeoutMs === undefined
+        ? {}
+        : { handlerTimeoutMs: timing.handlerTimeoutMs }),
     };
   }
 }

@@ -39,7 +39,7 @@ function routeSet(document: OpenAPIObject): string[] {
 }
 
 describe('HTTP route inventory', () => {
-  it('matches the post-consolidation route reference exactly', async () => {
+  it('matches the pre-PR route baseline exactly', async () => {
     const app = await createHttpApplication();
     await app.init();
 
@@ -49,15 +49,13 @@ describe('HTTP route inventory', () => {
         new DocumentBuilder().setTitle('AlphaCI route inventory').build(),
       );
       const actual = routeSet(document);
-      const reference = readFileSync(
+      const baselineText = readFileSync(
         resolve(
           __dirname,
-          '../../docs/architecture/route-inventory.pre-consolidation.txt',
+          '../../docs/architecture/route-inventory.baseline.txt',
         ),
         'utf8',
-      )
-        .split(/\r?\n/)
-        .filter(Boolean);
+      );
       const manifest = JSON.parse(
         readFileSync(
           resolve(
@@ -69,43 +67,29 @@ describe('HTTP route inventory', () => {
       ) as {
         routeCount: number;
         referenceKind: string;
-        preConsolidationBaselineAvailable: boolean;
-        preConsolidationBaselineFile: string;
-        preConsolidationBaselineSha256: string;
-        preConsolidationSourceCommit: string;
+        baselineAvailable: boolean;
+        baselineFile: string;
+        baselineSha256: string;
+        baselineSourceCommit: string;
         referenceFile: string;
         referenceSha256: string;
       };
-      const preConsolidationReference = readFileSync(
-        resolve(
-          __dirname,
-          '../../docs/architecture/route-inventory.pre-consolidation.txt',
-        ),
-        'utf8',
-      );
       const sha256 = (value: string) =>
         createHash('sha256').update(value, 'utf8').digest('hex');
+      const baseline = baselineText.split(/\r?\n/).filter(Boolean);
 
-      expect(actual).toEqual(reference);
+      expect(actual).toEqual(baseline);
       expect(actual).toHaveLength(manifest.routeCount);
-      expect(manifest.referenceFile).toBe(
-        'route-inventory.pre-consolidation.txt',
+      expect(manifest.referenceFile).toBe('route-inventory.baseline.txt');
+      expect(sha256(baselineText)).toBe(manifest.referenceSha256);
+      expect(manifest.referenceKind).toBe('pre-pr-baseline-equals-current');
+      expect(manifest.baselineAvailable).toBe(true);
+      expect(manifest.baselineFile).toBe('route-inventory.baseline.txt');
+      expect(sha256(baselineText)).toBe(manifest.baselineSha256);
+      expect(manifest.baselineSourceCommit).toBe(
+        '95b734c64d521797a7bb58541be2a9389bdc19e4',
       );
-      expect(sha256(reference.join('\n') + '\n')).toBe(
-        manifest.referenceSha256,
-      );
-      expect(manifest.referenceKind).toBe(
-        'pre-consolidation-reference-equals-current',
-      );
-      expect(manifest.preConsolidationBaselineAvailable).toBe(true);
-      expect(manifest.preConsolidationBaselineFile).toBe(
-        'route-inventory.pre-consolidation.txt',
-      );
-      expect(sha256(preConsolidationReference)).toBe(
-        manifest.preConsolidationBaselineSha256,
-      );
-      expect(manifest.preConsolidationSourceCommit).toBe('b175938');
-      expect(preConsolidationReference).toBe(reference.join('\n') + '\n');
+      expect(sha256(baselineText)).toBe(manifest.referenceSha256);
     } finally {
       await app.close();
     }

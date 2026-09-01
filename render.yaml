@@ -3,9 +3,8 @@
 # The web service and this cron job must use the same database credentials.
 # Leave secret values as `sync: false` and attach the same Render environment
 # values used by the web service; no credential is stored in the repository.
-# Do not add a second outbox consumer: the PostgreSQL advisory lock is a safety
-# net, while this single scheduled owner is the deployment-level ownership
-# boundary.
+# Do not add a second outbox consumer: leases prevent concurrent row ownership,
+# while this single scheduled owner is the deployment-level ownership boundary.
 services:
   - type: cron
     name: alphaci-outbox-relay
@@ -22,6 +21,21 @@ services:
         value: "5"
       - key: OUTBOX_RETRY_DELAY_SECONDS
         value: "60"
+      - key: OUTBOX_LEASE_SECONDS
+        value: "300"
+      - key: OUTBOX_HANDLER_TIMEOUT_MS
+        value: "120000"
+      - key: HIERARCHY_ENABLED
+        value: "true"
+      # Set this explicitly to `live` or `stub` for the deployment. The relay
+      # refuses to start when the mode is missing so it cannot acknowledge
+      # hierarchy events through an accidental no-op provider.
+      - key: HIERARCHY_GITHUB_SYNC_MODE
+        sync: false
+      - key: HIERARCHY_MAX_SYNC_RETRIES
+        value: "5"
+      - key: HIERARCHY_SYNC_POLL_INTERVAL_MS
+        value: "5000"
       - key: SUPABASE_DB_URL
         sync: false
       - key: SUPABASE_DB_CA_CERT

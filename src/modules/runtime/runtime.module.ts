@@ -40,6 +40,7 @@ import { ProjectDeploymentProvisioningService } from './application/project-depl
 import { DeploymentProvisioningDefaultsService } from './application/deployment-provisioning-defaults.service';
 import { RenderCiSecretsService } from './infrastructure/providers/render/render-ci-secrets.service';
 import { RenderCostPolicyService } from './infrastructure/providers/render/render-cost-policy.service';
+import { RenderEnvClient } from './infrastructure/providers/render/render-env.client';
 import { ProviderConnectionsController } from './api/provider-connections.controller';
 import { ProviderConnectionsRepository } from './infrastructure/provider-connections.repository';
 import { ProviderConnectionsService } from './application/provider-connections.service';
@@ -47,6 +48,7 @@ import { CustomDomainsController } from './api/custom-domains.controller';
 import { CustomDomainsRepository } from './infrastructure/custom-domains.repository';
 import { CustomDomainsService } from './application/custom-domains.service';
 import { VercelCiSecretsService } from './infrastructure/providers/vercel/vercel-ci-secrets.service';
+import { VercelEnvClient } from './infrastructure/providers/vercel/vercel-env.client';
 import { LegacyDeploymentProvidersModule } from './infrastructure/providers/legacy/legacy-deployment-providers.module';
 import { LocalDeploymentHistoryProvider } from './application/local-deployment-history.provider';
 import { ProjectDeploymentsService } from './application/project-deployments.service';
@@ -59,6 +61,17 @@ import { DEPLOYMENT_PROVISIONING_DEFAULTS } from './core/deployment-provisioning
 import { DeploymentProviderPolicyRegistry } from './core/deployment-provider.policy';
 import { RenderDeploymentPolicy } from './infrastructure/providers/render/render-deployment.policy';
 import { VercelDeploymentPolicy } from './infrastructure/providers/vercel/vercel-deployment.policy';
+import { RENDER_DEPLOYMENT_PROVIDER } from './infrastructure/providers/render/render-deployment.provider';
+import { VERCEL_DEPLOYMENT_PROVIDER } from './infrastructure/providers/vercel/vercel-deployment.provider';
+import { GcpDeploymentProvider } from './infrastructure/providers/gcp/gcp.provider';
+import {
+  RUNTIME_PROVIDER_PACKS,
+  RuntimeProviderPackRegistry,
+} from './core/provider-pack';
+import type { DeploymentProvider } from './core/deployment-provider.contract';
+import { createGcpProviderPack } from './infrastructure/providers/gcp/gcp-provider.pack';
+import { createRenderProviderPack } from './infrastructure/providers/render/render-provider.pack';
+import { createVercelProviderPack } from './infrastructure/providers/vercel/vercel-provider.pack';
 import {
   MANAGED_QUOTA_REGISTRAR,
   type ManagedQuotaRegistrar,
@@ -117,13 +130,62 @@ import {
     DeploymentTargetsService,
     DeploymentStrategyResolver,
     {
+      provide: RUNTIME_PROVIDER_PACKS,
+      useFactory: (
+        renderProvider: DeploymentProvider,
+        renderPolicy: RenderDeploymentPolicy,
+        renderClient: RenderEnvClient,
+        renderCiSecretsInstaller: RenderCiSecretsService,
+        vercelProvider: DeploymentProvider,
+        vercelPolicy: VercelDeploymentPolicy,
+        vercelClient: VercelEnvClient,
+        vercelCiSecretsInstaller: VercelCiSecretsService,
+        gcpProvider: GcpDeploymentProvider,
+        workflowFragments: readonly WorkflowFragment[],
+      ) => [
+        createRenderProviderPack({
+          provider: renderProvider,
+          policy: renderPolicy,
+          client: renderClient,
+          workflowFragment: workflowFragments.find(
+            (fragment) => fragment.provider === 'render',
+          ),
+          ciSecretsInstaller: renderCiSecretsInstaller,
+        }),
+        createVercelProviderPack({
+          provider: vercelProvider,
+          policy: vercelPolicy,
+          client: vercelClient,
+          workflowFragment: workflowFragments.find(
+            (fragment) => fragment.provider === 'vercel',
+          ),
+          ciSecretsInstaller: vercelCiSecretsInstaller,
+        }),
+        createGcpProviderPack({ provider: gcpProvider }),
+      ],
+      inject: [
+        RENDER_DEPLOYMENT_PROVIDER,
+        RenderDeploymentPolicy,
+        RenderEnvClient,
+        RenderCiSecretsService,
+        VERCEL_DEPLOYMENT_PROVIDER,
+        VercelDeploymentPolicy,
+        VercelEnvClient,
+        VercelCiSecretsService,
+        GcpDeploymentProvider,
+        WORKFLOW_FRAGMENTS,
+      ],
+    },
+    RuntimeProviderPackRegistry,
+    {
       provide: DeploymentProviderPolicyRegistry,
       useFactory: (
-        renderPolicy: RenderDeploymentPolicy,
-        vercelPolicy: VercelDeploymentPolicy,
+        providerPacks: RuntimeProviderPackRegistry,
         usageQuotaRegistrar: ManagedQuotaRegistrar,
       ) => {
-        const policies = [renderPolicy, vercelPolicy];
+        const policies = providerPacks
+          .list()
+          .flatMap((pack) => (pack.policy ? [pack.policy] : []));
         for (const policy of policies) {
           if (policy.managedQuota) {
             usageQuotaRegistrar.registerManagedQuota({
@@ -134,11 +196,7 @@ import {
         }
         return new DeploymentProviderPolicyRegistry(policies);
       },
-      inject: [
-        RenderDeploymentPolicy,
-        VercelDeploymentPolicy,
-        MANAGED_QUOTA_REGISTRAR,
-      ],
+      inject: [RuntimeProviderPackRegistry, MANAGED_QUOTA_REGISTRAR],
     },
     EnvVarsService,
     EnvTokenEncryptionService,
@@ -150,18 +208,29 @@ import {
           githubService.setActionsSecretStrict(...args),
       }),
     },
-    ProviderClientRegistry,
+    {
+      provide: ProviderClientRegistry,
+      useFactory: (providerPacks: RuntimeProviderPackRegistry) =>
+        new ProviderClientRegistry(
+          providerPacks
+            .list()
+            .flatMap((pack) => (pack.client ? [pack.client] : [])),
+        ),
+      inject: [RuntimeProviderPackRegistry],
+    },
     {
       provide: PROVIDER_CLIENT_REGISTRY,
       useExisting: ProviderClientRegistry,
     },
     {
       provide: PROVIDER_CI_SECRETS_INSTALLERS,
-      useFactory: (
-        renderCiSecretsService: RenderCiSecretsService,
-        vercelCiSecretsService: VercelCiSecretsService,
-      ) => [renderCiSecretsService, vercelCiSecretsService],
-      inject: [RenderCiSecretsService, VercelCiSecretsService],
+      useFactory: (providerPacks: RuntimeProviderPackRegistry) =>
+        providerPacks
+          .list()
+          .flatMap((pack) =>
+            pack.ciSecretsInstaller ? [pack.ciSecretsInstaller] : [],
+          ),
+      inject: [RuntimeProviderPackRegistry],
     },
     ProviderCiSecretsInstallerRegistry,
     {
@@ -201,9 +270,15 @@ import {
     },
     {
       provide: WorkflowFragmentRegistry,
-      useFactory: (fragments: readonly WorkflowFragment[]) =>
-        new WorkflowFragmentRegistry(fragments),
-      inject: [WORKFLOW_FRAGMENTS],
+      useFactory: (providerPacks: RuntimeProviderPackRegistry) =>
+        new WorkflowFragmentRegistry(
+          providerPacks
+            .list()
+            .flatMap((pack) =>
+              pack.workflowFragment ? [pack.workflowFragment] : [],
+            ),
+        ),
+      inject: [RuntimeProviderPackRegistry],
     },
     VercelCiSecretsService,
     EnvFeatureGuard,

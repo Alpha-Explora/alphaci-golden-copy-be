@@ -6,8 +6,8 @@ tags: [architecture, http, routes, map]
 status: stable
 sources:
   - id: "route-reference"
-    resource: "docs/architecture/route-inventory.pre-consolidation.txt"
-    title: "Checked-in route reference"
+    resource: "docs/architecture/route-inventory.baseline.txt"
+    title: "Checked-in pre-PR route baseline"
   - id: "route-manifest"
     resource: "docs/architecture/route-inventory.manifest.json"
     title: "Route inventory manifest"
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **145 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in route reference used by the route inventory test.
+The current compiled API exposes **145 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -167,4 +167,4 @@ The current compiled API exposes **145 routes** under the global `/api/v1` prefi
 
 ## Verification
 
-The route inventory test compares the current compiled route list with the checked-in reference. The reference manifest records a SHA-256 digest and the fact that the available pre-consolidation reference equals the current inventory. Regenerate the source reference only when an intentional API route change is reviewed.
+The route inventory test compares the current compiled route list with the checked-in pre-PR baseline. The reference manifest records a SHA-256 digest and its source commit. Update the baseline only when an intentional API route change is reviewed.

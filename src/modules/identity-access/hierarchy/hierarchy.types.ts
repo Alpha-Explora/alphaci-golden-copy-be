@@ -4,8 +4,8 @@ import { OUTBOX_TOPICS } from '#kernel/events/outbox-topics';
 /**
  * Group role wire values are the *existing* `orgs.workspace_members.role`
  * enum — a Group is an `orgs.workspaces` row with kind='team' (see
- * HIERARCHY_IMPLEMENTATION_PLAN.md §1.1/§1.2). Do not introduce a second role
- * enum here; FE must mirror this exact mapping (plan §2.1).
+ * the current hierarchy contract). Do not introduce a second role enum here;
+ * clients must mirror this exact mapping.
  */
 export type GroupRole = WorkspaceRole;
 
@@ -28,7 +28,7 @@ export const GROUP_MANAGER_ROLES: GroupRole[] = ['admin', 'delegated_lead'];
 
 /**
  * Roles a lead may grant when adding someone to a group — ownership only
- * changes via transfer (plan §2.4).
+ * changes via transfer (member-management contract).
  *
  * Named for the grant, not the delivery mechanism: members are added directly
  * and there is no invitation step.
@@ -87,7 +87,7 @@ export const HIERARCHY_OUTBOX_TOPICS = {
 export type HierarchyOutboxTopic =
   (typeof HIERARCHY_OUTBOX_TOPICS)[keyof typeof HIERARCHY_OUTBOX_TOPICS];
 
-/** audit.audit_events.event_code values this module emits (plan §2.2). */
+/** audit.audit_events.event_code values this module emits (hierarchy persistence contract). */
 export const HIERARCHY_EVENT_CODES = {
   groupCreated: 'hierarchy.group.created',
   groupUpdated: 'hierarchy.group.updated',

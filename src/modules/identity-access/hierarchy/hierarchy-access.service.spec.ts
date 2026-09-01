@@ -78,7 +78,7 @@ describe('HierarchyAccessService', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
-    it('returns 404 — not 403 — for a caller who is not a member at all (existence-hiding, plan §2.0)', async () => {
+    it('returns 404 — not 403 — for a caller who is not a member at all (existence-hiding, resource visibility rule)', async () => {
       groupsRepository.findActiveMembership.mockResolvedValue(null);
 
       await expect(

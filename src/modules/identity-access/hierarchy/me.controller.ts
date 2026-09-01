@@ -20,9 +20,9 @@ export class MeController {
   ) {}
 
   /**
-   * Developer dashboard "My groups" (plan §2.6). Wrapped in { items } — the
-   * /me/* and activity endpoints return objects, not bare arrays (UI_LAYOUTS.md
-   * §6.4), matching how GroupActivityService already wraps its own response.
+   * Developer dashboard "My groups" (current hierarchy API contract). Wrapped
+   * in { items } — the /me/* and activity endpoints return objects, not bare
+   * arrays, matching how GroupActivityService already wraps its own response.
    */
   @Get('groups')
   async getMyGroups(@Req() req: Request) {
@@ -32,7 +32,7 @@ export class MeController {
     return { items };
   }
 
-  /** Developer dashboard "My assigned repositories" + "Repository access status" (plan §2.6). */
+  /** Developer dashboard "My assigned repositories" + "Repository access status" (current hierarchy API contract). */
   @Get('assigned-repositories')
   async getMyAssignedRepositories(@Req() req: Request) {
     const items =

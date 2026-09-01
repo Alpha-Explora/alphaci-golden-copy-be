@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { DatabaseService } from '#kernel/db/database.service';
@@ -26,10 +27,10 @@ export interface HierarchyOutboxJobPayload {
 
 /**
  * Implements the desired_state x effective_state state machine transition
- * table (plan §1.6). Called directly by services for the synchronous parts
+ * table (hierarchy state-machine contract). Called directly by services for the synchronous parts
  * (enqueue) and by GithubSyncOutboxHandler for the async parts (process a
  * dequeued job). Kept as plain TypeScript (no DB trigger) so the state
- * machine stays testable in isolation (plan §1.6 rationale).
+ * machine stays testable in isolation (hierarchy state-machine contract rationale).
  */
 @Injectable()
 export class GithubSyncService {
@@ -106,19 +107,48 @@ export class GithubSyncService {
   ): Promise<void> {
     const assignment = await this.assignmentsRepository.setDesiredUnassigned(
       assignmentId,
-      {
-        topic: HIERARCHY_OUTBOX_TOPICS.revoke,
-        aggregateType: 'repository_assignment',
-        aggregateId: assignmentId,
-        payload: {
-          assignmentId,
-          actingUserId,
-        } satisfies HierarchyOutboxJobPayload,
-      },
+      this.revokeEvent(assignmentId, actingUserId),
     );
     if (!assignment) {
       return;
     }
+  }
+
+  /**
+   * Revoke transition against a caller-owned transaction. This is used by
+   * member offboarding so the membership update, assignment transitions, and
+   * outbox rows commit or roll back together.
+   */
+  async requestRevokeWithClient(
+    client: Pick<PoolClient, 'query'>,
+    assignmentId: string,
+    actingUserId: string,
+  ): Promise<void> {
+    const assignment =
+      await this.assignmentsRepository.setDesiredUnassignedWithClient(
+        client,
+        assignmentId,
+      );
+    if (!assignment) {
+      return;
+    }
+
+    await this.outboxRepository.publishInTransaction(
+      client,
+      this.revokeEvent(assignmentId, actingUserId),
+    );
+  }
+
+  private revokeEvent(assignmentId: string, actingUserId: string) {
+    return {
+      topic: HIERARCHY_OUTBOX_TOPICS.revoke,
+      aggregateType: 'repository_assignment',
+      aggregateId: assignmentId,
+      payload: {
+        assignmentId,
+        actingUserId,
+      } satisfies HierarchyOutboxJobPayload,
+    } as const;
   }
 
   /** Transition #5: manual drift-repair trigger — re-enqueues a job matching current desired_state. */
@@ -182,6 +212,8 @@ export class GithubSyncService {
       await this.failGrant(
         assignmentId,
         'Repository or user could not be resolved for grant',
+        repository?.groupId,
+        actingUserId,
       );
       return;
     }
@@ -268,6 +300,8 @@ export class GithubSyncService {
       await this.failRevoke(
         assignmentId,
         'Repository or user could not be resolved for revoke',
+        repository?.groupId,
+        actingUserId,
       );
       return;
     }
@@ -301,7 +335,7 @@ export class GithubSyncService {
       });
 
       // A revoke is only verified once GitHub confirms no effective access
-      // remains — never claim revoked before verified (plan §1.6 row 4a/4b).
+      // remains — never claim revoked before verified (hierarchy state-machine contract).
       if (verification.hasAccess) {
         await this.failRevoke(
           assignmentId,
@@ -372,7 +406,7 @@ export class GithubSyncService {
     actingUserId?: string,
   ): Promise<void> {
     // Effective_state stays 'revoking' — never silently promoted to
-    // 'revoked' (plan §1.6 row 4b, source §5/§9 "must retry automatically,
+    // 'revoked' (hierarchy state-machine contract, hierarchy retry and security contract "must retry automatically,
     // remain visible to administrators, and block any claim that access has
     // been removed until verified").
     await this.assignmentsRepository.markRevokeFailed(assignmentId);
@@ -403,7 +437,7 @@ export class GithubSyncService {
     maxRetries: number = MAX_SYNC_RETRIES_DEFAULT,
   ): Promise<void> {
     if (retryCount >= maxRetries || !actingUserId) {
-      return; // stays failed/revoking indefinitely, surfaced on the admin view (plan §1.6).
+      return; // stays failed/revoking indefinitely, surfaced on the admin view (hierarchy state-machine contract).
     }
     // The state transition has already been recorded as failed/revoking, but
     // the retry request itself is still durable work. Let the relay retain the

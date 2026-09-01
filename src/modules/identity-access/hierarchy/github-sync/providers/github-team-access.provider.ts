@@ -10,9 +10,9 @@ export interface VerifyPermissionResult {
 }
 
 /**
- * Repository-scoped GitHub Team access mapping (plan §1.7/§3.2). Every
+ * Repository-scoped GitHub Team access mapping (GitHub access contract). Every
  * repository gets its own dedicated team — never organization base
- * permissions, never a shared cross-repository team (source plan §5, §9
+ * permissions, never a shared cross-repository team (hierarchy retry and security contract
  * "least-privilege GitHub scope").
  */
 export abstract class GithubTeamAccessProvider {

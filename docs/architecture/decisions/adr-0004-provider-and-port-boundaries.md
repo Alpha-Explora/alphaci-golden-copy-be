@@ -24,11 +24,11 @@ sources:
 
 ## Decision
 
-Deployment providers are plugins inside Runtime. The provider registry, provider-neutral contracts, provider clients, policies, workflow fragments, CI secret installers, and cloud adapters are composed by Runtime.
+Deployment providers are plugins inside Runtime. Each provider contributes a validated pack containing its descriptor and any applicable provider client, policy, workflow fragment, CI secret installer, or cloud adapter. Runtime composes the packs and exposes only provider-neutral contracts to application code.
 
 A port is introduced only when there is a real inversion, optional integration, testing seam, policy boundary, or transport boundary. One implementation remains a concrete class; a second consumer or real replacement justifies extracting a shared interface. Ports must expose serialisable inputs and outputs and must not require consumers to import provider implementations.
 
-The current provider IDs are `gcp`, `render`, and `vercel`. Provider identifiers are runtime data. The current compatibility provider composition still contains explicit provider policy bindings; the generic registries protect consumer boundaries without claiming that provider addition is code-free.
+The current provider IDs are `gcp`, `render`, and `vercel`. Provider identifiers are runtime data. The current compatibility provider composition still contains one explicit pack binding per provider; the generic registries protect consumer boundaries without claiming that provider addition is code-free.
 
 ## Rejected alternatives
 

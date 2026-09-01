@@ -56,4 +56,66 @@ describe('OutboxRelayService', () => {
       expect.objectContaining({ userId: 'user-1' }),
     );
   });
+
+  it('passes bounded lease and handler timeout settings to the repository', async () => {
+    const originalEnv = process.env;
+    process.env = {
+      ...originalEnv,
+      OUTBOX_LEASE_SECONDS: '90',
+      OUTBOX_HANDLER_TIMEOUT_MS: '45000',
+    };
+    try {
+      const processPending = jest.fn().mockResolvedValue(0);
+      const service = new OutboxRelayService(
+        { processPending } as never,
+        new OutboxDispatcher(),
+        { recordProjectEvent: jest.fn() } as never,
+        { record: jest.fn() } as never,
+      );
+      service.onModuleInit();
+
+      await service.processPendingOnce(10);
+
+      expect(processPending).toHaveBeenCalledWith(
+        expect.any(Function),
+        10,
+        expect.arrayContaining([
+          'platform.audit.recorded',
+          'platform.notification.requested',
+        ]),
+        {
+          leaseSeconds: 90,
+          handlerTimeoutMs: 45000,
+        },
+      );
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  it('fails closed when the lease is not longer than the handler timeout', async () => {
+    const originalEnv = process.env;
+    process.env = {
+      ...originalEnv,
+      OUTBOX_LEASE_SECONDS: '45',
+      OUTBOX_HANDLER_TIMEOUT_MS: '45000',
+    };
+    try {
+      const processPending = jest.fn().mockResolvedValue(0);
+      const service = new OutboxRelayService(
+        { processPending } as never,
+        new OutboxDispatcher(),
+        { recordProjectEvent: jest.fn() } as never,
+        { record: jest.fn() } as never,
+      );
+      service.onModuleInit();
+
+      await expect(service.processPendingOnce(10)).rejects.toThrow(
+        'OUTBOX_LEASE_SECONDS must be greater than OUTBOX_HANDLER_TIMEOUT_MS',
+      );
+      expect(processPending).not.toHaveBeenCalled();
+    } finally {
+      process.env = originalEnv;
+    }
+  });
 });

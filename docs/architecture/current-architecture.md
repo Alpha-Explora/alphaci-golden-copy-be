@@ -61,7 +61,7 @@ The kernel owns technical concerns shared by contexts: environment/configuration
 
 ## Runtime providers
 
-Runtime contains generic registries and provider implementations under `src/modules/runtime/infrastructure/providers/`. The current registered provider IDs are `gcp`, `render`, and `vercel`. The [provider map](/architecture/provider-map.generated.md) records composition modules, responsibilities, slots, and configuration gating.
+Runtime contains generic registries and provider implementations under `src/modules/runtime/infrastructure/providers/`. A validated `RuntimeProviderPack` groups each provider descriptor with its applicable policy, runtime client, workflow fragment, and CI secret installer. The current registered provider IDs are `gcp`, `render`, and `vercel`; GCP is currently catalog/provisioning-only while Render and Vercel expose the environment client surface. The [provider map](/architecture/provider-map.generated.md) records composition modules, responsibilities, slots, and configuration gating.
 
 ## Persistence and migrations
 
@@ -81,7 +81,7 @@ supabase/migrations/
 
 ## Events
 
-`platform.outbox_events` is the current asynchronous work queue. The kernel stores registered topics and dispatches them to one handler per topic. `platform-ops` handles audit and notification topics; `identity-access` handles hierarchy assignment synchronization. The Render cron runs the compiled `scripts/process-outbox.cjs` entrypoint. See the [event map](/architecture/events-map.generated.md).
+`platform.outbox_events` is the current asynchronous work queue. The kernel stores registered topics and dispatches them to one handler per topic. `platform-ops` handles audit and notification topics; `identity-access` handles hierarchy assignment synchronization. The Render cron runs the compiled `scripts/process-outbox.cjs` entrypoint, which claims rows with short leases before invoking handlers. The relay rejects a lease that is not longer than its handler timeout. See the [event map](/architecture/events-map.generated.md).
 
 ## API surface
 

@@ -6,6 +6,7 @@ import {
 } from '../../src/modules/runtime/core/deployment-provider.policy';
 import { ProviderCiSecretsInstallerRegistry } from '../../src/modules/runtime/infrastructure/providers/core/provider-ci-secrets.registry';
 import { ProviderClientRegistry } from '../../src/modules/runtime/infrastructure/providers/core/provider-client.registry';
+import { RuntimeProviderPackRegistry } from '../../src/modules/runtime/core/provider-pack';
 import { WorkflowFragmentRegistry } from '../../src/modules/runtime/core/workflow-fragment.contract';
 import type { DeploymentProvider } from '../../src/modules/runtime/core/deployment-provider.contract';
 import type { RuntimeEnvProviderClient } from '../../src/modules/runtime/application/ports/runtime-env-provider.client';
@@ -82,16 +83,47 @@ describe('provider plugin composition', () => {
       installForTarget: async () => ({ githubSecrets: {} }),
     };
 
+    const providerPacks = new RuntimeProviderPackRegistry([
+      {
+        id: 'fake-cloud',
+        provider,
+        client,
+        policy,
+        workflowFragment: fragment,
+        ciSecretsInstaller: installer,
+      },
+    ]);
     const metadata = new DeploymentProviderRegistry<DeploymentProvider>();
-    const clients = new ProviderClientRegistry([client]);
-    const policies = new DeploymentProviderPolicyRegistry([policy]);
-    const workflows = new WorkflowFragmentRegistry([fragment]);
-    const ciInstallers = new ProviderCiSecretsInstallerRegistry([installer]);
+    const clients = new ProviderClientRegistry(
+      providerPacks
+        .list()
+        .flatMap((pack) => (pack.client ? [pack.client] : [])),
+    );
+    const policies = new DeploymentProviderPolicyRegistry(
+      providerPacks
+        .list()
+        .flatMap((pack) => (pack.policy ? [pack.policy] : [])),
+    );
+    const workflows = new WorkflowFragmentRegistry(
+      providerPacks
+        .list()
+        .flatMap((pack) =>
+          pack.workflowFragment ? [pack.workflowFragment] : [],
+        ),
+    );
+    const ciInstallers = new ProviderCiSecretsInstallerRegistry(
+      providerPacks
+        .list()
+        .flatMap((pack) =>
+          pack.ciSecretsInstaller ? [pack.ciSecretsInstaller] : [],
+        ),
+    );
 
     metadata.register(provider);
 
     const catalog = new DeploymentProviderCatalogService(metadata);
 
+    expect(providerPacks.get('fake-cloud').provider).toBe(provider);
     expect(metadata.get('fake-cloud')).toBe(provider);
     expect(catalog.list()).toEqual([
       {

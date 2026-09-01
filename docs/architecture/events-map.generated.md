@@ -35,8 +35,8 @@ The active event mechanism is a PostgreSQL-backed outbox inside the one NestJS d
 2. `OutboxRepository` inserts into `platform.outbox_events`. Critical hierarchy transitions call `publishInTransaction` on the same PostgreSQL client as the state mutation. Audit and notification publishers use explicit best-effort post-commit writes.
 3. `OutboxDispatcher` registers one handler for each active topic.
 4. `scripts/process-outbox.cjs` starts the compiled Nest application context and invokes `OutboxRelayService`.
-5. The Render cron in `render.yaml` is the deployment-level scheduler. PostgreSQL advisory locking prevents overlapping relay runs.
-6. Successful rows become `status = 'published'` with `published_at`. Failed rows are retried with `available_at`, then quarantined after the configured attempt limit.
+5. The Render cron in `render.yaml` is the deployment-level scheduler. A short `FOR UPDATE SKIP LOCKED` transaction assigns an expiring lease before a handler runs, so external I/O does not hold a database connection or process-wide lock.
+6. Successful rows become `status = 'published'` with `published_at`. Failed rows are retried with `available_at`, then quarantined after the configured attempt limit. Acknowledgement and failure updates require the lease token.
 
 Delivery is at-least-once. A handler can run again if the process stops after the side effect and before the acknowledgement update, so handlers must remain idempotent. The topic allow-list prevents an unowned row from being acknowledged by the wrong handler.
 

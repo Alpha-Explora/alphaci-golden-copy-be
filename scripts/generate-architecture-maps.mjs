@@ -77,7 +77,7 @@ const PROVIDERS = [
   {
     id: 'render',
     label: 'Render',
-    composition: 'src/modules/runtime/infrastructure/providers/legacy/legacy-deployment-providers.module.ts',
+    composition: 'src/modules/runtime/runtime.module.ts',
     implementation: 'src/modules/runtime/infrastructure/providers/render/render-deployment.provider.ts',
     responsibilities: 'Render deployment targets, environment variables, policy, and CI secret installation',
     slots: 'backend',
@@ -86,7 +86,7 @@ const PROVIDERS = [
   {
     id: 'vercel',
     label: 'Vercel',
-    composition: 'src/modules/runtime/infrastructure/providers/legacy/legacy-deployment-providers.module.ts',
+    composition: 'src/modules/runtime/runtime.module.ts',
     implementation: 'src/modules/runtime/infrastructure/providers/vercel/vercel-deployment.provider.ts',
     responsibilities: 'Vercel deployment targets, environment variables, preview lane, policy, and CI secret installation',
     slots: 'frontend',
@@ -305,8 +305,8 @@ ${rows.join('\n')}
 2. \`OutboxRepository\` inserts into \`platform.outbox_events\`. Critical hierarchy transitions call \`publishInTransaction\` on the same PostgreSQL client as the state mutation. Audit and notification publishers use explicit best-effort post-commit writes.
 3. \`OutboxDispatcher\` registers one handler for each active topic.
 4. \`scripts/process-outbox.cjs\` starts the compiled Nest application context and invokes \`OutboxRelayService\`.
-5. The Render cron in \`render.yaml\` is the deployment-level scheduler. PostgreSQL advisory locking prevents overlapping relay runs.
-6. Successful rows become \`status = 'published'\` with \`published_at\`. Failed rows are retried with \`available_at\`, then quarantined after the configured attempt limit.
+5. The Render cron in \`render.yaml\` is the deployment-level scheduler. A short \`FOR UPDATE SKIP LOCKED\` transaction assigns an expiring lease before a handler runs, so external I/O does not hold a database connection or process-wide lock.
+6. Successful rows become \`status = 'published'\` with \`published_at\`. Failed rows are retried with \`available_at\`, then quarantined after the configured attempt limit. Acknowledgement and failure updates require the lease token.
 
 Delivery is at-least-once. A handler can run again if the process stops after the side effect and before the acknowledgement update, so handlers must remain idempotent. The topic allow-list prevents an unowned row from being acknowledged by the wrong handler.
 
@@ -336,7 +336,7 @@ function generateProviderMap() {
     ],
     body: `# Runtime provider map
 
-Providers are Runtime-owned plugins. The generic registries expose provider-neutral contracts to application code; provider clients, policies, workflow fragments, CI secret installers, and cloud adapters stay under \`src/modules/runtime/infrastructure/providers/\`.\n
+Providers are Runtime-owned plugins. A provider contribution pack groups its descriptor, policy, runtime client, workflow fragment, and CI secret installer. The generic registries expose provider-neutral contracts to application code; provider implementations stay under \`src/modules/runtime/infrastructure/providers/\`.\n
 ## Current providers
 
 | Provider id | Label | Responsibility | Supported slot | Availability |
@@ -346,9 +346,10 @@ ${rows.join('\n')}
 ## Composition rules
 
 - Provider identifiers are runtime data and are registered through Runtime composition.
+- Each configured provider contributes one validated \`RuntimeProviderPack\`; optional components may be omitted only when the advertised capability does not require them.
 - Runtime consumers receive provider-neutral catalog data, focused ports, or contracts; they do not receive provider implementation methods from another context.
 - A provider may have configuration-gated live behavior. The catalog reports enabled state and selected capabilities from the registered provider.
-- The current implementation still has compatibility composition in the legacy provider module and provider-specific policy classes. This map records that fact rather than claiming provider addition is code-free.
+- Existing Render and Vercel compatibility classes remain provider-owned, while \`RuntimeModule\` assembles their packs. Adding a provider still requires one composition binding; the generic registries do not change.
 
 See the [provider and port decision](/architecture/decisions/adr-0004-provider-and-port-boundaries.md) and the [deployment provisioning runbook](/runbooks/runbook-deployment-provisioning.md).`,
   });
@@ -362,12 +363,12 @@ function generateRouteMap() {
     description: `Generated inventory of the ${manifest.routeCount} current API routes.`,
     tags: ['architecture', 'http', 'routes', 'map'],
     sources: [
-      { id: 'route-reference', resource: 'docs/architecture/route-inventory.pre-consolidation.txt', title: 'Checked-in route reference' },
+      { id: 'route-reference', resource: 'docs/architecture/route-inventory.baseline.txt', title: 'Checked-in pre-PR route baseline' },
       { id: 'route-manifest', resource: 'docs/architecture/route-inventory.manifest.json', title: 'Route inventory manifest' },
     ],
     body: `# HTTP route map
 
-The current compiled API exposes **${routes.length} routes** under the global \`/api/v1\` prefix. The list below is generated from the checked-in route reference used by the route inventory test.
+The current compiled API exposes **${routes.length} routes** under the global \`/api/v1\` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -375,7 +376,7 @@ ${routes.map((route) => `- \`${route}\``).join('\n')}
 
 ## Verification
 
-The route inventory test compares the current compiled route list with the checked-in reference. The reference manifest records a SHA-256 digest and the fact that the available pre-consolidation reference equals the current inventory. Regenerate the source reference only when an intentional API route change is reviewed.`,
+The route inventory test compares the current compiled route list with the checked-in pre-PR baseline. The reference manifest records a SHA-256 digest and its source commit. Update the baseline only when an intentional API route change is reviewed.`,
   });
 }
 

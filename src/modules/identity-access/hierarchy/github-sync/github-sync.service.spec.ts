@@ -51,7 +51,7 @@ const baseUser = {
   isInternal: true,
 };
 
-describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
+describe('GithubSyncService — assignment state machine (hierarchy state-machine contract)', () => {
   let outboxRepository: jest.Mocked<OutboxRepository>;
   let assignmentsRepository: jest.Mocked<AssignmentsRepository>;
   let syncRepository: jest.Mocked<GithubAccessSyncRepository>;
@@ -241,6 +241,21 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     expect(outboxRepository.publishBestEffort).not.toHaveBeenCalled();
   });
 
+  it('requeues a grant when the repository or user cannot be resolved', async () => {
+    assignmentsRepository.findById.mockResolvedValue(baseAssignment());
+    repositoriesRepository.findById.mockResolvedValue(null);
+    syncRepository.markFailed.mockResolvedValue(1);
+
+    await service.processJob(HIERARCHY_OUTBOX_TOPICS.grant, {
+      assignmentId: 'assignment-1',
+      actingUserId: 'pm-1',
+    });
+
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
+    );
+  });
+
   it('transition #3: requestRevoke sets desired_state=unassigned and enqueues a revoke job', async () => {
     assignmentsRepository.setDesiredUnassigned.mockResolvedValue(
       baseAssignment({
@@ -312,7 +327,7 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
       updatedAt: '2026-01-01T00:00:00Z',
     });
     // GitHub still reports the developer has access — revoke must NOT be
-    // claimed successful (source plan §5/§9, plan §1.6 row 4b).
+    // claimed successful (current hierarchy integration contract/§9, hierarchy state-machine contract).
     provider.verifyEffectivePermission.mockResolvedValue({
       hasAccess: true,
       permission: 'write',
@@ -328,6 +343,27 @@ describe('GithubSyncService — assignment state machine (plan §1.6)', () => {
     expect(assignmentsRepository.markRevokeFailed).toHaveBeenCalledWith(
       'assignment-1',
     );
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
+    );
+  });
+
+  it('requeues a revoke when the repository or user cannot be resolved', async () => {
+    assignmentsRepository.findById.mockResolvedValue(
+      baseAssignment({
+        desiredState: 'unassigned',
+        effectiveState: 'revoking',
+      }),
+    );
+    repositoriesRepository.findById.mockResolvedValue(null);
+    syncRepository.findByAssignmentId.mockResolvedValue(null);
+    syncRepository.markFailed.mockResolvedValue(1);
+
+    await service.processJob(HIERARCHY_OUTBOX_TOPICS.revoke, {
+      assignmentId: 'assignment-1',
+      actingUserId: 'pm-1',
+    });
+
     expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
     );
