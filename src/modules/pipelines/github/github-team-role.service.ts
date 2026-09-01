@@ -226,7 +226,68 @@ export class GithubTeamRoleService {
   ): Promise<AppRole | null> {
     if (!this.enabled) return null;
     if (isOrgOwner) return 'admin';
-    return this.resolveRoleFromTeams(login, token);
+
+    const fromUserToken = await this.resolveRoleFromTeams(login, token);
+    if (fromUserToken !== null) return fromUserToken;
+
+    // The user's OAuth token could not answer. Ask again as the App before
+    // giving up, because this path is NOT symmetric with the returning-login
+    // path and an unreadable answer here is not harmless:
+    //
+    //   - Returning login (syncRoleForUser) applies Rule 2 — unreadable means
+    //     untouched, so the user keeps the role they already had.
+    //   - FIRST login has no role to keep. The caller in auth.service.ts turns
+    //     our null into `isOrgOwner ? 'admin' : 'member'` and writes it with
+    //     app_role_source = 'github_team' — a guess, recorded as though GitHub
+    //     had confirmed it. A genuine `team-lead` then signs in as a Member,
+    //     sees no create-workspace affordance, and has no way to fix it from
+    //     inside the app.
+    //
+    // The installation token is the stronger reader: it carries the App's org
+    // Members:Read grant, so it works where a user token is missing read:org
+    // or the org has OAuth App access restrictions turned on — the two most
+    // common causes of the null above, and both of them permanent rather than
+    // transient. This is the same authority the reconcile sweep already uses;
+    // borrowing it here just moves the correction from "up to one sweep
+    // interval later" to "before the row is ever written".
+    return this.resolveRoleFromTeamsAsApp(login);
+  }
+
+  /**
+   * Derives the role using an App installation token instead of a user token.
+   *
+   * Returns null on every failure — no installation for the org, no token, or
+   * teams still unreadable. Callers must treat null as "unknown", never as
+   * "not a member": this runs precisely when we already know one reader is
+   * blind, so a second blind answer must not be upgraded into a fact.
+   */
+  private async resolveRoleFromTeamsAsApp(
+    login: string,
+  ): Promise<AppRole | null> {
+    const org = this.githubService.getEnforcedOrg();
+    if (!org) return null;
+
+    try {
+      const installationId =
+        await this.installationsRepository.findInstallationIdByAccountLogin(
+          org,
+        );
+      if (installationId === null) {
+        this.logger.warn(
+          `Seed role for ${login}: no GitHub App installation for org ${org}, so the team check stays unresolved.`,
+        );
+        return null;
+      }
+
+      const token =
+        await this.githubService.createInstallationAccessToken(installationId);
+      return await this.resolveRoleFromTeams(login, token);
+    } catch (error) {
+      this.logger.warn(
+        `Seed role for ${login}: installation-token team check failed: ${describeError(error)}`,
+      );
+      return null;
+    }
   }
 
   /**
