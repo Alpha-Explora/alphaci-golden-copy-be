@@ -31,7 +31,7 @@ import type {
   DisconnectProjectResponse,
   SetupProjectResponse,
   SyncProjectsResponse,
-} from '../../projects.service.types';
+} from './projects.service.types';
 
 /**
  * Narrow compatibility port for the provisioning use cases that are still

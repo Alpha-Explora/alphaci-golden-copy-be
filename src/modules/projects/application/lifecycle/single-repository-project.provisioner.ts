@@ -14,7 +14,7 @@ import type { SetupProjectDto } from '../../dto/setup-project.dto';
 import type {
   CreateProjectResponse,
   SetupProjectResponse,
-} from '../../projects.service.types';
+} from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../projects.repository';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 

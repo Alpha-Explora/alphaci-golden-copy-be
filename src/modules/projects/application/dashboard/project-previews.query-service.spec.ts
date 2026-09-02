@@ -1,4 +1,4 @@
-import { ProjectPreviewsService } from './project-previews.service';
+import { ProjectPreviewsService } from './project-previews.query-service';
 import type {
   DeploymentHistoryItem as ProjectDeploymentHistoryItem,
   DeploymentProjectReference,

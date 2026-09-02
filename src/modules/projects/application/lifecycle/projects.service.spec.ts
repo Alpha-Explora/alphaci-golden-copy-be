@@ -7,13 +7,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import type { CatalogService } from './application/catalog/catalog.service.js';
+import type { CatalogService } from '../catalog/catalog.service.js';
 import type { CiService } from '#modules/pipelines/ci/ci.service.js';
 import { GithubRepoDeleteError } from '#modules/pipelines/github/github.service.js';
 import type { GithubService } from '#modules/pipelines/github/github.service.js';
 import type { WorkspacesService } from '#modules/identity-access/workspaces/workspaces.service.js';
 import type { WorkspaceAccessService } from '#modules/identity-access/workspaces/workspace-access.service.js';
-import type { ProjectsRepository } from './projects.repository.js';
+import type { ProjectsRepository } from '../../projects.repository.js';
 import { ProjectsService } from './projects.service.js';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';

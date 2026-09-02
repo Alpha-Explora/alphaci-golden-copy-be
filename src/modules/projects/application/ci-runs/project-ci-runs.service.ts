@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
-import type { WorkflowFileMetadata } from './application/workflows/index';
+import type { WorkflowFileMetadata } from '../workflows/index';
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
 import type {
   CiRunsProjectContext,
@@ -16,7 +16,7 @@ import type {
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
-} from './projects.repository';
+} from '../../projects.repository';
 
 export interface ProjectCiRunsResponse {
   enabled: boolean;

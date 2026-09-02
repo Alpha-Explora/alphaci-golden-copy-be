@@ -9,7 +9,7 @@ sources:
     resource: "src/modules/identity-access/capabilities/capabilities.controller.ts"
     title: "Current capability compatibility endpoint"
   - id: configuration
-    resource: "src/kernel/config/app.config.ts"
+    resource: "src/kernel/config/app.config.types.ts"
     title: "Application configuration"
   - id: capability-gate
     resource: "scripts/check-capabilities.cjs"
@@ -31,12 +31,12 @@ Each registry record contains:
 | `maturity` | `stable`, `limited`, or `not-implemented`. |
 | `editions` | Pack documents for which the capability is applicable as a composition reference. |
 | `configuration` | Current source of enablement or gating. |
-| `configurationFlags` | Boolean `AppConfig` leaves, as `group.flag` paths, that gate the capability. Checked against `src/kernel/config/app.config.ts` in both directions. |
+| `configurationFlags` | Boolean `AppConfig` leaves, as `group.flag` paths, that gate the capability. Checked against `src/kernel/config/app.config.types.ts` in both directions. |
 | `requires` | Capability keys this capability depends on. Edges must resolve, stay acyclic, and never be applicable in fewer editions than their dependents. |
 
 The [generated matrix](/capabilities/capability-matrix.generated.md) is derived from `registry.ts`. The registry is intentionally separate from the live `/api/v1/capabilities` response, which retains its compatibility-shaped response and current configuration behavior.
 
-`configuration` stays human-readable prose. `configurationFlags` is the machine-checked form of the same claim: without it, a flag could be renamed in `app.config.ts` while the registry and the generated matrix both stayed green. Every boolean `AppConfig` leaf must be owned by exactly one record or listed in the `NON_CAPABILITY_FLAGS` exemption set in `scripts/check-capabilities.cjs`, which makes "this toggle is not a product capability" an explicit decision rather than an omission.
+`configuration` stays human-readable prose. `configurationFlags` is the machine-checked form of the same claim: without it, a flag could be renamed in `app.config.types.ts` while the registry and the generated matrix both stayed green. Every boolean `AppConfig` leaf must be owned by exactly one record or listed in the `NON_CAPABILITY_FLAGS` exemption set in `scripts/check-capabilities.cjs`, which makes "this toggle is not a product capability" an explicit decision rather than an omission.
 
 ## Maturity
 

@@ -1,6 +1,6 @@
 export { ProjectsModule } from './projects.module';
-export { ProjectsService } from './projects.service';
 export { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
+export { ProjectReconciliationService } from './application/lifecycle/project-reconciliation.service';
 export { ProjectProvisioningModule } from './project-provisioning.module';
 export type { CreatedProjectReference } from './application/lifecycle/project-provisioning.service';
 export type { ProjectReferenceContract } from './contracts/project-reference.contract';

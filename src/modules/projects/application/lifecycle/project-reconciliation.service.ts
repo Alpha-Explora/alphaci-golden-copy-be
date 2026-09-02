@@ -7,7 +7,7 @@ import {
 } from '#kernel/ports/github.port';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { ProjectsRepository } from '../../projects.repository';
-import type { ReconcileDeletedReposResult } from '../../projects.service.types';
+import type { ReconcileDeletedReposResult } from './projects.service.types';
 
 /**
  * System-wide cleanup for projects whose GitHub repository was deleted.

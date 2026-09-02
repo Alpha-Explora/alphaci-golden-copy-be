@@ -1,17 +1,17 @@
 // Response shapes (match FE contracts exactly).
 // Shared with the application-layer view mappers; keep free of runtime imports.
-import type { WorkflowFileMetadata } from './application/workflows/index';
+import type { WorkflowFileMetadata } from '../workflows/index';
 import type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
 import type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
-import type { StagedWorkflowFile } from './application/workflows/index';
-import type { ProvisionedProjectStatus } from './projects.repository';
-import type { WorkflowHistoryEntry } from './application/workflows/index';
+import type { StagedWorkflowFile } from '../workflows/index';
+import type { ProvisionedProjectStatus } from '../../projects.repository';
+import type { WorkflowHistoryEntry } from '../workflows/index';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
 } from '#kernel/ports/deployment-runtime.port';
-import type { ProjectDashboardSnapshot } from './project-dashboard-snapshots.repository';
-import type { WorkflowUpdateRequestRecord } from './project-workflow-update-requests.repository';
+import type { ProjectDashboardSnapshot } from '../../project-dashboard-snapshots.repository';
+import type { WorkflowUpdateRequestRecord } from '../../project-workflow-update-requests.repository';
 
 export interface CreateProjectResponse {
   id: string;

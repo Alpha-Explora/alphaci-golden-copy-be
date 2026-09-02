@@ -22,12 +22,12 @@
  * Reimplementing it here in raw fetch/crypto calls would be a real
  * drift/bug risk (e.g. silently falling out of sync with GithubService's
  * "only a clean 404 counts as gone" safety rule). createApplicationContext
- * boots real DI-wired GithubService/ProjectsRepository/ProjectsService
+ * boots real DI-wired GithubService/ProjectsRepository/ProjectReconciliationService
  * instances WITHOUT starting the HTTP listener (no app.listen()), so this
  * still never receives inbound requests — it's not a running server, just a
  * script that reuses the app's service layer for one call and exits.
  *
- * Safety: ProjectsService.reconcileDeletedRepos() only deletes a project
+ * Safety: ProjectReconciliationService.reconcileDeletedRepos() only deletes a project
  * when GitHub returns a clean 404 (repoExists() === false). Anything
  * inconclusive — 401/403 (bad/revoked org token, secondary rate limit),
  * 5xx, or a network error — is skipped, not deleted. A bad token or a
@@ -68,7 +68,7 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../app.module.js';
-import { ProjectsService } from '#modules/projects/index.js';
+import { ProjectReconciliationService } from '#modules/projects/index.js';
 
 async function run(): Promise<void> {
   const logger = new Logger('ReconcileDeletedRepos');
@@ -79,10 +79,10 @@ async function run(): Promise<void> {
   });
 
   try {
-    const projectsService = app.get(ProjectsService);
+    const reconciliationService = app.get(ProjectReconciliationService);
 
     logger.log('Starting scheduled repository-deletion reconciliation…');
-    const result = await projectsService.reconcileDeletedRepos();
+    const result = await reconciliationService.reconcileDeletedRepos();
 
     logger.log(
       `Done — ${String(result.total)} tracked project(s), ${String(

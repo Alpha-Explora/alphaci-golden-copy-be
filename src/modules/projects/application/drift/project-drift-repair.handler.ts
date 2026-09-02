@@ -23,8 +23,8 @@ import {
   type ProjectDriftRepairResponse,
 } from '#kernel/ports/deployment-runtime.port';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { ProjectsRepository } from './projects.repository';
-import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
+import { ProjectsRepository } from '../../projects.repository';
+import { ProjectWorkflowsService } from '../workflows/project-workflows.service';
 
 type DriftRepairContext = {
   projectId: string;
@@ -135,11 +135,7 @@ export class ProjectDriftRepairService {
         findingCode: ctx.finding.code,
       },
     });
-    return this.completed(
-      ctx.findingId,
-      ctx.action,
-      'Finding marked ignored',
-    );
+    return this.completed(ctx.findingId, ctx.action, 'Finding marked ignored');
   }
 
   private async rotateCiToken(

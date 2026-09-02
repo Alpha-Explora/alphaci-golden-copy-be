@@ -45,11 +45,11 @@ import type { SetupProjectDto } from '../../dto/setup-project.dto';
 import type {
   CreateProjectResponse,
   SetupProjectResponse,
-} from '../../projects.service.types';
+} from './projects.service.types';
 import { ProjectsRepository } from '../../projects.repository';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 
-export type * from '../../projects.service.types';
+export type * from './projects.service.types';
 
 /**
  * Dispatches project provisioning requests to focused use-case services.
