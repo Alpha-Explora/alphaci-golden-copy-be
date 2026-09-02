@@ -852,6 +852,30 @@ describe('VercelEnvClient', () => {
     ).resolves.toMatchObject([{ environment: 'preview' }]);
   });
 
+  it('drops deployments that have no uid', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          deployments: [
+            { readyState: 'READY', createdAt: 1752313500000 },
+            {
+              uid: 'dpl_kept',
+              readyState: 'READY',
+              createdAt: 1752313500000,
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: 'dpl_kept' })]);
+  });
+
   it.each([
     ['an empty string', '', null],
     ['whitespace', '   ', null],

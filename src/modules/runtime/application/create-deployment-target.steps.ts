@@ -63,6 +63,36 @@ export function buildProviderTargetRequest(input: {
   };
 }
 
+function trimOrNull(value: string | undefined): string | null {
+  return value?.trim() || null;
+}
+
+function trimOrDefault(value: string | undefined, fallback: string): string {
+  return value?.trim() || fallback;
+}
+
+function orNull<T>(value: T | null | undefined): T | null {
+  return value ?? null;
+}
+
+function providerConnectionIdFromDto(
+  dto: CreateDeploymentTargetDto,
+): string | null {
+  return dto.ownershipMode === 'byo'
+    ? (dto.providerConnectionId ?? null)
+    : null;
+}
+
+function mergeProviderMetadata(
+  metadata: Record<string, unknown> | undefined,
+  renderRuntime: DeploymentProviderTargetPolicyResult['storage']['renderRuntime'],
+): Record<string, unknown> {
+  return {
+    ...(metadata ?? {}),
+    ...(renderRuntime ? { renderRuntime } : {}),
+  };
+}
+
 export function buildCreateTargetPersistInput(input: {
   projectId: string;
   dto: CreateDeploymentTargetDto;
@@ -79,38 +109,32 @@ export function buildCreateTargetPersistInput(input: {
     providerTargetPolicy,
     deploymentStrategy,
   } = input;
+  const storage = providerTargetPolicy.storage;
   return {
     projectId,
     slot: dto.slot,
     ownershipMode: dto.ownershipMode,
     provider: dto.provider,
-    providerConnectionId:
-      dto.ownershipMode === 'byo'
-        ? (dto.providerConnectionId ?? null)
-        : null,
+    providerConnectionId: providerConnectionIdFromDto(dto),
     providerProjectId: target.id,
     providerProjectName: target.name,
     repoFullName,
-    branchName: dto.branchName?.trim() || 'uat',
-    rootDirectory: dto.rootDirectory?.trim() || null,
-    buildCommand: dto.buildCommand?.trim() || null,
-    startCommand: dto.startCommand?.trim() || null,
-    renderServiceType: providerTargetPolicy.storage.renderServiceType ?? null,
-    renderInstanceType:
-      providerTargetPolicy.storage.renderInstanceType ?? null,
-    renderRegion: providerTargetPolicy.storage.renderRegion ?? null,
-    renderEnvironmentName:
-      providerTargetPolicy.storage.renderEnvironmentName ?? null,
-    dockerContext: providerTargetPolicy.storage.dockerContext ?? null,
-    dockerfilePath: providerTargetPolicy.storage.dockerfilePath ?? null,
-    imageUrl: dto.imageUrl?.trim() || null,
+    branchName: trimOrDefault(dto.branchName, 'uat'),
+    rootDirectory: trimOrNull(dto.rootDirectory),
+    buildCommand: trimOrNull(dto.buildCommand),
+    startCommand: trimOrNull(dto.startCommand),
+    renderServiceType: orNull(storage.renderServiceType),
+    renderInstanceType: orNull(storage.renderInstanceType),
+    renderRegion: orNull(storage.renderRegion),
+    renderEnvironmentName: orNull(storage.renderEnvironmentName),
+    dockerContext: orNull(storage.dockerContext),
+    dockerfilePath: orNull(storage.dockerfilePath),
+    imageUrl: trimOrNull(dto.imageUrl),
     environmentMap: dto.environmentMap ?? {},
     deploymentStrategy,
-    providerMetadata: {
-      ...(target.metadata ?? {}),
-      ...(providerTargetPolicy.storage.renderRuntime
-        ? { renderRuntime: providerTargetPolicy.storage.renderRuntime }
-        : {}),
-    },
+    providerMetadata: mergeProviderMetadata(
+      target.metadata,
+      storage.renderRuntime,
+    ),
   };
 }

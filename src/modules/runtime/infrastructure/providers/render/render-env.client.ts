@@ -19,6 +19,12 @@ import type {
   UpsertProviderEnvInput,
 } from '../../../application/ports/runtime-env-provider.client';
 import type { DeploymentProvider } from '../../../core/deployment-provider-runtime.contract';
+import {
+  readCreatedService,
+  readServiceStatus,
+  type RenderCreatedServicePayload,
+  type RenderServiceStatusPayload,
+} from './render-env.mapping';
 
 const RENDER_API_URL = 'https://api.render.com/v1';
 
@@ -92,31 +98,10 @@ export class RenderEnvClient implements DeploymentProvider {
       ),
     });
     await this.assertOk(response, 'Render service could not be created');
-    const payload = (await response.json()) as {
-      id?: string;
-      name?: string;
-      service?: {
-        id?: string;
-        name?: string;
-        serviceDetails?: { url?: string };
-        details?: { url?: string };
-        url?: string;
-      };
-      serviceDetails?: { url?: string };
-      details?: { url?: string };
-      url?: string;
-    };
-    const serviceId = payload.service?.id ?? payload.id;
-    const serviceName = payload.service?.name ?? payload.name;
-    const serviceUrl =
-      payload.service?.serviceDetails?.url ??
-      payload.service?.details?.url ??
-      payload.service?.url ??
-      payload.serviceDetails?.url ??
-      payload.details?.url ??
-      payload.url ??
-      null;
-    if (!serviceId || !serviceName) {
+    const created = readCreatedService(
+      (await response.json()) as RenderCreatedServicePayload,
+    );
+    if (!created) {
       throw new Error('Render service creation returned an invalid response');
     }
     const renderServiceType = input.renderServiceType ?? 'web_service';
@@ -127,12 +112,12 @@ export class RenderEnvClient implements DeploymentProvider {
     const dockerfilePath = input.dockerfilePath ?? 'Dockerfile';
 
     return {
-      id: serviceId,
-      name: serviceName,
+      id: created.id,
+      name: created.name,
       provider: this.provider,
       metadata: {
         deploymentStrategy: input.deploymentStrategy ?? 'render_git_connected',
-        renderServiceId: serviceId,
+        renderServiceId: created.id,
         renderOwnerId: ownerId,
         renderServiceType,
         renderRuntime,
@@ -141,7 +126,7 @@ export class RenderEnvClient implements DeploymentProvider {
         renderEnvironmentName,
         renderEnvironmentId: environmentId,
         renderProjectName,
-        renderServiceUrl: serviceUrl,
+        renderServiceUrl: created.url,
         renderRegistryCredentialId: this.getRegistryCredentialId(),
         dockerContext,
         dockerfilePath,
@@ -251,40 +236,17 @@ export class RenderEnvClient implements DeploymentProvider {
       return { exists: false };
     }
     await this.assertOk(response, 'Render service status could not be loaded');
-    const payload = (await response.json()) as {
-      id?: string;
-      name?: string;
-      suspended?: string;
-      ownerId?: string;
-      service?: {
-        id?: string;
-        name?: string;
-        suspended?: string;
-        ownerId?: string;
-        serviceDetails?: { url?: string };
-        details?: { url?: string };
-        url?: string;
-      };
-      serviceDetails?: { url?: string };
-      details?: { url?: string };
-      url?: string;
-    };
-    const serviceUrl =
-      payload.service?.serviceDetails?.url ??
-      payload.service?.details?.url ??
-      payload.service?.url ??
-      payload.serviceDetails?.url ??
-      payload.details?.url ??
-      payload.url ??
-      null;
-    const state = payload.service?.suspended ?? payload.suspended;
-    const ownerId = payload.service?.ownerId ?? payload.ownerId;
+    const status = readServiceStatus(
+      (await response.json()) as RenderServiceStatusPayload,
+    );
 
     return {
       exists: true,
-      ...(state !== undefined ? { state } : {}),
-      url: serviceUrl,
-      ...(ownerId ? { metadata: { renderOwnerId: ownerId } } : {}),
+      ...(status.state !== undefined ? { state: status.state } : {}),
+      url: status.url,
+      ...(status.ownerId
+        ? { metadata: { renderOwnerId: status.ownerId } }
+        : {}),
     };
   }
 

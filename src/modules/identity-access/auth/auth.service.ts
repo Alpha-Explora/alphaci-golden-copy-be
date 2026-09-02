@@ -17,6 +17,12 @@ import {
 } from '#kernel/ports/github-team-role.port';
 import { OAuthStateRepository } from './infra/oauth-state.repository';
 import {
+  resolveInternalMembershipGate,
+  unauthorizedAuthRedirect,
+  type OrgMembershipCheck,
+  type UnauthorizedAuthReason,
+} from './oauth-callback.helpers';
+import {
   SUBSCRIPTION_BOOTSTRAP,
   type SubscriptionBootstrapPort,
 } from '#kernel/ports/subscription-bootstrap.port';
@@ -73,15 +79,8 @@ type AccountState =
       //    to be added to the org.
       kind: 'unauthorized';
       login: string;
-      reason: 'not_member' | 'invitation_pending' | 'verification_failed';
+      reason: UnauthorizedAuthReason;
     };
-
-/** Result of checking GitHub org membership for the internal gate. */
-type OrgMembershipCheck =
-  | 'member'
-  | 'not_member'
-  | 'invitation_pending'
-  | 'verification_failed';
 
 export interface PendingAccountInfo {
   pending: true;
@@ -357,102 +356,12 @@ export class AuthService {
     const fallbackReturnTo = `${this.config.frontendUrl}/auth/callback`;
 
     try {
-      // Look up and atomically delete the state record from DB.
-      // This is the authoritative source — session state is no longer consulted.
-      // NOTE: kept inside the outer try so that a transient DB error here produces
-      // an auth=failed redirect instead of an unhandled 500.
-      const oauthRecord =
-        code && state
-          ? await this.oauthStateRepository.findAndDelete(state)
-          : null;
-
-      // When the state record is missing/expired we have no stored returnTo. Default
-      // to the callback page (not the site root) so the FE renders the invalid_state
-      // error instead of silently dropping the user on the marketing homepage.
-      const returnTo = oauthRecord?.returnTo ?? fallbackReturnTo;
-
-      const isInvalidState =
-        !code || !state || oauthRecord?.provider !== 'github';
-
-      if (isInvalidState) {
-        return this.withQuery(returnTo, 'auth', 'invalid_state');
-      }
-
-      if (!this.hasGitHubCredentials()) {
-        return this.withQuery(returnTo, 'auth', 'unavailable');
-      }
-
-      const accountState = await this.resolveAccountState(code);
-
-      if (accountState.kind === 'unauthorized') {
-        // Internal deployment gate rejected this sign-in. No session, no DB
-        // write. The reason maps to a distinct auth= code so the FE can tell
-        // a confirmed non-member, a pending invitation, and an unverifiable
-        // membership check apart (see AccountState's 'unauthorized' comment)
-        // instead of always telling the user to "ask to be added to the org".
-        this.logger.warn(
-          `Blocked sign-in for "${accountState.login}" (GITHUB_INTERNAL_ORG gate, reason: ${accountState.reason}).`,
-        );
-        const authCodeByReason = {
-          not_member: 'not_authorized',
-          invitation_pending: 'org_invite_pending',
-          verification_failed: 'org_verification_failed',
-        } as const;
-        let redirect = this.withQuery(
-          returnTo,
-          'auth',
-          authCodeByReason[accountState.reason],
-        );
-        if (accountState.reason === 'invitation_pending') {
-          // The org login lets the FE link straight to GitHub's invitation
-          // acceptance page (github.com/orgs/{org}/invitation). Public info.
-          redirect = this.withQuery(
-            redirect,
-            'org',
-            this.config.github.internalOrg,
-          );
-        }
-        return redirect;
-      }
-
-      if (accountState.kind === 'archived') {
-        // User previously archived their account. Stash a pending-choice
-        // payload in the session so the FE can present restore/start-fresh.
-        // Do NOT set userId or session.user — the user is NOT authenticated.
-        const { profile, accessToken, isInternal } = accountState;
-        request.session.pendingArchived = {
-          githubUserId: profile.githubUserId,
-          login: profile.login,
-          ...(profile.name !== undefined && { name: profile.name }),
-          ...(profile.email !== undefined && { email: profile.email }),
-          ...(profile.avatarUrl !== undefined && {
-            avatarUrl: profile.avatarUrl,
-          }),
-          accessToken,
-          isInternal,
-        };
-
-        await this.saveSession(request);
-
-        return this.withQuery(returnTo, 'auth', 'archived_choice');
-      }
-
-      // Active or new account — establish a full authenticated session.
-      const { user: persistedUser, accessToken } = accountState;
-      await this.subscriptionsRepository.ensureDefaultFreeSubscription(
-        persistedUser.id,
+      return await this.completeOAuthCallback(
+        request,
+        code,
+        state,
+        fallbackReturnTo,
       );
-      await this.establishSession(request, persistedUser);
-      request.session.githubAccessToken = accessToken;
-      // Persist the access token to the store. `session.regenerate()` inside
-      // `establishSession` saves userId + user, but subsequent writes to
-      // `request.session` after the regenerate promise resolves are NOT
-      // automatically flushed with `resave: false`. An explicit save is
-      // required to guarantee the token reaches the session store before we
-      // redirect the browser.
-      await this.saveSession(request);
-
-      return this.withQuery(returnTo, 'auth', 'success');
     } catch (err) {
       this.logger.error(
         `OAuth callback failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -460,6 +369,116 @@ export class AuthService {
       );
       return this.withQuery(fallbackReturnTo, 'auth', 'failed');
     }
+  }
+
+  /**
+   * Look up OAuth state, resolve AccountState, then dispatch. Kept inside the
+   * outer try so a transient DB error produces auth=failed instead of a 500.
+   */
+  private async completeOAuthCallback(
+    request: Request,
+    code: string | undefined,
+    state: string | undefined,
+    fallbackReturnTo: string,
+  ): Promise<string> {
+    const oauthRecord =
+      code && state
+        ? await this.oauthStateRepository.findAndDelete(state)
+        : null;
+
+    // When the state record is missing/expired we have no stored returnTo. Default
+    // to the callback page (not the site root) so the FE renders the invalid_state
+    // error instead of silently dropping the user on the marketing homepage.
+    const returnTo = oauthRecord?.returnTo ?? fallbackReturnTo;
+
+    if (!code || !state || oauthRecord?.provider !== 'github') {
+      return this.withQuery(returnTo, 'auth', 'invalid_state');
+    }
+
+    if (!this.hasGitHubCredentials()) {
+      return this.withQuery(returnTo, 'auth', 'unavailable');
+    }
+
+    const accountState = await this.resolveAccountState(code);
+
+    switch (accountState.kind) {
+      case 'unauthorized':
+        return this.applyUnauthorized(accountState, returnTo);
+      case 'archived':
+        return this.applyArchived(request, accountState, returnTo);
+      case 'active':
+      case 'new':
+        return this.applyAuthenticated(request, accountState, returnTo);
+    }
+  }
+
+  private applyUnauthorized(
+    accountState: Extract<AccountState, { kind: 'unauthorized' }>,
+    returnTo: string,
+  ): string {
+    // Internal deployment gate rejected this sign-in. No session, no DB write.
+    // Distinct auth= codes so the FE can tell a confirmed non-member, a pending
+    // invitation, and an unverifiable membership check apart (see AccountState's
+    // 'unauthorized' comment). Mapping is fail-closed in unauthorizedAuthRedirect:
+    // not_member → not_authorized, invitation_pending → org_invite_pending (+ org=),
+    // verification_failed → org_verification_failed.
+    this.logger.warn(
+      `Blocked sign-in for "${accountState.login}" (GITHUB_INTERNAL_ORG gate, reason: ${accountState.reason}).`,
+    );
+    return unauthorizedAuthRedirect({
+      returnTo,
+      reason: accountState.reason,
+      internalOrg: this.config.github.internalOrg,
+      withQuery: (url, key, value) => this.withQuery(url, key, value),
+    });
+  }
+
+  private async applyArchived(
+    request: Request,
+    accountState: Extract<AccountState, { kind: 'archived' }>,
+    returnTo: string,
+  ): Promise<string> {
+    // User previously archived their account. Stash a pending-choice payload
+    // in the session so the FE can present restore/start-fresh. Do NOT set
+    // userId or session.user — the user is NOT authenticated.
+    const { profile, accessToken, isInternal } = accountState;
+    request.session.pendingArchived = {
+      githubUserId: profile.githubUserId,
+      login: profile.login,
+      ...(profile.name !== undefined && { name: profile.name }),
+      ...(profile.email !== undefined && { email: profile.email }),
+      ...(profile.avatarUrl !== undefined && {
+        avatarUrl: profile.avatarUrl,
+      }),
+      accessToken,
+      isInternal,
+    };
+
+    await this.saveSession(request);
+
+    return this.withQuery(returnTo, 'auth', 'archived_choice');
+  }
+
+  private async applyAuthenticated(
+    request: Request,
+    accountState: Extract<AccountState, { kind: 'active' | 'new' }>,
+    returnTo: string,
+  ): Promise<string> {
+    const { user: persistedUser, accessToken } = accountState;
+    await this.subscriptionsRepository.ensureDefaultFreeSubscription(
+      persistedUser.id,
+    );
+    await this.establishSession(request, persistedUser);
+    request.session.githubAccessToken = accessToken;
+    // Persist the access token to the store. `session.regenerate()` inside
+    // `establishSession` saves userId + user, but subsequent writes to
+    // `request.session` after the regenerate promise resolves are NOT
+    // automatically flushed with `resave: false`. An explicit save is
+    // required to guarantee the token reaches the session store before we
+    // redirect the browser.
+    await this.saveSession(request);
+
+    return this.withQuery(returnTo, 'auth', 'success');
   }
 
   /**
@@ -496,25 +515,21 @@ export class AuthService {
     //  - Sold deployment (unset): pass null so the persisted flag is preserved
     //    for existing users (an employee's internal status is not clobbered by
     //    logging into the customer product) and defaults to false for new rows.
-    const internalGatingEnabled = Boolean(this.config.github.internalOrg);
-    let isInternal: boolean | null = null;
-    if (internalGatingEnabled) {
-      const membership = await this.checkInternalOrgMembership(accessToken);
-
-      // Hard-block: non-members (confirmed or unverifiable) may not sign in on
-      // the internal deployment. Rejected before any session is established
-      // and before any DB write. Both failure modes deny access, but they are
-      // NOT the same situation — see AccountState's 'unauthorized' comment —
-      // so the reason is threaded through to produce an accurate message.
-      if (membership !== 'member') {
-        return {
-          kind: 'unauthorized',
-          login: profile.login,
-          reason: membership,
-        };
-      }
-      isInternal = true;
+    const membership = await this.checkInternalOrgMembership(accessToken);
+    const membershipGate = resolveInternalMembershipGate({
+      internalOrg: this.config.github.internalOrg,
+      membership,
+      login: profile.login,
+    });
+    // Hard-block: non-members (confirmed or unverifiable) may not sign in on
+    // the internal deployment. Rejected before any session is established
+    // and before any DB write. Both failure modes deny access, but they are
+    // NOT the same situation — see AccountState's 'unauthorized' comment —
+    // so the reason is threaded through to produce an accurate message.
+    if (membershipGate.kind === 'unauthorized') {
+      return membershipGate;
     }
+    const isInternal = membershipGate.isInternal;
 
     const existing =
       await this.usersRepository.findByGithubUserIdIncludingArchived(

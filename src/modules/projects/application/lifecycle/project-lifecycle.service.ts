@@ -124,125 +124,19 @@ export class ProjectLifecycleService {
         deleteGithubRepo ? destructiveRoles : undefined,
       );
     } catch (error) {
-      if (deleteGithubRepo) {
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_rejected',
-          title: 'GitHub repository deletion rejected',
-          body: 'Insufficient workspace role for deleteGithubRepo=true (owner/admin required).',
-          metadata: { reason: 'insufficient_role' },
-        });
-      }
+      await this.maybeRejectGithubDelete(deleteGithubRepo, userId, projectId);
       throw error;
     }
 
-    let githubRepoDeleted = false;
-    let githubRepoDeleteError:
-      | { code: GithubRepoDeleteErrorCode; message: string }
-      | undefined;
-
-    if (deleteGithubRepo) {
-      const project = await this.projectsRepository.findByIdAndUser(
+    const { githubRepoDeleted, githubRepoDeleteError } =
+      await this.deleteGithubRepoIfRequested(
+        deleteGithubRepo,
         projectId,
         userId,
+        options,
+        githubAccessToken,
         destructiveRoles,
       );
-      if (!project) {
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_rejected',
-          title: 'GitHub repository deletion rejected',
-          body: `Project '${projectId}' was not found, does not belong to the current user, or the current workspace role does not permit deleting its GitHub repository (owner/admin required).`,
-          metadata: { reason: 'not_found_or_insufficient_role' },
-        });
-        throw new NotFoundException(
-          `Project '${projectId}' not found or does not belong to the current user.`,
-        );
-      }
-
-      const repoFullName = project.repo_full_name;
-      if (options?.confirmRepoName !== repoFullName) {
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_rejected',
-          title: 'GitHub repository deletion rejected',
-          body: `confirmRepoName did not match this project's repository name (${repoFullName}). The GitHub repository was not deleted.`,
-          metadata: { reason: 'confirmation_mismatch', repoFullName },
-        });
-        throw new BadRequestException(
-          "confirmRepoName does not match this project's repository name. The GitHub repository was not deleted.",
-        );
-      }
-
-      if (!githubAccessToken) {
-        githubRepoDeleteError = {
-          code: 'missing_scope',
-          message:
-            'No GitHub access token on this session — reconnect your GitHub account to grant repository-deletion permission.',
-        };
-        await this.recordProductEvent({
-          userId,
-          projectId,
-          eventCode: 'project_github_repo_delete_missing_scope',
-          title: 'GitHub repository deletion needs reconnect',
-          body: `Could not delete ${repoFullName} on GitHub: no GitHub access token on this session.`,
-          metadata: { repoFullName, code: 'missing_scope' },
-        });
-      } else {
-        const [owner, repo] = repoFullName.split('/');
-        if (!owner || !repo) {
-          githubRepoDeleteError = {
-            code: 'other',
-            message: `Could not derive an owner/repo from '${repoFullName}'.`,
-          };
-          await this.recordProductEvent({
-            userId,
-            projectId,
-            eventCode: 'project_github_repo_delete_failed',
-            title: 'GitHub repository deletion failed',
-            body: `Could not derive an owner/repo from '${repoFullName}'.`,
-            metadata: { repoFullName, code: 'other' },
-          });
-        } else {
-          try {
-            await this.githubService.deleteRepoForUser(
-              githubAccessToken,
-              owner,
-              repo,
-            );
-            githubRepoDeleted = true;
-            await this.recordProductEvent({
-              userId,
-              projectId,
-              eventCode: 'project_github_repo_deleted',
-              title: 'GitHub repository deleted',
-              body: `${repoFullName} was deleted from GitHub.`,
-              metadata: { repoFullName },
-            });
-          } catch (error) {
-            const deleteError =
-              error instanceof GithubRepoDeleteError
-                ? { code: error.code, message: error.message }
-                : { code: 'other' as const, message: (error as Error).message };
-            githubRepoDeleteError = deleteError;
-            await this.recordProductEvent({
-              userId,
-              projectId,
-              eventCode:
-                deleteError.code === 'missing_scope'
-                  ? 'project_github_repo_delete_missing_scope'
-                  : 'project_github_repo_delete_failed',
-              title: 'GitHub repository deletion failed',
-              body: `Could not delete ${repoFullName} on GitHub: ${deleteError.message}`,
-              metadata: { repoFullName, code: deleteError.code },
-            });
-          }
-        }
-      }
-    }
 
     const deleted = await this.projectsRepository.deleteByIdAndUser(
       projectId,
@@ -330,6 +224,166 @@ export class ProjectLifecycleService {
       reachable: reachableCount,
       total: rows.length,
     };
+  }
+
+  private async maybeRejectGithubDelete(
+    deleteGithubRepo: boolean,
+    userId: string,
+    projectId: string,
+  ): Promise<void> {
+    if (!deleteGithubRepo) {
+      return;
+    }
+
+    await this.recordProductEvent({
+      userId,
+      projectId,
+      eventCode: 'project_github_repo_delete_rejected',
+      title: 'GitHub repository deletion rejected',
+      body: 'Insufficient workspace role for deleteGithubRepo=true (owner/admin required).',
+      metadata: { reason: 'insufficient_role' },
+    });
+  }
+
+  private async deleteGithubRepoIfRequested(
+    deleteGithubRepo: boolean,
+    projectId: string,
+    userId: string,
+    options: DisconnectProjectDto | undefined,
+    githubAccessToken: string | null | undefined,
+    destructiveRoles: WorkspaceRole[],
+  ): Promise<{
+    githubRepoDeleted: boolean;
+    githubRepoDeleteError?: {
+      code: GithubRepoDeleteErrorCode;
+      message: string;
+    };
+  }> {
+    if (!deleteGithubRepo) {
+      return { githubRepoDeleted: false };
+    }
+
+    const project = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+      destructiveRoles,
+    );
+    if (!project) {
+      await this.recordProductEvent({
+        userId,
+        projectId,
+        eventCode: 'project_github_repo_delete_rejected',
+        title: 'GitHub repository deletion rejected',
+        body: `Project '${projectId}' was not found, does not belong to the current user, or the current workspace role does not permit deleting its GitHub repository (owner/admin required).`,
+        metadata: { reason: 'not_found_or_insufficient_role' },
+      });
+      throw new NotFoundException(
+        `Project '${projectId}' not found or does not belong to the current user.`,
+      );
+    }
+
+    const repoFullName = project.repo_full_name;
+    if (options?.confirmRepoName !== repoFullName) {
+      await this.recordProductEvent({
+        userId,
+        projectId,
+        eventCode: 'project_github_repo_delete_rejected',
+        title: 'GitHub repository deletion rejected',
+        body: `confirmRepoName did not match this project's repository name (${repoFullName}). The GitHub repository was not deleted.`,
+        metadata: { reason: 'confirmation_mismatch', repoFullName },
+      });
+      throw new BadRequestException(
+        "confirmRepoName does not match this project's repository name. The GitHub repository was not deleted.",
+      );
+    }
+
+    return this.deleteConfirmedGithubRepo(
+      projectId,
+      userId,
+      repoFullName,
+      githubAccessToken,
+    );
+  }
+
+  private async deleteConfirmedGithubRepo(
+    projectId: string,
+    userId: string,
+    repoFullName: string,
+    githubAccessToken: string | null | undefined,
+  ): Promise<{
+    githubRepoDeleted: boolean;
+    githubRepoDeleteError?: {
+      code: GithubRepoDeleteErrorCode;
+      message: string;
+    };
+  }> {
+    if (!githubAccessToken) {
+      const githubRepoDeleteError = {
+        code: 'missing_scope' as const,
+        message:
+          'No GitHub access token on this session — reconnect your GitHub account to grant repository-deletion permission.',
+      };
+      await this.recordProductEvent({
+        userId,
+        projectId,
+        eventCode: 'project_github_repo_delete_missing_scope',
+        title: 'GitHub repository deletion needs reconnect',
+        body: `Could not delete ${repoFullName} on GitHub: no GitHub access token on this session.`,
+        metadata: { repoFullName, code: 'missing_scope' },
+      });
+      return { githubRepoDeleted: false, githubRepoDeleteError };
+    }
+
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo) {
+      const githubRepoDeleteError = {
+        code: 'other' as const,
+        message: `Could not derive an owner/repo from '${repoFullName}'.`,
+      };
+      await this.recordProductEvent({
+        userId,
+        projectId,
+        eventCode: 'project_github_repo_delete_failed',
+        title: 'GitHub repository deletion failed',
+        body: `Could not derive an owner/repo from '${repoFullName}'.`,
+        metadata: { repoFullName, code: 'other' },
+      });
+      return { githubRepoDeleted: false, githubRepoDeleteError };
+    }
+
+    try {
+      await this.githubService.deleteRepoForUser(
+        githubAccessToken,
+        owner,
+        repo,
+      );
+      await this.recordProductEvent({
+        userId,
+        projectId,
+        eventCode: 'project_github_repo_deleted',
+        title: 'GitHub repository deleted',
+        body: `${repoFullName} was deleted from GitHub.`,
+        metadata: { repoFullName },
+      });
+      return { githubRepoDeleted: true };
+    } catch (error) {
+      const deleteError =
+        error instanceof GithubRepoDeleteError
+          ? { code: error.code, message: error.message }
+          : { code: 'other' as const, message: (error as Error).message };
+      await this.recordProductEvent({
+        userId,
+        projectId,
+        eventCode:
+          deleteError.code === 'missing_scope'
+            ? 'project_github_repo_delete_missing_scope'
+            : 'project_github_repo_delete_failed',
+        title: 'GitHub repository deletion failed',
+        body: `Could not delete ${repoFullName} on GitHub: ${deleteError.message}`,
+        metadata: { repoFullName, code: deleteError.code },
+      });
+      return { githubRepoDeleted: false, githubRepoDeleteError: deleteError };
+    }
   }
 
   private async assertProjectMutationAccess(

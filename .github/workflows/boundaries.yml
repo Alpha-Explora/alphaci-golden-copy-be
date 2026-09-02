@@ -15,10 +15,7 @@
 name: Boundaries
 
 on:
-  pull_request:
-    branches: [main, codex/architecture-remediation-trunk]
-  push:
-    branches: [main, codex/architecture-remediation-trunk]
+  workflow_dispatch:
 
 permissions:
   contents: read

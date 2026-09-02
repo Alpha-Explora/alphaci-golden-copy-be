@@ -137,4 +137,65 @@ describe('GithubWebhookProcessor', () => {
     expect(installations.setSuspended).not.toHaveBeenCalled();
     expect(installations.completeWebhookDelivery).not.toHaveBeenCalled();
   });
+
+  it('emits team.membership.changed for added and removed', async () => {
+    const emit = jest.fn();
+    const processor = makeProcessor(makeInstallations(), emit);
+    const payload = {
+      action: 'removed',
+      member: { login: 'octocat' },
+      team: { slug: 'team-lead' },
+      installation: { id: 99 },
+    };
+    const { rawBody, signature } = sign(payload);
+
+    await processor.handleWebhook(
+      signature,
+      'membership',
+      'delivery-mem-1',
+      rawBody,
+      payload,
+    );
+
+    expect(emit).toHaveBeenCalledWith('team.membership.changed', {
+      action: 'removed',
+      login: 'octocat',
+      teamSlug: 'team-lead',
+      installationId: 99,
+    });
+  });
+
+  it('deletes an installation on installation.deleted', async () => {
+    const installations = makeInstallations();
+    const processor = makeProcessor(installations);
+    const payload = { action: 'deleted', installation: { id: 7 } };
+    const { rawBody, signature } = sign(payload);
+
+    await processor.handleWebhook(
+      signature,
+      'installation',
+      'delivery-del-1',
+      rawBody,
+      payload,
+    );
+
+    expect(installations.deleteInstallation).toHaveBeenCalledWith(7);
+  });
+
+  it('replaces repos on installation_repositories', async () => {
+    const installations = makeInstallations();
+    const processor = makeProcessor(installations);
+    const payload = { action: 'added', installation: { id: 5 } };
+    const { rawBody, signature } = sign(payload);
+
+    await processor.handleWebhook(
+      signature,
+      'installation_repositories',
+      'delivery-repos-1',
+      rawBody,
+      payload,
+    );
+
+    expect(installations.replaceRepos).toHaveBeenCalledWith(5, []);
+  });
 });

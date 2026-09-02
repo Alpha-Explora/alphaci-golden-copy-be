@@ -178,44 +178,9 @@ export class ProjectsRepository {
         created_at,
         updated_at;
     `;
-    const { ownerLogin, repoName } = this.splitRepoFullName(data.repoFullName);
-    const workflowSha256 =
-      data.workflowSha256 ?? this.computeWorkflowHash(data);
-    const projectOptions = data.projectOptions ?? {};
-    const metadata = {
-      repoUrl: data.repoUrl ?? null,
-      projectOptions,
-    };
-
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       query,
-      [
-        data.userId,
-        data.repoFullName,
-        data.templateId,
-        data.serviceName,
-        data.workflowPath,
-        workflowSha256,
-        data.githubCommitSha ?? null,
-        data.status,
-        data.githubCommitSha ?? null,
-        data.githubCommitUrl ?? null,
-        data.failureReason ?? null,
-        JSON.stringify(metadata),
-        data.status === 'provisioned' ? new Date().toISOString() : null,
-        data.status === 'failed' ? new Date().toISOString() : null,
-        ownerLogin,
-        repoName,
-        data.repoUrl ?? null,
-        data.visibility ?? null,
-        data.repoShape ?? null,
-        data.projectTypeId ?? null,
-        data.workflowRecipeId ?? null,
-        data.templateId,
-        JSON.stringify(projectOptions),
-        data.workspaceId ?? null,
-        false,
-      ],
+      this.toCreateParams(data),
     );
 
     const row = result.rows[0];
@@ -224,6 +189,57 @@ export class ProjectsRepository {
     }
 
     return row;
+  }
+
+  private toCreateParams(data: CreateProvisionedProjectInput): unknown[] {
+    const { ownerLogin, repoName } = this.splitRepoFullName(data.repoFullName);
+    const workflowSha256 =
+      data.workflowSha256 ?? this.computeWorkflowHash(data);
+    const projectOptions = data.projectOptions ?? {};
+    const metadata = {
+      repoUrl: data.repoUrl ?? null,
+      projectOptions,
+    };
+    const [provisionedAt, failedAt] = this.toCreateStatusTimestamps(
+      data.status,
+    );
+
+    return [
+      data.userId,
+      data.repoFullName,
+      data.templateId,
+      data.serviceName,
+      data.workflowPath,
+      workflowSha256,
+      data.githubCommitSha ?? null,
+      data.status,
+      data.githubCommitSha ?? null,
+      data.githubCommitUrl ?? null,
+      data.failureReason ?? null,
+      JSON.stringify(metadata),
+      provisionedAt,
+      failedAt,
+      ownerLogin,
+      repoName,
+      data.repoUrl ?? null,
+      data.visibility ?? null,
+      data.repoShape ?? null,
+      data.projectTypeId ?? null,
+      data.workflowRecipeId ?? null,
+      data.templateId,
+      JSON.stringify(projectOptions),
+      data.workspaceId ?? null,
+      false,
+    ];
+  }
+
+  private toCreateStatusTimestamps(
+    status: ProvisionedProjectStatus,
+  ): [string | null, string | null] {
+    return [
+      status === 'provisioned' ? new Date().toISOString() : null,
+      status === 'failed' ? new Date().toISOString() : null,
+    ];
   }
 
   async listByUser(

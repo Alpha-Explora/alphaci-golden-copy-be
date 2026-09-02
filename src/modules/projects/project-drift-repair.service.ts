@@ -26,6 +26,15 @@ import { NotificationEventPublisher } from '#kernel/events/platform-event-publis
 import { ProjectsRepository } from './projects.repository';
 import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 
+type DriftRepairContext = {
+  projectId: string;
+  findingId: string;
+  userId: string;
+  action: ProjectDriftRepairAction;
+  githubAccessToken: string | null;
+  finding: ProjectDriftFinding;
+};
+
 @Injectable()
 export class ProjectDriftRepairService {
   constructor(
@@ -85,155 +94,211 @@ export class ProjectDriftRepairService {
       );
     }
 
-    if (action === 'mark_ignored') {
-      await this.findingsRepository.markStatus(findingId, 'ignored');
-      await this.recordRepairEvent({
-        userId,
-        projectId,
-        eventCode: 'drift_repair_completed',
-        title: 'Drift finding ignored',
-        body: finding.message,
-        metadata: { findingId, action, findingCode: finding.code },
-      });
-      return this.completed(findingId, action, 'Finding marked ignored');
-    }
+    const ctx: DriftRepairContext = {
+      projectId,
+      findingId,
+      userId,
+      action,
+      githubAccessToken,
+      finding,
+    };
 
-    if (action === 'rotate_ci_token') {
-      this.assertCode(
-        finding,
-        ['ci_token_missing', 'ci_token_revoked'],
-        action,
-      );
-      const result = await this.ciService.issueProjectToken(projectId);
-      await this.findingsRepository.markStatus(findingId, 'resolved');
-      await this.recordRepairEvent({
-        userId,
-        projectId,
-        eventCode: 'ci_token_rotated',
-        title: 'CI token rotated',
-        body: 'A project CI token was rotated in ALPHACI.',
-        metadata: {
-          findingId,
-          action,
-          findingCode: finding.code,
-          tokenPrefix: result.tokenPrefix,
-        },
-      });
-      return this.completed(findingId, action, 'CI token rotated in ALPHACI', {
+    switch (action) {
+      case 'mark_ignored':
+        return this.markIgnored(ctx);
+      case 'rotate_ci_token':
+        return this.rotateCiToken(ctx);
+      case 'detach_target':
+        return this.detachTarget(ctx);
+      case 'regenerate_workflow_preview':
+        return this.regenerateWorkflowPreview(ctx);
+      case 'create_workflow_update_pr':
+        return this.createWorkflowUpdatePr(ctx);
+      default:
+        throw new BadRequestException('Unsupported repair action');
+    }
+  }
+
+  private async markIgnored(
+    ctx: DriftRepairContext,
+  ): Promise<ProjectDriftRepairResponse> {
+    await this.findingsRepository.markStatus(ctx.findingId, 'ignored');
+    await this.recordRepairEvent({
+      userId: ctx.userId,
+      projectId: ctx.projectId,
+      eventCode: 'drift_repair_completed',
+      title: 'Drift finding ignored',
+      body: ctx.finding.message,
+      metadata: {
+        findingId: ctx.findingId,
+        action: ctx.action,
+        findingCode: ctx.finding.code,
+      },
+    });
+    return this.completed(
+      ctx.findingId,
+      ctx.action,
+      'Finding marked ignored',
+    );
+  }
+
+  private async rotateCiToken(
+    ctx: DriftRepairContext,
+  ): Promise<ProjectDriftRepairResponse> {
+    this.assertCode(
+      ctx.finding,
+      ['ci_token_missing', 'ci_token_revoked'],
+      ctx.action,
+    );
+    const result = await this.ciService.issueProjectToken(ctx.projectId);
+    await this.findingsRepository.markStatus(ctx.findingId, 'resolved');
+    await this.recordRepairEvent({
+      userId: ctx.userId,
+      projectId: ctx.projectId,
+      eventCode: 'ci_token_rotated',
+      title: 'CI token rotated',
+      body: 'A project CI token was rotated in ALPHACI.',
+      metadata: {
+        findingId: ctx.findingId,
+        action: ctx.action,
+        findingCode: ctx.finding.code,
         tokenPrefix: result.tokenPrefix,
-      });
-    }
+      },
+    });
+    return this.completed(
+      ctx.findingId,
+      ctx.action,
+      'CI token rotated in ALPHACI',
+      {
+        tokenPrefix: result.tokenPrefix,
+      },
+    );
+  }
 
-    if (action === 'detach_target') {
-      this.assertCode(
-        finding,
-        ['deployment_target_metadata_missing', 'provider_target_missing_live'],
-        action,
-      );
-      if (!finding.targetId) {
-        throw new BadRequestException(
-          'Finding is not associated with a target',
-        );
-      }
-      const detached =
-        await this.deploymentTargetsRepository?.deleteDeploymentTargetForUser(
-          projectId,
-          finding.targetId,
-          userId,
-        );
-      if (!detached) {
-        throw new NotFoundException('Deployment target not found');
-      }
-      await this.findingsRepository.markStatus(findingId, 'resolved');
-      await this.recordRepairEvent({
-        userId,
-        projectId,
-        eventCode: 'drift_repair_completed',
-        title: 'Drift repair completed',
-        body: 'Deployment target detached from ALPHACI.',
-        metadata: {
-          findingId,
-          action,
-          findingCode: finding.code,
-          targetId: finding.targetId,
-        },
-      });
-      return this.completed(
-        findingId,
-        action,
-        'Deployment target detached from ALPHACI',
-        { targetId: finding.targetId },
-      );
+  private async detachTarget(
+    ctx: DriftRepairContext,
+  ): Promise<ProjectDriftRepairResponse> {
+    this.assertCode(
+      ctx.finding,
+      ['deployment_target_metadata_missing', 'provider_target_missing_live'],
+      ctx.action,
+    );
+    if (!ctx.finding.targetId) {
+      throw new BadRequestException('Finding is not associated with a target');
     }
-
-    if (action === 'regenerate_workflow_preview') {
-      this.assertCode(
-        finding,
-        ['workflow_files_missing', 'central_workflow_ref_outdated'],
-        action,
+    const detached =
+      await this.deploymentTargetsRepository?.deleteDeploymentTargetForUser(
+        ctx.projectId,
+        ctx.finding.targetId,
+        ctx.userId,
       );
-      const preview =
-        await this.projectWorkflowsService?.previewWorkflowSettings(
-          projectId,
-          userId,
-          {},
-        );
-      await this.recordRepairEvent({
-        userId,
-        projectId,
-        eventCode: 'drift_repair_completed',
-        title: 'Drift repair completed',
-        body: 'Workflow preview regenerated.',
-        metadata: { findingId, action, findingCode: finding.code },
-      });
-      return this.completed(findingId, action, 'Workflow preview regenerated', {
+    if (!detached) {
+      throw new NotFoundException('Deployment target not found');
+    }
+    await this.findingsRepository.markStatus(ctx.findingId, 'resolved');
+    await this.recordRepairEvent({
+      userId: ctx.userId,
+      projectId: ctx.projectId,
+      eventCode: 'drift_repair_completed',
+      title: 'Drift repair completed',
+      body: 'Deployment target detached from ALPHACI.',
+      metadata: {
+        findingId: ctx.findingId,
+        action: ctx.action,
+        findingCode: ctx.finding.code,
+        targetId: ctx.finding.targetId,
+      },
+    });
+    return this.completed(
+      ctx.findingId,
+      ctx.action,
+      'Deployment target detached from ALPHACI',
+      { targetId: ctx.finding.targetId },
+    );
+  }
+
+  private async regenerateWorkflowPreview(
+    ctx: DriftRepairContext,
+  ): Promise<ProjectDriftRepairResponse> {
+    this.assertCode(
+      ctx.finding,
+      ['workflow_files_missing', 'central_workflow_ref_outdated'],
+      ctx.action,
+    );
+    const preview = await this.projectWorkflowsService?.previewWorkflowSettings(
+      ctx.projectId,
+      ctx.userId,
+      {},
+    );
+    await this.recordRepairEvent({
+      userId: ctx.userId,
+      projectId: ctx.projectId,
+      eventCode: 'drift_repair_completed',
+      title: 'Drift repair completed',
+      body: 'Workflow preview regenerated.',
+      metadata: {
+        findingId: ctx.findingId,
+        action: ctx.action,
+        findingCode: ctx.finding.code,
+      },
+    });
+    return this.completed(
+      ctx.findingId,
+      ctx.action,
+      'Workflow preview regenerated',
+      {
         workflowFiles: preview?.workflowFiles ?? [],
         validationWarnings: preview?.validationWarnings ?? [],
-      });
-    }
+      },
+    );
+  }
 
-    if (action === 'create_workflow_update_pr') {
-      this.assertCode(
-        finding,
-        ['workflow_files_missing', 'central_workflow_ref_outdated'],
-        action,
+  private async createWorkflowUpdatePr(
+    ctx: DriftRepairContext,
+  ): Promise<ProjectDriftRepairResponse> {
+    this.assertCode(
+      ctx.finding,
+      ['workflow_files_missing', 'central_workflow_ref_outdated'],
+      ctx.action,
+    );
+    if (!this.workflowUpdatePrEnabled()) {
+      return this.disabled(
+        ctx.findingId,
+        ctx.action,
+        'Workflow update PR creation is disabled',
       );
-      if (!this.workflowUpdatePrEnabled()) {
-        return this.disabled(
-          findingId,
-          action,
-          'Workflow update PR creation is disabled',
-        );
-      }
-      const pullRequest =
-        await this.projectWorkflowsService?.createWorkflowUpdatePullRequest(
-          projectId,
-          userId,
-          githubAccessToken,
-          {},
-        );
-      await this.findingsRepository.markStatus(findingId, 'resolved');
-      await this.recordRepairEvent({
-        userId,
-        projectId,
-        eventCode: 'drift_repair_completed',
-        title: 'Drift repair completed',
-        body: 'Workflow update PR created from a drift finding.',
-        metadata: {
-          findingId,
-          action,
-          findingCode: finding.code,
-          pullRequestNumber: pullRequest?.pullRequestNumber ?? null,
-          pullRequestUrl: pullRequest?.pullRequestUrl ?? null,
-        },
-      });
-      return this.completed(findingId, action, 'Workflow update PR created', {
+    }
+    const pullRequest =
+      await this.projectWorkflowsService?.createWorkflowUpdatePullRequest(
+        ctx.projectId,
+        ctx.userId,
+        ctx.githubAccessToken,
+        {},
+      );
+    await this.findingsRepository.markStatus(ctx.findingId, 'resolved');
+    await this.recordRepairEvent({
+      userId: ctx.userId,
+      projectId: ctx.projectId,
+      eventCode: 'drift_repair_completed',
+      title: 'Drift repair completed',
+      body: 'Workflow update PR created from a drift finding.',
+      metadata: {
+        findingId: ctx.findingId,
+        action: ctx.action,
+        findingCode: ctx.finding.code,
+        pullRequestNumber: pullRequest?.pullRequestNumber ?? null,
+        pullRequestUrl: pullRequest?.pullRequestUrl ?? null,
+      },
+    });
+    return this.completed(
+      ctx.findingId,
+      ctx.action,
+      'Workflow update PR created',
+      {
         pullRequestUrl: pullRequest?.pullRequestUrl ?? null,
         pullRequestNumber: pullRequest?.pullRequestNumber ?? null,
-      });
-    }
-
-    throw new BadRequestException('Unsupported repair action');
+      },
+    );
   }
 
   private enabled(): boolean {

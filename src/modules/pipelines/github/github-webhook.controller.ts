@@ -1,10 +1,12 @@
 import { Body, Controller, Headers, Post, Req } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 
 import { GithubService } from './github.service';
 
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
+@SkipThrottle()
 @Controller('github/webhooks')
 export class GithubWebhookController {
   constructor(private readonly githubService: GithubService) {}
