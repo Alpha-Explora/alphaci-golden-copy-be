@@ -473,6 +473,7 @@ function generateArchitectureChecks(metrics) {
     sources: [
       { id: 'metrics-source', resource: 'scripts/report-architecture-metrics.cjs', title: 'Architecture metrics generator' },
       { id: 'boundary-source', resource: '.dependency-cruiser.cjs', title: 'Authoritative dependency graph configuration' },
+      { id: 'capability-gate', resource: 'scripts/check-capabilities.cjs', title: 'Capability registry gate' },
       { id: 'ci-source', resource: '.github/workflows/ci.yml', title: 'Continuous integration gate' },
     ],
     body: `# Architecture check map
@@ -500,6 +501,7 @@ Dead in-process adapters measured by the source report: **${total.deadInProcessA
 | Application boundaries | \`npm run check:application-boundaries\` | cross-context contract/application rule checker |
 | Provider encapsulation | \`npm run check:provider-encapsulation\` | provider ownership checker |
 | Schema ownership | \`npm run check:schema-ownership\` | migration and inline SQL checker |
+| Capability registry | \`npm run check:capabilities\` | AppConfig flag ownership and capability dependency checker |
 | Migration order | \`npm run db:apply:all -- --dry-run\` | migration replay planner |
 | OKF bundle | \`npm run check:okf\` | OKF v0.2 bundle validator |
 | Documentation | \`npm run check:documentation\` | naming, stale-claim, generated-map, and documentation policy checker |
@@ -532,6 +534,7 @@ function generateCapabilityMatrix() {
     tags: ['capabilities', 'map', 'packs'],
     sources: [
       { id: 'capability-registry', resource: 'docs/capabilities/registry.ts', title: 'Documentation capability registry' },
+      { id: 'capability-gate', resource: 'scripts/check-capabilities.cjs', title: 'Capability registry gate' },
       { id: 'capability-endpoint', resource: 'src/modules/identity-access/capabilities/capabilities.controller.ts', title: 'Compatibility capability endpoint' },
     ],
     body: `# Capability matrix

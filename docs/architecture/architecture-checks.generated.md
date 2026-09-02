@@ -11,6 +11,9 @@ sources:
   - id: "boundary-source"
     resource: ".dependency-cruiser.cjs"
     title: "Authoritative dependency graph configuration"
+  - id: "capability-gate"
+    resource: "scripts/check-capabilities.cjs"
+    title: "Capability registry gate"
   - id: "ci-source"
     resource: ".github/workflows/ci.yml"
     title: "Continuous integration gate"
@@ -25,13 +28,13 @@ This snapshot is generated from the current source tree. It is descriptive evide
 | Context | Source files | Test files | Cross-context imports | Directional pairs | Contract imports | Application imports |
 |---|---:|---:|---:|---:|---:|---:|
 | `billing` | 21 | 5 | 0 | 0 | 0 | 0 |
-| `identity-access` | 103 | 15 | 8 | 5 | 0 | 0 |
-| `pipelines` | 37 | 9 | 1 | 1 | 0 | 0 |
+| `identity-access` | 109 | 19 | 8 | 5 | 0 | 0 |
+| `pipelines` | 44 | 12 | 1 | 1 | 0 | 0 |
 | `platform-ops` | 27 | 3 | 0 | 0 | 0 | 0 |
-| `projects` | 90 | 23 | 15 | 5 | 0 | 0 |
-| `runtime` | 128 | 44 | 8 | 4 | 0 | 0 |
+| `projects` | 94 | 25 | 15 | 5 | 0 | 0 |
+| `runtime` | 136 | 48 | 8 | 4 | 0 | 0 |
 
-| Total | 406 | 99 | 32 | 15 | 0 | 0 |
+| Total | 431 | 112 | 32 | 15 | 0 | 0 |
 
 Dead in-process adapters measured by the source report: **0**.
 
@@ -46,6 +49,7 @@ Dead in-process adapters measured by the source report: **0**.
 | Application boundaries | `npm run check:application-boundaries` | cross-context contract/application rule checker |
 | Provider encapsulation | `npm run check:provider-encapsulation` | provider ownership checker |
 | Schema ownership | `npm run check:schema-ownership` | migration and inline SQL checker |
+| Capability registry | `npm run check:capabilities` | AppConfig flag ownership and capability dependency checker |
 | Migration order | `npm run db:apply:all -- --dry-run` | migration replay planner |
 | OKF bundle | `npm run check:okf` | OKF v0.2 bundle validator |
 | Documentation | `npm run check:documentation` | naming, stale-claim, generated-map, and documentation policy checker |

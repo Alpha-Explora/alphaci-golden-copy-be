@@ -28,6 +28,7 @@ Use this sequence before merging a change that affects source, schemas, provider
 ```bash
 npm run generate:architecture-maps
 npm run check:okf
+npm run check:capabilities
 npm run check:documentation
 git diff --check
 ```
@@ -43,6 +44,7 @@ npm run boundaries
 npm run check:application-boundaries
 npm run check:provider-encapsulation
 npm run check:schema-ownership
+npm run check:capabilities
 npm run db:apply:all -- --dry-run
 npm run check:documentation
 git diff --check

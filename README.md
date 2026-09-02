@@ -32,4 +32,4 @@ npm run build
 npm run check:documentation
 ```
 
-The architecture gates are available through `npm run boundaries`, `npm run check:application-boundaries`, `npm run check:provider-encapsulation`, and `npm run check:schema-ownership`. See the [local verification runbook](docs/runbooks/runbook-local-verification.md) for the complete sequence and evidence expectations.
+The architecture gates are available through `npm run boundaries`, `npm run check:application-boundaries`, `npm run check:provider-encapsulation`, `npm run check:schema-ownership`, and `npm run check:capabilities`. See the [local verification runbook](docs/runbooks/runbook-local-verification.md) for the complete sequence and evidence expectations.

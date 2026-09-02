@@ -1,5 +1,11 @@
 # Directory Update Log
 
+## 2026-09-02
+
+* **Update**: Bound the capability registry to real application configuration with `configurationFlags` and `requires`, so a renamed `AppConfig` flag can no longer leave the registry and generated matrix silently green.
+* **Update**: Added the `check:capabilities` gate covering flag existence, two-way flag ownership, dependency resolution, acyclicity, and edition-narrowing of dependencies.
+* **Update**: Pinned `*.txt` to LF so the generated route-inventory baseline hash is stable on Windows checkouts.
+
 ## 2026-09-01
 
 * **Update**: Documented the current leased PostgreSQL outbox relay, explicit hierarchy sync mode, topic ownership, and recovery procedures.

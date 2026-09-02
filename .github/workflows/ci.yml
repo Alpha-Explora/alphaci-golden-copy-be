@@ -5,7 +5,7 @@ name: CI
 # GitHub Actions minutes are constrained on this account (the sibling
 # alphaci-be repo ships the same posture). Dispatch this workflow when you
 # have minutes to spend. The everyday gate is local:
-#   npm run typecheck && npm run lint && npm test && npm run boundaries && npm run check:documentation
+#   npm run typecheck && npm run lint && npm test && npm run boundaries && npm run check:documentation && npm run check:capabilities
 
 on:
   workflow_dispatch:
@@ -63,6 +63,9 @@ jobs:
 
       - name: Schema ownership
         run: npm run check:schema-ownership
+
+      - name: Capability registry
+        run: npm run check:capabilities
 
       - name: Migration replay order
         run: npm run db:apply:all -- --dry-run
