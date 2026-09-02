@@ -138,244 +138,324 @@ interface PackageDeploymentPlan {
   promotionNeeds: Record<Exclude<DeployBranch, 'main'>, string[]>;
 }
 
-export function buildStagedWorkflowBundle(
+interface StagedNames {
+  fileSuffix: string;
+  accessName: string;
+  qualityName: string;
+  packageName: string;
+}
+
+interface StagedWorkflowContext {
+  serviceName: string;
+  servicePath: string;
+  nodeVersion: string;
+  coverageThreshold: number;
+  strictCoverageThreshold: number;
+  centralWorkflowRef: string;
+  requireProductionApproval: boolean;
+  stack: WorkflowTemplate['stack'];
+  isBackend: boolean;
+  testWorkflow: string;
+  testJobId: string;
+  testCommand: string;
+  lintCommand: string;
+  hasTestsDirectory: boolean | undefined;
+  names: StagedNames;
+}
+
+function resolveStagedNames(
+  workflowVariant: StagedWorkflowOptions['workflowVariant'],
+): StagedNames {
+  const fileSuffix = workflowVariant ? `-${workflowVariant}` : '';
+  const nameSuffix = workflowVariant ? ` (${workflowVariant})` : '';
+  return {
+    fileSuffix,
+    accessName: `ALPHACI Access Gate${nameSuffix}`,
+    qualityName: `ALPHACI Quality${nameSuffix}`,
+    packageName: `ALPHACI Package${nameSuffix}`,
+  };
+}
+
+function resolveStagedContext(
   template: WorkflowTemplate,
   dto: StagedWorkflowOptions,
-  workflowFragmentRegistry?: WorkflowFragmentRegistry,
-): StagedWorkflowBundle {
-  const serviceName = dto.serviceName;
-  const servicePath = normalizeServicePath(dto.servicePath);
-  const nodeVersion = dto.nodeVersion ?? '24';
+): StagedWorkflowContext {
   const coverageThreshold = dto.coverageThreshold ?? 80;
-  const strictCoverageThreshold = Math.min(
-    coverageThreshold + STRICT_COVERAGE_BONUS,
-    STRICT_COVERAGE_CAP,
-  );
-  const centralWorkflowRef =
-    dto.centralWorkflowRef ?? DEFAULT_CENTRAL_WORKFLOW_REF;
-  const requireProductionApproval =
-    dto.enhancements?.includes('strictProductionApproval') ?? false;
-  const stack = template.stack;
-  const isBackend = stack === 'nestjs' || stack === 'nodejs';
-  const testWorkflow = isBackend ? 'backend-tests.yml' : 'frontend-tests.yml';
-  const testJobId = isBackend ? 'backend-tests' : 'frontend-tests';
+  const isBackend = template.stack === 'nestjs' || template.stack === 'nodejs';
   // The central test workflows enforce coverage by parsing
   // coverage/coverage-summary.json, and SonarCloud ingests lcov, so the
   // command must produce both reporters.
   const testCommand = isBackend
     ? 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json'
     : 'npm run test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json';
-  const lintCommand = 'npm run lint';
 
-  const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
-  const nameSuffix = dto.workflowVariant ? ` (${dto.workflowVariant})` : '';
-  const accessName = `ALPHACI Access Gate${nameSuffix}`;
-  const qualityName = `ALPHACI Quality${nameSuffix}`;
-  const packageName = `ALPHACI Package${nameSuffix}`;
+  return {
+    serviceName: dto.serviceName,
+    servicePath: normalizeServicePath(dto.servicePath),
+    nodeVersion: dto.nodeVersion ?? '24',
+    coverageThreshold,
+    strictCoverageThreshold: Math.min(
+      coverageThreshold + STRICT_COVERAGE_BONUS,
+      STRICT_COVERAGE_CAP,
+    ),
+    centralWorkflowRef: dto.centralWorkflowRef ?? DEFAULT_CENTRAL_WORKFLOW_REF,
+    requireProductionApproval:
+      dto.enhancements?.includes('strictProductionApproval') ?? false,
+    stack: template.stack,
+    isBackend,
+    testWorkflow: isBackend ? 'backend-tests.yml' : 'frontend-tests.yml',
+    testJobId: isBackend ? 'backend-tests' : 'frontend-tests',
+    testCommand,
+    lintCommand: 'npm run lint',
+    hasTestsDirectory: dto.hasTestsDirectory,
+    names: resolveStagedNames(dto.workflowVariant),
+  };
+}
+
+function qualityTestWithExtras(
+  isBackend: boolean,
+  stack: WorkflowTemplate['stack'],
+  hasTestsDirectory: boolean | undefined,
+): Record<string, string> {
+  if (isBackend) {
+    return { 'backend-stack': stack };
+  }
+
+  // Repos born with the ALPHACI scaffold ship tests/unit and the guard
+  // enforces it stays; BYO repos fall back to src, the one folder every
+  // layout is guaranteed to have.
+  return {
+    'unit-tests-directory': hasTestsDirectory ? 'tests/unit' : 'src',
+  };
+}
+
+function buildAccessWorkflowFile(
+  ctx: StagedWorkflowContext,
+): StagedWorkflowFile {
+  const { accessName, fileSuffix } = ctx.names;
+  return {
+    stage: 'access',
+    name: accessName,
+    path: `.github/workflows/00-alphaci-access${fileSuffix}.yml`,
+    gated: true,
+    yaml: dumpWorkflow({
+      name: accessName,
+      on: {
+        push: { branches: ['uat', 'main'] },
+        pull_request: { branches: ['uat', 'main'] },
+        workflow_dispatch: {},
+      },
+      permissions: { contents: 'read' },
+      env: {
+        ALPHACI_VALIDATE_URL,
+        ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
+      },
+      jobs: {
+        'validate-access': validationJob('access'),
+        'report-results': reportingJob('access', ['validate-access']),
+      },
+    }),
+  };
+}
+
+function buildQualityWorkflowFile(
+  ctx: StagedWorkflowContext,
+): StagedWorkflowFile {
+  const { qualityName, fileSuffix } = ctx.names;
+  return {
+    stage: 'quality',
+    name: qualityName,
+    path: `.github/workflows/10-alphaci-quality${fileSuffix}.yml`,
+    gated: true,
+    yaml: dumpWorkflow({
+      name: qualityName,
+      on: {
+        workflow_run: {
+          workflows: [ctx.names.accessName],
+          types: ['completed'],
+        },
+        workflow_dispatch: {},
+      },
+      permissions: {
+        contents: 'read',
+        'security-events': 'write',
+      },
+      env: {
+        ALPHACI_VALIDATE_URL,
+        ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
+      },
+      jobs: {
+        'validate-access': {
+          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          ...validationJob('quality'),
+        },
+        'branch-policy': branchPolicyJob(
+          ctx.coverageThreshold,
+          ctx.strictCoverageThreshold,
+        ),
+        [ctx.testJobId]: {
+          needs: ['branch-policy'],
+          uses: `${CENTRAL_WORKFLOW_REF}/${ctx.testWorkflow}@${ctx.centralWorkflowRef}`,
+          with: {
+            'working-directory': ctx.servicePath,
+            'system-name': ctx.serviceName,
+            ...qualityTestWithExtras(
+              ctx.isBackend,
+              ctx.stack,
+              ctx.hasTestsDirectory,
+            ),
+            'node-version': Number(ctx.nodeVersion),
+            'coverage-threshold':
+              '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
+            'enforce-coverage': true,
+            'test-command': ctx.testCommand,
+            'checkout-ref': HEAD_SHA_EXPR,
+          },
+        },
+        lint: {
+          needs: ['branch-policy'],
+          uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@${ctx.centralWorkflowRef}`,
+          with: {
+            'working-directory': ctx.servicePath,
+            'system-name': ctx.serviceName,
+            'node-version': Number(ctx.nodeVersion),
+            'lint-command': ctx.lintCommand,
+            // PR source refs use the baseline; direct uat/main runs are strict.
+            'fail-on-warning':
+              '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
+            'checkout-ref': HEAD_SHA_EXPR,
+          },
+        },
+        typecheck: typecheckJob(ctx.servicePath, ctx.nodeVersion),
+        security: {
+          needs: ['validate-access'],
+          uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@${ctx.centralWorkflowRef}`,
+          with: {
+            'working-directory': ctx.servicePath,
+            'system-name': ctx.serviceName,
+            'node-version': Number(ctx.nodeVersion),
+            'fail-on-high': true,
+            'checkout-ref': HEAD_SHA_EXPR,
+          },
+        },
+        sonar: {
+          needs: ['branch-policy', ctx.testJobId],
+          // Runs only when the ALPHACI-provisioned SonarCloud secrets are
+          // present so repos without Sonar keep passing. The quality gate
+          // is advisory for PR source refs and blocking on direct uat/main
+          // runs (branch-policy decides via sonar-gate-wait).
+          if: "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
+          uses: `${CENTRAL_WORKFLOW_REF}/sonarcloud-scan.yml@${ctx.centralWorkflowRef}`,
+          with: {
+            'working-directory': ctx.servicePath,
+            'system-name': ctx.serviceName,
+            'sources-path': 'src',
+            'tests-path': ctx.hasTestsDirectory ? 'src,tests' : 'src',
+            'coverage-report-path': 'coverage/lcov.info',
+            'coverage-artifact-name': `${ctx.serviceName}-coverage`,
+            'quality-gate-wait':
+              '${{ fromJson(needs.branch-policy.outputs.sonar-gate-wait) }}',
+            'checkout-ref': HEAD_SHA_EXPR,
+          },
+          secrets: {
+            SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}',
+            SONAR_PROJECT_KEY: '${{ secrets.SONAR_PROJECT_KEY }}',
+            SONAR_ORGANIZATION: '${{ secrets.SONAR_ORGANIZATION }}',
+          },
+        },
+        'report-results': reportingJob(
+          'quality',
+          [
+            'validate-access',
+            'branch-policy',
+            ctx.testJobId,
+            'lint',
+            'typecheck',
+            'security',
+            'sonar',
+          ],
+          { testJobId: ctx.testJobId },
+        ),
+      },
+    }),
+  };
+}
+
+function buildPackageWorkflowFile(
+  ctx: StagedWorkflowContext,
+  deploymentPlan: PackageDeploymentPlan,
+): StagedWorkflowFile {
+  const { packageName, qualityName, fileSuffix } = ctx.names;
+  return {
+    stage: 'package',
+    name: packageName,
+    path: `.github/workflows/20-alphaci-package${fileSuffix}.yml`,
+    gated: true,
+    yaml: dumpWorkflow({
+      name: packageName,
+      on: {
+        workflow_run: {
+          workflows: [qualityName],
+          types: ['completed'],
+        },
+        workflow_dispatch: {},
+      },
+      permissions: {
+        contents: 'read',
+        packages: 'write',
+      },
+      env: {
+        ALPHACI_VALIDATE_URL,
+        ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
+      },
+      jobs: {
+        'validate-access': {
+          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          ...validationJob('package'),
+        },
+        build: buildJob(ctx.servicePath, ctx.nodeVersion),
+        'production-gate': productionGateJob(
+          ctx.serviceName,
+          ctx.isBackend,
+          ctx.requireProductionApproval,
+          ctx.centralWorkflowRef,
+        ),
+        ...deploymentPlan.jobs,
+        'promote-to-main': promotionJob(
+          'uat-to-main',
+          'uat',
+          ctx.serviceName,
+          ctx.centralWorkflowRef,
+          deploymentPlan.promotionNeeds.uat,
+        ),
+        'report-results': reportingJob('package', [
+          'validate-access',
+          'build',
+          ...deploymentPlan.jobIds,
+        ]),
+      },
+    }),
+  };
+}
+
+export function buildStagedWorkflowBundle(
+  template: WorkflowTemplate,
+  dto: StagedWorkflowOptions,
+  workflowFragmentRegistry?: WorkflowFragmentRegistry,
+): StagedWorkflowBundle {
+  const ctx = resolveStagedContext(template, dto);
   const deploymentPlan = buildPackageDeploymentPlan(
     dto.deploymentTargets ?? [],
-    serviceName,
-    servicePath,
-    centralWorkflowRef,
+    ctx.serviceName,
+    ctx.servicePath,
+    ctx.centralWorkflowRef,
     workflowFragmentRegistry,
   );
 
   const files: StagedWorkflowFile[] = [
-    {
-      stage: 'access',
-      name: accessName,
-      path: `.github/workflows/00-alphaci-access${fileSuffix}.yml`,
-      gated: true,
-      yaml: dumpWorkflow({
-        name: accessName,
-        on: {
-          push: { branches: ['uat', 'main'] },
-          pull_request: { branches: ['uat', 'main'] },
-          workflow_dispatch: {},
-        },
-        permissions: { contents: 'read' },
-        env: {
-          ALPHACI_VALIDATE_URL,
-          ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
-        },
-        jobs: {
-          'validate-access': validationJob('access'),
-          'report-results': reportingJob('access', ['validate-access']),
-        },
-      }),
-    },
-    {
-      stage: 'quality',
-      name: qualityName,
-      path: `.github/workflows/10-alphaci-quality${fileSuffix}.yml`,
-      gated: true,
-      yaml: dumpWorkflow({
-        name: qualityName,
-        on: {
-          workflow_run: {
-            workflows: [accessName],
-            types: ['completed'],
-          },
-          workflow_dispatch: {},
-        },
-        permissions: {
-          contents: 'read',
-          'security-events': 'write',
-        },
-        env: {
-          ALPHACI_VALIDATE_URL,
-          ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
-        },
-        jobs: {
-          'validate-access': {
-            if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
-            ...validationJob('quality'),
-          },
-          'branch-policy': branchPolicyJob(
-            coverageThreshold,
-            strictCoverageThreshold,
-          ),
-          [testJobId]: {
-            needs: ['branch-policy'],
-            uses: `${CENTRAL_WORKFLOW_REF}/${testWorkflow}@${centralWorkflowRef}`,
-            with: {
-              'working-directory': servicePath,
-              'system-name': serviceName,
-              ...(isBackend
-                ? { 'backend-stack': stack }
-                : // Repos born with the ALPHACI scaffold ship tests/unit and
-                  // the guard enforces it stays; BYO repos fall back to src,
-                  // the one folder every layout is guaranteed to have.
-                  {
-                    'unit-tests-directory': dto.hasTestsDirectory
-                      ? 'tests/unit'
-                      : 'src',
-                  }),
-              'node-version': Number(nodeVersion),
-              'coverage-threshold':
-                '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
-              'enforce-coverage': true,
-              'test-command': testCommand,
-              'checkout-ref': HEAD_SHA_EXPR,
-            },
-          },
-          lint: {
-            needs: ['branch-policy'],
-            uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@${centralWorkflowRef}`,
-            with: {
-              'working-directory': servicePath,
-              'system-name': serviceName,
-              'node-version': Number(nodeVersion),
-              'lint-command': lintCommand,
-              // PR source refs use the baseline; direct uat/main runs are strict.
-              'fail-on-warning':
-                '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
-              'checkout-ref': HEAD_SHA_EXPR,
-            },
-          },
-          typecheck: typecheckJob(servicePath, nodeVersion),
-          security: {
-            needs: ['validate-access'],
-            uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@${centralWorkflowRef}`,
-            with: {
-              'working-directory': servicePath,
-              'system-name': serviceName,
-              'node-version': Number(nodeVersion),
-              'fail-on-high': true,
-              'checkout-ref': HEAD_SHA_EXPR,
-            },
-          },
-          sonar: {
-            needs: ['branch-policy', testJobId],
-            // Runs only when the ALPHACI-provisioned SonarCloud secrets are
-            // present so repos without Sonar keep passing. The quality gate
-            // is advisory for PR source refs and blocking on direct uat/main
-            // runs (branch-policy decides via sonar-gate-wait).
-            if: "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
-            uses: `${CENTRAL_WORKFLOW_REF}/sonarcloud-scan.yml@${centralWorkflowRef}`,
-            with: {
-              'working-directory': servicePath,
-              'system-name': serviceName,
-              'sources-path': 'src',
-              'tests-path': dto.hasTestsDirectory ? 'src,tests' : 'src',
-              'coverage-report-path': 'coverage/lcov.info',
-              'coverage-artifact-name': `${serviceName}-coverage`,
-              'quality-gate-wait':
-                '${{ fromJson(needs.branch-policy.outputs.sonar-gate-wait) }}',
-              'checkout-ref': HEAD_SHA_EXPR,
-            },
-            secrets: {
-              SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}',
-              SONAR_PROJECT_KEY: '${{ secrets.SONAR_PROJECT_KEY }}',
-              SONAR_ORGANIZATION: '${{ secrets.SONAR_ORGANIZATION }}',
-            },
-          },
-          'report-results': reportingJob(
-            'quality',
-            [
-              'validate-access',
-              'branch-policy',
-              testJobId,
-              'lint',
-              'typecheck',
-              'security',
-              'sonar',
-            ],
-            { testJobId },
-          ),
-        },
-      }),
-    },
-    {
-      stage: 'package',
-      name: packageName,
-      path: `.github/workflows/20-alphaci-package${fileSuffix}.yml`,
-      gated: true,
-      yaml: dumpWorkflow({
-        name: packageName,
-        on: {
-          workflow_run: {
-            workflows: [qualityName],
-            types: ['completed'],
-          },
-          workflow_dispatch: {},
-        },
-        permissions: {
-          contents: 'read',
-          packages: 'write',
-        },
-        env: {
-          ALPHACI_VALIDATE_URL,
-          ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
-        },
-        jobs: {
-          'validate-access': {
-            if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
-            ...validationJob('package'),
-          },
-          build: buildJob(servicePath, nodeVersion),
-          'production-gate': productionGateJob(
-            serviceName,
-            isBackend,
-            requireProductionApproval,
-            centralWorkflowRef,
-          ),
-          ...deploymentPlan.jobs,
-          'promote-to-main': promotionJob(
-            'uat-to-main',
-            'uat',
-            serviceName,
-            centralWorkflowRef,
-            deploymentPlan.promotionNeeds.uat,
-          ),
-          'report-results': reportingJob('package', [
-            'validate-access',
-            'build',
-            ...deploymentPlan.jobIds,
-          ]),
-        },
-      }),
-    },
+    buildAccessWorkflowFile(ctx),
+    buildQualityWorkflowFile(ctx),
+    buildPackageWorkflowFile(ctx, deploymentPlan),
   ];
 
   // The env guard is repo-wide, not per-pipeline: in microservices repos both

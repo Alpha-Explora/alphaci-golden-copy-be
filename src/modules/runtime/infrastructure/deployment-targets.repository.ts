@@ -66,6 +66,33 @@ export interface CreateDeploymentTargetInput {
   providerMetadata?: Record<string, unknown>;
 }
 
+function toInsertParams(input: CreateDeploymentTargetInput): unknown[] {
+  return [
+    input.projectId,
+    input.slot,
+    input.ownershipMode,
+    input.provider,
+    input.providerConnectionId ?? null,
+    input.providerProjectId,
+    input.providerProjectName,
+    input.repoFullName,
+    input.branchName,
+    input.rootDirectory ?? null,
+    input.buildCommand ?? null,
+    input.startCommand ?? null,
+    input.renderServiceType ?? null,
+    input.renderInstanceType ?? null,
+    input.renderRegion ?? null,
+    input.renderEnvironmentName ?? null,
+    input.dockerContext ?? null,
+    input.dockerfilePath ?? null,
+    input.imageUrl ?? null,
+    JSON.stringify(input.environmentMap ?? {}),
+    input.deploymentStrategy ?? 'provider_native',
+    JSON.stringify(input.providerMetadata ?? {}),
+  ];
+}
+
 @Injectable()
 export class DeploymentTargetsRepository {
   constructor(private readonly databaseService: DatabaseService) {}
@@ -102,30 +129,7 @@ export class DeploymentTargetsRepository {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
         RETURNING *;
       `,
-      [
-        input.projectId,
-        input.slot,
-        input.ownershipMode,
-        input.provider,
-        input.providerConnectionId ?? null,
-        input.providerProjectId,
-        input.providerProjectName,
-        input.repoFullName,
-        input.branchName,
-        input.rootDirectory ?? null,
-        input.buildCommand ?? null,
-        input.startCommand ?? null,
-        input.renderServiceType ?? null,
-        input.renderInstanceType ?? null,
-        input.renderRegion ?? null,
-        input.renderEnvironmentName ?? null,
-        input.dockerContext ?? null,
-        input.dockerfilePath ?? null,
-        input.imageUrl ?? null,
-        JSON.stringify(input.environmentMap ?? {}),
-        input.deploymentStrategy ?? 'provider_native',
-        JSON.stringify(input.providerMetadata ?? {}),
-      ],
+      toInsertParams(input),
     );
 
     const row = result.rows[0];

@@ -24,17 +24,9 @@ import {
 export { GithubRepoDeleteError } from '#kernel/ports/github.port';
 export type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
 import { ENV_GUARD_CHECK_CONTEXT } from './github-policy.constants';
-import type {
-  GitHubBranchSummary,
-  GitHubContentEntry,
-  GitHubContentEntryType,
-  GitHubContentListing,
-  GitHubPullRequestFile,
-  GitHubPullRequestSummary,
-  GitHubRunJob,
-  GitHubWorkflowRunSummary,
-} from './github-workspace.types';
 import type { CreateRepoDto } from './dto/create-repo.dto';
+import { GithubHttp } from './github-http';
+import { GithubInstallationLinker } from './github-installation-linker';
 import {
   GithubInstallationsRepository,
   type GithubInstallation,
@@ -44,6 +36,23 @@ import {
   GithubWebhookProcessor,
   REPOSITORY_DELETED_EVENT,
 } from './github-webhook.processor';
+import {
+  mapContentEntries,
+  toFileListing,
+  toPullRequestFile,
+  toPullRequestSummary,
+  type GitHubContentsRow,
+  type GitHubPullRequestFileRow,
+  type GitHubPullRequestRow,
+} from './github-workspace.mapping';
+import type {
+  GitHubBranchSummary,
+  GitHubContentListing,
+  GitHubPullRequestFile,
+  GitHubPullRequestSummary,
+  GitHubRunJob,
+  GitHubWorkflowRunSummary,
+} from './github-workspace.types';
 
 export {
   REPOSITORY_DELETED_EVENT,
@@ -63,19 +72,6 @@ interface GitHubRepoResponse {
   updated_at: string;
 }
 
-interface GitHubInstallationMetadataResponse {
-  account?: {
-    login?: string | null;
-    id?: number | null;
-    type?: 'Organization' | 'User' | null;
-  };
-  repository_selection?: 'all' | 'selected';
-}
-
-interface GitHubInstallationRepositoriesResponse {
-  repositories?: Array<{ full_name?: string }>;
-}
-
 interface GitHubContentResponse {
   content?: string;
   encoding?: string;
@@ -87,17 +83,6 @@ interface GitHubContentResponse {
  * reads consume them. Every field is optional: these describe someone else's
  * API, and a missing key must fall back rather than throw.
  */
-interface GitHubContentsRow {
-  name?: string;
-  path?: string;
-  type?: string;
-  size?: number;
-  sha?: string;
-  content?: string;
-  encoding?: string;
-  html_url?: string;
-}
-
 interface GitHubWorkflowRunRow {
   id: number;
   name?: string;
@@ -132,23 +117,6 @@ interface GitHubRunJobRow {
     started_at?: string | null;
     completed_at?: string | null;
   }>;
-}
-
-interface GitHubPullRequestRow {
-  number: number;
-  title?: string;
-  state?: string;
-  draft?: boolean;
-  merged_at?: string | null;
-  html_url?: string;
-  head?: { ref?: string };
-  base?: { ref?: string };
-  user?: { login?: string; avatar_url?: string };
-  created_at?: string;
-  updated_at?: string;
-  additions?: number;
-  deletions?: number;
-  changed_files?: number;
 }
 
 interface GitHubContentsWriteResponse {
@@ -191,6 +159,8 @@ export class GithubService
   private readonly appSlug: string;
   private readonly appPrivateKey: string;
   private readonly appWebhookSecret: string;
+  private readonly http: GithubHttp;
+  private readonly installationLinker: GithubInstallationLinker;
   private readonly webhookProcessor: GithubWebhookProcessor;
 
   // Explicit @Inject tokens are required here: the `| null` union types make
@@ -221,6 +191,16 @@ export class GithubService
         ? `Repository creation is enforced to organization: ${enforcedOrg}`
         : 'GITHUB ENFORCED ORG RESOLVED EMPTY AT BOOT — repository creation will be refused. Check that this deploy includes the enforced-org config fallback.',
     );
+
+    this.http = new GithubHttp(this.logger);
+    this.installationLinker = new GithubInstallationLinker({
+      logger: this.logger,
+      http: this.http,
+      installations: this.githubInstallationsRepository,
+      createAppJwt: () => this.createAppJwt(),
+      createInstallationAccessToken: (id) =>
+        this.createInstallationAccessToken(id),
+    });
 
     this.webhookProcessor = new GithubWebhookProcessor({
       getWebhookSecret: () =>
@@ -299,7 +279,7 @@ export class GithubService
     const members: Array<{ login: string; avatarUrl: string | null }> = [];
     const maxPages = 5; // cap at 500 members — more than enough for this org
     for (let page = 1; page <= maxPages; page += 1) {
-      const response = await this.fetchWithRetry(
+      const response = await this.http.fetchWithRetry(
         `https://api.github.com/orgs/${encodeURIComponent(org)}/members?per_page=100&page=${String(page)}`,
         {
           headers: {
@@ -351,7 +331,7 @@ export class GithubService
     if (!org || !teamSlug || !login) return null;
 
     try {
-      const response = await this.fetchWithRetry(
+      const response = await this.http.fetchWithRetry(
         `https://api.github.com/orgs/${encodeURIComponent(org)}/teams/${encodeURIComponent(teamSlug)}/memberships/${encodeURIComponent(login)}`,
         {
           headers: {
@@ -409,7 +389,7 @@ export class GithubService
     const logins: string[] = [];
     const maxPages = 5; // cap at 500 members, same bound as listOrganizationMembers
     for (let page = 1; page <= maxPages; page += 1) {
-      const response = await this.fetchWithRetry(
+      const response = await this.http.fetchWithRetry(
         `https://api.github.com/orgs/${encodeURIComponent(org)}/teams/${encodeURIComponent(teamSlug)}/members?per_page=100&page=${String(page)}`,
         {
           headers: {
@@ -430,73 +410,6 @@ export class GithubService
       if (batch.length < 100) break;
     }
     return logins;
-  }
-
-  /**
-   * Wraps fetch with bounded retry/backoff for GitHub rate limits.
-   *
-   * Retries only on 429 and rate-limit 403s — detected via response headers so
-   * the body is never consumed and remains readable by callers (a permission
-   * 403 is NOT retried because its x-ratelimit-remaining is non-zero). Honors
-   * Retry-After / X-RateLimit-Reset but caps the inline wait so a provisioning
-   * request can never hang past the platform's request timeout; if the reset is
-   * further out than the cap, the original response is returned for the caller
-   * to surface normally.
-   */
-  private async fetchWithRetry(
-    input: Parameters<typeof fetch>[0],
-    init?: Parameters<typeof fetch>[1],
-  ): ReturnType<typeof fetch> {
-    const maxAttempts = 3;
-    const maxWaitMs = 8_000;
-
-    for (let attempt = 1; ; attempt += 1) {
-      const response = await fetch(input, init);
-
-      const isRateLimited =
-        response.status === 429 ||
-        (response.status === 403 &&
-          (response.headers?.get('retry-after') != null ||
-            response.headers?.get('x-ratelimit-remaining') === '0'));
-
-      if (!isRateLimited || attempt >= maxAttempts) {
-        return response;
-      }
-
-      const waitMs = this.resolveRetryDelayMs(response, attempt);
-      if (waitMs > maxWaitMs) {
-        return response;
-      }
-
-      this.logger.warn(
-        `GitHub rate limit (${String(response.status)}); retrying in ${String(waitMs)}ms (attempt ${String(attempt)}/${String(maxAttempts)})`,
-      );
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-    }
-  }
-
-  private resolveRetryDelayMs(
-    response: Awaited<ReturnType<typeof fetch>>,
-    attempt: number,
-  ): number {
-    const retryAfter = response.headers?.get('retry-after');
-    if (retryAfter) {
-      const seconds = Number(retryAfter);
-      if (Number.isFinite(seconds) && seconds >= 0) {
-        return seconds * 1000;
-      }
-    }
-
-    const reset = response.headers?.get('x-ratelimit-reset');
-    if (reset) {
-      const resetMs = Number(reset) * 1000 - Date.now();
-      if (Number.isFinite(resetMs) && resetMs > 0) {
-        return resetMs;
-      }
-    }
-
-    // Exponential backoff fallback: 1s, 2s, 4s.
-    return 2 ** (attempt - 1) * 1000;
   }
 
   createAppJwt(nowSeconds = Math.floor(Date.now() / 1000)): string {
@@ -525,7 +438,7 @@ export class GithubService
   }
 
   async createInstallationAccessToken(installationId: number): Promise<string> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/app/installations/${String(installationId)}/access_tokens`,
       {
         method: 'POST',
@@ -631,60 +544,7 @@ export class GithubService
     userId: string,
     installationId: number,
   ): Promise<{ reposLinked: number; repositorySelection: 'all' | 'selected' }> {
-    let reposLinked = 0;
-    let repositorySelection: 'all' | 'selected' = 'selected';
-    let accountLogin: string | null = null;
-    let accountId: number | null = null;
-    let accountType: 'Organization' | 'User' | null = null;
-    let repoFullNames: string[] = [];
-
-    try {
-      const metadata = await this.fetchInstallationMetadata(installationId);
-      accountLogin = metadata.account?.login ?? null;
-      accountId = metadata.account?.id ?? null;
-      accountType = metadata.account?.type ?? null;
-      repositorySelection = metadata.repository_selection ?? 'selected';
-
-      const installationToken =
-        await this.createInstallationAccessToken(installationId);
-      repoFullNames =
-        await this.fetchInstallationRepositories(installationToken);
-      reposLinked = repoFullNames.length;
-    } catch (error) {
-      this.logger.warn(
-        `Could not fully inspect installation ${installationId}: ${(error as Error).message}`,
-      );
-    }
-
-    if (this.githubInstallationsRepository) {
-      try {
-        const saved = await this.githubInstallationsRepository.upsert(
-          userId,
-          installationId,
-          accountLogin,
-          accountId,
-          accountType,
-          repositorySelection,
-          reposLinked,
-        );
-
-        if (repoFullNames.length > 0) {
-          await this.githubInstallationsRepository.replaceRepos(
-            installationId,
-            repoFullNames,
-          );
-        }
-
-        reposLinked = saved.reposLinked;
-        repositorySelection = saved.repositorySelection;
-      } catch (error) {
-        this.logger.warn(
-          `Could not persist installation ${installationId}: ${(error as Error).message}`,
-        );
-      }
-    }
-
-    return { reposLinked, repositorySelection };
+    return this.installationLinker.linkInstallation(userId, installationId);
   }
 
   async listLinkedRepos(userId: string): Promise<GithubInstallationRepo[]> {
@@ -830,7 +690,7 @@ export class GithubService
     targetType: string;
     repositorySelection: string;
   }> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/orgs/${encodeURIComponent(orgLogin)}/installation`,
       {
         headers: {
@@ -928,7 +788,7 @@ export class GithubService
     accessToken: string,
     repoFullName: string,
   ): Promise<boolean> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${repoFullName}`,
       {
         method: 'GET',
@@ -957,7 +817,7 @@ export class GithubService
   }
 
   async listRepos(accessToken: string): Promise<GitHubRepo[]> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       'https://api.github.com/user/repos?per_page=100&sort=updated&type=all',
       {
         headers: {
@@ -981,7 +841,7 @@ export class GithubService
     owner: string,
     repo: string,
   ): Promise<GitHubRepo> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}`,
       {
         headers: {
@@ -1053,7 +913,7 @@ export class GithubService
     ownerLogin: string;
     repoName: string;
   }> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/orgs/${orgLogin}/repos`,
       {
         method: 'POST',
@@ -1129,7 +989,7 @@ export class GithubService
     repo: string,
   ): Promise<boolean> {
     try {
-      const response = await this.fetchWithRetry(
+      const response = await this.http.fetchWithRetry(
         `https://api.github.com/repos/${owner}/${repo}`,
         {
           method: 'DELETE',
@@ -1172,7 +1032,7 @@ export class GithubService
     owner: string,
     repo: string,
   ): Promise<void> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}`,
       {
         method: 'DELETE',
@@ -1236,9 +1096,9 @@ export class GithubService
     repo: string,
     secretName: string,
   ): Promise<void> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/actions/secrets/${encodeURIComponent(secretName)}`,
-      { method: 'DELETE', headers: this.workspaceHeaders(accessToken) },
+      { method: 'DELETE', headers: this.http.workspaceHeaders(accessToken) },
     );
 
     if (!response.ok && response.status !== 404) {
@@ -1255,9 +1115,9 @@ export class GithubService
     repo: string,
   ): Promise<Set<string>> {
     try {
-      const response = await this.fetchWithRetry(
+      const response = await this.http.fetchWithRetry(
         `https://api.github.com/repos/${owner}/${repo}/actions/secrets?per_page=100`,
-        { headers: this.workspaceHeaders(accessToken) },
+        { headers: this.http.workspaceHeaders(accessToken) },
       );
 
       if (!response.ok) return new Set();
@@ -1283,9 +1143,9 @@ export class GithubService
     repo: string,
     branch: string,
   ): Promise<boolean> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`,
-      { headers: this.workspaceHeaders(accessToken) },
+      { headers: this.http.workspaceHeaders(accessToken) },
     );
     return response.ok;
   }
@@ -1308,9 +1168,9 @@ export class GithubService
     branch: string,
   ): Promise<boolean | null> {
     try {
-      const response = await this.fetchWithRetry(
+      const response = await this.http.fetchWithRetry(
         `https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`,
-        { headers: this.workspaceHeaders(accessToken) },
+        { headers: this.http.workspaceHeaders(accessToken) },
       );
 
       // 404 is the documented answer for "this branch has no protection".
@@ -1338,7 +1198,7 @@ export class GithubService
       if (attempt > 0) {
         await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
       }
-      const refRes = await this.fetchWithRetry(
+      const refRes = await this.http.fetchWithRetry(
         `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${fromBranch}`,
         {
           headers: {
@@ -1360,7 +1220,7 @@ export class GithubService
       );
     }
 
-    const createRes = await this.fetchWithRetry(
+    const createRes = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/git/refs`,
       {
         method: 'POST',
@@ -1391,7 +1251,7 @@ export class GithubService
     filePath: string,
     ref: string,
   ): Promise<string | null> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
       {
         headers: {
@@ -1435,54 +1295,11 @@ export class GithubService
   // Breaking that ordering is how a handful of open tabs exhausts the org's
   // hourly budget and every other GitHub call in the product starts failing.
 
-  /** Max bytes of a blob we will decode and send to a browser. */
-  private static readonly MAX_FILE_BYTES = 512 * 1024;
-
-  private workspaceHeaders(accessToken: string): Record<string, string> {
-    return {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'cicd-workflow-product',
-      'X-GitHub-Api-Version': '2022-11-28',
-    };
-  }
-
-  /**
-   * Shared failure path for every workspace read.
-   *
-   * 404 comes back as null rather than thrown: an empty repository, a deleted
-   * branch, or a path that no longer exists are all normal states a browsing UI
-   * must render as "nothing here", not as an error banner. 409 is GitHub's
-   * answer for "this repository is empty", which is the same situation.
-   */
-  private async workspaceGet<T>(
-    url: string,
-    accessToken: string,
-    what: string,
-  ): Promise<T | null> {
-    const response = await this.fetchWithRetry(url, {
-      headers: this.workspaceHeaders(accessToken),
-    });
-
-    if (response.status === 404 || response.status === 409) {
-      return null;
-    }
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new BadGatewayException(
-        `GitHub ${what} failed (${String(response.status)}): ${body.slice(0, 300)}`,
-      );
-    }
-
-    return (await response.json()) as T;
-  }
-
   async listBranches(
     accessToken: string,
     repoFullName: string,
   ): Promise<GitHubBranchSummary[]> {
-    const payload = await this.workspaceGet<
+    const payload = await this.http.workspaceGet<
       Array<{ name: string; protected?: boolean; commit?: { sha?: string } }>
     >(
       `https://api.github.com/repos/${repoFullName}/branches?per_page=100`,
@@ -1516,7 +1333,7 @@ export class GithubService
       `https://api.github.com/repos/${repoFullName}/contents/${cleanPath}` +
       `?ref=${encodeURIComponent(ref)}`;
 
-    const payload = await this.workspaceGet<unknown>(
+    const payload = await this.http.workspaceGet<unknown>(
       url,
       accessToken,
       'contents read',
@@ -1527,53 +1344,15 @@ export class GithubService
     }
 
     if (Array.isArray(payload)) {
-      const entries = (payload as GitHubContentsRow[])
-        .map(
-          (row): GitHubContentEntry => ({
-            name: row.name ?? '',
-            path: row.path ?? '',
-            type: (row.type ?? 'file') as GitHubContentEntryType,
-            size: row.size ?? 0,
-            sha: row.sha ?? '',
-          }),
-        )
-        // Directories first, then alphabetical — the ordering every file
-        // browser uses, and one GitHub does not guarantee.
-        .sort((a, b) => {
-          if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-
-      return { path: cleanPath, ref, entries, file: null };
+      return {
+        path: cleanPath,
+        ref,
+        entries: mapContentEntries(payload as GitHubContentsRow[]),
+        file: null,
+      };
     }
 
-    const row = payload as GitHubContentsRow;
-    const size = row.size ?? 0;
-    // A binary blob or an oversized file is reported as truncated rather than
-    // decoded: turning a PNG into a UTF-8 string produces a screenful of
-    // replacement characters, which reads as corruption rather than as "this is
-    // not text". The NUL-byte probe is the same heuristic git itself uses.
-    const tooLarge = size > GithubService.MAX_FILE_BYTES;
-    const decoded =
-      !tooLarge && row.content && row.encoding === 'base64'
-        ? Buffer.from(row.content, 'base64')
-        : null;
-    const isText = decoded !== null && !decoded.includes(0);
-
-    return {
-      path: row.path ?? cleanPath,
-      ref,
-      entries: [],
-      file: {
-        name: row.name ?? cleanPath,
-        path: row.path ?? cleanPath,
-        size,
-        sha: row.sha ?? '',
-        content: isText && decoded ? decoded.toString('utf8') : null,
-        truncated: tooLarge || !isText,
-        htmlUrl: row.html_url ?? null,
-      },
-    };
+    return toFileListing(payload as GitHubContentsRow, cleanPath, ref);
   }
 
   /**
@@ -1592,7 +1371,7 @@ export class GithubService
     });
     if (branch) params.set('branch', branch);
 
-    const payload = await this.workspaceGet<{
+    const payload = await this.http.workspaceGet<{
       workflow_runs?: GitHubWorkflowRunRow[];
     }>(
       `https://api.github.com/repos/${repoFullName}/actions/runs?${params.toString()}`,
@@ -1625,7 +1404,7 @@ export class GithubService
     repoFullName: string,
     runId: number,
   ): Promise<GitHubRunJob[]> {
-    const payload = await this.workspaceGet<{ jobs?: GitHubRunJobRow[] }>(
+    const payload = await this.http.workspaceGet<{ jobs?: GitHubRunJobRow[] }>(
       `https://api.github.com/repos/${repoFullName}/actions/runs/${String(runId)}/jobs?per_page=100`,
       accessToken,
       'workflow job list',
@@ -1664,9 +1443,9 @@ export class GithubService
     jobId: number,
     maxChars = 200_000,
   ): Promise<{ content: string; truncated: boolean } | null> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${repoFullName}/actions/jobs/${String(jobId)}/logs`,
-      { headers: this.workspaceHeaders(accessToken), redirect: 'follow' },
+      { headers: this.http.workspaceHeaders(accessToken), redirect: 'follow' },
     );
 
     // 410 Gone is normal, not an error: GitHub expires logs after its
@@ -1703,13 +1482,13 @@ export class GithubService
       direction: 'desc',
     });
 
-    const payload = await this.workspaceGet<GitHubPullRequestRow[]>(
+    const payload = await this.http.workspaceGet<GitHubPullRequestRow[]>(
       `https://api.github.com/repos/${repoFullName}/pulls?${params.toString()}`,
       accessToken,
       'pull request list',
     );
 
-    return (payload ?? []).map((pr) => this.toPullRequestSummary(pr));
+    return (payload ?? []).map((pr) => toPullRequestSummary(pr));
   }
 
   /**
@@ -1725,51 +1504,13 @@ export class GithubService
     pullNumber: number,
     limit = 100,
   ): Promise<GitHubPullRequestFile[]> {
-    const payload = await this.workspaceGet<
-      Array<{
-        filename?: string;
-        status?: string;
-        additions?: number;
-        deletions?: number;
-        changes?: number;
-        patch?: string;
-      }>
-    >(
+    const payload = await this.http.workspaceGet<GitHubPullRequestFileRow[]>(
       `https://api.github.com/repos/${repoFullName}/pulls/${String(pullNumber)}/files?per_page=${String(Math.min(limit, 100))}`,
       accessToken,
       'pull request file list',
     );
 
-    return (payload ?? []).map((file) => ({
-      filename: file.filename ?? '',
-      status: file.status ?? 'modified',
-      additions: file.additions ?? 0,
-      deletions: file.deletions ?? 0,
-      changes: file.changes ?? 0,
-      patch: file.patch ?? null,
-    }));
-  }
-
-  private toPullRequestSummary(
-    pr: GitHubPullRequestRow,
-  ): GitHubPullRequestSummary {
-    return {
-      number: pr.number,
-      title: pr.title ?? '',
-      state: pr.state === 'closed' ? 'closed' : 'open',
-      draft: pr.draft === true,
-      merged: pr.merged_at != null,
-      htmlUrl: pr.html_url ?? '',
-      headRef: pr.head?.ref ?? '',
-      baseRef: pr.base?.ref ?? '',
-      author: pr.user?.login ?? null,
-      authorAvatarUrl: pr.user?.avatar_url ?? null,
-      createdAt: pr.created_at ?? '',
-      updatedAt: pr.updated_at ?? '',
-      additions: pr.additions ?? null,
-      deletions: pr.deletions ?? null,
-      changedFiles: pr.changed_files ?? null,
-    };
+    return (payload ?? []).map((file) => toPullRequestFile(file));
   }
 
   async putFileContent(
@@ -1784,7 +1525,7 @@ export class GithubService
     const encodedContent = Buffer.from(content, 'utf8').toString('base64');
     let existingSha: string | undefined;
 
-    const checkRes = await this.fetchWithRetry(
+    const checkRes = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(branch)}`,
       {
         headers: {
@@ -1815,7 +1556,7 @@ export class GithubService
       body.sha = existingSha;
     }
 
-    const putRes = await this.fetchWithRetry(
+    const putRes = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
       {
         method: 'PUT',
@@ -1849,7 +1590,7 @@ export class GithubService
     repo: string,
     pullRequest: { title: string; head: string; base: string; body?: string },
   ): Promise<{ number: number; htmlUrl: string }> {
-    const response = await this.fetchWithRetry(
+    const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/pulls`,
       {
         method: 'POST',
@@ -1897,7 +1638,7 @@ export class GithubService
       return;
     }
 
-    const keyRes = await this.fetchWithRetry(
+    const keyRes = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`,
       {
         headers: {
@@ -1932,7 +1673,7 @@ export class GithubService
       sodium.base64_variants.ORIGINAL,
     );
 
-    const putRes = await this.fetchWithRetry(
+    const putRes = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`,
       {
         method: 'PUT',
@@ -1989,7 +1730,7 @@ export class GithubService
     branch: string,
     requiredStatusChecks: string[] = [ENV_GUARD_CHECK_CONTEXT],
   ): Promise<void> {
-    const res = await this.fetchWithRetry(
+    const res = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/branches/${branch}/protection`,
       {
         method: 'PUT',
@@ -2023,56 +1764,10 @@ export class GithubService
     }
   }
 
-  private async fetchInstallationMetadata(
-    installationId: number,
-  ): Promise<GitHubInstallationMetadataResponse> {
-    const response = await this.fetchWithRetry(
-      `https://api.github.com/app/installations/${String(installationId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${this.createAppJwt()}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
-        },
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new BadGatewayException(
-        `GitHub installation metadata request failed (${String(response.status)}): ${body}`,
-      );
-    }
-
-    return (await response.json()) as GitHubInstallationMetadataResponse;
-  }
-
-  private async fetchInstallationRepositories(
+  private fetchInstallationRepositories(
     accessToken: string,
   ): Promise<string[]> {
-    const response = await this.fetchWithRetry(
-      'https://api.github.com/installation/repositories?per_page=100',
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
-        },
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new BadGatewayException(
-        `GitHub installation repositories request failed (${String(response.status)}): ${body}`,
-      );
-    }
-
-    const payload =
-      (await response.json()) as GitHubInstallationRepositoriesResponse;
-    return (payload.repositories ?? [])
-      .map((repo) => repo.full_name)
-      .filter((repoFullName): repoFullName is string => Boolean(repoFullName));
+    return this.installationLinker.fetchInstallationRepositories(accessToken);
   }
 
   private base64UrlJson(value: Record<string, unknown>): string {

@@ -11,8 +11,11 @@ import type { ProjectDashboardSnapshotFinding } from '../../project-dashboard-sn
 import type { ProvisionedProjectRow } from '../../projects.repository';
 import type {
   ProvisionedProject,
+  ProjectOverviewHealthStatus,
   ProjectOverviewResponse,
 } from '../../projects.service.types';
+
+type OverviewHealthCheck = ProjectOverviewResponse['health']['checks'][number];
 
 export function buildLocalSnapshotFindings(
   overview: ProjectOverviewResponse,
@@ -107,6 +110,86 @@ export function toCiAuthOverview(token: ProjectTokenStatus | null): {
   };
 }
 
+function checkProjectStatus(project: ProvisionedProject): OverviewHealthCheck {
+  return {
+    key: 'project_status',
+    label: 'Project status',
+    status: project.status === 'failed' ? 'error' : 'ok',
+    message:
+      project.status === 'failed'
+        ? (project.failureReason ?? 'Project provisioning failed.')
+        : `Project is ${project.status}.`,
+  };
+}
+
+function checkWorkflowBundle(
+  workflowFiles: WorkflowFileMetadata[],
+): OverviewHealthCheck {
+  return {
+    key: 'workflow_bundle',
+    label: 'Workflow bundle',
+    status: workflowFiles.length > 0 ? 'ok' : 'warning',
+    message:
+      workflowFiles.length > 0
+        ? `${workflowFiles.length} workflow file${workflowFiles.length === 1 ? '' : 's'} tracked.`
+        : 'No workflow file metadata is tracked yet.',
+  };
+}
+
+function checkCiToken(
+  ciAuth: ProjectOverviewResponse['ciAuth'],
+): OverviewHealthCheck {
+  return {
+    key: 'ci_token',
+    label: 'CI token',
+    status: ciAuth.status === 'active' ? 'ok' : 'warning',
+    message:
+      ciAuth.status === 'active'
+        ? 'Project CI token is active.'
+        : ciAuth.status === 'revoked'
+          ? 'Project CI token is revoked.'
+          : 'No project CI token is tracked.',
+  };
+}
+
+function checkDeploymentTargets(
+  deploymentTargets: DeploymentTargetSummary[],
+): OverviewHealthCheck {
+  return {
+    key: 'deployment_targets',
+    label: 'Deployment targets',
+    status: deploymentTargets.length > 0 ? 'ok' : 'warning',
+    message:
+      deploymentTargets.length > 0
+        ? `${deploymentTargets.length} deployment target${deploymentTargets.length === 1 ? '' : 's'} tracked.`
+        : 'No deployment targets are configured.',
+  };
+}
+
+function checkEnvMetadata(envMetadata: EnvVarMetadata[]): OverviewHealthCheck {
+  return {
+    key: 'env_metadata',
+    label: 'Environment metadata',
+    status: envMetadata.some((item) => item.status === 'failed')
+      ? 'warning'
+      : 'ok',
+    message:
+      envMetadata.length > 0
+        ? `${envMetadata.length} env var key${envMetadata.length === 1 ? '' : 's'} tracked.`
+        : 'No env var metadata is tracked yet.',
+  };
+}
+
+function summaryFromChecks(
+  checks: OverviewHealthCheck[],
+): ProjectOverviewHealthStatus {
+  return checks.some((check) => check.status === 'error')
+    ? 'error'
+    : checks.some((check) => check.status === 'warning')
+      ? 'warning'
+      : 'ok';
+}
+
 export function buildOverviewHealth(input: {
   project: ProvisionedProject;
   workflowFiles: WorkflowFileMetadata[];
@@ -114,64 +197,15 @@ export function buildOverviewHealth(input: {
   deploymentTargets: DeploymentTargetSummary[];
   envMetadata: EnvVarMetadata[];
 }): ProjectOverviewResponse['health'] {
-  const checks: ProjectOverviewResponse['health']['checks'] = [
-    {
-      key: 'project_status',
-      label: 'Project status',
-      status: input.project.status === 'failed' ? 'error' : 'ok',
-      message:
-        input.project.status === 'failed'
-          ? (input.project.failureReason ?? 'Project provisioning failed.')
-          : `Project is ${input.project.status}.`,
-    },
-    {
-      key: 'workflow_bundle',
-      label: 'Workflow bundle',
-      status: input.workflowFiles.length > 0 ? 'ok' : 'warning',
-      message:
-        input.workflowFiles.length > 0
-          ? `${input.workflowFiles.length} workflow file${input.workflowFiles.length === 1 ? '' : 's'} tracked.`
-          : 'No workflow file metadata is tracked yet.',
-    },
-    {
-      key: 'ci_token',
-      label: 'CI token',
-      status: input.ciAuth.status === 'active' ? 'ok' : 'warning',
-      message:
-        input.ciAuth.status === 'active'
-          ? 'Project CI token is active.'
-          : input.ciAuth.status === 'revoked'
-            ? 'Project CI token is revoked.'
-            : 'No project CI token is tracked.',
-    },
-    {
-      key: 'deployment_targets',
-      label: 'Deployment targets',
-      status: input.deploymentTargets.length > 0 ? 'ok' : 'warning',
-      message:
-        input.deploymentTargets.length > 0
-          ? `${input.deploymentTargets.length} deployment target${input.deploymentTargets.length === 1 ? '' : 's'} tracked.`
-          : 'No deployment targets are configured.',
-    },
-    {
-      key: 'env_metadata',
-      label: 'Environment metadata',
-      status: input.envMetadata.some((item) => item.status === 'failed')
-        ? 'warning'
-        : 'ok',
-      message:
-        input.envMetadata.length > 0
-          ? `${input.envMetadata.length} env var key${input.envMetadata.length === 1 ? '' : 's'} tracked.`
-          : 'No env var metadata is tracked yet.',
-    },
+  const checks: OverviewHealthCheck[] = [
+    checkProjectStatus(input.project),
+    checkWorkflowBundle(input.workflowFiles),
+    checkCiToken(input.ciAuth),
+    checkDeploymentTargets(input.deploymentTargets),
+    checkEnvMetadata(input.envMetadata),
   ];
-  const summary = checks.some((check) => check.status === 'error')
-    ? 'error'
-    : checks.some((check) => check.status === 'warning')
-      ? 'warning'
-      : 'ok';
 
-  return { summary, checks };
+  return { summary: summaryFromChecks(checks), checks };
 }
 
 export function toProvisionedProject(

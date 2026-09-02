@@ -146,3 +146,23 @@ describe('GroupsRepository last-owner SQL guards', () => {
     expect(queryIncludes(client, "member_status = 'removed'")).toBe(false);
   });
 });
+
+describe('GroupsRepository addMemberDirect', () => {
+  it('addMemberDirect upserts an active member and clears removal columns', async () => {
+    const db = makeDatabaseService();
+    const repo = new GroupsRepository(db);
+
+    await repo.addMemberDirect('group-1', 'user-2', 'member', 'actor-1');
+
+    expect(db.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(sql).toContain('INSERT INTO orgs.workspace_members');
+    expect(sql).toContain('ON CONFLICT (workspace_id, user_id)');
+    expect(sql).toContain("member_status = 'active'");
+    expect(sql).toContain('removed_at = NULL');
+    expect(params).toEqual(['group-1', 'user-2', 'member', 'actor-1']);
+  });
+});

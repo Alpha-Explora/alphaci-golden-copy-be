@@ -506,6 +506,61 @@ describe('RenderEnvClient', () => {
     ).rejects.toThrow('Render service creation returned an invalid response');
   });
 
+  it.each([
+    [
+      'nested service id/name/url',
+      {
+        service: {
+          id: 'srv-nested',
+          name: 'nested-name',
+          serviceDetails: { url: 'https://nested.onrender.com' },
+        },
+      },
+      {
+        id: 'srv-nested',
+        name: 'nested-name',
+        url: 'https://nested.onrender.com',
+      },
+    ],
+    [
+      'flat id/name/url',
+      {
+        id: 'srv-flat',
+        name: 'flat-name',
+        url: 'https://flat.onrender.com',
+      },
+      {
+        id: 'srv-flat',
+        name: 'flat-name',
+        url: 'https://flat.onrender.com',
+      },
+    ],
+  ])('maps a %s createTarget payload', async (_label, payload, expected) => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ owner: { id: 'tea-1' } }]))
+      .mockResolvedValueOnce(
+        jsonResponse([{ project: { id: 'prj-shapes', name: 'api-service' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ environment: { id: 'env-shapes', name: 'test' } }]),
+      )
+      .mockResolvedValueOnce(jsonResponse(payload));
+
+    await expect(
+      new RenderEnvClient().createTarget({
+        token: 'rnd',
+        repoFullName: 'owner/api-service',
+        projectName: 'api-service-test',
+        branchName: 'test',
+      }),
+    ).resolves.toMatchObject({
+      id: expected.id,
+      name: expected.name,
+      metadata: { renderServiceUrl: expected.url },
+    });
+  });
+
   it('maps Render branches to environment names', async () => {
     global.fetch = jest.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -644,6 +699,48 @@ describe('RenderEnvClient', () => {
           targetId: 'srv-1',
         }),
       ).rejects.toThrow('Render API key is invalid');
+    });
+
+    it.each([
+      [
+        'nested service url/suspended/ownerId',
+        {
+          service: {
+            suspended: 'not_suspended',
+            ownerId: 'tea-nested',
+            serviceDetails: { url: 'https://nested.onrender.com' },
+          },
+        },
+        {
+          exists: true,
+          state: 'not_suspended',
+          url: 'https://nested.onrender.com',
+          metadata: { renderOwnerId: 'tea-nested' },
+        },
+      ],
+      [
+        'flat url/suspended/ownerId',
+        {
+          suspended: 'suspended',
+          ownerId: 'tea-flat',
+          url: 'https://flat.onrender.com',
+        },
+        {
+          exists: true,
+          state: 'suspended',
+          url: 'https://flat.onrender.com',
+          metadata: { renderOwnerId: 'tea-flat' },
+        },
+      ],
+    ])('maps a %s status payload', async (_label, payload, expected) => {
+      global.fetch = jest.fn().mockResolvedValueOnce(jsonResponse(payload));
+
+      await expect(
+        new RenderEnvClient().getTargetStatus({
+          token: 'rnd',
+          targetId: 'srv-1',
+        }),
+      ).resolves.toEqual(expected);
     });
   });
 

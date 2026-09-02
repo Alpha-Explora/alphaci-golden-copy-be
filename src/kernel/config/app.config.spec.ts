@@ -139,6 +139,34 @@ describe('appConfig factory', () => {
     expect(config.github.appPrivateKey).toBe('line1\nline2');
   });
 
+  it('prefers GITHUB_APP_ID over the GITHUB_APP alias', () => {
+    process.env['GITHUB_APP_ID'] = 'canonical-app-id';
+    process.env['GITHUB_APP'] = 'alias-app-id';
+
+    expect(appConfig().github.appId).toBe('canonical-app-id');
+  });
+
+  it('falls back to the GITHUB_APP alias when GITHUB_APP_ID is unset', () => {
+    delete process.env['GITHUB_APP_ID'];
+    process.env['GITHUB_APP'] = 'alias-app-id';
+
+    expect(appConfig().github.appId).toBe('alias-app-id');
+  });
+
+  it('prefers GITHUB_APP_PRIVATE_KEY over GITHUB_PRIVATE_KEY', () => {
+    process.env['GITHUB_APP_PRIVATE_KEY'] = 'canonical\\nkey';
+    process.env['GITHUB_PRIVATE_KEY'] = 'alias\\nkey';
+
+    expect(appConfig().github.appPrivateKey).toBe('canonical\nkey');
+  });
+
+  it('falls back to GITHUB_PRIVATE_KEY when GITHUB_APP_PRIVATE_KEY is unset', () => {
+    delete process.env['GITHUB_APP_PRIVATE_KEY'];
+    process.env['GITHUB_PRIVATE_KEY'] = 'alias\\nkey';
+
+    expect(appConfig().github.appPrivateKey).toBe('alias\nkey');
+  });
+
   it('does not use the placeholder GitHub App slug in production', () => {
     process.env['NODE_ENV'] = 'production';
     delete process.env['GITHUB_APP_SLUG'];

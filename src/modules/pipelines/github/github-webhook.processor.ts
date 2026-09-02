@@ -57,6 +57,17 @@ export interface GithubWebhookProcessorDeps {
 export class GithubWebhookProcessor {
   private readonly logger = new Logger(GithubWebhookProcessor.name);
 
+  private readonly eventHandlers: Record<
+    string,
+    (body: Record<string, unknown>) => Promise<void> | void
+  > = {
+    repository: (body) => this.handleRepositoryEvent(body),
+    membership: (body) => this.handleMembershipEvent(body),
+    installation: (body) => this.handleInstallationEvent(body),
+    installation_repositories: (body) =>
+      this.handleInstallationRepositoriesEvent(body),
+  };
+
   constructor(private readonly deps: GithubWebhookProcessorDeps) {}
 
   async handleWebhook(
@@ -117,32 +128,39 @@ export class GithubWebhookProcessor {
   ): Promise<void> {
     if (!payload || typeof payload !== 'object') return;
     const body = payload as Record<string, unknown>;
+    const handler = this.eventHandlers[eventName];
+    if (!handler) return;
+    await handler(body);
+  }
 
-    // Handled before the `installation` guard below: a `repository` deleted
-    // event carries everything it needs in `repository.full_name` and must
-    // not depend on the installation payload shape (GitHub App webhooks
-    // normally include `installation`, but there's no reason to make repo
-    // deletion detection depend on it).
-    if (eventName === 'repository' && body['action'] === 'deleted') {
-      const repository = body['repository'];
-      if (repository && typeof repository === 'object') {
-        const fullName = (repository as Record<string, unknown>)['full_name'];
-        if (typeof fullName === 'string' && fullName.trim().length > 0) {
-          const event: RepositoryDeletedEvent = { repoFullName: fullName };
-          this.deps.emit(REPOSITORY_DELETED_EVENT, event);
-        } else {
-          this.logger.warn(
-            `Ignoring repository.deleted webhook with missing/invalid full_name`,
-          );
-        }
+  /**
+   * A `repository` deleted event carries everything it needs in
+   * `repository.full_name` and must not depend on the installation payload
+   * shape (GitHub App webhooks normally include `installation`, but there's
+   * no reason to make repo deletion detection depend on it).
+   */
+  private handleRepositoryEvent(body: Record<string, unknown>): void {
+    if (body['action'] !== 'deleted') return;
+
+    const repository = body['repository'];
+    if (repository && typeof repository === 'object') {
+      const fullName = (repository as Record<string, unknown>)['full_name'];
+      if (typeof fullName === 'string' && fullName.trim().length > 0) {
+        const event: RepositoryDeletedEvent = { repoFullName: fullName };
+        this.deps.emit(REPOSITORY_DELETED_EVENT, event);
       } else {
         this.logger.warn(
-          `Ignoring repository.deleted webhook with missing repository object`,
+          `Ignoring repository.deleted webhook with missing/invalid full_name`,
         );
       }
-      return;
+    } else {
+      this.logger.warn(
+        `Ignoring repository.deleted webhook with missing repository object`,
+      );
     }
+  }
 
+  private handleMembershipEvent(body: Record<string, unknown>): void {
     const installation = body['installation'];
     if (!installation || typeof installation !== 'object') return;
     const installationId = Number(
@@ -153,57 +171,71 @@ export class GithubWebhookProcessor {
     // Org team membership changed — re-derive the affected user's app_role.
     // Emitted for BOTH 'added' and 'removed': a removal from `team-lead` must
     // revoke create rights promptly, which is the security-relevant direction.
-    if (eventName === 'membership') {
-      const action = body['action'];
-      const member = body['member'];
-      const team = body['team'];
-      const login =
-        member && typeof member === 'object'
-          ? (member as Record<string, unknown>)['login']
-          : undefined;
-      const teamSlug =
-        team && typeof team === 'object'
-          ? (team as Record<string, unknown>)['slug']
-          : undefined;
+    const action = body['action'];
+    const member = body['member'];
+    const team = body['team'];
+    const login =
+      member && typeof member === 'object'
+        ? (member as Record<string, unknown>)['login']
+        : undefined;
+    const teamSlug =
+      team && typeof team === 'object'
+        ? (team as Record<string, unknown>)['slug']
+        : undefined;
 
-      if (
-        typeof action === 'string' &&
-        typeof login === 'string' &&
-        login.trim().length > 0 &&
-        typeof teamSlug === 'string'
-      ) {
-        const event: TeamMembershipChangedEvent = {
-          action,
-          login,
-          teamSlug,
-          installationId,
-        };
-        this.deps.emit(TEAM_MEMBERSHIP_CHANGED_EVENT, event);
-      } else {
-        this.logger.warn(
-          'Ignoring membership webhook with missing action/member.login/team.slug',
-        );
-      }
-      return;
+    if (
+      typeof action === 'string' &&
+      typeof login === 'string' &&
+      login.trim().length > 0 &&
+      typeof teamSlug === 'string'
+    ) {
+      const event: TeamMembershipChangedEvent = {
+        action,
+        login,
+        teamSlug,
+        installationId,
+      };
+      this.deps.emit(TEAM_MEMBERSHIP_CHANGED_EVENT, event);
+    } else {
+      this.logger.warn(
+        'Ignoring membership webhook with missing action/member.login/team.slug',
+      );
     }
+  }
 
-    if (eventName === 'installation') {
-      const action = body['action'];
-      if (action === 'deleted') {
-        await this.deps.installations?.deleteInstallation(installationId);
-      } else if (action === 'suspend') {
-        await this.deps.installations?.setSuspended(installationId, true);
-      } else if (action === 'unsuspend') {
-        await this.deps.installations?.setSuspended(installationId, false);
-      }
-      return;
-    }
+  private async handleInstallationEvent(
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    const installation = body['installation'];
+    if (!installation || typeof installation !== 'object') return;
+    const installationId = Number(
+      (installation as Record<string, unknown>)['id'],
+    );
+    if (!Number.isInteger(installationId) || installationId < 1) return;
 
-    if (eventName === 'installation_repositories') {
-      const token =
-        await this.deps.tokens.createInstallationAccessToken(installationId);
-      const repos = await this.deps.tokens.fetchInstallationRepositories(token);
-      await this.deps.installations?.replaceRepos(installationId, repos);
+    const action = body['action'];
+    if (action === 'deleted') {
+      await this.deps.installations?.deleteInstallation(installationId);
+    } else if (action === 'suspend') {
+      await this.deps.installations?.setSuspended(installationId, true);
+    } else if (action === 'unsuspend') {
+      await this.deps.installations?.setSuspended(installationId, false);
     }
+  }
+
+  private async handleInstallationRepositoriesEvent(
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    const installation = body['installation'];
+    if (!installation || typeof installation !== 'object') return;
+    const installationId = Number(
+      (installation as Record<string, unknown>)['id'],
+    );
+    if (!Number.isInteger(installationId) || installationId < 1) return;
+
+    const token =
+      await this.deps.tokens.createInstallationAccessToken(installationId);
+    const repos = await this.deps.tokens.fetchInstallationRepositories(token);
+    await this.deps.installations?.replaceRepos(installationId, repos);
   }
 }

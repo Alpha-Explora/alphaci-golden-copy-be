@@ -6,6 +6,7 @@ import {
   DEPLOYMENT_PROVIDER_CATALOG,
   type DeploymentProviderCatalogPort,
 } from '#kernel/ports/deployment-provider-catalog.port';
+import { resolveLiveAdapterStatus } from './live-adapter-status';
 
 @Controller('capabilities')
 export class CapabilitiesController {
@@ -19,7 +20,7 @@ export class CapabilitiesController {
   getCapabilities() {
     const config = this.configService.getOrThrow<AppConfig>('app');
     const enabled = config.envProvisioning.enabled;
-    const liveAdaptersImplemented = false;
+    const liveAdaptersImplemented = resolveLiveAdapterStatus().implemented;
     const registeredProviders = this.providerCatalog.list();
     const registeredProviderIds = new Set(
       registeredProviders.map((provider) => provider.id),

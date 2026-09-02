@@ -9,7 +9,6 @@ import type {
   DeploymentProvisioningFacade,
 } from '../core/deployment-provisioning.contract';
 import { DeploymentTargetsService } from './deployment-targets.service';
-import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
 import type { EnvLane, EnvVarScope } from '../core/deployments.types';
 import { DeploymentProviderPolicyRegistry } from '../core/deployment-provider.policy';
 import { EnvVarsService } from './env-vars.service';
@@ -17,6 +16,10 @@ import {
   PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
   type ProviderCiSecretsInstallerRegistryPort,
 } from './ports/provider-ci-secrets-installer.port';
+import {
+  requestedBranch,
+  toCreateDeploymentTargetDto,
+} from './provision-for-project.mapping';
 
 type ProvisionForProjectInput = DeploymentProvisioningInput;
 
@@ -33,21 +36,6 @@ export interface CrossLinkGroup {
 const CROSS_LINK_LANES = ['preview', 'production'] as const;
 
 const PRODUCTION_SCOPE: EnvVarScope = { lane: 'production', gitBranch: null };
-
-/**
- * The branch a requested target will actually track.
- *
- * Mirrors the default the deployment-target create path applies, so the scope a
- * variable is written under and the scope a user-provided key is recorded under
- * cannot disagree. They did once: the request target carried no branch while
- * the created target defaulted to 'uat', so a user's own CORS_ORIGINS no longer
- * suppressed the cross-link injection meant to defer to it.
- */
-const DEFAULT_TARGET_BRANCH = 'uat';
-
-function requestedBranch(target: { branchName?: string }): string {
-  return target.branchName?.trim() || DEFAULT_TARGET_BRANCH;
-}
 
 /** Map key for a lane/branch pair. Production has no branch, hence the ''. */
 function scopeKey(scope: EnvVarScope): string {
@@ -68,6 +56,9 @@ function previewScope(branch: string | null | undefined): EnvVarScope {
 }
 
 type ProvisionedTarget = DeploymentProvisioningResult['targets'][number];
+type CreatedDeploymentTarget = Awaited<
+  ReturnType<DeploymentTargetsService['createDeploymentTarget']>
+>;
 
 @Injectable()
 export class ProjectDeploymentProvisioningService implements DeploymentProvisioningFacade {
@@ -100,67 +91,10 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
           input.repoFullName,
           requestedTarget,
         );
-        const targetRequest: CreateDeploymentTargetDto = {
-          action:
-            requestedTarget.action ??
-            (requestedTarget.renderDeployMethod === 'existing_service'
-              ? 'register_existing'
-              : 'create'),
-          slot: requestedTarget.slot,
-          ownershipMode: requestedTarget.ownershipMode,
-          provider: requestedTarget.provider,
-          branchName: requestedBranch(requestedTarget),
-          ...(requestedTarget.providerConnectionId
-            ? { providerConnectionId: requestedTarget.providerConnectionId }
-            : {}),
-          ...(requestedTarget.projectName
-            ? { projectName: requestedTarget.projectName }
-            : {}),
-          ...(requestedTarget.providerProjectId
-            ? { providerProjectId: requestedTarget.providerProjectId }
-            : {}),
-          ...(requestedTarget.providerProjectName
-            ? { providerProjectName: requestedTarget.providerProjectName }
-            : {}),
-          ...(requestedTarget.rootDirectory
-            ? { rootDirectory: requestedTarget.rootDirectory }
-            : {}),
-          ...(requestedTarget.buildCommand
-            ? { buildCommand: requestedTarget.buildCommand }
-            : {}),
-          ...(requestedTarget.startCommand
-            ? { startCommand: requestedTarget.startCommand }
-            : {}),
-          ...(requestedTarget.renderDeployMethod
-            ? { renderDeployMethod: requestedTarget.renderDeployMethod }
-            : {}),
-          ...(requestedTarget.renderServiceType
-            ? { renderServiceType: requestedTarget.renderServiceType }
-            : {}),
-          ...(requestedTarget.renderRuntime
-            ? { renderRuntime: requestedTarget.renderRuntime }
-            : {}),
-          ...(requestedTarget.renderInstanceType
-            ? { renderInstanceType: requestedTarget.renderInstanceType }
-            : {}),
-          ...(requestedTarget.renderRegion
-            ? { renderRegion: requestedTarget.renderRegion }
-            : {}),
-          ...(requestedTarget.renderEnvironmentName
-            ? { renderEnvironmentName: requestedTarget.renderEnvironmentName }
-            : {}),
-          ...(requestedTarget.dockerContext
-            ? { dockerContext: requestedTarget.dockerContext }
-            : {}),
-          ...(requestedTarget.dockerfilePath
-            ? { dockerfilePath: requestedTarget.dockerfilePath }
-            : {}),
-          ...(requestedTarget.imageUrl
-            ? { imageUrl: requestedTarget.imageUrl }
-            : defaultImageUrl
-              ? { imageUrl: defaultImageUrl }
-              : {}),
-        };
+        const targetRequest = toCreateDeploymentTargetDto(
+          requestedTarget,
+          defaultImageUrl,
+        );
 
         const target =
           await this.deploymentTargetsService.createDeploymentTarget(
@@ -168,59 +102,20 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
             input.userId,
             targetRequest,
           );
-        let providerMetadata = target.providerMetadata;
-
-        const ciSecretsInstaller = this.ciSecretsInstallers.get(
-          target.provider,
-        );
-        if (ciSecretsInstaller?.supports(target)) {
-          if (!input.githubAccessToken) {
-            throw new Error(
-              `GitHub access token is required to install ${target.provider} deployment secrets`,
-            );
-          }
-
-          const secretResult = await ciSecretsInstaller.installForTarget({
-            githubAccessToken: input.githubAccessToken,
-            repoFullName: input.repoFullName,
-            userId: input.userId,
-            providerConnectionId: requestedTarget.providerConnectionId ?? null,
-            target,
-          });
-          providerMetadata = {
-            ...target.providerMetadata,
-            githubSecrets: secretResult.githubSecrets,
-          };
-          await this.deploymentTargetsService.updateProviderMetadata(
-            target.id,
-            providerMetadata,
-          );
-        }
-
-        const env: DeploymentProvisioningResult['targets'][number]['env'] = [];
-        for (const envSet of this.resolveEnvSets(
-          input.request,
+        const providerMetadata = await this.installCiSecretsIfSupported({
+          githubAccessToken: input.githubAccessToken,
+          repoFullName: input.repoFullName,
+          userId: input.userId,
+          providerConnectionId: requestedTarget.providerConnectionId,
+          target,
+        });
+        const env = await this.provisionEnvForTarget({
+          projectId: input.projectId,
+          userId: input.userId,
+          request: input.request,
           requestedTarget,
-          requestedTarget.env,
-        )) {
-          const result = await this.envVarsService.provisionEnvVars(
-            input.projectId,
-            input.userId,
-            {
-              deploymentTargetId: target.id,
-              lane: envSet.lane,
-              gitBranch: envSet.gitBranch,
-              vars: envSet.vars,
-            },
-          );
-
-          env.push({
-            lane: envSet.lane,
-            gitBranch: envSet.gitBranch,
-            provisioned: result.provisioned,
-            failed: result.failed,
-          });
-        }
+          targetId: target.id,
+        });
 
         targets.push({
           slot: requestedTarget.slot,
@@ -275,6 +170,77 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     });
 
     return result;
+  }
+
+  private async installCiSecretsIfSupported(input: {
+    githubAccessToken: string | undefined;
+    repoFullName: string;
+    userId: string;
+    providerConnectionId: string | undefined;
+    target: CreatedDeploymentTarget;
+  }): Promise<CreatedDeploymentTarget['providerMetadata']> {
+    const ciSecretsInstaller = this.ciSecretsInstallers.get(
+      input.target.provider,
+    );
+    if (!ciSecretsInstaller?.supports(input.target)) {
+      return input.target.providerMetadata;
+    }
+    if (!input.githubAccessToken) {
+      throw new Error(
+        `GitHub access token is required to install ${input.target.provider} deployment secrets`,
+      );
+    }
+
+    const secretResult = await ciSecretsInstaller.installForTarget({
+      githubAccessToken: input.githubAccessToken,
+      repoFullName: input.repoFullName,
+      userId: input.userId,
+      providerConnectionId: input.providerConnectionId ?? null,
+      target: input.target,
+    });
+    const providerMetadata = {
+      ...input.target.providerMetadata,
+      githubSecrets: secretResult.githubSecrets,
+    };
+    await this.deploymentTargetsService.updateProviderMetadata(
+      input.target.id,
+      providerMetadata,
+    );
+    return providerMetadata;
+  }
+
+  private async provisionEnvForTarget(input: {
+    projectId: string;
+    userId: string;
+    request: DeploymentProvisioningRequestDto;
+    requestedTarget: DeploymentProvisioningTargetDto;
+    targetId: string;
+  }): Promise<ProvisionedTarget['env']> {
+    const env: ProvisionedTarget['env'] = [];
+    for (const envSet of this.resolveEnvSets(
+      input.request,
+      input.requestedTarget,
+      input.requestedTarget.env,
+    )) {
+      const result = await this.envVarsService.provisionEnvVars(
+        input.projectId,
+        input.userId,
+        {
+          deploymentTargetId: input.targetId,
+          lane: envSet.lane,
+          gitBranch: envSet.gitBranch,
+          vars: envSet.vars,
+        },
+      );
+
+      env.push({
+        lane: envSet.lane,
+        gitBranch: envSet.gitBranch,
+        provisioned: result.provisioned,
+        failed: result.failed,
+      });
+    }
+    return env;
   }
 
   /**

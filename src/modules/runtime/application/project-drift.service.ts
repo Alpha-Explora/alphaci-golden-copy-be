@@ -5,6 +5,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import {
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
+  type ProjectTokenStatus,
 } from '#kernel/ports/ci-project.port';
 import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
 import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
@@ -20,6 +21,111 @@ import {
   type DeploymentProjectReference,
 } from '../core/deployment-provisioning.contract';
 import type { ProjectDriftFindingInput } from './project-drift.types';
+
+function maybeRepoFinding(
+  project: DeploymentProjectReference,
+): ProjectDriftFindingInput | null {
+  if (!project.repoFullName || !project.repoUrl) {
+    return {
+      projectId: project.projectId,
+      source: 'local_snapshot',
+      severity: 'warning',
+      code: 'project_repo_metadata_missing',
+      message: 'Project repository metadata is incomplete.',
+      details: {
+        repoFullName: project.repoFullName,
+        repoUrl: project.repoUrl ?? null,
+      },
+    };
+  }
+  return null;
+}
+
+function maybeWorkflowFinding(
+  project: DeploymentProjectReference,
+): ProjectDriftFindingInput | null {
+  const workflowFiles = project.projectOptions?.['workflowFiles'];
+  if (
+    !project.workflowPath &&
+    (!Array.isArray(workflowFiles) || workflowFiles.length === 0)
+  ) {
+    return {
+      projectId: project.projectId,
+      source: 'local_snapshot',
+      severity: 'warning',
+      code: 'workflow_files_missing',
+      message: 'No workflow file metadata is tracked for this project.',
+    };
+  }
+  return null;
+}
+
+function maybeCiTokenFinding(
+  projectId: string,
+  ciToken: ProjectTokenStatus | null,
+): ProjectDriftFindingInput | null {
+  if (!ciToken) {
+    return {
+      projectId,
+      source: 'local_snapshot',
+      severity: 'error',
+      code: 'ci_token_missing',
+      message: 'No active CI token metadata is tracked for this project.',
+    };
+  }
+  if (ciToken.status === 'revoked') {
+    return {
+      projectId,
+      source: 'local_snapshot',
+      severity: 'error',
+      code: 'ci_token_revoked',
+      message: 'The tracked CI token is revoked.',
+    };
+  }
+  return null;
+}
+
+function maybeTargetFindings(
+  projectId: string,
+  targets: DeploymentTargetSummary[],
+): ProjectDriftFindingInput[] {
+  const findings: ProjectDriftFindingInput[] = [];
+  for (const target of targets) {
+    if (!target.branchName) {
+      findings.push({
+        projectId,
+        targetId: target.id,
+        source: 'local_snapshot',
+        severity: 'warning',
+        code: 'branch_metadata_missing',
+        message: 'Deployment target branch metadata is missing.',
+      });
+    }
+    if (!target.providerProjectId || !target.providerProjectName) {
+      findings.push({
+        projectId,
+        targetId: target.id,
+        source: 'local_snapshot',
+        severity: 'error',
+        code: 'deployment_target_metadata_missing',
+        message: 'Deployment target provider metadata is incomplete.',
+        details: { provider: target.provider },
+      });
+    }
+    if (target.ownershipMode === 'byo' && !target.providerConnectionId) {
+      findings.push({
+        projectId,
+        targetId: target.id,
+        source: 'local_snapshot',
+        severity: 'warning',
+        code: 'provider_connection_metadata_unavailable',
+        message: 'BYO deployment target has no provider connection metadata.',
+        details: { provider: target.provider },
+      });
+    }
+  }
+  return findings;
+}
 
 @Injectable()
 export class ProjectDriftService implements DeploymentDriftQuery {
@@ -89,87 +195,20 @@ export class ProjectDriftService implements DeploymentDriftQuery {
   ): ProjectDriftFindingInput[] {
     const findings: ProjectDriftFindingInput[] = [];
     const projectId = project.projectId;
-    const workflowFiles = project.projectOptions?.['workflowFiles'];
-
-    if (!project.repoFullName || !project.repoUrl) {
-      findings.push({
-        projectId,
-        source: 'local_snapshot',
-        severity: 'warning',
-        code: 'project_repo_metadata_missing',
-        message: 'Project repository metadata is incomplete.',
-        details: {
-          repoFullName: project.repoFullName,
-          repoUrl: project.repoUrl ?? null,
-        },
-      });
+    const repoFinding = maybeRepoFinding(project);
+    if (repoFinding) {
+      findings.push(repoFinding);
+    }
+    const workflowFinding = maybeWorkflowFinding(project);
+    if (workflowFinding) {
+      findings.push(workflowFinding);
+    }
+    const ciTokenFinding = maybeCiTokenFinding(projectId, ciToken);
+    if (ciTokenFinding) {
+      findings.push(ciTokenFinding);
     }
 
-    if (
-      !project.workflowPath &&
-      (!Array.isArray(workflowFiles) || workflowFiles.length === 0)
-    ) {
-      findings.push({
-        projectId,
-        source: 'local_snapshot',
-        severity: 'warning',
-        code: 'workflow_files_missing',
-        message: 'No workflow file metadata is tracked for this project.',
-      });
-    }
-
-    if (!ciToken) {
-      findings.push({
-        projectId,
-        source: 'local_snapshot',
-        severity: 'error',
-        code: 'ci_token_missing',
-        message: 'No active CI token metadata is tracked for this project.',
-      });
-    } else if (ciToken.status === 'revoked') {
-      findings.push({
-        projectId,
-        source: 'local_snapshot',
-        severity: 'error',
-        code: 'ci_token_revoked',
-        message: 'The tracked CI token is revoked.',
-      });
-    }
-
-    for (const target of targets) {
-      if (!target.branchName) {
-        findings.push({
-          projectId,
-          targetId: target.id,
-          source: 'local_snapshot',
-          severity: 'warning',
-          code: 'branch_metadata_missing',
-          message: 'Deployment target branch metadata is missing.',
-        });
-      }
-      if (!target.providerProjectId || !target.providerProjectName) {
-        findings.push({
-          projectId,
-          targetId: target.id,
-          source: 'local_snapshot',
-          severity: 'error',
-          code: 'deployment_target_metadata_missing',
-          message: 'Deployment target provider metadata is incomplete.',
-          details: { provider: target.provider },
-        });
-      }
-      if (target.ownershipMode === 'byo' && !target.providerConnectionId) {
-        findings.push({
-          projectId,
-          targetId: target.id,
-          source: 'local_snapshot',
-          severity: 'warning',
-          code: 'provider_connection_metadata_unavailable',
-          message: 'BYO deployment target has no provider connection metadata.',
-          details: { provider: target.provider },
-        });
-      }
-    }
+    findings.push(...maybeTargetFindings(projectId, targets));
 
     if (targets.length > 0 && envMetadata.length === 0) {
       findings.push({
