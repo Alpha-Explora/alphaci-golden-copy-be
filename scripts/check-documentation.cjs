@@ -160,6 +160,18 @@ function generatedMapErrors() {
   ];
 }
 
+function capabilityRegistryErrors() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'check-capabilities.cjs')],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  if (result.status === 0) return [];
+  return [
+    `capability registry check failed: ${(result.stderr || result.stdout).trim()}`,
+  ];
+}
+
 function main() {
   const errors = [
     ...requiredFileErrors(),
@@ -168,6 +180,7 @@ function main() {
     ...sourceBranchErrors(),
     ...changelogErrors(),
     ...generatedMapErrors(),
+    ...capabilityRegistryErrors(),
     ...validateBundle(DOCS),
   ];
 

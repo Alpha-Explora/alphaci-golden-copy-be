@@ -21,10 +21,10 @@ This map is generated from the current source tree and architecture metrics. It 
 
 | Context | Owns | Public boundary | Owned schemas | Measured source/test files |
 |---|---|---|---|---|
-| `identity-access` | authentication, administration, capabilities, workspaces, hierarchy, and repository access policy | `src/modules/identity-access/index.ts` | `identity`, `orgs`, `hierarchy` | 103 source files / 15 tests |
-| `projects` | project lifecycle, catalog, workflows, existing repositories, and project read models | `src/modules/projects/index.ts` | `projects`, `workflow` | 90 source files / 23 tests |
-| `pipelines` | GitHub integration, CI token lifecycle, and CI report ingestion | `src/modules/pipelines/index.ts` | `github_app`, `ci`, `workflow` | 37 source files / 9 tests |
-| `runtime` | deployment targets, environment metadata, domains, provider connections, provider adapters, and deployment history | `src/modules/runtime/index.ts` | `runtime`, `env_provisioning`, `runtime_deployments`, `runtime_domains`, `runtime_secrets`, `gcp_operations` | 128 source files / 44 tests |
+| `identity-access` | authentication, administration, capabilities, workspaces, hierarchy, and repository access policy | `src/modules/identity-access/index.ts` | `identity`, `orgs`, `hierarchy` | 109 source files / 19 tests |
+| `projects` | project lifecycle, catalog, workflows, existing repositories, and project read models | `src/modules/projects/index.ts` | `projects`, `workflow` | 94 source files / 25 tests |
+| `pipelines` | GitHub integration, CI token lifecycle, and CI report ingestion | `src/modules/pipelines/index.ts` | `github_app`, `ci`, `workflow` | 44 source files / 12 tests |
+| `runtime` | deployment targets, environment metadata, domains, provider connections, provider adapters, and deployment history | `src/modules/runtime/index.ts` | `runtime`, `env_provisioning`, `runtime_deployments`, `runtime_domains`, `runtime_secrets`, `gcp_operations` | 136 source files / 48 tests |
 | `billing` | subscriptions, usage, and quota policy | `src/modules/billing/index.ts` | `billing`, `usage`, `billing_lifecycle` | 21 source files / 5 tests |
 | `platform-ops` | audit, notifications, feedback, and outbox consumers | `src/modules/platform-ops/index.ts` | `platform`, `audit`, `notifications`, `support` | 27 source files / 3 tests |
 

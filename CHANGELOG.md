@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added the `check:capabilities` gate, which binds `docs/capabilities/registry.ts` to the boolean leaves of `AppConfig` and validates capability dependency edges.
 - Added an OKF v0.2 current-state documentation bundle covering architecture, capabilities, composition packs, runbooks, and change history.
 - Added generated context, event, provider, route, schema, architecture-check, and capability maps.
 - Added repository checks for OKF structure, lower-kebab documentation names, stale plan-specific claims, edition branches, and generated-map drift.
@@ -25,11 +26,12 @@
 
 ### Fixed
 
+- Fixed the architecture route-inventory check failing on Windows checkouts by pinning `*.txt` to LF, so the committed baseline hash matches the working tree.
 - Corrected outbox acknowledgement to update the active `published_at` column rather than the removed legacy `processed_at` column.
 - Added fail-closed protection to the branch-scoped environment rollback so it cannot silently discard preview branch identity in the legacy schema.
 - Preserved hierarchy failure context when GitHub repository or user resolution fails, allowing retry and audit handling to retain the group and acting-user context.
 
 ### Verification
 
-- Documentation verification: `npm run check:documentation`.
+- Documentation verification: `npm run check:documentation` (includes `npm run check:capabilities`).
 - Full local verification: see [the local verification runbook](docs/runbooks/runbook-local-verification.md).

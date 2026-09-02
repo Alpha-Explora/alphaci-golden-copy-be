@@ -8,6 +8,9 @@ sources:
   - id: "capability-registry"
     resource: "docs/capabilities/registry.ts"
     title: "Documentation capability registry"
+  - id: "capability-gate"
+    resource: "scripts/check-capabilities.cjs"
+    title: "Capability registry gate"
   - id: "capability-endpoint"
     resource: "src/modules/identity-access/capabilities/capabilities.controller.ts"
     title: "Compatibility capability endpoint"
@@ -23,8 +26,10 @@ This matrix is generated from the documentation registry at `docs/capabilities/r
 | `identity.hierarchy` | `identity-access` | Hierarchy groups, systems, repositories, and assignments. | stable | saas, edu, enterprise | hierarchy.enabled |
 | `platform.audit-events` | `platform-ops` | Project audit event recording through the application outbox. | stable | saas, edu, enterprise | auditEvents.enabled |
 | `platform.notifications` | `platform-ops` | In-app notification requests and persistence. | stable | saas, edu, enterprise | notifications.enabled |
+| `billing.subscription-gate` | `billing` | Subscription entitlement gating for authenticated access and CI run validation. | stable | saas, edu, enterprise | subscription.gateEnabled |
 | `billing.usage-quotas` | `billing` | Usage tracking and quota policy checks. | limited | saas, edu, enterprise | usageQuotas.enabled |
 | `runtime.env-provisioning` | `runtime` | Provider-backed deployment target and environment provisioning. | limited | saas, edu, enterprise | envProvisioning.enabled plus provider configuration |
+| `runtime.gcp-deployments` | `runtime` | Google Cloud deployment provider, including optional dedicated per-customer projects. | limited | saas, edu, enterprise | gcpDeployments.enabled plus GCP provider configuration |
 | `runtime.deployment-history` | `runtime` | Deployment history read model exposed through the Runtime context. | limited | saas, edu, enterprise | deploymentHistory.enabled |
 | `runtime.preview-deployments` | `runtime` | Branch-scoped preview deployment grouping when the provider supports it. | limited | saas, edu, enterprise | previewDeployments.enabled and deploymentHistory.enabled |
 | `runtime.drift-detection` | `runtime` | Configuration drift detection using the current local or provider snapshot mode. | limited | saas, edu, enterprise | driftDetection.enabled |
