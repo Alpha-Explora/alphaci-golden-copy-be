@@ -11,7 +11,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
-import { ProjectWorkspaceService } from './project-workspace.service';
+import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
 
 /**
  * GET-only views of a project's repository: Code, Pull requests and Pipeline

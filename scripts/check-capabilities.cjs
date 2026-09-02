@@ -5,9 +5,10 @@
  * Binds the documentation capability registry to real application configuration.
  *
  * The registry used to name its enablement source in prose, so a flag could be
- * renamed in app.config.ts while the registry and the generated matrix stayed
+ * renamed in AppConfig while the registry and the generated matrix stayed
  * green. Every record now carries `configurationFlags`, which are checked
- * against the boolean leaves of the AppConfig interface in both directions.
+ * against the boolean leaves of AppConfig (`src/kernel/config/app.config.types.ts`)
+ * in both directions.
  *
  * Checks:
  *   1. every configurationFlags entry exists as a boolean leaf in AppConfig
@@ -26,7 +27,7 @@ const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
 const REGISTRY = path.join(ROOT, 'docs/capabilities/registry.ts');
-const APP_CONFIG = path.join(ROOT, 'src/kernel/config/app.config.ts');
+const APP_CONFIG = path.join(ROOT, 'src/kernel/config/app.config.types.ts');
 
 const CONTEXTS = new Set([
   'identity-access',

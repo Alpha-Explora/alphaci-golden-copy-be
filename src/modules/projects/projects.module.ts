@@ -17,12 +17,12 @@ import { WorkflowsModule } from './application/workflows/workflows.module';
 import { ExistingReposModule } from './application/existing-repos/existing-repos.module';
 import { CatalogModule } from './application/catalog/catalog.module';
 import { ProjectsController } from './projects.controller';
-import { LocalCiRunsProvider } from './local-ci-runs.provider';
+import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';
-import { ProjectCiRunsService } from './project-ci-runs.service';
-import { ProjectPreviewsService } from './project-previews.service';
-import { UrlEmbeddabilityProbe } from './url-embeddability.probe';
-import { ProjectDriftRepairService } from './project-drift-repair.service';
+import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service';
+import { ProjectPreviewsService } from './application/dashboard/project-previews.query-service';
+import { UrlEmbeddabilityProbe } from './application/dashboard/url-embeddability.probe';
+import { ProjectDriftRepairService } from './application/drift/project-drift-repair.handler';
 import { ProjectDashboardService } from './application/dashboard/project-dashboard.service';
 import { ProjectDriftRepairApplicationService } from './application/drift/project-drift-repair.service';
 import {
@@ -38,8 +38,8 @@ import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.r
 import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
 import { ProjectsRepository } from './projects.repository';
 import { ProjectWorkspaceController } from './project-workspace.controller';
-import { ProjectWorkspaceService } from './project-workspace.service';
-import { ProjectsService } from './projects.service';
+import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
+import { ProjectsService } from './application/lifecycle/projects.service';
 import { ProjectReferenceModule } from './project-reference.module';
 
 @Module({
@@ -88,6 +88,6 @@ import { ProjectReferenceModule } from './project-reference.module';
     SessionAuthGuard,
     SubscriptionGuard,
   ],
-  exports: [ProjectProvisioningService],
+  exports: [ProjectProvisioningService, ProjectReconciliationService],
 })
 export class ProjectsModule {}

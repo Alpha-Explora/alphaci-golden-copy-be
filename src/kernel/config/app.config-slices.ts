@@ -1,6 +1,6 @@
 import type { SubscriptionPlan } from '#kernel/auth/session-user.interface';
 
-import type { AppConfig, GithubTeamRoleSyncMode } from './app.config';
+import type { AppConfig, GithubTeamRoleSyncMode } from './app.config.types';
 
 type Env = NodeJS.ProcessEnv;
 
@@ -17,7 +17,9 @@ function resolveTeamRoleSync(raw: string | undefined): GithubTeamRoleSyncMode {
   return 'off';
 }
 
-function githubOAuth(env: Env): Pick<
+function githubOAuth(
+  env: Env,
+): Pick<
   AppConfig['github'],
   'clientId' | 'clientSecret' | 'callbackUrl' | 'scope'
 > {
@@ -39,7 +41,9 @@ function githubOAuth(env: Env): Pick<
   };
 }
 
-function githubAppCredentials(env: Env): Pick<
+function githubAppCredentials(
+  env: Env,
+): Pick<
   AppConfig['github'],
   'appId' | 'appSlug' | 'appPrivateKey' | 'appWebhookSecret'
 > {
@@ -62,7 +66,9 @@ function githubAppCredentials(env: Env): Pick<
   };
 }
 
-function githubOrgAndTeams(env: Env): Pick<
+function githubOrgAndTeams(
+  env: Env,
+): Pick<
   AppConfig['github'],
   | 'internalOrg'
   | 'enforcedOrg'

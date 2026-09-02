@@ -11,10 +11,10 @@ import {
   type DeploymentProjectReference,
 } from '#kernel/ports/deployment-runtime.port';
 import { ProjectsController } from './projects.controller.js';
-import { ProjectCiRunsService } from './project-ci-runs.service.js';
-import { ProjectPreviewsService } from './project-previews.service.js';
-import { ProjectDriftRepairService } from './project-drift-repair.service.js';
-import { ProjectsService } from './projects.service.js';
+import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service.js';
+import { ProjectPreviewsService } from './application/dashboard/project-previews.query-service.js';
+import { ProjectDriftRepairService } from './application/drift/project-drift-repair.handler.js';
+import { ProjectsService } from './application/lifecycle/projects.service.js';
 
 const fakeUser = { id: 'user-1', login: 'testuser' };
 const projectReference: DeploymentProjectReference = {

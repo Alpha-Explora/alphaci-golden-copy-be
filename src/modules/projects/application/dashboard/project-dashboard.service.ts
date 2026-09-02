@@ -40,7 +40,7 @@ import type {
   ProjectOverviewResponse,
   ProjectSyncSnapshotResponse,
   ProvisionedProjectsResponse,
-} from '../../projects.service.types';
+} from '../lifecycle/projects.service.types';
 import {
   WORKFLOW_HISTORY_QUERY,
   type WorkflowHistoryQuery,

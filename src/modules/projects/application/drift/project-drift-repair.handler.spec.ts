@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
-import { ProjectDriftRepairService } from './project-drift-repair.service';
+import { ProjectDriftRepairService } from './project-drift-repair.handler';
 
 describe('ProjectDriftRepairService', () => {
   const projectsRepository = {

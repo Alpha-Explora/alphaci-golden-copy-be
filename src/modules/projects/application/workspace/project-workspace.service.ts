@@ -18,7 +18,7 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
-import { ProjectsRepository } from './projects.repository';
+import { ProjectsRepository } from '../../projects.repository';
 
 export interface ProjectBranchesResponse {
   defaultBranch: string;

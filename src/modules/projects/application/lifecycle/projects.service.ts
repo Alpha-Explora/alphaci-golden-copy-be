@@ -32,29 +32,29 @@ import {
   type DeploymentTargetsQuery,
 } from '#kernel/ports/deployment-runtime.port';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
-import { CatalogService } from './application/catalog/catalog.service';
+import { CatalogService } from '../catalog/catalog.service';
 import {
   PROJECT_LINK_PORT,
   type ProjectLinkPort,
 } from '#kernel/ports/project-link.port';
-import { ProjectsRepository } from './projects.repository';
-import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';
-import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.repository';
-import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
-import type { CreateProjectDto } from './dto/create-project.dto';
-import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
-import { ProductEventsService } from './application/lifecycle/product-events.service';
-import { ProjectDashboardService } from './application/dashboard/project-dashboard.service';
-import { ProjectWorkflowFilesService } from './application/workflows/project-workflow-files.service';
+import { ProjectsRepository } from '../../projects.repository';
+import { ProjectDashboardSnapshotsRepository } from '../../project-dashboard-snapshots.repository';
+import { ProjectWorkflowSettingsRepository } from '../../project-workflow-settings.repository';
+import { ProjectWorkflowUpdateRequestsRepository } from '../../project-workflow-update-requests.repository';
+import type { CreateProjectDto } from '../../dto/create-project.dto';
+import { ProjectWorkflowsService } from '../workflows/project-workflows.service';
+import { ProductEventsService } from './product-events.service';
+import { ProjectDashboardService } from '../dashboard/project-dashboard.service';
+import { ProjectWorkflowFilesService } from '../workflows/project-workflow-files.service';
 import {
   WORKFLOW_HISTORY_QUERY,
   type WorkflowHistoryQuery,
-} from './application/workflows/index';
-import { ProjectLifecycleService } from './application/lifecycle/project-lifecycle.service';
-import { ProjectReconciliationService } from './application/lifecycle/project-reconciliation.service';
-import { ProjectProvisioningApplicationService } from './application/lifecycle/project-provisioning-application.service';
-import type { SetupProjectDto } from './dto/setup-project.dto';
-import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
+} from '../workflows/index';
+import { ProjectLifecycleService } from './project-lifecycle.service';
+import { ProjectReconciliationService } from './project-reconciliation.service';
+import { ProjectProvisioningApplicationService } from './project-provisioning-application.service';
+import type { SetupProjectDto } from '../../dto/setup-project.dto';
+import type { DisconnectProjectDto } from '../../dto/disconnect-project.dto';
 import {
   USAGE_QUOTA,
   type UsageQuotaPort,

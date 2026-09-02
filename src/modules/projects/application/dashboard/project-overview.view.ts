@@ -13,7 +13,7 @@ import type {
   ProvisionedProject,
   ProjectOverviewHealthStatus,
   ProjectOverviewResponse,
-} from '../../projects.service.types';
+} from '../lifecycle/projects.service.types';
 
 type OverviewHealthCheck = ProjectOverviewResponse['health']['checks'][number];
 

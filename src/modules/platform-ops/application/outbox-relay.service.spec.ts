@@ -57,6 +57,83 @@ describe('OutboxRelayService', () => {
     );
   });
 
+  it('rejects unknown platform event topics instead of acknowledging them', async () => {
+    const auditEventsService = {
+      recordProjectEvent: jest.fn().mockResolvedValue(undefined),
+    };
+    const notificationEventsService = {
+      record: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new OutboxRelayService(
+      { processPending: jest.fn() } as never,
+      new OutboxDispatcher(),
+      auditEventsService as never,
+      notificationEventsService as never,
+    );
+
+    await expect(
+      service.handle({
+        id: 'unknown-1',
+        topic: 'platform.unknown',
+        aggregateType: 'audit_event',
+        aggregateId: 'project-1',
+        payload: {},
+        createdAt: '2026-08-27T00:00:00.000Z',
+      }),
+    ).rejects.toThrow("Unsupported platform event topic 'platform.unknown'");
+    expect(auditEventsService.recordProjectEvent).not.toHaveBeenCalled();
+    expect(notificationEventsService.record).not.toHaveBeenCalled();
+  });
+
+  it('re-delivers the same events under at-least-once semantics', async () => {
+    const auditEventsService = {
+      recordProjectEvent: jest.fn().mockResolvedValue(undefined),
+    };
+    const notificationEventsService = {
+      record: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new OutboxRelayService(
+      { processPending: jest.fn() } as never,
+      new OutboxDispatcher(),
+      auditEventsService as never,
+      notificationEventsService as never,
+    );
+
+    const auditEvent = {
+      id: 'audit-1',
+      topic: 'platform.audit.recorded',
+      aggregateType: 'audit_event',
+      aggregateId: 'project-1',
+      payload: {
+        projectId: 'project-1',
+        eventCode: 'project.updated',
+        message: 'Project updated',
+      },
+      createdAt: '2026-08-27T00:00:00.000Z',
+    };
+    const notificationEvent = {
+      id: 'notification-1',
+      topic: 'platform.notification.requested',
+      aggregateType: 'notification',
+      aggregateId: 'user-1',
+      payload: {
+        userId: 'user-1',
+        eventCode: 'project.updated',
+        title: 'Project updated',
+        body: 'The project changed.',
+      },
+      createdAt: '2026-08-27T00:00:00.000Z',
+    };
+
+    await service.handle(auditEvent);
+    await service.handle(auditEvent);
+    await service.handle(notificationEvent);
+    await service.handle(notificationEvent);
+
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledTimes(2);
+    expect(notificationEventsService.record).toHaveBeenCalledTimes(2);
+  });
+
   it('passes bounded lease and handler timeout settings to the repository', async () => {
     const originalEnv = process.env;
     process.env = {

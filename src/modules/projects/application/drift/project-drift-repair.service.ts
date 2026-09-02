@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { ProjectDriftRepairService } from '../../project-drift-repair.service';
+import { ProjectDriftRepairService } from './project-drift-repair.handler';
 import type {
   ProjectDriftRepairAction,
   ProjectDriftRepairResponse,

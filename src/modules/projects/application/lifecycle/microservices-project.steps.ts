@@ -11,7 +11,7 @@ import type {
   DeploymentProvisioningRequestDto,
   MicroserviceSlotDto,
 } from '../../dto/create-project.dto';
-import type { CreateProjectResponse } from '../../projects.service.types';
+import type { CreateProjectResponse } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../projects.repository';
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
