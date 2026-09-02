@@ -24,6 +24,12 @@ import {
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
 import type { DetachDeploymentTargetDto } from '../dto/detach-deployment-target.dto';
+import {
+  buildCreateTargetPersistInput,
+  buildCreateTargetTokenInput,
+  buildProviderTargetRequest,
+  mapSlotViolation,
+} from './create-deployment-target.steps';
 import { EnvTokenEncryptionService } from './encryption.service';
 import {
   PROVIDER_CLIENT_REGISTRY,
@@ -124,10 +130,7 @@ export class DeploymentTargetsService {
         this.providerRegistry?.find(dto.provider),
       );
     } catch (error) {
-      if (error instanceof DeploymentPolicyViolation) {
-        throw new BadRequestException(error.policyError.message);
-      }
-      throw error;
+      mapSlotViolation(error);
     }
     const providerPolicy = this.providerPolicy(dto.provider);
     if (
@@ -152,17 +155,10 @@ export class DeploymentTargetsService {
         ...providerPolicy.managedQuota,
       });
     }
-    const tokenInput: {
-      ownershipMode: string;
-      providerConnectionId?: string;
-    } = { ownershipMode: dto.ownershipMode };
-    if (dto.providerConnectionId) {
-      tokenInput.providerConnectionId = dto.providerConnectionId;
-    }
     const providerAuth = await this.resolveProviderToken(
       dto.provider,
       userId,
-      tokenInput,
+      buildCreateTargetTokenInput(dto),
     );
     const deploymentStrategy = this.deploymentStrategyResolver.resolve({
       provider: dto.provider,
@@ -171,31 +167,13 @@ export class DeploymentTargetsService {
       renderDeployMethod: dto.renderDeployMethod,
     });
     const providerTargetPolicy =
-      providerPolicy?.resolveTarget({
-        ownershipMode: dto.ownershipMode,
-        action: dto.action,
-        branchName: dto.branchName?.trim() || 'uat',
-        ...(dto.rootDirectory ? { rootDirectory: dto.rootDirectory } : {}),
-        ...(dto.imageUrl ? { imageUrl: dto.imageUrl } : {}),
-        ...(dto.renderDeployMethod
-          ? { renderDeployMethod: dto.renderDeployMethod }
-          : {}),
-        ...(dto.renderServiceType
-          ? { renderServiceType: dto.renderServiceType }
-          : {}),
-        ...(dto.renderRuntime ? { renderRuntime: dto.renderRuntime } : {}),
-        ...(dto.renderInstanceType
-          ? { renderInstanceType: dto.renderInstanceType }
-          : {}),
-        ...(dto.renderRegion ? { renderRegion: dto.renderRegion } : {}),
-        ...(dto.renderEnvironmentName
-          ? { renderEnvironmentName: dto.renderEnvironmentName }
-          : {}),
-        ...(dto.dockerContext ? { dockerContext: dto.dockerContext } : {}),
-        ...(dto.dockerfilePath ? { dockerfilePath: dto.dockerfilePath } : {}),
-        connectionMetadata: providerAuth.connectionMetadata,
-        managedConfig: this.managedProviderConfig(),
-      }) ?? EMPTY_PROVIDER_TARGET_POLICY;
+      providerPolicy?.resolveTarget(
+        buildProviderTargetRequest({
+          dto,
+          connectionMetadata: providerAuth.connectionMetadata,
+          managedConfig: this.managedProviderConfig(),
+        }),
+      ) ?? EMPTY_PROVIDER_TARGET_POLICY;
 
     const target =
       dto.action === 'create'
@@ -228,41 +206,16 @@ export class DeploymentTargetsService {
           };
 
     const created =
-      await this.deploymentTargetsRepository.createDeploymentTarget({
-        projectId,
-        slot: dto.slot,
-        ownershipMode: dto.ownershipMode,
-        provider: dto.provider,
-        providerConnectionId:
-          dto.ownershipMode === 'byo'
-            ? (dto.providerConnectionId ?? null)
-            : null,
-        providerProjectId: target.id,
-        providerProjectName: target.name,
-        repoFullName: project.repoFullName,
-        branchName: dto.branchName?.trim() || 'uat',
-        rootDirectory: dto.rootDirectory?.trim() || null,
-        buildCommand: dto.buildCommand?.trim() || null,
-        startCommand: dto.startCommand?.trim() || null,
-        renderServiceType:
-          providerTargetPolicy.storage.renderServiceType ?? null,
-        renderInstanceType:
-          providerTargetPolicy.storage.renderInstanceType ?? null,
-        renderRegion: providerTargetPolicy.storage.renderRegion ?? null,
-        renderEnvironmentName:
-          providerTargetPolicy.storage.renderEnvironmentName ?? null,
-        dockerContext: providerTargetPolicy.storage.dockerContext ?? null,
-        dockerfilePath: providerTargetPolicy.storage.dockerfilePath ?? null,
-        imageUrl: dto.imageUrl?.trim() || null,
-        environmentMap: dto.environmentMap ?? {},
-        deploymentStrategy,
-        providerMetadata: {
-          ...(target.metadata ?? {}),
-          ...(providerTargetPolicy.storage.renderRuntime
-            ? { renderRuntime: providerTargetPolicy.storage.renderRuntime }
-            : {}),
-        },
-      });
+      await this.deploymentTargetsRepository.createDeploymentTarget(
+        buildCreateTargetPersistInput({
+          projectId,
+          dto,
+          repoFullName: project.repoFullName,
+          target,
+          providerTargetPolicy,
+          deploymentStrategy,
+        }),
+      );
     await this.recordTargetEvent({
       userId,
       projectId,
