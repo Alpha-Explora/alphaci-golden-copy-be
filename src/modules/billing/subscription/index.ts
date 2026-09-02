@@ -1,9 +1,9 @@
 export { SubscriptionModule } from './subscription.module';
-export { SubscriptionService } from './subscription.service';
+export { SubscriptionService } from './application/subscription.service';
 export {
   SUBSCRIPTION_BOOTSTRAP,
   type SubscriptionBootstrap,
-} from './subscription.contracts';
+} from './application/subscription.contracts';
 export type {
   SubscriptionContract,
   SubscriptionPlanContract,

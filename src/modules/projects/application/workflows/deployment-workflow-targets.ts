@@ -1,4 +1,4 @@
-import type { DeploymentProvisioningRequestDto } from '../../dto/create-project.dto';
+import type { DeploymentProvisioningRequestDto } from '../../api/dto/create-project.dto';
 import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import type { DeploymentWorkflowTarget } from './dto/generate-workflow.dto';
 

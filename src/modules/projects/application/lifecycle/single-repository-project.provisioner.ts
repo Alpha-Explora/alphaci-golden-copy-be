@@ -7,15 +7,15 @@ import {
   extractDeploymentProvider,
   resolveSingleRepoDeploymentSlots,
   withDefaultCreateDeploymentProvisioning,
-} from './deployment-provisioning.policy';
+} from '../../domain/deployment-provisioning.policy';
 import { normalizeRepoShape } from '../../scaffold.builder';
-import type { CreateProjectDto } from '../../dto/create-project.dto';
-import type { SetupProjectDto } from '../../dto/setup-project.dto';
+import type { CreateProjectDto } from '../../api/dto/create-project.dto';
+import type { SetupProjectDto } from '../../api/dto/setup-project.dto';
 import type {
   CreateProjectResponse,
   SetupProjectResponse,
 } from './projects.service.types';
-import type { ProvisionedProjectRow } from '../../projects.repository';
+import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 
 export class SingleRepositoryProjectProvisioner {

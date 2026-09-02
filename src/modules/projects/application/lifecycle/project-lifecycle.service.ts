@@ -22,10 +22,10 @@ import {
   type WorkspaceAccessPort,
   type WorkspaceRole,
 } from '#kernel/ports/workspaces.port';
-import type { CreateProjectDto } from '../../dto/create-project.dto';
-import type { DisconnectProjectDto } from '../../dto/disconnect-project.dto';
-import type { SetupProjectDto } from '../../dto/setup-project.dto';
-import { ProjectsRepository } from '../../projects.repository';
+import type { CreateProjectDto } from '../../api/dto/create-project.dto';
+import type { DisconnectProjectDto } from '../../api/dto/disconnect-project.dto';
+import type { SetupProjectDto } from '../../api/dto/setup-project.dto';
+import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import type {
   CreateProjectResponse,
   DisconnectProjectResponse,

@@ -3,7 +3,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { ProviderCiSecretsInstaller } from '../application/ports/provider-ci-secrets-installer.port';
 import type { RuntimeEnvProviderClient } from '../application/ports/runtime-env-provider.client';
 import type { DeploymentProvider } from './deployment-provider.contract';
-import type { DeploymentProviderPolicy } from './deployment-provider.policy';
+import type { DeploymentProviderPolicy } from '../domain/deployment-provider.policy';
 import type { WorkflowFragment } from './workflow-fragment.contract';
 
 /**

@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '#kernel/db/database.module';
-import { HierarchyProjectLinkRepository } from './hierarchy-project-link.repository';
-import { HierarchyProjectLinkService } from './hierarchy-project-link.service';
+import { HierarchyProjectLinkRepository } from './infrastructure/hierarchy-project-link.repository';
+import { HierarchyProjectLinkService } from './application/hierarchy-project-link.service';
 import { PROJECT_LINK_PORT } from '#kernel/ports/project-link.port';
 
 /** Composition boundary for the project-to-hierarchy link adapter. */

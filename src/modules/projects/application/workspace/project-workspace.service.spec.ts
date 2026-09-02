@@ -1,8 +1,8 @@
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 
 import { ProjectWorkspaceService } from './project-workspace.service';
-import type { GithubService } from '#modules/pipelines/github/github.service';
-import type { ProjectsRepository } from '../../projects.repository';
+import type { GithubService } from '#modules/pipelines/github/infrastructure/github.service';
+import type { ProjectsRepository } from '../../infrastructure/projects.repository';
 
 const ROW = { repo_full_name: 'Alpha-Explora/orders-api' };
 

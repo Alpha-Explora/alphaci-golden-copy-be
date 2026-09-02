@@ -177,7 +177,7 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
 const TRANSITIONAL_SOURCE_REFERENCES = new Map([
   ['src/kernel/events/outbox.repository.ts', pairs(['platform.outbox_events'])],
   [
-    'src/modules/billing/usage/usage-quota.service.ts',
+    'src/modules/billing/usage/application/usage-quota.service.ts',
     pairs([
       'env_provisioning.project_deployment_targets',
       'env_provisioning.project_env_var_metadata',
@@ -187,7 +187,7 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     ]),
   ],
   [
-    'src/modules/identity-access/admin/admin.repository.ts',
+    'src/modules/identity-access/admin/infrastructure/admin.repository.ts',
     pairs([
       'projects.provisioned_projects',
       'workflow.ci_run_reports',
@@ -197,27 +197,27 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     ]),
   ],
   [
-    'src/modules/identity-access/hierarchy/group-activity.repository.ts',
+    'src/modules/identity-access/hierarchy/infrastructure/group-activity.repository.ts',
     pairs(['audit.audit_events']),
   ],
   [
-    'src/modules/identity-access/hierarchy/github-sync/github-access-sync.repository.ts',
+    'src/modules/identity-access/hierarchy/infrastructure/github-access-sync.repository.ts',
     pairs(['identity.app_users']),
   ],
   [
-    'src/modules/identity-access/hierarchy/groups/groups.repository.ts',
+    'src/modules/identity-access/hierarchy/infrastructure/groups.repository.ts',
     pairs(['hierarchy.systems']),
   ],
   [
-    'src/modules/identity-access/workspaces/workspaces.repository.ts',
+    'src/modules/identity-access/workspaces/infrastructure/workspaces.repository.ts',
     pairs(['projects.provisioned_projects']),
   ],
   [
-    'src/modules/pipelines/ci/ci-reports.service.ts',
+    'src/modules/pipelines/ci/application/ci-reports.service.ts',
     pairs(['projects.provisioned_projects']),
   ],
   [
-    'src/modules/pipelines/ci/infra/ci-tokens.repository.ts',
+    'src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts',
     pairs([
       'projects.provisioned_projects',
       'identity.app_users',
@@ -225,15 +225,15 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     ]),
   ],
   [
-    'src/modules/platform-ops/audit/audit-events.repository.ts',
+    'src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts',
     pairs(['projects.provisioned_projects']),
   ],
   [
-    'src/modules/platform-ops/feedback/feedback.repository.ts',
+    'src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts',
     pairs(['identity.app_users']),
   ],
   [
-    'src/modules/projects/projects.repository.ts',
+    'src/modules/projects/infrastructure/projects.repository.ts',
     pairs([
       'identity.app_users',
       'identity.platform_admins',
@@ -243,11 +243,11 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     ]),
   ],
   [
-    'src/modules/runtime/infrastructure/deployment-targets.repository.ts',
+    'src/modules/runtime/infrastructure/repositories/deployment-targets.repository.ts',
     pairs(['projects.provisioned_projects', 'orgs.workspace_members']),
   ],
   [
-    'src/modules/runtime/infrastructure/env-vars.repository.ts',
+    'src/modules/runtime/infrastructure/repositories/env-vars.repository.ts',
     pairs(['projects.provisioned_projects', 'orgs.workspace_members']),
   ],
   [

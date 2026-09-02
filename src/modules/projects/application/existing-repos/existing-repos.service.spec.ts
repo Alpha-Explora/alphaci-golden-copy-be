@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import type { CatalogService } from '../catalog/catalog.service.js';
-import type { GithubService } from '#modules/pipelines/github/github.service.js';
+import type { GithubService } from '#modules/pipelines/github/infrastructure/github.service.js';
 import { ExistingReposService } from './existing-repos.service.js';
 
 jest.mock('node:fs/promises', () => ({

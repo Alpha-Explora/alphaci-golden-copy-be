@@ -12,7 +12,7 @@ import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
-import type { CreateProviderConnectionDto } from '../dto/create-provider-connection.dto';
+import type { CreateProviderConnectionDto } from './dto/create-provider-connection.dto';
 import { EnvFeatureGuard } from './env-feature.guard';
 import { ProviderConnectionsService } from '../application/provider-connections.service';
 

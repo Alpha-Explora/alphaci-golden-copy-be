@@ -10,36 +10,37 @@ import { EventsModule } from '#kernel/events/events.module';
 import { AuthIdentityModule } from '#modules/identity-access/auth/auth-identity.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
 
-import { AssignmentsController } from './assignments/assignments.controller';
-import { AssignmentsRepository } from './assignments/assignments.repository';
-import { AssignmentsService } from './assignments/assignments.service';
-import { RepoConfigBrokerController } from './config-broker/repo-config-broker.controller';
-import { RepoConfigBrokerService } from './config-broker/repo-config-broker.service';
-import { RepoConfigurationChangesRepository } from './config-broker/repo-configuration-changes.repository';
-import { GithubSecretsProvider } from './config-broker/providers/github-secrets.provider';
-import { DeliveryProjectsController } from './delivery-projects/delivery-projects.controller';
-import { DeliveryProjectsRepository } from './delivery-projects/delivery-projects.repository';
-import { DeliveryProjectsService } from './delivery-projects/delivery-projects.service';
-import { GithubSyncOutboxHandler } from './github-sync/github-sync-outbox.handler';
-import { GithubAccessSyncRepository } from './github-sync/github-access-sync.repository';
-import { GithubSyncService } from './github-sync/github-sync.service';
-import { GithubTeamAccessProvider } from './github-sync/providers/github-team-access.provider';
-import { GithubTeamAccessLiveProvider } from './github-sync/providers/github-team-access.live';
-import { GithubTeamAccessStubProvider } from './github-sync/providers/github-team-access.stub';
-import { GroupActivityRepository } from './group-activity.repository';
-import { GroupActivityService } from './group-activity.service';
-import { GroupMembersService } from './groups/group-members.service';
-import { GroupsController } from './groups/groups.controller';
-import { GroupsRepository } from './groups/groups.repository';
-import { GroupsService } from './groups/groups.service';
-import { HierarchyAccessService } from './hierarchy-access.service';
-import { MeController } from './me.controller';
-import { RepositoriesController } from './repositories/repositories.controller';
-import { RepositoriesRepository } from './repositories/repositories.repository';
-import { RepositoriesService } from './repositories/repositories.service';
-import { SystemsController } from './systems/systems.controller';
-import { SystemsRepository } from './systems/systems.repository';
-import { SystemsService } from './systems/systems.service';
+import { AssignmentsController } from './api/assignments.controller';
+import { AssignmentsRepository } from './infrastructure/assignments.repository';
+import { AssignmentsService } from './application/assignments.service';
+import { RepoConfigBrokerController } from './api/repo-config-broker.controller';
+import { GITHUB_SECRETS_BROKER } from './application/github-secrets.broker';
+import { RepoConfigBrokerService } from './application/repo-config-broker.service';
+import { RepoConfigurationChangesRepository } from './infrastructure/repo-configuration-changes.repository';
+import { GithubSecretsProvider } from './infrastructure/config-broker-providers/github-secrets.provider';
+import { DeliveryProjectsController } from './api/delivery-projects.controller';
+import { DeliveryProjectsRepository } from './infrastructure/delivery-projects.repository';
+import { DeliveryProjectsService } from './application/delivery-projects.service';
+import { GithubSyncOutboxHandler } from './application/github-sync-outbox.handler';
+import { GithubAccessSyncRepository } from './infrastructure/github-access-sync.repository';
+import { GithubSyncService } from './application/github-sync.service';
+import { GithubTeamAccessProvider } from './application/github-team-access.provider';
+import { GithubTeamAccessLiveProvider } from './infrastructure/github-sync/providers/github-team-access.live';
+import { GithubTeamAccessStubProvider } from './infrastructure/github-sync/providers/github-team-access.stub';
+import { GroupActivityRepository } from './infrastructure/group-activity.repository';
+import { GroupActivityService } from './application/group-activity.service';
+import { GroupMembersService } from './application/group-members.service';
+import { GroupsController } from './api/groups.controller';
+import { GroupsRepository } from './infrastructure/groups.repository';
+import { GroupsService } from './application/groups.service';
+import { HierarchyAccessService } from './application/hierarchy-access.service';
+import { MeController } from './api/me.controller';
+import { RepositoriesController } from './api/repositories.controller';
+import { RepositoriesRepository } from './infrastructure/repositories.repository';
+import { RepositoriesService } from './application/repositories.service';
+import { SystemsController } from './api/systems.controller';
+import { SystemsRepository } from './infrastructure/systems.repository';
+import { SystemsService } from './application/systems.service';
 
 @Module({
   imports: [
@@ -98,6 +99,10 @@ import { SystemsService } from './systems/systems.service';
     },
     RepoConfigurationChangesRepository,
     GithubSecretsProvider,
+    {
+      provide: GITHUB_SECRETS_BROKER,
+      useExisting: GithubSecretsProvider,
+    },
     RepoConfigBrokerService,
   ],
 })

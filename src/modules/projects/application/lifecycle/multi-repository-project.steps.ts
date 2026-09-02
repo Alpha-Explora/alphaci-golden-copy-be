@@ -7,15 +7,15 @@ import { workflowFileMetadata } from '../dashboard/project-overview.view';
 import {
   combineDeploymentProvisioningResults,
   extractDeploymentProvider,
-} from './deployment-provisioning.policy';
+} from '../../domain/deployment-provisioning.policy';
 import { normalizeRepoShape } from '../../scaffold.builder';
 import type {
   CreateProjectDto,
   DeploymentProvisioningRequestDto,
   MicroserviceSlotDto,
-} from '../../dto/create-project.dto';
+} from '../../api/dto/create-project.dto';
 import type { CreateProjectResponse } from './projects.service.types';
-import type { ProvisionedProjectRow } from '../../projects.repository';
+import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 

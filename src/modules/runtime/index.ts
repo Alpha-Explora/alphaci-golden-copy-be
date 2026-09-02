@@ -31,7 +31,7 @@ export {
   type DeploymentProviderManagedQuota,
   type DeploymentProviderTargetPolicyInput,
   type DeploymentProviderTargetPolicyResult,
-} from './core/deployment-provider.policy';
+} from './domain/deployment-provider.policy';
 export {
   buildDeploymentWorkflowFragment,
   WORKFLOW_FRAGMENTS,

@@ -13,7 +13,7 @@ import { UsageModule } from '#modules/billing/usage/usage.module.js';
 import { WorkspacesModule } from '#modules/identity-access/workspaces/workspaces.module.js';
 import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { DeploymentTargetsController } from './api/deployment-targets.controller';
-import { DeploymentTargetsRepository } from './infrastructure/deployment-targets.repository';
+import { DeploymentTargetsRepository } from './infrastructure/repositories/deployment-targets.repository';
 import { DeploymentTargetsService } from './application/deployment-targets.service';
 import {
   DEPLOYMENT_DRIFT_FINDINGS_STORE,
@@ -28,7 +28,7 @@ import { DeploymentStrategyResolver } from './domain/deployment-strategy.resolve
 import { EnvTokenEncryptionService } from './application/encryption.service';
 import { EnvFeatureGuard } from './api/env-feature.guard';
 import { EnvVarsController } from './api/env-vars.controller';
-import { EnvVarsRepository } from './infrastructure/env-vars.repository';
+import { EnvVarsRepository } from './infrastructure/repositories/env-vars.repository';
 import { EnvVarsService } from './application/env-vars.service';
 import { ProviderClientRegistry } from './infrastructure/providers/core/provider-client.registry';
 import {
@@ -42,10 +42,10 @@ import { RenderCiSecretsService } from './infrastructure/providers/render/render
 import { RenderCostPolicyService } from './infrastructure/providers/render/render-cost-policy.service';
 import { RenderEnvClient } from './infrastructure/providers/render/render-env.client';
 import { ProviderConnectionsController } from './api/provider-connections.controller';
-import { ProviderConnectionsRepository } from './infrastructure/provider-connections.repository';
+import { ProviderConnectionsRepository } from './infrastructure/repositories/provider-connections.repository';
 import { ProviderConnectionsService } from './application/provider-connections.service';
 import { CustomDomainsController } from './api/custom-domains.controller';
-import { CustomDomainsRepository } from './infrastructure/custom-domains.repository';
+import { CustomDomainsRepository } from './infrastructure/repositories/custom-domains.repository';
 import { CustomDomainsService } from './application/custom-domains.service';
 import { VercelCiSecretsService } from './infrastructure/providers/vercel/vercel-ci-secrets.service';
 import { VercelEnvClient } from './infrastructure/providers/vercel/vercel-env.client';
@@ -58,7 +58,7 @@ import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-re
 import { RuntimeCoreModule } from './core/runtime-core.module';
 import { DEPLOYMENT_TARGET_DEFAULTS } from './core/deployment-provider.contract';
 import { DEPLOYMENT_PROVISIONING_DEFAULTS } from './core/deployment-provisioning.defaults';
-import { DeploymentProviderPolicyRegistry } from './core/deployment-provider.policy';
+import { DeploymentProviderPolicyRegistry } from './domain/deployment-provider.policy';
 import { RenderDeploymentPolicy } from './infrastructure/providers/render/render-deployment.policy';
 import { VercelDeploymentPolicy } from './infrastructure/providers/vercel/vercel-deployment.policy';
 import { RENDER_DEPLOYMENT_PROVIDER } from './infrastructure/providers/render/render-deployment.provider';

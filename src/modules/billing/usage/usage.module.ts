@@ -6,8 +6,8 @@ import {
   MANAGED_QUOTA_REGISTRAR,
   USAGE_QUOTA,
 } from '#kernel/ports/usage-quota.port';
-import { UsageController } from './usage.controller';
-import { UsageQuotaService } from './usage-quota.service';
+import { UsageController } from './api/usage.controller';
+import { UsageQuotaService } from './application/usage-quota.service';
 
 @Module({
   imports: [DatabaseModule],

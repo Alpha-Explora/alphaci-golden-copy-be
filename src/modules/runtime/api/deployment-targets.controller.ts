@@ -24,8 +24,8 @@ import {
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
-import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
-import type { DetachDeploymentTargetDto } from '../dto/detach-deployment-target.dto';
+import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
+import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
 import { DeploymentTargetsService } from '../application/deployment-targets.service';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import { EnvFeatureGuard } from './env-feature.guard';

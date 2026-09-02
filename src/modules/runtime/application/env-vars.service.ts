@@ -18,14 +18,14 @@ import {
   DeploymentPolicyViolation,
   validateEnvironmentScope,
 } from '../domain/deployment-target.policy';
-import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
-import type { ProvisionEnvVarsDto } from '../dto/provision-env-vars.dto';
+import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
+import type { ProvisionEnvVarsDto } from '../api/dto/provision-env-vars.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
 import {
   PROVIDER_CLIENT_REGISTRY,
   type ProviderClientRegistryPort,
 } from './ports/provider-client-registry.port';
-import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
+import { EnvVarsRepository } from '../infrastructure/repositories/env-vars.repository';
 import type {
   DeploymentTargetSummary,
   EnvLane,
@@ -33,7 +33,7 @@ import type {
   EnvVarInput,
   EnvVarScope,
 } from '../core/deployments.types';
-import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import { ProviderConnectionsRepository } from '../infrastructure/repositories/provider-connections.repository';
 import {
   WORKSPACE_ACCESS_PORT,
   type WorkspaceAccessPort,

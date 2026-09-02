@@ -33,15 +33,15 @@ import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
-} from '../../projects.repository';
+} from '../../infrastructure/projects.repository';
 import {
   ProjectWorkflowSettingsRepository,
   type ProjectWorkflowSettingsRowValue,
-} from '../../project-workflow-settings.repository';
+} from '../../infrastructure/project-workflow-settings.repository';
 import {
   ProjectWorkflowUpdateRequestsRepository,
   type WorkflowUpdateRequestRecord,
-} from '../../project-workflow-update-requests.repository';
+} from '../../infrastructure/project-workflow-update-requests.repository';
 
 export interface WorkflowSettings {
   projectId: string;

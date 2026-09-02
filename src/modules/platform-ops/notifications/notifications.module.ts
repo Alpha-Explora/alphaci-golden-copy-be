@@ -4,7 +4,7 @@ import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { NotificationsController } from './api/notifications.controller';
 import { NotificationEventsService } from './application/notification-events.service';
-import { NotificationsRepository } from './infra/notifications.repository';
+import { NotificationsRepository } from './infrastructure/notifications.repository';
 import { NotificationsService } from './application/notifications.service';
 
 @Module({

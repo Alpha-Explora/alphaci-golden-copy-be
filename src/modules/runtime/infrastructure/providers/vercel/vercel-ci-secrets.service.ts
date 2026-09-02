@@ -12,7 +12,7 @@ import type {
   DeploymentTargetSummary,
   EnvTargetSlot,
 } from '../../../core/deployments.types';
-import { ProviderConnectionsRepository } from '../../../infrastructure/provider-connections.repository';
+import { ProviderConnectionsRepository } from '../../repositories/provider-connections.repository';
 import type {
   ProviderCiSecretsInstaller,
   ProviderCiSecretsInstallerInput,

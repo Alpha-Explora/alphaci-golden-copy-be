@@ -10,7 +10,7 @@ import type {
 } from '../core/deployment-provisioning.contract';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { EnvLane, EnvVarScope } from '../core/deployments.types';
-import { DeploymentProviderPolicyRegistry } from '../core/deployment-provider.policy';
+import { DeploymentProviderPolicyRegistry } from '../domain/deployment-provider.policy';
 import { EnvVarsService } from './env-vars.service';
 import {
   PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,

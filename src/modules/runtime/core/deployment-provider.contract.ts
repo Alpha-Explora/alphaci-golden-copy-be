@@ -1,5 +1,5 @@
 import type { RenderServiceType } from './deployment-target.types';
-import type { DeploymentProviderPolicy } from './deployment-provider.policy';
+import type { DeploymentProviderPolicy } from '../domain/deployment-provider.policy';
 import type { DeploymentProviderId } from './deployment-provider-id';
 
 export type { DeploymentProviderId } from './deployment-provider-id';

@@ -6,8 +6,8 @@ import { EventsModule } from '#kernel/events/events.module';
 import { SubscriptionModule } from '#modules/billing/subscription/subscription.module.js';
 import { AdminModule } from '#modules/identity-access/admin/admin.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module';
-import { AuthController } from './auth.controller';
-import { AuthService } from './auth.service';
+import { AuthController } from './api/auth.controller';
+import { AuthService } from './application/auth.service';
 import { AuthIdentityModule } from './auth-identity.module';
 
 @Module({

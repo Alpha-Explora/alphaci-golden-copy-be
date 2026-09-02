@@ -7,8 +7,8 @@ import {
   type CiTokenStatusLookup,
   type ProjectTokenStatus,
 } from '#kernel/ports/ci-project.port';
-import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
-import { EnvVarsRepository } from '../infrastructure/env-vars.repository';
+import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
+import { EnvVarsRepository } from '../infrastructure/repositories/env-vars.repository';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,

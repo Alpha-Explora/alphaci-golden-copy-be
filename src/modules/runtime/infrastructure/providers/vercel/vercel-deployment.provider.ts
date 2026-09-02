@@ -7,7 +7,7 @@ import type {
   ProviderFormSchema,
 } from '../../../core/deployment-provider.contract';
 import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
-import type { DeploymentProviderPolicy } from '../../../core/deployment-provider.policy';
+import type { DeploymentProviderPolicy } from '../../../domain/deployment-provider.policy';
 import {
   LEGACY_PROVIDER_CAPABILITIES,
   LEGACY_PROVIDER_CONFIG_SCHEMA,

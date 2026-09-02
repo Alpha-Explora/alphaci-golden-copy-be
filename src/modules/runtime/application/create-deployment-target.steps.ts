@@ -1,13 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
 
-import type { CreateDeploymentTargetInput } from '../infrastructure/deployment-targets.repository';
+import type { CreateDeploymentTargetInput } from '../infrastructure/repositories/deployment-targets.repository';
 import type { DeploymentStrategy } from '../core/deployments.types';
 import type {
   DeploymentProviderTargetPolicyInput,
   DeploymentProviderTargetPolicyResult,
-} from '../core/deployment-provider.policy';
+} from '../domain/deployment-provider.policy';
 import { DeploymentPolicyViolation } from '../domain/deployment-target.policy';
-import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
+import type { CreateDeploymentTargetDto } from '../api/dto/create-deployment-target.dto';
 import type { ProviderDeploymentTarget } from './ports/runtime-env-provider.client';
 
 export function mapSlotViolation(error: unknown): never {

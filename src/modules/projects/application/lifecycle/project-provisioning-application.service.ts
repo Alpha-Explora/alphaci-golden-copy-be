@@ -40,13 +40,13 @@ import { SingleRepositoryProjectProvisioner } from './single-repository-project.
 import { MicroservicesProjectProvisioner } from './microservices-project.provisioner';
 import { MultiRepositoryProjectProvisioner } from './multi-repository-project.provisioner';
 import { normalizeRepoShape } from '../../scaffold.builder';
-import type { CreateProjectDto } from '../../dto/create-project.dto';
-import type { SetupProjectDto } from '../../dto/setup-project.dto';
+import type { CreateProjectDto } from '../../api/dto/create-project.dto';
+import type { SetupProjectDto } from '../../api/dto/setup-project.dto';
 import type {
   CreateProjectResponse,
   SetupProjectResponse,
 } from './projects.service.types';
-import { ProjectsRepository } from '../../projects.repository';
+import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 
 export type * from './projects.service.types';

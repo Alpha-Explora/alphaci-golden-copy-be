@@ -16,8 +16,8 @@ import {
   PROVIDER_CLIENT_REGISTRY,
   type ProviderClientRegistryPort,
 } from './ports/provider-client-registry.port';
-import type { CreateProviderConnectionDto } from '../dto/create-provider-connection.dto';
-import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import type { CreateProviderConnectionDto } from '../api/dto/create-provider-connection.dto';
+import { ProviderConnectionsRepository } from '../infrastructure/repositories/provider-connections.repository';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 

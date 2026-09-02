@@ -2,7 +2,7 @@ import yaml from 'js-yaml';
 
 import type { DeploymentProvider } from '../../src/modules/runtime/core/deployment-provider.contract';
 import { DeploymentProviderRegistry } from '../../src/modules/runtime/core/deployment-provider.registry';
-import { DeploymentProvidersController } from '../../src/modules/runtime/core/deployment-providers.controller';
+import { DeploymentProvidersController } from '../../src/modules/runtime/api/deployment-providers.controller';
 import { WorkflowFragmentRegistry } from '../../src/modules/runtime/core/workflow-fragment.contract';
 import { renderWorkflowFragment } from '../../src/modules/runtime/infrastructure/providers/render/render-workflow.fragment';
 import { vercelWorkflowFragment } from '../../src/modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';

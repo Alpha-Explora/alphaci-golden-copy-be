@@ -4,15 +4,15 @@ import { ALPHACI_REPORT_URL } from '../workflows/index';
 import type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
 import { resolveDeploymentWorkflowTargets } from '../workflows/deployment-workflow-targets';
 import { workflowFileMetadata } from '../dashboard/project-overview.view';
-import { extractDeploymentProvider } from './deployment-provisioning.policy';
+import { extractDeploymentProvider } from '../../domain/deployment-provisioning.policy';
 import { normalizeRepoShape } from '../../scaffold.builder';
 import type {
   CreateProjectDto,
   DeploymentProvisioningRequestDto,
   MicroserviceSlotDto,
-} from '../../dto/create-project.dto';
+} from '../../api/dto/create-project.dto';
 import type { CreateProjectResponse } from './projects.service.types';
-import type { ProvisionedProjectRow } from '../../projects.repository';
+import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 

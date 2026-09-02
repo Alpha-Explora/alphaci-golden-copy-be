@@ -16,7 +16,7 @@ import type {
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
-} from '../../projects.repository';
+} from '../../infrastructure/projects.repository';
 
 export interface ProjectCiRunsResponse {
   enabled: boolean;

@@ -14,7 +14,7 @@ import {
   decodePlatformEvent,
   PLATFORM_EVENT_TOPICS,
 } from '#kernel/events/platform-event.registry';
-import { AuditEventsService } from '../audit/audit-events.service';
+import { AuditEventsService } from '../audit/application/audit-events.service';
 import { NotificationEventsService } from '../notifications/application/notification-events.service';
 
 /**

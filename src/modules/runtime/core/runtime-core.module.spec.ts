@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 
-import { DeploymentProvidersController } from './deployment-providers.controller';
+import { DeploymentProvidersController } from '../api/deployment-providers.controller';
 import { RuntimeCoreModule } from './runtime-core.module';
 
 describe('RuntimeCoreModule', () => {
