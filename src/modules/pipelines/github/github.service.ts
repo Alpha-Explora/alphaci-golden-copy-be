@@ -1,4 +1,4 @@
-import { createHmac, createSign, timingSafeEqual } from 'node:crypto';
+import { createSign } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
 import {
@@ -10,7 +10,6 @@ import {
   Logger,
   ServiceUnavailableException,
   UnprocessableEntityException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import sodium from 'libsodium-wrappers';
@@ -41,6 +40,17 @@ import {
   type GithubInstallation,
   type GithubInstallationRepo,
 } from './github-installations.repository';
+import {
+  GithubWebhookProcessor,
+  REPOSITORY_DELETED_EVENT,
+} from './github-webhook.processor';
+
+export {
+  REPOSITORY_DELETED_EVENT,
+  TEAM_MEMBERSHIP_CHANGED_EVENT,
+  type RepositoryDeletedEvent,
+  type TeamMembershipChangedEvent,
+} from './github-webhook.processor';
 
 interface GitHubRepoResponse {
   id: number;
@@ -171,43 +181,6 @@ import type { GitHubRepo } from '#kernel/ports/github.port';
  * re-enables personal-account creation — the POST /user/repos path was removed.
  */
 
-/**
- * Emitted on GithubService when a GitHub `repository` webhook reports
- * `action: 'deleted'`. ProjectsService subscribes to this in its constructor
- * to mark the matching provisioned_projects row 'orphaned' — see the
- * module-level comment on that subscription for why an event is used
- * instead of a direct repository injection (GithubModule must not import
- * ProjectsModule, which a direct ProjectsRepository/ProjectsService
- * dependency here would require).
- */
-export const REPOSITORY_DELETED_EVENT = 'repository.deleted';
-
-export type RepositoryDeletedEvent = GithubRepositoryDeletedEvent;
-
-/**
- * Emitted when a GitHub `membership` webhook reports someone being added to or
- * removed from an org team. GithubTeamRoleService subscribes to re-derive that
- * user's app_role immediately, so a promotion to `team-lead` — or, more
- * importantly for security, a removal from it — does not wait for their next
- * login.
- *
- * An event is used rather than a direct call because GithubTeamRoleService
- * already depends on GithubService; calling back the other way would be a
- * cycle. Same reasoning as REPOSITORY_DELETED_EVENT above.
- */
-export const TEAM_MEMBERSHIP_CHANGED_EVENT = 'team.membership.changed';
-
-export interface TeamMembershipChangedEvent {
-  /** 'added' | 'removed' — GitHub's `action` on the membership event. */
-  action: string;
-  /** GitHub login of the affected user. */
-  login: string;
-  /** Slug of the team they were added to / removed from. */
-  teamSlug: string;
-  /** Installation id, used to mint a token for the follow-up team reads. */
-  installationId: number;
-}
-
 @Injectable()
 export class GithubService
   extends EventEmitter
@@ -218,6 +191,7 @@ export class GithubService
   private readonly appSlug: string;
   private readonly appPrivateKey: string;
   private readonly appWebhookSecret: string;
+  private readonly webhookProcessor: GithubWebhookProcessor;
 
   // Explicit @Inject tokens are required here: the `| null` union types make
   // emitDecoratorMetadata serialize these params as `Object`, so token-less
@@ -247,6 +221,20 @@ export class GithubService
         ? `Repository creation is enforced to organization: ${enforcedOrg}`
         : 'GITHUB ENFORCED ORG RESOLVED EMPTY AT BOOT — repository creation will be refused. Check that this deploy includes the enforced-org config fallback.',
     );
+
+    this.webhookProcessor = new GithubWebhookProcessor({
+      getWebhookSecret: () =>
+        this.configService?.get<AppConfig>('app')?.github.appWebhookSecret ??
+        this.appWebhookSecret,
+      installations: this.githubInstallationsRepository,
+      tokens: {
+        createInstallationAccessToken: (id) =>
+          this.createInstallationAccessToken(id),
+        fetchInstallationRepositories: (token) =>
+          this.fetchInstallationRepositories(token),
+      },
+      emit: (event, payload) => this.emit(event, payload),
+    });
   }
 
   getAppInstallUrl(): string {
@@ -746,162 +734,13 @@ export class GithubService
     rawBody: Buffer | undefined,
     payload: unknown,
   ): Promise<{ accepted: boolean; duplicate?: boolean }> {
-    const appWebhookSecret =
-      this.configService?.get<AppConfig>('app')?.github.appWebhookSecret ??
-      this.appWebhookSecret;
-    if (!appWebhookSecret) {
-      throw new UnauthorizedException(
-        'GitHub webhook secret is not configured.',
-      );
-    }
-    if (!signature || !eventName || !deliveryId || !rawBody) {
-      throw new UnauthorizedException(
-        'Missing GitHub webhook headers or raw body.',
-      );
-    }
-
-    const expected = `sha256=${createHmac('sha256', appWebhookSecret)
-      .update(rawBody)
-      .digest('hex')}`;
-    const signatureBuffer = Buffer.from(signature);
-    const expectedBuffer = Buffer.from(expected);
-    if (
-      signatureBuffer.length !== expectedBuffer.length ||
-      !timingSafeEqual(signatureBuffer, expectedBuffer)
-    ) {
-      throw new UnauthorizedException('Invalid GitHub webhook signature.');
-    }
-
-    if (!this.githubInstallationsRepository) {
-      return { accepted: true };
-    }
-    const claimed =
-      await this.githubInstallationsRepository.beginWebhookDelivery(
-        deliveryId,
-        eventName,
-      );
-    if (!claimed) {
-      return { accepted: true, duplicate: true };
-    }
-
-    try {
-      await this.processWebhookEvent(eventName, payload);
-      await this.githubInstallationsRepository.completeWebhookDelivery(
-        deliveryId,
-      );
-      return { accepted: true };
-    } catch (error) {
-      await this.githubInstallationsRepository.releaseWebhookDelivery(
-        deliveryId,
-      );
-      throw error;
-    }
-  }
-
-  private async processWebhookEvent(
-    eventName: string,
-    payload: unknown,
-  ): Promise<void> {
-    if (!payload || typeof payload !== 'object') return;
-    const body = payload as Record<string, unknown>;
-
-    // Handled before the `installation` guard below: a `repository` deleted
-    // event carries everything it needs in `repository.full_name` and must
-    // not depend on the installation payload shape (GitHub App webhooks
-    // normally include `installation`, but there's no reason to make repo
-    // deletion detection depend on it).
-    if (eventName === 'repository' && body['action'] === 'deleted') {
-      const repository = body['repository'];
-      if (repository && typeof repository === 'object') {
-        const fullName = (repository as Record<string, unknown>)['full_name'];
-        if (typeof fullName === 'string' && fullName.trim().length > 0) {
-          const event: RepositoryDeletedEvent = { repoFullName: fullName };
-          this.emit(REPOSITORY_DELETED_EVENT, event);
-        } else {
-          this.logger.warn(
-            `Ignoring repository.deleted webhook with missing/invalid full_name`,
-          );
-        }
-      } else {
-        this.logger.warn(
-          `Ignoring repository.deleted webhook with missing repository object`,
-        );
-      }
-      return;
-    }
-
-    const installation = body['installation'];
-    if (!installation || typeof installation !== 'object') return;
-    const installationId = Number(
-      (installation as Record<string, unknown>)['id'],
+    return this.webhookProcessor.handleWebhook(
+      signature,
+      eventName,
+      deliveryId,
+      rawBody,
+      payload,
     );
-    if (!Number.isInteger(installationId) || installationId < 1) return;
-
-    // Org team membership changed — re-derive the affected user's app_role.
-    // Emitted for BOTH 'added' and 'removed': a removal from `team-lead` must
-    // revoke create rights promptly, which is the security-relevant direction.
-    if (eventName === 'membership') {
-      const action = body['action'];
-      const member = body['member'];
-      const team = body['team'];
-      const login =
-        member && typeof member === 'object'
-          ? (member as Record<string, unknown>)['login']
-          : undefined;
-      const teamSlug =
-        team && typeof team === 'object'
-          ? (team as Record<string, unknown>)['slug']
-          : undefined;
-
-      if (
-        typeof action === 'string' &&
-        typeof login === 'string' &&
-        login.trim().length > 0 &&
-        typeof teamSlug === 'string'
-      ) {
-        const event: TeamMembershipChangedEvent = {
-          action,
-          login,
-          teamSlug,
-          installationId,
-        };
-        this.emit(TEAM_MEMBERSHIP_CHANGED_EVENT, event);
-      } else {
-        this.logger.warn(
-          'Ignoring membership webhook with missing action/member.login/team.slug',
-        );
-      }
-      return;
-    }
-
-    if (eventName === 'installation') {
-      const action = body['action'];
-      if (action === 'deleted') {
-        await this.githubInstallationsRepository?.deleteInstallation(
-          installationId,
-        );
-      } else if (action === 'suspend') {
-        await this.githubInstallationsRepository?.setSuspended(
-          installationId,
-          true,
-        );
-      } else if (action === 'unsuspend') {
-        await this.githubInstallationsRepository?.setSuspended(
-          installationId,
-          false,
-        );
-      }
-      return;
-    }
-
-    if (eventName === 'installation_repositories') {
-      const token = await this.createInstallationAccessToken(installationId);
-      const repos = await this.fetchInstallationRepositories(token);
-      await this.githubInstallationsRepository?.replaceRepos(
-        installationId,
-        repos,
-      );
-    }
   }
 
   /**
