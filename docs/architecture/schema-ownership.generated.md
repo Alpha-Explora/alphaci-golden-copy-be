@@ -68,19 +68,19 @@ These are exact source-file allowances for current cross-context reads or shared
 | `scripts/check-github-team-setup.ts` | `hierarchy.repositories`, `identity.app_users`, `information_schema.columns`, `orgs.workspaces`, `projects.provisioned_projects` |
 | `scripts/hierarchy-migrations.cjs` | `information_schema.columns` |
 | `src/kernel/events/outbox.repository.ts` | `platform.outbox_events` |
-| `src/modules/billing/usage/usage-quota.service.ts` | `env_provisioning.project_deployment_targets`, `env_provisioning.project_env_var_metadata`, `identity.app_users`, `projects.project_workflow_update_requests`, `projects.provisioned_projects` |
-| `src/modules/identity-access/admin/admin.repository.ts` | `audit.audit_events`, `billing.user_subscriptions`, `projects.provisioned_projects`, `workflow.ci_run_reports`, `workflow.workflow_generations` |
-| `src/modules/identity-access/hierarchy/github-sync/github-access-sync.repository.ts` | `identity.app_users` |
-| `src/modules/identity-access/hierarchy/group-activity.repository.ts` | `audit.audit_events` |
-| `src/modules/identity-access/hierarchy/groups/groups.repository.ts` | `hierarchy.systems` |
-| `src/modules/identity-access/workspaces/workspaces.repository.ts` | `projects.provisioned_projects` |
-| `src/modules/pipelines/ci/ci-reports.service.ts` | `projects.provisioned_projects` |
-| `src/modules/pipelines/ci/infra/ci-tokens.repository.ts` | `billing.user_subscriptions`, `identity.app_users`, `projects.provisioned_projects` |
-| `src/modules/platform-ops/audit/audit-events.repository.ts` | `projects.provisioned_projects` |
-| `src/modules/platform-ops/feedback/feedback.repository.ts` | `identity.app_users` |
-| `src/modules/projects/projects.repository.ts` | `hierarchy.repositories`, `hierarchy.repository_assignments`, `identity.app_users`, `identity.platform_admins`, `orgs.workspace_members` |
-| `src/modules/runtime/infrastructure/deployment-targets.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |
-| `src/modules/runtime/infrastructure/env-vars.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |
+| `src/modules/billing/usage/application/usage-quota.service.ts` | `env_provisioning.project_deployment_targets`, `env_provisioning.project_env_var_metadata`, `identity.app_users`, `projects.project_workflow_update_requests`, `projects.provisioned_projects` |
+| `src/modules/identity-access/admin/infrastructure/admin.repository.ts` | `audit.audit_events`, `billing.user_subscriptions`, `projects.provisioned_projects`, `workflow.ci_run_reports`, `workflow.workflow_generations` |
+| `src/modules/identity-access/hierarchy/infrastructure/github-access-sync.repository.ts` | `identity.app_users` |
+| `src/modules/identity-access/hierarchy/infrastructure/group-activity.repository.ts` | `audit.audit_events` |
+| `src/modules/identity-access/hierarchy/infrastructure/groups.repository.ts` | `hierarchy.systems` |
+| `src/modules/identity-access/workspaces/infrastructure/workspaces.repository.ts` | `projects.provisioned_projects` |
+| `src/modules/pipelines/ci/application/ci-reports.service.ts` | `projects.provisioned_projects` |
+| `src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts` | `billing.user_subscriptions`, `identity.app_users`, `projects.provisioned_projects` |
+| `src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts` | `projects.provisioned_projects` |
+| `src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts` | `identity.app_users` |
+| `src/modules/projects/infrastructure/projects.repository.ts` | `hierarchy.repositories`, `hierarchy.repository_assignments`, `identity.app_users`, `identity.platform_admins`, `orgs.workspace_members` |
+| `src/modules/runtime/infrastructure/repositories/deployment-targets.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |
+| `src/modules/runtime/infrastructure/repositories/env-vars.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |
 | `src/modules/runtime/infrastructure/repositories/project-sync-findings.repository.ts` | `projects.project_sync_findings`, `projects.provisioned_projects` |
 
 ## Verification

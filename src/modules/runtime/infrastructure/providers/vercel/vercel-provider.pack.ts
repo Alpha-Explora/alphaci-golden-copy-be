@@ -1,7 +1,7 @@
 import type { ProviderCiSecretsInstaller } from '../../../application/ports/provider-ci-secrets-installer.port';
 import type { RuntimeEnvProviderClient } from '../../../application/ports/runtime-env-provider.client';
 import type { DeploymentProvider } from '../../../core/deployment-provider.contract';
-import type { DeploymentProviderPolicy } from '../../../core/deployment-provider.policy';
+import type { DeploymentProviderPolicy } from '../../../domain/deployment-provider.policy';
 import type { RuntimeProviderPack } from '../../../core/provider-pack';
 import type { WorkflowFragment } from '../../../core/workflow-fragment.contract';
 

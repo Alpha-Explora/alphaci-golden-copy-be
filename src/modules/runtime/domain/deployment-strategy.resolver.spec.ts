@@ -1,7 +1,7 @@
-import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
+import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
-import type { DeploymentProviderPolicy } from '../core/deployment-provider.policy';
+import type { DeploymentProviderPolicy } from './deployment-provider.policy';
 import { RenderCostPolicyService } from '../infrastructure/providers/render/render-cost-policy.service';
 import { RenderDeploymentPolicy } from '../infrastructure/providers/render/render-deployment.policy';
 import { VercelDeploymentPolicy } from '../infrastructure/providers/vercel/vercel-deployment.policy';

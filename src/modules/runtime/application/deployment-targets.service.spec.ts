@@ -5,7 +5,7 @@ import { DeploymentTargetsService } from './deployment-targets.service';
 import { RenderCostPolicyService } from '../infrastructure/providers/render/render-cost-policy.service';
 import { RenderDeploymentPolicy } from '../infrastructure/providers/render/render-deployment.policy';
 import { VercelDeploymentPolicy } from '../infrastructure/providers/vercel/vercel-deployment.policy';
-import type { DeploymentProviderPolicy } from '../core/deployment-provider.policy';
+import type { DeploymentProviderPolicy } from '../domain/deployment-provider.policy';
 
 describe('DeploymentTargetsService', () => {
   const projectReferenceLookup = {

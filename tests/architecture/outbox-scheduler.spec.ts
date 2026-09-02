@@ -43,6 +43,7 @@ describe('outbox scheduler wiring', () => {
         'modules',
         'identity-access',
         'auth',
+        'application',
         'auth.service.ts',
       ),
       join(
@@ -51,6 +52,7 @@ describe('outbox scheduler wiring', () => {
         'modules',
         'billing',
         'subscription',
+        'application',
         'subscription.service.ts',
       ),
       join(

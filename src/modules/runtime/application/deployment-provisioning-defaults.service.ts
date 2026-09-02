@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { DEFAULT_BACKEND_PROVIDER_ID } from '../core/deployment-provider.defaults';
-import { DeploymentProviderPolicyRegistry } from '../core/deployment-provider.policy';
+import { DeploymentProviderPolicyRegistry } from '../domain/deployment-provider.policy';
 import type { DeploymentProvisioningTarget } from '../core/deployment-provisioning.contract';
 import type { DeploymentProvisioningDefaultsPort } from '../core/deployment-provisioning.defaults';
 

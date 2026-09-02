@@ -1,9 +1,9 @@
 import { ProjectProvisioningApplicationService } from './project-provisioning-application.service';
 import type { CatalogService } from '../catalog/catalog.service';
-import type { CiService } from '#modules/pipelines/ci/ci.service';
-import type { GithubService } from '#modules/pipelines/github/github.service';
+import type { CiService } from '#modules/pipelines/ci/application/ci.service';
+import type { GithubService } from '#modules/pipelines/github/infrastructure/github.service';
 import { createDefaultWorkflowFragmentRegistry } from '#modules/runtime/index.js';
-import type { ProjectsRepository } from '../../projects.repository';
+import type { ProjectsRepository } from '../../infrastructure/projects.repository';
 
 const stagedWorkflowFiles = [
   {

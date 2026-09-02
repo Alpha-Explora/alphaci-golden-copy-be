@@ -16,9 +16,9 @@ import { WorkspacesModule } from '#modules/identity-access/workspaces/workspaces
 import { WorkflowsModule } from './application/workflows/workflows.module';
 import { ExistingReposModule } from './application/existing-repos/existing-repos.module';
 import { CatalogModule } from './application/catalog/catalog.module';
-import { ProjectsController } from './projects.controller';
+import { ProjectsController } from './api/projects.controller';
 import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provider';
-import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';
+import { ProjectDashboardSnapshotsRepository } from './infrastructure/project-dashboard-snapshots.repository';
 import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service';
 import { ProjectPreviewsService } from './application/dashboard/project-previews.query-service';
 import { UrlEmbeddabilityProbe } from './application/dashboard/url-embeddability.probe';
@@ -34,10 +34,10 @@ import { ProjectWorkflowsService } from './application/workflows/project-workflo
 import { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
 import { ProjectReconciliationService } from './application/lifecycle/project-reconciliation.service';
 import { ProjectProvisioningApplicationService } from './application/lifecycle/project-provisioning-application.service';
-import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.repository';
-import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
-import { ProjectsRepository } from './projects.repository';
-import { ProjectWorkspaceController } from './project-workspace.controller';
+import { ProjectWorkflowSettingsRepository } from './infrastructure/project-workflow-settings.repository';
+import { ProjectWorkflowUpdateRequestsRepository } from './infrastructure/project-workflow-update-requests.repository';
+import { ProjectsRepository } from './infrastructure/projects.repository';
+import { ProjectWorkspaceController } from './api/project-workspace.controller';
 import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
 import { ProjectsService } from './application/lifecycle/projects.service';
 import { ProjectReferenceModule } from './project-reference.module';

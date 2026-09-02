@@ -1,5 +1,5 @@
 import { DeploymentProviderRegistry } from '../../../core/deployment-provider.registry';
-import type { DeploymentProviderPolicy } from '../../../core/deployment-provider.policy';
+import type { DeploymentProviderPolicy } from '../../../domain/deployment-provider.policy';
 import { VercelDeploymentProvider } from './vercel-deployment.provider';
 
 const testPolicy = {} as DeploymentProviderPolicy;

@@ -20,13 +20,13 @@ import type {
   DeploymentProvisioningRequestDto,
   DeploymentProvisioningTargetDto,
   CreateProjectDto,
-} from '../../dto/create-project.dto';
-import type { ProjectsRepository } from '../../projects.repository';
+} from '../../api/dto/create-project.dto';
+import type { ProjectsRepository } from '../../infrastructure/projects.repository';
 import {
   filterDeploymentProvisioningRequest,
   forceManagedProvisioning,
   skippedDeploymentProvisioning,
-} from './deployment-provisioning.policy';
+} from '../../domain/deployment-provisioning.policy';
 import {
   buildProjectScaffold,
   defaultIncludeDocker,

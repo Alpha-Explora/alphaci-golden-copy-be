@@ -4,14 +4,14 @@ import type { WorkflowFileMetadata } from '../workflows/index';
 import type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
 import type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
 import type { StagedWorkflowFile } from '../workflows/index';
-import type { ProvisionedProjectStatus } from '../../projects.repository';
+import type { ProvisionedProjectStatus } from '../../infrastructure/projects.repository';
 import type { WorkflowHistoryEntry } from '../workflows/index';
 import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
 } from '#kernel/ports/deployment-runtime.port';
-import type { ProjectDashboardSnapshot } from '../../project-dashboard-snapshots.repository';
-import type { WorkflowUpdateRequestRecord } from '../../project-workflow-update-requests.repository';
+import type { ProjectDashboardSnapshot } from '../../infrastructure/project-dashboard-snapshots.repository';
+import type { WorkflowUpdateRequestRecord } from '../../infrastructure/project-workflow-update-requests.repository';
 
 export interface CreateProjectResponse {
   id: string;

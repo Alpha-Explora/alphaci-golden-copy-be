@@ -9,12 +9,12 @@ import { GITHUB_TEAM_ROLE_PORT } from '#kernel/ports/github-team-role.port';
 import { AuditModule } from '#modules/platform-ops/audit/audit.module.js';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
-import { GithubInstallationsRepository } from './github-installations.repository';
-import { GithubController } from './github.controller';
-import { GithubTeamRoleReconcileWorker } from './github-team-role-reconcile.worker';
-import { GithubTeamRoleService } from './github-team-role.service';
-import { GithubWebhookController } from './github-webhook.controller';
-import { GithubService } from './github.service';
+import { GithubInstallationsRepository } from './infrastructure/github-installations.repository';
+import { GithubController } from './api/github.controller';
+import { GithubTeamRoleReconcileWorker } from './application/github-team-role-reconcile.worker';
+import { GithubTeamRoleService } from './application/github-team-role.service';
+import { GithubWebhookController } from './api/github-webhook.controller';
+import { GithubService } from './infrastructure/github.service';
 
 @Module({
   imports: [DatabaseModule, EventsModule, AuditModule],

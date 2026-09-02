@@ -3,7 +3,7 @@ import { DeploymentProviderCatalogService } from '../../src/modules/runtime/core
 import {
   DeploymentProviderPolicyRegistry,
   type DeploymentProviderPolicy,
-} from '../../src/modules/runtime/core/deployment-provider.policy';
+} from '../../src/modules/runtime/domain/deployment-provider.policy';
 import { ProviderCiSecretsInstallerRegistry } from '../../src/modules/runtime/infrastructure/providers/core/provider-ci-secrets.registry';
 import { ProviderClientRegistry } from '../../src/modules/runtime/infrastructure/providers/core/provider-client.registry';
 import { RuntimeProviderPackRegistry } from '../../src/modules/runtime/core/provider-pack';

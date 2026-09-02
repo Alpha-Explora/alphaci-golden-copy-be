@@ -5,9 +5,9 @@ import { SUBSCRIPTION_ACCESS } from '#kernel/auth/subscription-access.port';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { SUBSCRIPTION_BOOTSTRAP } from '#kernel/ports/subscription-bootstrap.port';
-import { SubscriptionController } from './subscription.controller';
-import { SubscriptionService } from './subscription.service';
-import { SubscriptionsRepository } from './infra/subscriptions.repository';
+import { SubscriptionController } from './api/subscription.controller';
+import { SubscriptionService } from './application/subscription.service';
+import { SubscriptionsRepository } from './infrastructure/subscriptions.repository';
 
 @Module({
   imports: [DatabaseModule, EventsModule],

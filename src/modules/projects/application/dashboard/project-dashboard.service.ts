@@ -33,8 +33,8 @@ import {
   PROJECT_LINK_PORT,
   type ProjectLinkPort,
 } from '#kernel/ports/project-link.port';
-import { ProjectDashboardSnapshotsRepository } from '../../project-dashboard-snapshots.repository';
-import { ProjectsRepository } from '../../projects.repository';
+import { ProjectDashboardSnapshotsRepository } from '../../infrastructure/project-dashboard-snapshots.repository';
+import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import type {
   ProjectAuditEventsResponse,
   ProjectOverviewResponse,

@@ -7,7 +7,7 @@ import type {
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
-} from '../../projects.repository';
+} from '../../infrastructure/projects.repository';
 
 /**
  * The narrow write contract hierarchy needs when it creates a repository-backed

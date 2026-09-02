@@ -1,3 +1,3 @@
 export { HierarchyProjectLinkModule } from './hierarchy-project-link.module';
-export { HierarchyProjectLinkService } from './hierarchy-project-link.service';
-export type { EnsureProjectLinkInput } from './hierarchy-project-link.service';
+export { HierarchyProjectLinkService } from './application/hierarchy-project-link.service';
+export type { EnsureProjectLinkInput } from './application/hierarchy-project-link.service';

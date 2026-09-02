@@ -303,8 +303,18 @@ export interface GithubProjectPort {
   ): Promise<GitHubPullRequestFile[]>;
 }
 
+export interface GithubTeamMembershipChangedEvent {
+  action: string;
+  login: string;
+  teamSlug: string;
+  installationId: number;
+}
+
 export interface GithubOrganizationPort {
   getEnforcedOrg(): string;
+  onTeamMembershipChanged(
+    listener: (event: GithubTeamMembershipChangedEvent) => void,
+  ): void;
   listOrganizationMembers(
     userId: string,
   ): Promise<Array<{ login: string; avatarUrl: string | null }>>;

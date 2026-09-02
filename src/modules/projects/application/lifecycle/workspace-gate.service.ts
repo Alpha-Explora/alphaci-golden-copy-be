@@ -5,7 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 
-import { ProjectsRepository } from '../../projects.repository';
+import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import {
   WORKSPACES_PORT,
   type WorkspacesPort,

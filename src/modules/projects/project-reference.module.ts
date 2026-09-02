@@ -6,7 +6,7 @@ import {
   type DeploymentProjectReferenceLookup,
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
 } from '#kernel/ports/deployment-runtime.port';
-import { ProjectsRepository } from './projects.repository';
+import { ProjectsRepository } from './infrastructure/projects.repository';
 
 @Injectable()
 class ProjectReferenceLookupAdapter implements DeploymentProjectReferenceLookup {

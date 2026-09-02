@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
-import { NotificationsRepository } from '../infra/notifications.repository';
+import { NotificationsRepository } from '../infrastructure/notifications.repository';
 
 export interface NotificationEventInput {
   userId: string;

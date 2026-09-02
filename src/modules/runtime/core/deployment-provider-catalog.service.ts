@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { DeploymentProvider } from './deployment-provider.contract';
-import { DeploymentProviderRegistry } from './deployment-provider.registry';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type {
   DeploymentProviderCatalogEntry,
   DeploymentProviderCatalogPort,

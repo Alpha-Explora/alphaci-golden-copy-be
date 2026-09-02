@@ -13,7 +13,7 @@ import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
-import type { ProvisionEnvVarsDto } from '../dto/provision-env-vars.dto';
+import type { ProvisionEnvVarsDto } from './dto/provision-env-vars.dto';
 import { EnvFeatureGuard } from './env-feature.guard';
 import {
   EnvVarsService,

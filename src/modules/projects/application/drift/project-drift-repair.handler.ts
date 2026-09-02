@@ -23,7 +23,7 @@ import {
   type ProjectDriftRepairResponse,
 } from '#kernel/ports/deployment-runtime.port';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
-import { ProjectsRepository } from '../../projects.repository';
+import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { ProjectWorkflowsService } from '../workflows/project-workflows.service';
 
 type DriftRepairContext = {

@@ -2,7 +2,7 @@
  * Notifications — public API.
  *
  * This file is the module's entire surface. Everything under api/, application/ and
- * infra/ is private, and `.dependency-cruiser.cjs` fails the build if another
+ * infrastructure/ is private, and `.dependency-cruiser.cjs` fails the build if another
  * module reaches past this file.
  *
  * Exporting something here is a deliberate commitment: it becomes a contract

@@ -14,7 +14,7 @@ import {
   WORKSPACE_ACCESS_PORT,
   type WorkspaceAccessPort,
 } from '#kernel/ports/workspaces.port';
-import { CustomDomainsRepository } from '../infrastructure/custom-domains.repository';
+import { CustomDomainsRepository } from '../infrastructure/repositories/custom-domains.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import {
   PROVIDER_CLIENT_REGISTRY,

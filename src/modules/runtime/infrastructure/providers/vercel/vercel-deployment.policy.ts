@@ -8,7 +8,7 @@ import type {
   DeploymentProviderTargetPolicyInput,
   DeploymentProviderTargetPolicyResult,
   DeploymentProviderLogEntry,
-} from '../../../core/deployment-provider.policy';
+} from '../../../domain/deployment-provider.policy';
 import type { DeploymentProvisioningTarget } from '../../../core/deployment-provisioning.contract';
 import type { DeploymentStrategy } from '../../../core/deployments.types';
 

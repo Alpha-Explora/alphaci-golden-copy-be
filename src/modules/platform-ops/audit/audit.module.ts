@@ -5,8 +5,8 @@ import {
   AUDIT_QUERY_PORT,
   AUDIT_SECURITY_PORT,
 } from '#kernel/ports/audit.port';
-import { AuditEventsRepository } from './audit-events.repository';
-import { AuditEventsService } from './audit-events.service';
+import { AuditEventsRepository } from './infrastructure/audit-events.repository';
+import { AuditEventsService } from './application/audit-events.service';
 
 @Module({
   imports: [DatabaseModule],

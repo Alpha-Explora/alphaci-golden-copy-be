@@ -1,5 +1,5 @@
 import type { DeploymentProvisioningTarget } from '../core/deployment-provisioning.contract';
-import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
+import type { CreateDeploymentTargetDto } from '../api/dto/create-deployment-target.dto';
 
 /**
  * The branch a requested target will actually track.

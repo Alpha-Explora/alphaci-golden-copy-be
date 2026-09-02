@@ -2,14 +2,14 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
-import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
+import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import type { DeploymentTargetSummary } from '../core/deployments.types';
 import { EnvTokenEncryptionService } from '../application/encryption.service';
 import {
   PROVIDER_CLIENT_REGISTRY,
   type ProviderClientRegistryPort,
 } from './ports/provider-client-registry.port';
-import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import { ProviderConnectionsRepository } from '../infrastructure/repositories/provider-connections.repository';
 import {
   type DeploymentHistoryQuery,
   type DeploymentHistoryResponse,

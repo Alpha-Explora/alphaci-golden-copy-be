@@ -15,15 +15,15 @@ import {
   USAGE_QUOTA,
   type UsageQuotaPort,
 } from '#kernel/ports/usage-quota.port';
-import { DeploymentTargetsRepository } from '../infrastructure/deployment-targets.repository';
+import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import {
   assertProviderSlotAllowed,
   DeploymentPolicyViolation,
 } from '../domain/deployment-target.policy';
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
-import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
-import type { DetachDeploymentTargetDto } from '../dto/detach-deployment-target.dto';
+import type { CreateDeploymentTargetDto } from '../api/dto/create-deployment-target.dto';
+import type { DetachDeploymentTargetDto } from '../api/dto/detach-deployment-target.dto';
 import {
   buildCreateTargetPersistInput,
   buildCreateTargetTokenInput,
@@ -41,7 +41,7 @@ import type {
   EnvTargetSlot,
   RenderEnvironmentName,
 } from '../core/deployments.types';
-import { ProviderConnectionsRepository } from '../infrastructure/provider-connections.repository';
+import { ProviderConnectionsRepository } from '../infrastructure/repositories/provider-connections.repository';
 import {
   WORKSPACE_ACCESS_PORT,
   type WorkspaceAccessPort,
@@ -58,7 +58,7 @@ import type {
   DeploymentProviderLogEntry,
   DeploymentProviderPolicy,
   DeploymentProviderTargetPolicyResult,
-} from '../core/deployment-provider.policy';
+} from '../domain/deployment-provider.policy';
 
 export type DeploymentTargetLogEntry = DeploymentProviderLogEntry;
 

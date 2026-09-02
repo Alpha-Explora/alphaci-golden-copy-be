@@ -1,7 +1,7 @@
 import { Logger, UnprocessableEntityException } from '@nestjs/common';
 
-import { withDefaultCreateDeploymentProvisioning } from './deployment-provisioning.policy';
-import type { CreateProjectDto } from '../../dto/create-project.dto';
+import { withDefaultCreateDeploymentProvisioning } from '../../domain/deployment-provisioning.policy';
+import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import type { CreateProjectResponse } from './projects.service.types';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 import {

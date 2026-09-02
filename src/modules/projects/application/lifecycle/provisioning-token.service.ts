@@ -9,7 +9,7 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
-import type { CreateProjectDto } from '../../dto/create-project.dto';
+import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 
 /**
  * GitHub token resolution for repository provisioning flows.

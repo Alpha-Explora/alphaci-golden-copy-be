@@ -2,8 +2,8 @@ import { Global, Module } from '@nestjs/common';
 
 import { SESSION_USER_LOOKUP } from '#kernel/auth/session-user-lookup.contract';
 import { DatabaseModule } from '#kernel/db/database.module';
-import { OAuthStateRepository } from './infra/oauth-state.repository';
-import { UsersRepository } from './infra/users.repository';
+import { OAuthStateRepository } from './infrastructure/oauth-state.repository';
+import { UsersRepository } from './infrastructure/users.repository';
 
 /**
  * Auth-owned identity persistence and the narrow session lookup contract used

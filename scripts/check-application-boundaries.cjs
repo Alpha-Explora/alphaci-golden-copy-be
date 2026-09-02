@@ -5,7 +5,8 @@
  * Keeps application code independent from infrastructure details.
  *
  * Own concrete repositories are permitted only when they live under the
- * module's infrastructure directory. Nested context folders may contain their
+ * module's infrastructure directory, including nested folders such as
+ * infrastructure/repositories. Nested context folders may contain their
  * own infrastructure directory (for example projects/application/workflows),
  * so those files are not treated as application code.
  *
@@ -40,7 +41,7 @@ function filesUnder(dir) {
 
 function isOwnSchemaRepository(normalizedTarget) {
   const target = normalizedTarget.replace(/\.js$/, '');
-  return /\/infrastructure\/[^/]*\.repository$/.test(target);
+  return /\/infrastructure\/(?:[^/]+\/)*[^/]+\.repository$/.test(target);
 }
 
 function resolveImportTarget(sourceRel, importPath) {

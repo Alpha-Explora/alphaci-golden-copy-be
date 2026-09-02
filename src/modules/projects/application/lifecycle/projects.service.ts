@@ -37,11 +37,11 @@ import {
   PROJECT_LINK_PORT,
   type ProjectLinkPort,
 } from '#kernel/ports/project-link.port';
-import { ProjectsRepository } from '../../projects.repository';
-import { ProjectDashboardSnapshotsRepository } from '../../project-dashboard-snapshots.repository';
-import { ProjectWorkflowSettingsRepository } from '../../project-workflow-settings.repository';
-import { ProjectWorkflowUpdateRequestsRepository } from '../../project-workflow-update-requests.repository';
-import type { CreateProjectDto } from '../../dto/create-project.dto';
+import { ProjectsRepository } from '../../infrastructure/projects.repository';
+import { ProjectDashboardSnapshotsRepository } from '../../infrastructure/project-dashboard-snapshots.repository';
+import { ProjectWorkflowSettingsRepository } from '../../infrastructure/project-workflow-settings.repository';
+import { ProjectWorkflowUpdateRequestsRepository } from '../../infrastructure/project-workflow-update-requests.repository';
+import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import { ProjectWorkflowsService } from '../workflows/project-workflows.service';
 import { ProductEventsService } from './product-events.service';
 import { ProjectDashboardService } from '../dashboard/project-dashboard.service';
@@ -53,8 +53,8 @@ import {
 import { ProjectLifecycleService } from './project-lifecycle.service';
 import { ProjectReconciliationService } from './project-reconciliation.service';
 import { ProjectProvisioningApplicationService } from './project-provisioning-application.service';
-import type { SetupProjectDto } from '../../dto/setup-project.dto';
-import type { DisconnectProjectDto } from '../../dto/disconnect-project.dto';
+import type { SetupProjectDto } from '../../api/dto/setup-project.dto';
+import type { DisconnectProjectDto } from '../../api/dto/disconnect-project.dto';
 import {
   USAGE_QUOTA,
   type UsageQuotaPort,

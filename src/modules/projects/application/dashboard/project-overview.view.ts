@@ -7,8 +7,8 @@ import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
 } from '#kernel/ports/deployment-runtime.port';
-import type { ProjectDashboardSnapshotFinding } from '../../project-dashboard-snapshots.repository';
-import type { ProvisionedProjectRow } from '../../projects.repository';
+import type { ProjectDashboardSnapshotFinding } from '../../infrastructure/project-dashboard-snapshots.repository';
+import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type {
   ProvisionedProject,
   ProjectOverviewHealthStatus,

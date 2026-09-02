@@ -1,5 +1,5 @@
 import { ProjectDeploymentProvisioningService } from './project-deployment-provisioning.service';
-import { DeploymentProviderPolicyRegistry } from '../core/deployment-provider.policy';
+import { DeploymentProviderPolicyRegistry } from '../domain/deployment-provider.policy';
 import { RenderDeploymentPolicy } from '../infrastructure/providers/render/render-deployment.policy';
 import { VercelDeploymentPolicy } from '../infrastructure/providers/vercel/vercel-deployment.policy';
 import type { RenderCostPolicyService } from '../infrastructure/providers/render/render-cost-policy.service';

@@ -2,13 +2,13 @@ import { Module } from '@nestjs/common';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { DatabaseModule } from '#kernel/db/database.module';
-import { CiController } from './ci.controller';
-import { CiReportsService } from './ci-reports.service';
-import { CiRunReportsRepository } from './ci-run-reports.repository';
-import { CiService } from './ci.service';
-import { CI_TOKEN_STATUS_LOOKUP } from './ci.contracts';
+import { CiController } from './api/ci.controller';
+import { CiReportsService } from './application/ci-reports.service';
+import { CiRunReportsRepository } from './infrastructure/ci-run-reports.repository';
+import { CiService } from './application/ci.service';
+import { CI_TOKEN_STATUS_LOOKUP } from './application/ci.contracts';
 import { CI_PROJECT_PORT } from '#kernel/ports/ci-project.port';
-import { CiTokensRepository } from './infra/ci-tokens.repository';
+import { CiTokensRepository } from './infrastructure/ci-tokens.repository';
 
 @Module({
   imports: [DatabaseModule],

@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 
 import { DeploymentPolicyViolation } from '../domain/deployment-target.policy';
-import type { CreateDeploymentTargetDto } from '../dto/create-deployment-target.dto';
+import type { CreateDeploymentTargetDto } from '../api/dto/create-deployment-target.dto';
 import {
   buildCreateTargetTokenInput,
   mapSlotViolation,
