@@ -3,7 +3,7 @@ okf_version: "0.2"
 ---
 # AlphaCI backend knowledge bundle
 
-This bundle describes the current AlphaCI backend as one NestJS deployable. It is organized for progressive disclosure: start with the [constitution](constitution.md), then use the current architecture, capability, pack, and runbook sections.
+This bundle describes the current AlphaCI backend as one NestJS deployable. It is organized for progressive disclosure: start with the [constitution](constitution.md), then use the current architecture, capability, pack, and runbook sections. The frontend repository keeps a matching current-state bundle that snapshots this catalog and records the screens that consume it.
 
 ## Foundations
 

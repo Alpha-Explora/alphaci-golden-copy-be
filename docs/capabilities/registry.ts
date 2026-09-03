@@ -32,6 +32,90 @@ export const CAPABILITIES = [
     "requires": []
   },
   {
+    "key": "identity.sso-scim",
+    "context": "identity-access",
+    "description": "Single sign-on and SCIM user provisioning.",
+    "maturity": "not-implemented",
+    "editions": [
+      "enterprise"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": [
+      "identity.workspaces"
+    ]
+  },
+  {
+    "key": "identity.lms-lti",
+    "context": "identity-access",
+    "description": "LMS and LTI education-platform integrations.",
+    "maturity": "not-implemented",
+    "editions": [
+      "edu"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": [
+      "identity.workspaces"
+    ]
+  },
+  {
+    "key": "identity.cohort-policy",
+    "context": "identity-access",
+    "description": "Cohort-specific access and policy rules.",
+    "maturity": "not-implemented",
+    "editions": [
+      "edu"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": [
+      "identity.hierarchy"
+    ]
+  },
+  {
+    "key": "identity.edu-provisioning",
+    "context": "identity-access",
+    "description": "Education-specific identity provisioning.",
+    "maturity": "not-implemented",
+    "editions": [
+      "edu"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": [
+      "identity.workspaces"
+    ]
+  },
+  {
+    "key": "identity.ferpa-workflows",
+    "context": "identity-access",
+    "description": "FERPA-oriented education workflow automation.",
+    "maturity": "not-implemented",
+    "editions": [
+      "edu"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": [
+      "identity.workspaces"
+    ]
+  },
+  {
+    "key": "identity.edition-entitlements",
+    "context": "identity-access",
+    "description": "Runtime edition and pack entitlement resolution.",
+    "maturity": "not-implemented",
+    "editions": [
+      "saas",
+      "edu",
+      "enterprise"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": []
+  },
+  {
     "key": "platform.audit-events",
     "context": "platform-ops",
     "description": "Project audit event recording through the application outbox.",
@@ -64,6 +148,18 @@ export const CAPABILITIES = [
     "requires": []
   },
   {
+    "key": "platform.data-residency",
+    "context": "platform-ops",
+    "description": "Customer-specific data-location controls.",
+    "maturity": "not-implemented",
+    "editions": [
+      "enterprise"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": []
+  },
+  {
     "key": "billing.subscription-gate",
     "context": "billing",
     "description": "Subscription entitlement gating for authenticated access and CI run validation.",
@@ -93,6 +189,18 @@ export const CAPABILITIES = [
     "configurationFlags": [
       "usageQuotas.enabled"
     ],
+    "requires": []
+  },
+  {
+    "key": "billing.checkout",
+    "context": "billing",
+    "description": "Self-serve payment checkout.",
+    "maturity": "not-implemented",
+    "editions": [
+      "saas"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "requires": []
   },
   {
@@ -198,6 +306,42 @@ export const CAPABILITIES = [
     "requires": []
   },
   {
+    "key": "runtime.managed-secrets",
+    "context": "runtime",
+    "description": "Managed secret storage, including Vault integration.",
+    "maturity": "not-implemented",
+    "editions": [
+      "enterprise"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": []
+  },
+  {
+    "key": "runtime.air-gap-packaging",
+    "context": "runtime",
+    "description": "Air-gap packaging of the application as a deployment target.",
+    "maturity": "not-implemented",
+    "editions": [
+      "enterprise"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": []
+  },
+  {
+    "key": "runtime.customer-isolation",
+    "context": "runtime",
+    "description": "Customer-managed operational isolation as a tenancy option.",
+    "maturity": "not-implemented",
+    "editions": [
+      "enterprise"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "requires": []
+  },
+  {
     "key": "projects.sync-snapshots",
     "context": "projects",
     "description": "Project synchronization snapshot reads and findings.",
@@ -278,6 +422,18 @@ export const CAPABILITIES = [
       "ciRunTracking.enabled",
       "ciRunTracking.liveGithubEnabled"
     ],
+    "requires": []
+  },
+  {
+    "key": "pipelines.github-enterprise-server",
+    "context": "pipelines",
+    "description": "GitHub Enterprise Server repository and CI integration.",
+    "maturity": "not-implemented",
+    "editions": [
+      "enterprise"
+    ],
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "requires": []
   }
 ] as const;

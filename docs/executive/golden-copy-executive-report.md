@@ -103,16 +103,16 @@ This is the current outbox approach. It is a reliable background task list insid
 
 ### Capability status
 
-The capability list is shared across all packs. A capability is not copied three times for SaaS, EDU, and Enterprise.
+The capability list is shared across all packs. A capability is not copied three times for SaaS, EDU, and Enterprise. Each pack profile lists every current registry capability in that same order so the three catalogs can be compared row by row.
 
 | Capability area | What is currently covered | Current status |
 |---|---|---|
-| Identity and access | Workspaces, membership, hierarchy, repository assignments, and access management. | Stable across SaaS, EDU, and Enterprise. |
-| Platform operations | Activity records and in-product notifications. | Stable across SaaS, EDU, and Enterprise. |
-| Billing and usage | Usage tracking and quota checks. | Limited; configuration and product rules apply. |
-| Runtime and hosting | Environment setup, deployment history, previews, drift checking, and drift repair. | Limited; setup and provider support are required. |
+| Identity and access | Workspaces, membership, hierarchy, repository assignments, and access management. | Stable across SaaS, EDU, and Enterprise. SSO/SCIM, LMS/LTI, cohort policy, education provisioning, FERPA workflows, and runtime pack entitlement resolution are recorded as not implemented. |
+| Platform operations | Activity records and in-product notifications. | Stable across SaaS, EDU, and Enterprise. Customer data-location controls are not implemented. |
+| Billing and usage | Usage tracking and quota checks. | Limited; configuration and product rules apply. Self-serve checkout is not implemented. |
+| Runtime and hosting | Environment setup, deployment history, previews, drift checking, and drift repair. | Limited; setup and provider support are required. Managed secrets, air-gap packaging, and customer-managed isolation are not implemented. |
 | Projects and workflows | Project synchronization, workflow preview, workflow update requests, and target management. | Stable or limited depending on the capability and setup. |
-| Pipelines and CI | Build-result intake and tracking. | Limited; CI setup and reporting are required. |
+| Pipelines and CI | Build-result intake and tracking. | Limited; CI setup and reporting are required. GitHub Enterprise Server support is not implemented. |
 
 ### Pack status
 
@@ -120,20 +120,28 @@ Packs are customer-facing groupings and comparison tools. They do not automatica
 
 | Pack | What it means | Current status |
 |---|---|---|
-| SaaS | Shared hosted capabilities for general customers. | Uses the common capability list; some features require setup. |
-| EDU | Shared capabilities considered for education environments. | Uses the common capability list; education-specific integrations are not implemented. |
-| Enterprise | Shared capabilities held to stricter access, security, operating, and evidence standards. | Priority for delivery; several Enterprise-specific capabilities are not implemented. |
+| SaaS | Shared hosted capabilities for general customers. | Lists the shared catalog. Checkout and runtime pack entitlement resolution are not implemented. Marketing-site behavior is not a backend capability. |
+| EDU | Shared capabilities considered for education environments. | Lists the shared catalog. LMS/LTI, cohort policy, FERPA workflows, education identity provisioning, and runtime pack entitlement resolution are not implemented. |
+| Enterprise | Shared capabilities held to stricter access, security, operating, and evidence standards. | Lists the shared catalog under the Enterprise evidence bar. SSO/SCIM, GitHub Enterprise Server, managed secrets, air-gap packaging, data-location controls, customer-managed isolation, and runtime pack entitlement resolution are not implemented. |
 
-### Enterprise capabilities not yet available
+### Capabilities recorded as not implemented
 
-The following must remain clearly marked as not implemented until they have working behavior and proof:
+These catalog keys must remain `not-implemented` until they have working behavior and proof. Pack rows use `not-applicable` when the key is outside that pack.
 
-- single sign-on and automatic user provisioning;
-- GitHub Enterprise Server support;
-- managed secret storage through Vault;
-- air-gap packaging;
-- customer-specific data-location controls;
-- customer-managed operational isolation.
+| Capability key | Packs that include it |
+|---|---|
+| `identity.sso-scim` | Enterprise |
+| `identity.lms-lti` | EDU |
+| `identity.cohort-policy` | EDU |
+| `identity.edu-provisioning` | EDU |
+| `identity.ferpa-workflows` | EDU |
+| `identity.edition-entitlements` | SaaS, EDU, and Enterprise |
+| `billing.checkout` | SaaS |
+| `platform.data-residency` | Enterprise |
+| `runtime.managed-secrets` | Enterprise |
+| `runtime.air-gap-packaging` | Enterprise |
+| `runtime.customer-isolation` | Enterprise |
+| `pipelines.github-enterprise-server` | Enterprise |
 
 The report deliberately distinguishes “described” from “available.” This prevents a pack description from becoming an accidental customer promise.
 
@@ -285,7 +293,7 @@ The report should remain readable and portable. The detailed records can contain
 | Hosting choices | GCP, Render, and Vercel are supported when the required setup is present. |
 | Background work | A database-backed task list, one scheduled processor, retries, review handling, and repeat-safe processing are defined. |
 | Capability records | Shared capability names and status are recorded for SaaS, EDU, and Enterprise. |
-| Pack records | All three packs use comparable language and explicitly identify unsupported areas. |
+| Pack records | All three packs list the shared catalog. Pack-specific gaps use `not-implemented` or `not-applicable` status. |
 | Operating guidance | Verification, database changes, background tasks, hosting, authentication, and performance procedures are recorded. |
 | Automated proof | Document format, naming, generated maps, product boundaries, hosting boundaries, data ownership, migration order, tests, and builds can be checked. |
 | Enterprise readiness | Shared foundations are in place, but several Enterprise-specific integrations and real-environment proofs are not complete. |

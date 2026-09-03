@@ -26,9 +26,11 @@ Use the exact headings below for each pack profile. Replace bracketed values wit
 
 ## Capability status
 
+List every registry capability in registry order. Do not sample. Status must match the shared catalog rule in the [pack contract](pack-contract.md).
+
 | Capability key | Status | Evidence or limit |
 |---|---|---|
-| `context.capability` | `available` / `configuration-gated` / `not-implemented` | `[evidence]` |
+| `context.capability` | `available` / `configuration-gated` / `not-implemented` / `not-applicable` | `[evidence]` |
 
 ## Deployment scope
 
@@ -40,7 +42,7 @@ Use the exact headings below for each pack profile. Replace bracketed values wit
 
 ## Explicit non-support
 
-[Name product behaviors that are not implemented in this backend.]
+[Name product behaviors that are not registry keys. Registry-declared absences use `not-implemented` rows.]
 
 ## Ownership and verification
 

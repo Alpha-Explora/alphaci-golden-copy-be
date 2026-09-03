@@ -6,4 +6,4 @@
 * [EDU pack](edu/) - EDU composition reference.
 * [Enterprise pack](enterprise/) - Enterprise composition reference.
 
-Pack files are comparable documentation artifacts. They do not create separate backend domain implementations or runtime edition branches.
+Pack files are comparable documentation artifacts. Each profile lists the same registry capabilities in the same order. Differences belong in status (`not-implemented` versus `not-applicable`), deployment scope, and explicit non-support. Packs do not create separate backend domain implementations or runtime edition branches.

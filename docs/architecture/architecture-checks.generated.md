@@ -49,7 +49,7 @@ Dead in-process adapters measured by the source report: **0**.
 | Application boundaries | `npm run check:application-boundaries` | cross-context contract/application rule checker |
 | Provider encapsulation | `npm run check:provider-encapsulation` | provider ownership checker |
 | Schema ownership | `npm run check:schema-ownership` | migration and inline SQL checker |
-| Capability registry | `npm run check:capabilities` | AppConfig flag ownership and capability dependency checker |
+| Capability registry | `npm run check:capabilities` | AppConfig flag ownership, capability dependency, and pack catalog completeness checker |
 | Migration order | `npm run db:apply:all -- --dry-run` | migration replay planner |
 | OKF bundle | `npm run check:okf` | OKF v0.2 bundle validator |
 | Documentation | `npm run check:documentation` | naming, stale-claim, generated-map, and documentation policy checker |

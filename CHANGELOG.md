@@ -15,6 +15,10 @@
 
 ### Changed
 
+- Made the SaaS, EDU, and Enterprise pack profiles list every shared capability in registry order, with status derived from the capability registry rather than sampled per pack.
+- Recorded that the frontend repository keeps a matching current-state Golden Copy bundle that snapshots this catalog.
+- Recorded SaaS, EDU, and Enterprise target gaps as `not-implemented` capability keys, and added pack status `not-applicable` for keys outside a pack.
+- Extended `check:capabilities` to reject pack tables that omit, reorder, or restate capability status outside the shared catalog rule, and to forbid AppConfig flags on `not-implemented` records.
 - Replaced obsolete architecture and operational document locations with current lower-kebab canonical paths.
 - Synchronized the npm lockfile with the existing `js-yaml` dependency so clean `npm ci` installation succeeds.
 - Kept the existing HTTP route inventory, public DTO compatibility, and product workflow behavior while tightening internal delivery and composition boundaries.

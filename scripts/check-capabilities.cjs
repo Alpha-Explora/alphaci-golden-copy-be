@@ -16,6 +16,9 @@
  *   3. requires edges resolve to known capability keys, are acyclic, and
  *      never point at a capability with a narrower edition set
  *   4. records are structurally valid (key/context/maturity vocabulary)
+ *   5. not-implemented records do not claim AppConfig flags
+ *   6. each pack profile lists every registry key in registry order with
+ *      status derived from maturity and edition applicability
  *
  * Usage:
  *   node ./scripts/check-capabilities.cjs
@@ -39,6 +42,17 @@ const CONTEXTS = new Set([
 ]);
 const MATURITIES = new Set(['stable', 'limited', 'not-implemented']);
 const EDITIONS = new Set(['saas', 'edu', 'enterprise']);
+const PACK_STATUSES = new Set([
+  'available',
+  'configuration-gated',
+  'not-implemented',
+  'not-applicable',
+]);
+const PACK_PROFILES = [
+  { edition: 'saas', file: 'docs/packs/saas/pack.md' },
+  { edition: 'edu', file: 'docs/packs/edu/pack.md' },
+  { edition: 'enterprise', file: 'docs/packs/enterprise/pack.md' },
+];
 
 /**
  * Infrastructure toggles that are deliberately not product capabilities.
@@ -81,6 +95,76 @@ function readConfigFlags() {
     if (leaf && group) flags.add(`${group}.${leaf[1]}`);
   }
   return flags;
+}
+
+function expectedPackStatus(capability, edition) {
+  if (!(capability.editions ?? []).includes(edition)) return 'not-applicable';
+  if (capability.maturity === 'stable') return 'available';
+  if (capability.maturity === 'limited') return 'configuration-gated';
+  return 'not-implemented';
+}
+
+function parsePackCapabilityRows(markdown) {
+  const heading = /^## Capability status\s*$/m.exec(markdown);
+  if (!heading) return { error: 'missing ## Capability status heading' };
+  const rest = markdown.slice(heading.index + heading[0].length);
+  const nextHeading = /^## /m.exec(rest);
+  const section = nextHeading ? rest.slice(0, nextHeading.index) : rest;
+  const rows = [];
+  for (const line of section.split(/\r?\n/)) {
+    const match = /^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*(.*?)\s*\|\s*$/.exec(line);
+    if (match) rows.push({ key: match[1], status: match[2] });
+  }
+  return { rows };
+}
+
+function packCatalogErrors(capabilities) {
+  const errors = [];
+  for (const pack of PACK_PROFILES) {
+    const file = path.join(ROOT, pack.file);
+    if (!fs.existsSync(file)) {
+      errors.push(`${pack.file}: pack profile is missing`);
+      continue;
+    }
+    const parsed = parsePackCapabilityRows(fs.readFileSync(file, 'utf8'));
+    if (parsed.error) {
+      errors.push(`${pack.file}: ${parsed.error}`);
+      continue;
+    }
+    const rows = parsed.rows;
+    if (rows.length === 0) {
+      errors.push(`${pack.file}: Capability status table has no capability rows`);
+      continue;
+    }
+    const max = Math.max(rows.length, capabilities.length);
+    for (let index = 0; index < max; index += 1) {
+      const expected = capabilities[index];
+      const actual = rows[index];
+      const at = `${pack.file} row ${index + 1}`;
+      if (!expected) {
+        errors.push(`${at}: extra capability key ${actual.key}`);
+        continue;
+      }
+      if (!actual) {
+        errors.push(`${at}: missing capability key ${expected.key}`);
+        continue;
+      }
+      if (actual.key !== expected.key) {
+        errors.push(`${at}: expected ${expected.key} in registry order, found ${actual.key}`);
+      }
+      if (!PACK_STATUSES.has(actual.status)) {
+        errors.push(`${at}: unknown pack status ${actual.status}`);
+        continue;
+      }
+      const expectedStatus = expectedPackStatus(expected, pack.edition);
+      if (actual.status !== expectedStatus) {
+        errors.push(
+          `${at}: ${expected.key} must be ${expectedStatus} for ${pack.edition} (maturity ${expected.maturity})`,
+        );
+      }
+    }
+  }
+  return errors;
 }
 
 function detectCycle(byKey) {
@@ -128,12 +212,23 @@ function collect() {
     if (!MATURITIES.has(capability.maturity)) {
       errors.push(`${at} unknown maturity: ${capability.maturity}`);
     }
+    if (!Array.isArray(capability.editions) || capability.editions.length === 0) {
+      errors.push(`${at} must declare at least one edition`);
+    }
     for (const edition of capability.editions ?? []) {
       if (!EDITIONS.has(edition)) {
         errors.push(`${at} unknown edition: ${edition}`);
       }
     }
-    if (!Array.isArray(capability.configurationFlags) || capability.configurationFlags.length === 0) {
+    if (!Array.isArray(capability.configurationFlags)) {
+      errors.push(`${at} configurationFlags must be an array`);
+    } else if (capability.maturity === 'not-implemented') {
+      if (capability.configurationFlags.length > 0) {
+        errors.push(
+          `${at} not-implemented capabilities must not claim AppConfig flags until the behavior exists`,
+        );
+      }
+    } else if (capability.configurationFlags.length === 0) {
       errors.push(`${at} must declare at least one configurationFlags entry`);
     }
 
@@ -185,6 +280,8 @@ function collect() {
   const cycle = detectCycle(byKey);
   if (cycle) errors.push(`requires cycle: ${cycle.join(' -> ')}`);
 
+  errors.push(...packCatalogErrors(capabilities));
+
   return {
     capabilityCount: capabilities.length,
     configFlagCount: configFlags.size,
@@ -212,7 +309,7 @@ if (result.errors.length > 0) {
 }
 
 console.log(
-  `Capability registry OK (${result.capabilityCount} capabilities, ${result.claimedFlagCount}/${result.configFlagCount} AppConfig flags owned, ${result.exemptFlagCount} exempt, ${result.requiresEdgeCount} requires edge(s)).`,
+  `Capability registry OK (${result.capabilityCount} capabilities, ${result.claimedFlagCount}/${result.configFlagCount} AppConfig flags owned, ${result.exemptFlagCount} exempt, ${result.requiresEdgeCount} requires edge(s), pack catalogs complete).`,
 );
 
-module.exports = { collect };
+module.exports = { collect, expectedPackStatus, parsePackCapabilityRows };
