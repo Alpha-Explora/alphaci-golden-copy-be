@@ -501,7 +501,7 @@ Dead in-process adapters measured by the source report: **${total.deadInProcessA
 | Application boundaries | \`npm run check:application-boundaries\` | cross-context contract/application rule checker |
 | Provider encapsulation | \`npm run check:provider-encapsulation\` | provider ownership checker |
 | Schema ownership | \`npm run check:schema-ownership\` | migration and inline SQL checker |
-| Capability registry | \`npm run check:capabilities\` | AppConfig flag ownership and capability dependency checker |
+| Capability registry | \`npm run check:capabilities\` | AppConfig flag ownership, capability dependency, and pack catalog completeness checker |
 | Migration order | \`npm run db:apply:all -- --dry-run\` | migration replay planner |
 | OKF bundle | \`npm run check:okf\` | OKF v0.2 bundle validator |
 | Documentation | \`npm run check:documentation\` | naming, stale-claim, generated-map, and documentation policy checker |
@@ -551,7 +551,7 @@ ${rows.join('\n')}
 - **limited** means the key is present but its live adapter or provider behavior is intentionally limited or configuration-gated.
 - **not-implemented** means the product area is explicitly recorded as absent from this backend; it is not an entitlement claim.
 
-Pack documents use this matrix to describe composition without copying domain ownership or changing runtime behavior.`,
+Pack profiles list every key in this table, in this order. Pack status is derived from maturity and edition applicability: \`not-applicable\` means the pack does not include the capability; \`not-implemented\` means the pack includes it and the backend does not provide it. Pack-specific gaps that are not registry keys stay in Explicit non-support.`,
   });
 }
 

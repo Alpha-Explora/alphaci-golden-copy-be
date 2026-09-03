@@ -23,22 +23,47 @@ sources:
 
 - Documentation status: `documentation-only`
 - Runtime selection behavior: No pack-selection resolver is implemented in this backend.
-- Current backend applicability: The same six-context backend supports configured provider integrations, workspace and hierarchy controls, project workflows, CI reporting, billing, and platform operations.
+- Current backend applicability: The same six-context backend exposes the shared capability catalog. A customer-managed deployment target remains separate from edition identity.
 
 ## Capability status
 
+This table lists every current registry capability in registry order. Status is derived from capability maturity and edition applicability. Pack-specific gaps that are not registry keys stay in Explicit non-support.
+
 | Capability key | Status | Evidence or limit |
 |---|---|---|
-| `identity.workspaces` | `available` | Workspace access is owned by identity-access. |
-| `identity.hierarchy` | `available` | Repository hierarchy and assignment behavior is owned by identity-access. |
-| `runtime.env-provisioning` | `configuration-gated` | Provider and environment configuration are required. |
-| `runtime.deployment-history` | `configuration-gated` | Current history mode is configuration-controlled. |
-| `projects.target-management` | `available` | Project target composition is exposed through current context contracts. |
-| `platform.audit-events` | `available` | Audit recording is outbox-backed and configuration-controlled. |
+| `identity.workspaces` | `available` | Workspace membership and access management. Configuration: workspaces.enabled. |
+| `identity.hierarchy` | `available` | Hierarchy groups, systems, repositories, and assignments. Configuration: hierarchy.enabled. |
+| `identity.sso-scim` | `not-implemented` | Single sign-on and SCIM user provisioning. Not implemented in this backend. |
+| `identity.lms-lti` | `not-applicable` | Not part of this pack composition. |
+| `identity.cohort-policy` | `not-applicable` | Not part of this pack composition. |
+| `identity.edu-provisioning` | `not-applicable` | Not part of this pack composition. |
+| `identity.ferpa-workflows` | `not-applicable` | Not part of this pack composition. |
+| `identity.edition-entitlements` | `not-implemented` | Runtime edition and pack entitlement resolution. Not implemented in this backend. |
+| `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
+| `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
+| `platform.data-residency` | `not-implemented` | Customer-specific data-location controls. Not implemented in this backend. |
+| `billing.subscription-gate` | `available` | Subscription entitlement gating for authenticated access and CI run validation. Configuration: subscription.gateEnabled. |
+| `billing.usage-quotas` | `configuration-gated` | Usage tracking and quota policy checks. Configuration: usageQuotas.enabled. |
+| `billing.checkout` | `not-applicable` | Not part of this pack composition. |
+| `runtime.env-provisioning` | `configuration-gated` | Provider-backed deployment target and environment provisioning. Configuration: envProvisioning.enabled plus provider configuration. |
+| `runtime.gcp-deployments` | `configuration-gated` | Google Cloud deployment provider, including optional dedicated per-customer projects. Configuration: gcpDeployments.enabled plus GCP provider configuration. |
+| `runtime.deployment-history` | `configuration-gated` | Deployment history read model exposed through the Runtime context. Configuration: deploymentHistory.enabled. |
+| `runtime.preview-deployments` | `configuration-gated` | Branch-scoped preview deployment grouping when the provider supports it. Configuration: previewDeployments.enabled and deploymentHistory.enabled. |
+| `runtime.drift-detection` | `configuration-gated` | Configuration drift detection using the current local or provider snapshot mode. Configuration: driftDetection.enabled. |
+| `runtime.drift-repair` | `configuration-gated` | Safe drift repair using the current configured repair mode. Configuration: driftRepair.enabled. |
+| `runtime.managed-secrets` | `not-implemented` | Managed secret storage, including Vault integration. Not implemented in this backend. |
+| `runtime.air-gap-packaging` | `not-implemented` | Air-gap packaging of the application as a deployment target. Not implemented in this backend. |
+| `runtime.customer-isolation` | `not-implemented` | Customer-managed operational isolation as a tenancy option. Not implemented in this backend. |
+| `projects.sync-snapshots` | `configuration-gated` | Project synchronization snapshot reads and findings. Configuration: projectSyncSnapshots.enabled. |
+| `projects.workflow-settings-preview` | `available` | Workflow settings preview and validation. Configuration: workflowSettingsPreview.enabled. |
+| `projects.workflow-update-pr` | `configuration-gated` | Workflow update pull-request requests. Configuration: workflowUpdatePr.enabled. |
+| `projects.target-management` | `available` | Project target management composition with Runtime. Configuration: projectTargetManagement.enabled. |
+| `pipelines.ci-run-tracking` | `configuration-gated` | CI run report ingestion and tracking. Configuration: ciRunTracking.enabled. |
+| `pipelines.github-enterprise-server` | `not-implemented` | GitHub Enterprise Server repository and CI integration. Not implemented in this backend. |
 
 ## Deployment scope
 
-Enterprise is an edition composition reference. A customer-managed deployment target remains separate from edition identity. The current Runtime provider and GCP operational scope are described in the [provider map](/architecture/provider-map.generated.md) and [provisioning runbook](/runbooks/runbook-deployment-provisioning.md).
+Enterprise is an edition composition reference. A customer-managed deployment target remains separate from edition identity. `runtime.air-gap-packaging` is a deployment-target capability composed into this pack; `runtime.customer-isolation` is a tenancy capability composed into this pack. Neither value replaces the Enterprise edition identity. The current Runtime provider and GCP operational scope are described in the [provider map](/architecture/provider-map.generated.md) and [provisioning runbook](/runbooks/runbook-deployment-provisioning.md).
 
 ## Configuration and entitlements
 
@@ -46,10 +71,10 @@ The narrowing order is `build -> edition manifest -> deployment configuration ->
 
 ## Explicit non-support
 
-Air-gap packaging, Vault integration, GHES integration, SSO/SCIM provisioning, customer-specific data residency controls, and customer-managed operational isolation are not implemented as Enterprise pack behavior in this backend.
+No additional non-registry product areas. Catalog rows with status `not-implemented` are the current Enterprise product gaps in this backend.
 
 ## Ownership and verification
 
-- Context owners: `identity-access`, `projects`, `runtime`, and `platform-ops` as shown in the capability matrix.
+- Context owners: `identity-access`, `projects`, `pipelines`, `runtime`, `billing`, and `platform-ops` as shown in the capability matrix.
 - Source: `docs/capabilities/registry.ts` and the owning context source paths.
 - Verification: `npm run check:documentation`.
