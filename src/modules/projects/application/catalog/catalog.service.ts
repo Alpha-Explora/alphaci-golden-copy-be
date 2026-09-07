@@ -304,9 +304,10 @@ interface EngineWorkflowRefsFile {
 }
 
 // The reusable gated-stage workflow logic (Access, Quality, Package) that every
-// generated pipeline calls into via `uses: <repo>/<workflow>@<ref>`. Public
-// repo — tags are readable via GitHub's unauthenticated REST API.
-const CENTRAL_WORKFLOW_REPO = 'cicd-external-project/cicd-workflow';
+// generated pipeline calls into via `uses: <repo>/<workflow>@<ref>`. The
+// repository is configuration (templates.centralWorkflowRepo), not a constant,
+// so a deployment can be repointed without a code change and the value cannot
+// drift away from the one the workflow generator uses.
 
 function resolveDefaultCentralWorkflowRef(
   env: NodeJS.ProcessEnv = process.env,
@@ -370,7 +371,7 @@ export class CatalogService {
 
     try {
       const response = await fetch(
-        `https://api.github.com/repos/${CENTRAL_WORKFLOW_REPO}/tags?per_page=30`,
+        `https://api.github.com/repos/${this.config.templates.centralWorkflowRepo}/tags?per_page=30`,
         {
           headers: {
             Accept: 'application/vnd.github+json',

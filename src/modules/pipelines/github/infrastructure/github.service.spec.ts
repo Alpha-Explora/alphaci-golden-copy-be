@@ -46,8 +46,9 @@ const appConfig: AppConfig = {
     teamRoleReconcileIntervalMs: 0,
   },
   templates: {
-    repoPath: '../cicd-workflow',
+    repoPath: '../alphaci-workflow',
     workflowDir: 'workflow-templates',
+    centralWorkflowRepo: 'Alpha-Explora/alphaci-workflow',
   },
   envProvisioning: {
     enabled: false,

@@ -66,6 +66,12 @@ export interface AppConfig {
   templates: {
     repoPath: string;
     workflowDir: string;
+    /**
+     * `owner/name` of the central workflow repository that generated pipelines
+     * call into. Distinct from the git ref (CENTRAL_WORKFLOW_REF), which selects
+     * the tag within it.
+     */
+    centralWorkflowRepo: string;
   };
   subscription: {
     /**

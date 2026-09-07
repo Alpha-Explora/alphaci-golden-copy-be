@@ -9,7 +9,7 @@ import type {
 } from '../../../core/workflow-fragment.contract';
 import {
   branchCondition,
-  CENTRAL_WORKFLOW_REF,
+  CENTRAL_WORKFLOW_BASE,
   deploymentNeeds,
   HEAD_SHA_EXPR,
 } from '../core/workflow-fragment.helpers';
@@ -26,7 +26,7 @@ function buildVercelFragment(
       [jobId]: {
         needs: deploymentNeeds(branch),
         if: branchCondition(branch),
-        uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@${context.centralWorkflowRef}`,
+        uses: `${CENTRAL_WORKFLOW_BASE}/vercel-deploy.yml@${context.centralWorkflowRef}`,
         with: {
           'system-name': context.serviceName,
           'working-directory': target.rootDirectory ?? context.servicePath,

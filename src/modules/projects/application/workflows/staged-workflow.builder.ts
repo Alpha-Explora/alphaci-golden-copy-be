@@ -1,5 +1,6 @@
 import yaml from 'js-yaml';
 
+import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
@@ -27,8 +28,15 @@ export interface StagedWorkflowBundle {
   metadata: WorkflowFileMetadata[];
 }
 
-const CENTRAL_WORKFLOW_REF =
-  'cicd-external-project/cicd-workflow/.github/workflows';
+/**
+ * `owner/name/.github/workflows` prefix for every generated `uses:`.
+ *
+ * Named BASE, not REF: this is the repository, while `centralWorkflowRef` on
+ * the build context is the git tag. Both were previously called
+ * CENTRAL_WORKFLOW_REF, which is how the repository stayed hardcoded through a
+ * change whose stated purpose was making the ref configurable.
+ */
+const CENTRAL_WORKFLOW_BASE = resolveCentralWorkflowBase();
 
 /**
  * Check-run name of the env-guard job. Branch protection on provisioned repos
@@ -295,7 +303,7 @@ function buildQualityWorkflowFile(
         ),
         [ctx.testJobId]: {
           needs: ['branch-policy'],
-          uses: `${CENTRAL_WORKFLOW_REF}/${ctx.testWorkflow}@${ctx.centralWorkflowRef}`,
+          uses: `${CENTRAL_WORKFLOW_BASE}/${ctx.testWorkflow}@${ctx.centralWorkflowRef}`,
           with: {
             'working-directory': ctx.servicePath,
             'system-name': ctx.serviceName,
@@ -314,7 +322,7 @@ function buildQualityWorkflowFile(
         },
         lint: {
           needs: ['branch-policy'],
-          uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@${ctx.centralWorkflowRef}`,
+          uses: `${CENTRAL_WORKFLOW_BASE}/lint-check.yml@${ctx.centralWorkflowRef}`,
           with: {
             'working-directory': ctx.servicePath,
             'system-name': ctx.serviceName,
@@ -329,7 +337,7 @@ function buildQualityWorkflowFile(
         typecheck: typecheckJob(ctx.servicePath, ctx.nodeVersion),
         security: {
           needs: ['validate-access'],
-          uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@${ctx.centralWorkflowRef}`,
+          uses: `${CENTRAL_WORKFLOW_BASE}/security-scan.yml@${ctx.centralWorkflowRef}`,
           with: {
             'working-directory': ctx.servicePath,
             'system-name': ctx.serviceName,
@@ -345,7 +353,7 @@ function buildQualityWorkflowFile(
           // is advisory for PR source refs and blocking on direct uat/main
           // runs (branch-policy decides via sonar-gate-wait).
           if: "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
-          uses: `${CENTRAL_WORKFLOW_REF}/sonarcloud-scan.yml@${ctx.centralWorkflowRef}`,
+          uses: `${CENTRAL_WORKFLOW_BASE}/sonarcloud-scan.yml@${ctx.centralWorkflowRef}`,
           with: {
             'working-directory': ctx.servicePath,
             'system-name': ctx.serviceName,
@@ -852,7 +860,7 @@ function productionGateJob(
   return {
     needs: ['build'],
     if: `\${{ (${BRANCH_EXPR}) == 'main' }}`,
-    uses: `${CENTRAL_WORKFLOW_REF}/production-gate.yml@${centralWorkflowRef}`,
+    uses: `${CENTRAL_WORKFLOW_BASE}/production-gate.yml@${centralWorkflowRef}`,
     with: {
       'system-dir': serviceName,
       'app-type': isBackend ? 'api' : 'web',
@@ -898,7 +906,7 @@ function promotionJob(
     },
     needs,
     if: `\${{ ${conditions.join(' && ')} }}`,
-    uses: `${CENTRAL_WORKFLOW_REF}/promotion.yml@${centralWorkflowRef}`,
+    uses: `${CENTRAL_WORKFLOW_BASE}/promotion.yml@${centralWorkflowRef}`,
     with: {
       'pipeline-kind': 'single',
       direction,

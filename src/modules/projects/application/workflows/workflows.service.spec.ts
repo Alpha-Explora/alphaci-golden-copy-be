@@ -24,7 +24,7 @@ on:
         type: string
 jobs:
   pipeline:
-    uses: cicd-external-project/cicd-workflow/.github/workflows/be-pipeline.yml@main
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/be-pipeline.yml@main
     with:
       service_name: placeholder
 `.trim();
@@ -151,7 +151,7 @@ describe('WorkflowsService', () => {
         "conclusion == 'success'",
       );
       expect(result.workflowFiles[1]?.yaml).toContain(
-        'cicd-external-project/cicd-workflow/.github/workflows/backend-tests.yml@v1',
+        'Alpha-Explora/alphaci-workflow/.github/workflows/backend-tests.yml@v1',
       );
       expect(result.workflowFiles[1]?.yaml).toContain(
         'http://localhost:4000/api/v1/ci/validate',

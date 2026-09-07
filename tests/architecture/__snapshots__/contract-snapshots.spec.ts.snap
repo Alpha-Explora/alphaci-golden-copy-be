@@ -103,7 +103,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
         "RENDER_HEALTHCHECK_URL_TEST": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
         "RENDER_HEALTHCHECK_URL_UAT": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
       },
-      "uses": "cicd-external-project/cicd-workflow/.github/workflows/render-deploy.yml@v1",
+      "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/render-deploy.yml@v1",
       "with": {
         "branch": "uat",
         "deploy-mode": "auto",
@@ -125,7 +125,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
         "VERCEL_PROJECT_ID": "\${{ secrets.VERCEL_FRONTEND_PROJECT_ID }}",
         "VERCEL_TOKEN": "\${{ secrets.VERCEL_FRONTEND_TOKEN }}",
       },
-      "uses": "cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1",
+      "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
         "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
         "environment": "production",
@@ -144,7 +144,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
         "VERCEL_PROJECT_ID": "\${{ secrets.VERCEL_FRONTEND_PROJECT_ID }}",
         "VERCEL_TOKEN": "\${{ secrets.VERCEL_FRONTEND_TOKEN }}",
       },
-      "uses": "cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1",
+      "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
         "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
         "environment": "preview",
@@ -162,7 +162,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
         "packages": "write",
         "security-events": "write",
       },
-      "uses": "cicd-external-project/cicd-workflow/.github/workflows/docker-build.yml@v1",
+      "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1",
       "with": {
         "dockerfile-path": "Dockerfile",
         "fail-on-vulnerabilities": true,

@@ -6,14 +6,22 @@ import {
   subscriptionConfig,
 } from './app.config-slices';
 import type { AppConfig } from './app.config.types';
+import { resolveCentralWorkflowRepo } from './central-workflow';
 
 export { githubConfig, provisioningConfig, subscriptionConfig };
 export type { AppConfig, GithubTeamRoleSyncMode } from './app.config.types';
 
 function templatesConfig(env: NodeJS.ProcessEnv): AppConfig['templates'] {
   return {
-    repoPath: env['TEMPLATE_REPO_PATH'] ?? '../cicd-workflow',
+    // Local default matches the checked-out sibling directory name. It
+    // previously read '../cicd-workflow', which resolved for nobody: the
+    // checkout is named alphaci-workflow, so the engine catalog silently threw
+    // and every local run fell back to the hardcoded static catalog while
+    // deployed instances loaded the real one. Local and deployed disagreed with
+    // only a log warning to say so.
+    repoPath: env['TEMPLATE_REPO_PATH'] ?? '../alphaci-workflow',
     workflowDir: env['TEMPLATE_WORKFLOW_DIR'] ?? 'workflow-templates',
+    centralWorkflowRepo: resolveCentralWorkflowRepo(env),
   };
 }
 

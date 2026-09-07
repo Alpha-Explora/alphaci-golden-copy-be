@@ -94,7 +94,7 @@ describe('CatalogService', () => {
         if (normalized.endsWith('/catalog/workflow-refs.json')) {
           return JSON.stringify({
             currentStable: 'v1',
-            repository: 'cicd-external-project/cicd-workflow',
+            repository: 'Alpha-Explora/alphaci-workflow',
             workflows: {
               frontendMaster: '.github/workflows/master-pipeline-fe.yml',
               backendMaster: '.github/workflows/master-pipeline-be.yml',
@@ -131,9 +131,9 @@ describe('CatalogService', () => {
             }),
             workflowRefByProjectType: expect.objectContaining({
               nextjs:
-                'cicd-external-project/cicd-workflow/.github/workflows/service-nextjs.yml@v1',
+                'Alpha-Explora/alphaci-workflow/.github/workflows/service-nextjs.yml@v1',
               nestjs:
-                'cicd-external-project/cicd-workflow/.github/workflows/service-nestjs.yml@v1',
+                'Alpha-Explora/alphaci-workflow/.github/workflows/service-nestjs.yml@v1',
             }),
           }),
         ]),
@@ -165,7 +165,7 @@ describe('CatalogService', () => {
         if (normalized.endsWith('/catalog/workflow-refs.json')) {
           return JSON.stringify({
             currentStable: 'v1',
-            repository: 'cicd-external-project/cicd-workflow',
+            repository: 'Alpha-Explora/alphaci-workflow',
             workflows: {
               reactService: '.github/workflows/service-react.yml',
               nodeService: '.github/workflows/service-node.yml',
@@ -198,9 +198,9 @@ describe('CatalogService', () => {
       expect(result.recipes[0]?.workflowRefByProjectType).toEqual(
         expect.objectContaining({
           react:
-            'cicd-external-project/cicd-workflow/.github/workflows/service-react.yml@v1',
+            'Alpha-Explora/alphaci-workflow/.github/workflows/service-react.yml@v1',
           nodejs:
-            'cicd-external-project/cicd-workflow/.github/workflows/service-node.yml@v1',
+            'Alpha-Explora/alphaci-workflow/.github/workflows/service-node.yml@v1',
         }),
       );
     });

@@ -377,7 +377,7 @@ describe('buildStagedWorkflowBundle', () => {
     const sonar = quality.jobs['sonar'];
 
     expect(sonar?.uses).toBe(
-      'cicd-external-project/cicd-workflow/.github/workflows/sonarcloud-scan.yml@v1',
+      'Alpha-Explora/alphaci-workflow/.github/workflows/sonarcloud-scan.yml@v1',
     );
     expect(sonar?.if).toBe(
       "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
@@ -406,7 +406,7 @@ describe('buildStagedWorkflowBundle', () => {
     const gate = pkg.jobs['production-gate'];
 
     expect(gate?.uses).toBe(
-      'cicd-external-project/cicd-workflow/.github/workflows/production-gate.yml@v1',
+      'Alpha-Explora/alphaci-workflow/.github/workflows/production-gate.yml@v1',
     );
     expect(gate?.if).toBe(
       "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' }}",
@@ -441,7 +441,7 @@ describe('buildStagedWorkflowBundle', () => {
     const packageYaml = bundle.workflowFiles[2]!.yaml;
 
     expect(pkg.jobs['deploy-vercel-standalone-uat']?.uses).toBe(
-      'cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1',
+      'Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1',
     );
     expect(pkg.jobs['deploy-vercel-standalone-uat']?.with?.environment).toBe(
       'preview',
@@ -494,10 +494,10 @@ describe('buildStagedWorkflowBundle', () => {
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
 
     expect(pkg.jobs['docker-backend-uat']?.uses).toBe(
-      'cicd-external-project/cicd-workflow/.github/workflows/docker-build.yml@v1',
+      'Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1',
     );
     expect(pkg.jobs['deploy-render-backend-uat']?.uses).toBe(
-      'cicd-external-project/cicd-workflow/.github/workflows/render-deploy.yml@v1',
+      'Alpha-Explora/alphaci-workflow/.github/workflows/render-deploy.yml@v1',
     );
     expect(pkg.jobs['deploy-render-backend-uat']?.needs).toEqual([
       'docker-backend-uat',
@@ -515,7 +515,7 @@ describe('buildStagedWorkflowBundle', () => {
 
     expect(pkg.jobs['promote-to-uat']).toBeUndefined();
     expect(toMain?.uses).toBe(
-      'cicd-external-project/cicd-workflow/.github/workflows/promotion.yml@v1',
+      'Alpha-Explora/alphaci-workflow/.github/workflows/promotion.yml@v1',
     );
     expect(toMain?.with?.['system1-name']).toBe('orders-api');
     expect(toMain?.secrets).toEqual({

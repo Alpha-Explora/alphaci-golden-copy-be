@@ -9,7 +9,7 @@ import type {
 } from '../../../core/workflow-fragment.contract';
 import {
   branchCondition,
-  CENTRAL_WORKFLOW_REF,
+  CENTRAL_WORKFLOW_BASE,
   deploymentNeeds,
 } from '../core/workflow-fragment.helpers';
 
@@ -28,7 +28,7 @@ function buildDockerJob(
     },
     needs: deploymentNeeds(branch),
     if: branchCondition(branch),
-    uses: `${CENTRAL_WORKFLOW_REF}/docker-build.yml@${context.centralWorkflowRef}`,
+    uses: `${CENTRAL_WORKFLOW_BASE}/docker-build.yml@${context.centralWorkflowRef}`,
     with: {
       'working-directory':
         target.dockerContext ?? target.rootDirectory ?? context.servicePath,
@@ -51,7 +51,7 @@ function buildRenderJob(
   return {
     needs: [dockerJobId],
     if: branchCondition(branch),
-    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${context.centralWorkflowRef}`,
+    uses: `${CENTRAL_WORKFLOW_BASE}/render-deploy.yml@${context.centralWorkflowRef}`,
     with: {
       'system-name': context.serviceName,
       environment: branch === 'main' ? 'production' : branch,
