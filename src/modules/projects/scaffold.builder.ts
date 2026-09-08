@@ -25,11 +25,30 @@ export type CanonicalStack = 'nestjs' | 'nodejs' | 'nextjs' | 'react';
  * Accept legacy FE/API project type IDs as well as catalog stack keys. Older
  * saved requests and tests still use values like 'nestjs-api' and 'react-app',
  * but the scaffold needs canonical stack names to emit the right file tree.
+ *
+ * Two different things used to share one fallback, and only one of them was
+ * benign:
+ *
+ *   nullish  → a project with no recorded stack, which is every project
+ *              predating the catalog. Defaulting these to nodejs is correct.
+ *   unknown  → a stack that was explicitly asked for and is not supported.
+ *              Defaulting these produced a repository scaffolded as Node —
+ *              package.json, tsconfig, ESLint, a Node Dockerfile — for someone
+ *              who asked for something else, with nothing anywhere reporting
+ *              the substitution. The pipeline then ran `npm ci` against it and
+ *              failed for a reason unrelated to the actual mistake.
+ *
+ * The same reasoning is already written down one function below, for repo
+ * shapes: a catalog-driven request must never silently fall back.
  */
 export function normalizeProjectStack(
   stack: string | null | undefined,
 ): CanonicalStack {
-  const normalized = (stack ?? '').toLowerCase();
+  const normalized = (stack ?? '').trim().toLowerCase();
+
+  if (normalized === '') {
+    return 'nodejs';
+  }
 
   if (normalized.includes('next')) {
     return 'nextjs';
@@ -47,7 +66,9 @@ export function normalizeProjectStack(
     return 'nodejs';
   }
 
-  return 'nodejs';
+  throw new Error(
+    `Unsupported project stack '${stack}'. The scaffold can emit nextjs, react, nestjs or nodejs; a stack outside that set needs a scaffold before it can be provisioned.`,
+  );
 }
 
 /**

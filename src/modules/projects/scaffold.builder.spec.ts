@@ -33,10 +33,24 @@ describe('normalizeProjectStack', () => {
     expect(normalizeProjectStack('nodejs-api')).toBe('nodejs');
   });
 
-  it('falls back to nodejs for unknown or missing stack IDs', () => {
+  // A project with no recorded stack predates the catalog; nodejs is the right
+  // answer for it and existing repositories rely on that.
+  it('falls back to nodejs when no stack was recorded', () => {
     expect(normalizeProjectStack(undefined)).toBe('nodejs');
     expect(normalizeProjectStack(null)).toBe('nodejs');
-    expect(normalizeProjectStack('unknown')).toBe('nodejs');
+    expect(normalizeProjectStack('')).toBe('nodejs');
+    expect(normalizeProjectStack('   ')).toBe('nodejs');
+  });
+
+  // A stack that was explicitly asked for and is not supported is a different
+  // case, and it used to share the fallback above. That is how a request for a
+  // stack we cannot scaffold produced a Node repository instead — the caller got
+  // a plausible result rather than an error, and only found out when the
+  // generated pipeline ran `npm ci` against a project with no lockfile.
+  it('rejects a stack that was asked for but cannot be scaffolded', () => {
+    expect(() => normalizeProjectStack('dotnet')).toThrow(/Unsupported project stack/);
+    expect(() => normalizeProjectStack('python')).toThrow(/dotnet|nextjs, react, nestjs or nodejs/);
+    expect(() => normalizeProjectStack('unknown')).toThrow();
   });
 });
 

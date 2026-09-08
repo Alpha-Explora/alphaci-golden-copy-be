@@ -277,6 +277,20 @@ export interface WorkflowTemplate {
   categories: string[];
   filePatterns: string[];
   stack: 'nextjs' | 'react' | 'react-native' | 'expo' | 'nestjs' | 'nodejs';
+  /**
+   * Whether the stack produces a service or a site, taken from the catalog.
+   *
+   * The generator previously re-derived this by comparing the stack identifier
+   * against a hardcoded list, which meant a stack the list did not name was
+   * classified as a frontend by omission rather than rejected. The catalog has
+   * always declared it. See ADR-0006.
+   *
+   * Optional because templates predating the catalog have no entry to join to;
+   * callers fall back rather than assume.
+   */
+  kind?: 'frontend' | 'backend';
+  /** Toolchain the stack runs on, from the catalog. 'node' today. */
+  runtime?: string;
   propertiesPath: string;
   workflowPath: string;
 }
@@ -551,6 +565,8 @@ export class CatalogService implements OnModuleInit {
       (entry) => entry.isFile() && entry.name.endsWith('.properties.json'),
     );
 
+    const stacksByKey = this.readStackCatalog();
+
     const loaded = await Promise.all(
       propertyFiles.map(async (entry) => {
         const id = entry.name.replace('.properties.json', '');
@@ -577,6 +593,9 @@ export class CatalogService implements OnModuleInit {
               )
             : [];
 
+          const stack = this.inferStack(id, categories);
+          const catalogEntry = stacksByKey.get(stack);
+
           return {
             id,
             name: parsed.name ?? id,
@@ -584,7 +603,15 @@ export class CatalogService implements OnModuleInit {
             iconName: parsed.iconName ?? 'octicon package',
             categories,
             filePatterns,
-            stack: this.inferStack(id, categories),
+            stack,
+            // Joined from catalog/stacks.json rather than re-derived. The key
+            // still comes from the template id, for templates that predate the
+            // catalog; kind and runtime are declared, not inferred. ADR-0006.
+            ...(catalogEntry?.kind === 'frontend' ||
+            catalogEntry?.kind === 'backend'
+              ? { kind: catalogEntry.kind }
+              : {}),
+            ...(catalogEntry?.runtime ? { runtime: catalogEntry.runtime } : {}),
             propertiesPath,
             workflowPath,
           } satisfies WorkflowTemplate;
@@ -728,6 +755,37 @@ export class CatalogService implements OnModuleInit {
         },
       ],
     };
+  }
+
+  /**
+   * The catalog's stack declarations, keyed for lookup.
+   *
+   * Returns an empty map when the catalog is unavailable rather than throwing:
+   * a template can still be served without its catalog entry, it simply has no
+   * declared kind or runtime and callers fall back. Failing here would take the
+   * whole template listing down over metadata that is additive.
+   */
+  private readStackCatalog(): Map<string, EngineStackFile> {
+    try {
+      const catalogRoot = join(this.resolveTemplateRepoPath(), 'catalog');
+      const stacks = this.readCatalogJson<EngineStackFile[]>(
+        catalogRoot,
+        'stacks.json',
+      );
+
+      return new Map(
+        stacks
+          .filter((stack): stack is EngineStackFile & { key: string } =>
+            Boolean(stack.key),
+          )
+          .map((stack) => [stack.key, stack]),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Stack catalog unavailable; templates will carry no declared kind or runtime: ${(error as Error).message}`,
+      );
+      return new Map();
+    }
   }
 
   private readCatalogJson<T>(catalogRoot: string, fileName: string): T {

@@ -245,7 +245,14 @@ function resolveStagedContext(
   dto: StagedWorkflowOptions,
 ): StagedWorkflowContext {
   const coverageThreshold = dto.coverageThreshold ?? 80;
-  const isBackend = template.stack === 'nestjs' || template.stack === 'nodejs';
+  // Prefer what the catalog declares. The comparison below is the fallback for
+  // templates with no catalog entry, and is the reason a stack the list did not
+  // name was classified as a frontend by omission rather than rejected — see
+  // ADR-0006. It stays only until every template resolves through the catalog.
+  const isBackend =
+    template.kind !== undefined
+      ? template.kind === 'backend'
+      : template.stack === 'nestjs' || template.stack === 'nodejs';
   // The central test workflows enforce coverage by parsing
   // coverage/coverage-summary.json, and SonarCloud ingests lcov, so the
   // command must produce both reporters.
