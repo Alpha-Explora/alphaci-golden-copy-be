@@ -1,3 +1,4 @@
+import { normalizeRepoShape } from '../scaffold.builder';
 import type {
   DeploymentProvisioningRequestDto,
   DeploymentProvisioningTargetDto,
@@ -140,6 +141,45 @@ export function withDefaultCreateDeploymentProvisioning(input: {
  * platform's centralized Render/Vercel credentials regardless of what the
  * client sent, and any BYO provider-connection reference is dropped.
  */
+/**
+ * Slot-named root directories only exist in the microservices shape.
+ *
+ * The create wizard defaults a backend target's rootDirectory to "backend" and
+ * a frontend target's to "frontend" for every shape. Only the microservices
+ * scaffold has those directories: a single-app repo carries its service at the
+ * root, and each multi-repo repository carries a flat standalone scaffold. So a
+ * single-app project was provisioned pointing Render at a folder that does not
+ * exist, and the deploy failed with "Root directory backend does not exist"
+ * after a green build.
+ *
+ * Only the two literal slot names are corrected, and only for shapes that lack
+ * them. A path someone chose deliberately — a BYO repository with its service
+ * in a subdirectory — is left alone, because overriding that would trade this
+ * bug for a worse one.
+ */
+export function withRepoShapeRootDirectory(
+  request: DeploymentProvisioningRequestDto | undefined,
+  repoShape: string | null | undefined,
+): DeploymentProvisioningRequestDto | undefined {
+  if (!request) {
+    return undefined;
+  }
+  if (normalizeRepoShape(repoShape) === 'microservices') {
+    return request;
+  }
+
+  return {
+    ...request,
+    targets: request.targets.map((target) => {
+      const looksLikeSlotDefault =
+        target.rootDirectory === 'backend' ||
+        target.rootDirectory === 'frontend';
+
+      return looksLikeSlotDefault ? { ...target, rootDirectory: '.' } : target;
+    }),
+  };
+}
+
 export function forceManagedProvisioning(
   request: DeploymentProvisioningRequestDto | undefined,
 ): DeploymentProvisioningRequestDto | undefined {
