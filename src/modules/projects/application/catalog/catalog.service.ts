@@ -5,6 +5,7 @@ import { join, isAbsolute, resolve } from 'node:path';
 import {
   Injectable,
   Logger,
+  OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -316,7 +317,7 @@ function resolveDefaultCentralWorkflowRef(
 }
 
 @Injectable()
-export class CatalogService {
+export class CatalogService implements OnModuleInit {
   private readonly logger = new Logger(CatalogService.name);
   private readonly config: AppConfig;
   private cache: { loadedAt: number; templates: WorkflowTemplate[] } | null =
@@ -331,6 +332,57 @@ export class CatalogService {
 
   constructor(private readonly configService: ConfigService) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
+  }
+
+  /**
+   * Assert the baked central-workflow content is actually present.
+   *
+   * Both failure paths used to be silent in the ways that matter. A missing
+   * templates folder surfaced as a 503 on the first catalog request, while the
+   * container's health check — which never touches the catalog — kept reporting
+   * healthy. A missing catalog folder was quieter still: `getProjectOptions`
+   * caught the error and served a hardcoded fallback stack list, so the product
+   * answered successfully with different data and logged one warning.
+   *
+   * That second path is not hypothetical. The repoPath default named a
+   * directory that resolved for nobody, so local runs served the fallback while
+   * deployed instances served the real catalog, and nothing said so.
+   *
+   * Production fails to boot, because an image whose templates did not copy is
+   * broken and should never take traffic. Elsewhere this warns loudly at boot
+   * rather than lazily on first use, so a developer without the sibling
+   * checkout still sees which catalog they are actually running against.
+   */
+  async onModuleInit(): Promise<void> {
+    const repoPath = this.resolveTemplateRepoPath();
+    const missing: string[] = [];
+
+    const templatesRoot = join(repoPath, this.config.templates.workflowDir);
+    if (!(await this.pathExists(templatesRoot))) {
+      missing.push(`workflow templates (${templatesRoot})`);
+    }
+
+    const catalogRoot = join(repoPath, 'catalog');
+    if (!(await this.pathExists(catalogRoot))) {
+      missing.push(`engine catalog (${catalogRoot})`);
+    }
+
+    if (missing.length === 0) {
+      this.logger.log(
+        `Central workflow content resolved at ${repoPath} (repository: ${this.config.templates.centralWorkflowRepo}).`,
+      );
+      return;
+    }
+
+    const detail = `Central workflow content is not available: ${missing.join(', ')}. Set TEMPLATE_REPO_PATH to a checkout of ${this.config.templates.centralWorkflowRepo}.`;
+
+    if (process.env['NODE_ENV'] === 'production') {
+      throw new Error(detail);
+    }
+
+    this.logger.warn(
+      `${detail} Project options will fall back to the built-in stack list, which does not match the catalog this deployment generates pipelines from.`,
+    );
   }
 
   getProjectOptions(): ProjectOptionsResult {
