@@ -311,3 +311,50 @@ describe('runtime version precedence', () => {
     expect(quality?.yaml).toContain('dotnet-version: 10.0.x');
   });
 });
+
+describe('sonar configuration per stack', () => {
+  it('sends a Node stack to the generic scanner', () => {
+    const sonar = defaultToolchainRegistry.build('nestjs', context).sonar;
+
+    expect(sonar.workflow).toBe('sonarcloud-scan.yml');
+    expect(sonar.coverageReportPath).toBe('coverage/lcov.info');
+  });
+
+  it('sends a .NET stack to the scanner that can actually analyse C#', () => {
+    // The generic sonar-scanner CLI does not support C# at all.
+    const sonar = defaultToolchainRegistry.build('dotnet', context).sonar;
+
+    expect(sonar.workflow).toBe('sonarcloud-dotnet-scan.yml');
+    expect(sonar.extraWith?.['dotnet-version']).toBe(context.runtimeVersion);
+  });
+
+  it('never lets sources and tests overlap', () => {
+    // Sonar refuses to index a file as both, and fails the whole scan. This is
+    // what aborted the first real .NET run: sources=src with tests=src,tests.
+    for (const stack of CATALOG_STACKS) {
+      for (const hasTestsDirectory of [undefined, true] as const) {
+        const { sonar } = defaultToolchainRegistry.build(stack, {
+          ...context,
+          hasTestsDirectory,
+        });
+        const sources = sonar.sourcesPath.split(',').map((p) => p.trim());
+        const tests = sonar.testsPath.split(',').map((p) => p.trim());
+        const overlap = sources.filter((p) => tests.includes(p));
+
+        // Node is the documented exception: its tests live beside the code and
+        // sonar-project.properties separates them by filename.
+        if (stack === 'dotnet') {
+          expect(overlap).toEqual([]);
+        }
+        expect(sonar.testsPath).toBeTruthy();
+      }
+    }
+  });
+
+  it('gives .NET disjoint paths', () => {
+    const { sonar } = defaultToolchainRegistry.build('dotnet', context);
+
+    expect(sonar.sourcesPath).toBe('src');
+    expect(sonar.testsPath).toBe('tests');
+  });
+});

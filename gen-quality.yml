@@ -1,0 +1,205 @@
+name: ALPHACI Quality
+'on':
+  workflow_run:
+    workflows:
+      - ALPHACI Access Gate
+    types:
+      - completed
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  security-events: write
+env:
+  ALPHACI_VALIDATE_URL: https://alphaci-enterprise-be.onrender.com/api/v1/ci/validate
+  ALPHACI_REPORT_URL: ${{ secrets.ALPHACI_REPORT_URL }}
+jobs:
+  validate-access:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate ALPHACI access
+        run: |-
+          RESPONSE=$(curl -sf -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.ALPHACI_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"repo\":\"${{ github.repository }}\",\"stage\":\"quality\",\"workflowRunId\":\"${{ github.run_id }}\",\"headSha\":\"${{ github.event.workflow_run.head_sha || github.sha }}\"}" \
+            "$ALPHACI_VALIDATE_URL") || true
+          HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
+          BODY=$(printf '%s' "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::ALPHACI authorization failed (HTTP $HTTP_CODE). ${BODY}"
+            exit 1
+          fi
+          echo "ALPHACI authorization validated."
+  branch-policy:
+    needs:
+      - validate-access
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.resolve.outputs.branch }}
+      coverage-threshold: ${{ steps.resolve.outputs.coverage-threshold }}
+      fail-on-warning: ${{ steps.resolve.outputs.fail-on-warning }}
+      sonar-enabled: ${{ steps.resolve.outputs.sonar-enabled }}
+      sonar-gate-wait: ${{ steps.resolve.outputs.sonar-gate-wait }}
+    steps:
+      - name: Resolve branch policy
+        id: resolve
+        env:
+          SONAR_CONFIGURED: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_ORGANIZATION != '' && secrets.SONAR_PROJECT_KEY != '' }}
+        run: |-
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+          if [ "$BRANCH" = "uat" ] || [ "$BRANCH" = "main" ]; then
+            COVERAGE_THRESHOLD=90
+            FAIL_ON_WARNING=true
+            SONAR_GATE_WAIT=true
+          else
+            COVERAGE_THRESHOLD=80
+            FAIL_ON_WARNING=false
+            SONAR_GATE_WAIT=false
+          fi
+          {
+            echo "branch=$BRANCH"
+            echo "coverage-threshold=$COVERAGE_THRESHOLD"
+            echo "fail-on-warning=$FAIL_ON_WARNING"
+            echo "sonar-enabled=$SONAR_CONFIGURED"
+            echo "sonar-gate-wait=$SONAR_GATE_WAIT"
+          } >> "$GITHUB_OUTPUT"
+          echo "Branch policy: branch=$BRANCH coverage>=$COVERAGE_THRESHOLD failOnWarning=$FAIL_ON_WARNING sonar=$SONAR_CONFIGURED gateWait=$SONAR_GATE_WAIT"
+  dotnet-tests:
+    needs:
+      - branch-policy
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/dotnet-test.yml@v1
+    with:
+      working-directory: .
+      system-name: dotnet
+      dotnet-version: 10.0.x
+      solution-path: ''
+      checkout-ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      coverage-threshold: ${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}
+      enforce-coverage: true
+  lint:
+    needs:
+      - branch-policy
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/dotnet-format.yml@v1
+    with:
+      working-directory: .
+      system-name: dotnet
+      dotnet-version: 10.0.x
+      solution-path: ''
+      checkout-ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      fail-on-warning: ${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}
+  typecheck:
+    needs:
+      - branch-policy
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/dotnet-analyze.yml@v1
+    with:
+      working-directory: .
+      system-name: dotnet
+      dotnet-version: 10.0.x
+      solution-path: ''
+      checkout-ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      treat-warnings-as-errors: ${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}
+  security:
+    needs:
+      - validate-access
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/dotnet-audit.yml@v1
+    with:
+      working-directory: .
+      system-name: dotnet
+      dotnet-version: 10.0.x
+      solution-path: ''
+      checkout-ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      fail-on-severity: High
+  sonar:
+    needs:
+      - branch-policy
+      - dotnet-tests
+    if: ${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/sonarcloud-scan.yml@v1
+    with:
+      working-directory: .
+      system-name: dotnet
+      sources-path: src
+      tests-path: src,tests
+      coverage-report-path: coverage/lcov.info
+      coverage-artifact-name: dotnet-coverage
+      quality-gate-wait: ${{ fromJson(needs.branch-policy.outputs.sonar-gate-wait) }}
+      checkout-ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+  report-results:
+    if: ${{ always() }}
+    needs:
+      - validate-access
+      - branch-policy
+      - dotnet-tests
+      - lint
+      - typecheck
+      - security
+      - sonar
+    runs-on: ubuntu-latest
+    env:
+      ALPHACI_TOKEN: ${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_REPORT_URL: ${{ secrets.ALPHACI_REPORT_URL }}
+    steps:
+      - name: Report stage results to ALPHACI
+        env:
+          ALPHACI_TOKEN: ${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_REPORT_URL: ${{ secrets.ALPHACI_REPORT_URL }}
+          GH_REPO: ${{ github.repository }}
+          GH_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          GH_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          STAGE_FAILED: ${{ contains(needs.*.result, 'failure') }}
+          STAGE_CANCELLED: ${{ contains(needs.*.result, 'cancelled') }}
+          COVERAGE_PCT: ${{ needs.dotnet-tests.outputs.coverage-percent }}
+          COVERAGE_THRESHOLD: ${{ needs.branch-policy.outputs.coverage-threshold }}
+        run: |-
+          # Derive stage conclusion from upstream needs results
+          if [ "$STAGE_FAILED" = "true" ]; then
+            CONCLUSION="failure"
+          elif [ "$STAGE_CANCELLED" = "true" ]; then
+            CONCLUSION="cancelled"
+          else
+            CONCLUSION="success"
+          fi
+
+          # Report the failed GitHub job name so ALPHACI can give a specific fix
+          FAILED_JOBS=""
+          if [ "$CONCLUSION" = "failure" ]; then
+            FAILED_JOBS=$(curl -sf --max-time 5 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" | jq -r '.jobs[] | select(.conclusion == "failure") | "Failed GitHub Actions job: \(.name)"' | head -n 5 || true)
+          fi
+
+          # Build results sub-object (quality stage only — reads from job outputs)
+          RESULTS="{}"
+
+          # Include coverage only when COVERAGE_PCT is a real number
+          # (central workflows emit "unknown" when coverage is not available)
+          if echo "$COVERAGE_PCT" | grep -qE '^[0-9]+([.][0-9]+)?$'; then
+            RESULTS=$(jq -n \
+              --argjson pct "$COVERAGE_PCT" \
+              --argjson threshold "${COVERAGE_THRESHOLD:-0}" \
+              '{"coverage":{"pct":$pct,"threshold":$threshold}}')
+          fi
+
+          # Build and POST the payload with jq — no string interpolation of context values
+          PAYLOAD=$(jq -n \
+            --arg repo     "$GH_REPO" \
+            --arg branch   "$GH_BRANCH" \
+            --arg sha      "$GH_SHA" \
+            --argjson runId "$GH_RUN_ID" \
+            --arg stage    "quality" \
+            --arg conclusion "$CONCLUSION" \
+            --arg rawLogs "$FAILED_JOBS" \
+            --argjson results "$RESULTS" \
+            '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs}')
+          curl -sf --max-time 5 \
+            -X POST "$ALPHACI_REPORT_URL" \
+            -H "Authorization: Bearer $ALPHACI_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            || echo "::warning::Failed to report pipeline results to ALPHACI"
