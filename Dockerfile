@@ -12,7 +12,6 @@
 # ── Stage 1: compile TypeScript + fetch templates ────────────────────────────
 FROM node:22-alpine AS builder
 
-ARG NPM_TOKEN
 ARG TEMPLATE_CLONE_TOKEN
 # Git ref (branch/tag) of the central workflow repo whose catalog + templates
 # get baked into this image. Defaults to main; set to `test`/`uat` on
@@ -33,10 +32,7 @@ RUN apk add --no-cache git
 
 # Install deps first — layer is cached until package.json changes
 COPY package*.json ./
-RUN echo "@implementsprint:registry=https://npm.pkg.github.com" > .npmrc \
-  && echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" >> .npmrc \
-  && npm install \
-  && rm -f .npmrc
+RUN npm install
 
 # Compile source
 COPY tsconfig*.json nest-cli.json ./
@@ -54,8 +50,6 @@ RUN git clone --depth 1 --branch "${TEMPLATE_REPO_REF}" \
 # ── Stage 2: production runtime ───────────────────────────────────────────────
 FROM node:22-alpine AS runner
 
-ARG NPM_TOKEN
-
 ENV NODE_ENV=production
 # Absolute path — CatalogService reads from TEMPLATE_REPO_PATH/TEMPLATE_WORKFLOW_DIR
 ENV TEMPLATE_REPO_PATH=/app/templates
@@ -65,11 +59,8 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN echo "@implementsprint:registry=https://npm.pkg.github.com" > .npmrc \
-  && echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" >> .npmrc \
-  && apk upgrade --no-cache zlib \
+RUN apk upgrade --no-cache zlib \
   && npm install --omit=dev \
-  && rm -f .npmrc \
   && addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nestjs
 
