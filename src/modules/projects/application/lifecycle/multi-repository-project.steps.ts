@@ -18,6 +18,11 @@ import type { CreateProjectResponse } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
+import {
+  BRANCHES_CREATED_ON_PROVISION,
+  PROTECTED_BRANCHES,
+  PROVISIONED_BRANCHES,
+} from '#kernel/config/pipeline-branches';
 
 export type CreatedGithubRepo = {
   repoUrl: string;
@@ -262,8 +267,9 @@ export async function createAndProtectDefaultBranches(input: {
   ownerLogin: string;
   repoName: string;
 }): Promise<void> {
-  // `develop` remains available but unprotected and does not run CI.
-  for (const branch of ['develop', 'uat'] as const) {
+  // dev is unprotected: it is where developers push. uat and main are
+  // protected and reached by promotion.
+  for (const branch of BRANCHES_CREATED_ON_PROVISION) {
     await input.support.githubService.createBranch(
       input.provisioningToken,
       input.ownerLogin,
@@ -273,7 +279,7 @@ export async function createAndProtectDefaultBranches(input: {
     );
   }
 
-  for (const branch of ['uat', 'main'] as const) {
+  for (const branch of PROTECTED_BRANCHES) {
     await input.support.githubService.applyBranchProtection(
       input.provisioningToken,
       input.ownerLogin,
@@ -621,6 +627,7 @@ export function buildMultiRepoCreateResponse(input: {
     repoFullName: input.beRepoFullName,
     repoUrl: input.beRepoUrl,
     status: 'provisioned',
+    branchesCreated: [...PROVISIONED_BRANCHES],
     workflowPath: input.backendWorkflowPath,
     workflowFiles: workflowFileMetadata(input.backendWorkflowFiles),
     githubCommitSha: input.backendCommitSha,

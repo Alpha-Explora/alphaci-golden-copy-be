@@ -205,7 +205,7 @@ describe('GithubController', () => {
         repoUrl: 'https://github.com/tone/orders-api',
         cloneUrl: 'https://github.com/tone/orders-api.git',
         defaultBranch: 'main',
-        branchesCreated: ['main', 'develop', 'uat'],
+        branchesCreated: ['main', 'dev', 'uat'],
       });
 
       expect(service.createRepo).toHaveBeenCalledWith('gh-token', {
@@ -218,7 +218,7 @@ describe('GithubController', () => {
         'gh-token',
         'tone',
         'orders-api',
-        'develop',
+        'dev',
         'main',
       );
       expect(service.createBranch).toHaveBeenNthCalledWith(

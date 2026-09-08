@@ -5,6 +5,11 @@ import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { CreateRepoDto } from './dto/create-repo.dto.js';
 import { LinkInstallationDto } from './dto/link-installation.dto';
 import { GithubService } from '../infrastructure/github.service';
+import {
+  BRANCHES_CREATED_ON_PROVISION,
+  DEFAULT_BRANCH,
+  PROTECTED_BRANCHES,
+} from '#kernel/config/pipeline-branches';
 
 @Controller('github')
 @UseGuards(SessionAuthGuard)
@@ -119,10 +124,11 @@ export class GithubController {
     const { repoUrl, cloneUrl, ownerLogin, repoName } =
       await this.githubService.createRepo(accessToken, body);
 
-    // `develop` remains available for integration work but is intentionally
-    // unprotected and does not trigger generated workflows.
-    const branchesCreated: string[] = ['main'];
-    for (const branch of ['develop', 'uat'] as const) {
+    // dev is where developers push and is intentionally unprotected; uat and
+    // main are reached by promotion. Both lists come from the branch model so
+    // they cannot drift from the triggers the generated workflows carry.
+    const branchesCreated: string[] = [DEFAULT_BRANCH];
+    for (const branch of BRANCHES_CREATED_ON_PROVISION) {
       await this.githubService.createBranch(
         accessToken,
         ownerLogin,
@@ -133,7 +139,7 @@ export class GithubController {
       branchesCreated.push(branch);
     }
 
-    for (const branch of ['uat', 'main'] as const) {
+    for (const branch of PROTECTED_BRANCHES) {
       await this.githubService.applyBranchProtection(
         accessToken,
         ownerLogin,

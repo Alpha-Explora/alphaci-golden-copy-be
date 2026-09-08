@@ -17,6 +17,11 @@ import type {
 } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
+import {
+  BRANCHES_CREATED_ON_PROVISION,
+  PROTECTED_BRANCHES,
+  PROVISIONED_BRANCHES,
+} from '#kernel/config/pipeline-branches';
 
 export class SingleRepositoryProjectProvisioner {
   private readonly logger = new Logger(SingleRepositoryProjectProvisioner.name);
@@ -175,9 +180,9 @@ export class SingleRepositoryProjectProvisioner {
         commitUrl,
       );
 
-      // 6. Create develop and uat from main. `develop` is intentionally
+      // 6. Create the non-default tiers from main. dev is intentionally
       // unprotected and has no CI trigger; uat is the integration/test branch.
-      for (const branch of ['develop', 'uat'] as const) {
+      for (const branch of BRANCHES_CREATED_ON_PROVISION) {
         await this.support.githubService.createBranch(
           provisioningToken,
           ownerLogin,
@@ -188,7 +193,7 @@ export class SingleRepositoryProjectProvisioner {
       }
 
       // 7. Only uat and main are protected long-lived branches.
-      for (const branch of ['uat', 'main'] as const) {
+      for (const branch of PROTECTED_BRANCHES) {
         await this.support.githubService.applyBranchProtection(
           provisioningToken,
           ownerLogin,
@@ -232,6 +237,7 @@ export class SingleRepositoryProjectProvisioner {
         repoFullName,
         repoUrl,
         status: 'provisioned',
+        branchesCreated: [...PROVISIONED_BRANCHES],
         workflowPath,
         workflowFiles: workflowFileMetadata(workflowFiles),
         githubCommitSha: commitSha,
