@@ -4,6 +4,7 @@ import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/provider
 import { DeploymentProvisioningDefaultsService } from '#modules/runtime/application/deployment-provisioning-defaults.service';
 import { DeploymentProviderPolicyRegistry } from '#modules/runtime/domain/deployment-provider.policy';
 import { RenderDeploymentPolicy } from '#modules/runtime/infrastructure/providers/render/render-deployment.policy';
+import type { RenderCostPolicyService } from '#modules/runtime/infrastructure/providers/render/render-cost-policy.service';
 import { VercelDeploymentPolicy } from '#modules/runtime/infrastructure/providers/vercel/vercel-deployment.policy';
 
 import { resolveDeploymentWorkflowTargets } from '../application/workflows/deployment-workflow-targets';
@@ -28,7 +29,9 @@ import {
 
 const defaults = new DeploymentProvisioningDefaultsService(
   new DeploymentProviderPolicyRegistry([
-    new RenderDeploymentPolicy(),
+    // The cost policy is only consulted when normalizing a target, which the
+    // default resolution below never reaches.
+    new RenderDeploymentPolicy({} as RenderCostPolicyService),
     new VercelDeploymentPolicy(),
   ]),
 );

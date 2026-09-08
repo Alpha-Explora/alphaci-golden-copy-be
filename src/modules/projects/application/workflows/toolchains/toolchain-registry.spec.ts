@@ -1,7 +1,13 @@
+import yaml from 'js-yaml';
+
 import { ToolchainFragmentRegistry } from '#kernel/ports/toolchain-fragment.port';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import type { ToolchainFragmentContext } from '#kernel/ports/toolchain-fragment.port';
 
 import { defaultToolchainRegistry, nodeToolchainFragments } from './index';
+import { buildStagedWorkflowBundle } from '../staged-workflow.builder';
+import type { StagedWorkflowOptions } from '../staged-workflow.builder';
+import type { WorkflowTemplate } from '../../catalog/catalog.service';
 
 /**
  * Every stack the catalog's `inferStack` can return.
@@ -236,5 +242,72 @@ describe('toolchain registry', () => {
       expect(jobs['lint']!.with['fail-on-warning']).toBe(expr);
       expect(jobs['typecheck']!.with['treat-warnings-as-errors']).toBe(expr);
     });
+  });
+});
+
+describe('runtime version precedence', () => {
+  // The create form sends nodeVersion for every stack, Node or not. Reading it
+  // ahead of the catalog generated `dotnet-version: 24` and failed every .NET
+  // job on an SDK that does not exist.
+  const template = {
+    id: 'dotnet-service-pipeline',
+    name: '.NET',
+    description: 'x',
+    iconName: 'server',
+    categories: ['backend', 'dotnet'],
+    filePatterns: [],
+    stack: 'dotnet',
+    kind: 'backend',
+    runtime: 'dotnet',
+    runtimeVersion: '10.0.x',
+    propertiesPath: '/p.json',
+    workflowPath: '/w.yml',
+  } as WorkflowTemplate;
+
+  function dotnetVersionIn(nodeVersion: string | undefined): unknown {
+    const bundle = buildStagedWorkflowBundle(
+      template,
+      {
+        serviceName: 'svc',
+        servicePath: '.',
+        coverageThreshold: 80,
+        ...(nodeVersion === undefined ? {} : { nodeVersion }),
+      } as unknown as StagedWorkflowOptions,
+      new WorkflowFragmentRegistry([]),
+    );
+    const quality = bundle.workflowFiles.find(
+      (file) => file.stage === 'quality',
+    );
+    const doc = yaml.load(quality?.yaml ?? '') as {
+      jobs: Record<string, { with?: Record<string, unknown> }>;
+    };
+    return doc.jobs['dotnet-tests']?.with?.['dotnet-version'];
+  }
+
+  it('uses the declared SDK version even when a Node version is sent', () => {
+    expect(dotnetVersionIn('24')).toBe('10.0.x');
+  });
+
+  it('uses the declared SDK version when nothing is sent', () => {
+    expect(dotnetVersionIn(undefined)).toBe('10.0.x');
+  });
+
+  it('never emits a node-version input for a .NET job', () => {
+    const bundle = buildStagedWorkflowBundle(
+      template,
+      {
+        serviceName: 'svc',
+        servicePath: '.',
+        coverageThreshold: 80,
+        nodeVersion: '24',
+      } as unknown as StagedWorkflowOptions,
+      new WorkflowFragmentRegistry([]),
+    );
+    const quality = bundle.workflowFiles.find(
+      (file) => file.stage === 'quality',
+    );
+
+    expect(quality?.yaml).not.toContain('node-version');
+    expect(quality?.yaml).toContain('dotnet-version: 10.0.x');
   });
 });
