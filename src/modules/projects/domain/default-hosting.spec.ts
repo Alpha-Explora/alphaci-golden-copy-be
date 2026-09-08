@@ -10,6 +10,7 @@ import { VercelDeploymentPolicy } from '#modules/runtime/infrastructure/provider
 import { resolveDeploymentWorkflowTargets } from '../application/workflows/deployment-workflow-targets';
 import {
   filterDeploymentProvisioningRequest,
+  withRepoShapeRootDirectory,
   forceManagedProvisioning,
   resolveSingleRepoDeploymentSlots,
   withDefaultCreateDeploymentProvisioning,
@@ -121,5 +122,70 @@ describe('default hosting when none was configured', () => {
 
     expect(result?.targets).toHaveLength(1);
     expect(result?.targets[0]?.projectName).toBe('chosen-by-the-user');
+  });
+});
+
+describe('root directory against the repo shape', () => {
+  // Render reported "Root directory backend does not exist" on a single-app
+  // .NET project. The create wizard defaults a backend target's rootDirectory
+  // to "backend", but only the microservices scaffold has that folder.
+  const backendTarget = (rootDirectory: string) => ({
+    enabled: true,
+    targets: [
+      {
+        slot: 'backend' as const,
+        provider: 'render',
+        ownershipMode: 'flowci_managed' as const,
+        rootDirectory,
+      },
+    ],
+  });
+
+  it.each([['standalone'], ['multi'], [undefined]])(
+    'points a %s project at the repo root',
+    (shape) => {
+      const result = withRepoShapeRootDirectory(backendTarget('backend'), shape);
+
+      expect(result?.targets[0]?.rootDirectory).toBe('.');
+    },
+  );
+
+  it('leaves microservices alone, where backend/ really exists', () => {
+    const result = withRepoShapeRootDirectory(
+      backendTarget('backend'),
+      'microservices',
+    );
+
+    expect(result?.targets[0]?.rootDirectory).toBe('backend');
+  });
+
+  it('corrects a frontend slot the same way', () => {
+    const request = {
+      enabled: true,
+      targets: [
+        {
+          slot: 'frontend' as const,
+          provider: 'vercel',
+          ownershipMode: 'flowci_managed' as const,
+          rootDirectory: 'frontend',
+        },
+      ],
+    };
+
+    expect(
+      withRepoShapeRootDirectory(request, 'standalone')?.targets[0]
+        ?.rootDirectory,
+    ).toBe('.');
+  });
+
+  it('does not touch a path someone chose deliberately', () => {
+    // A BYO repository may genuinely keep its service in a subdirectory.
+    // Only the two literal slot defaults are corrected.
+    const result = withRepoShapeRootDirectory(
+      backendTarget('services/api'),
+      'standalone',
+    );
+
+    expect(result?.targets[0]?.rootDirectory).toBe('services/api');
   });
 });

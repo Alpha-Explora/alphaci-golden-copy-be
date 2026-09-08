@@ -1,6 +1,9 @@
 import { Logger, UnprocessableEntityException } from '@nestjs/common';
 
-import { withDefaultCreateDeploymentProvisioning } from '../../domain/deployment-provisioning.policy';
+import {
+  withDefaultCreateDeploymentProvisioning,
+  withRepoShapeRootDirectory,
+} from '../../domain/deployment-provisioning.policy';
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import type { CreateProjectResponse } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
@@ -42,7 +45,7 @@ export class MicroservicesProjectProvisioner {
     const { backend, frontend } = dto.microservicesConfig;
     const backendServicePath = packedSlotServicePath(backend, 'backend');
     const frontendServicePath = packedSlotServicePath(frontend, 'frontend');
-    const effectiveDeploymentProvisioning =
+    const effectiveDeploymentProvisioning = withRepoShapeRootDirectory(
       withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: backend.projectTypeId,
@@ -51,7 +54,9 @@ export class MicroservicesProjectProvisioner {
         servicePath: backendServicePath,
         deploymentProvisioningDefaults:
           this.support.deploymentProvisioningDefaults,
-      });
+      }),
+      dto.repoShape,
+    );
 
     const backendBundle = await buildPackedBackendBundle({
       support: this.support,

@@ -7,6 +7,7 @@ import {
   extractDeploymentProvider,
   resolveSingleRepoDeploymentSlots,
   withDefaultCreateDeploymentProvisioning,
+  withRepoShapeRootDirectory,
 } from '../../domain/deployment-provisioning.policy';
 import { normalizeRepoShape } from '../../scaffold.builder';
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
@@ -42,7 +43,7 @@ export class SingleRepositoryProjectProvisioner {
       dto.projectTypeId,
       dto.workflowRecipeId,
     );
-    const effectiveDeploymentProvisioning =
+    const effectiveDeploymentProvisioning = withRepoShapeRootDirectory(
       withDefaultCreateDeploymentProvisioning({
         request: dto.deploymentProvisioning,
         projectTypeId: dto.projectTypeId,
@@ -51,7 +52,9 @@ export class SingleRepositoryProjectProvisioner {
         servicePath: dto.servicePath,
         deploymentProvisioningDefaults:
           this.support.deploymentProvisioningDefaults,
-      });
+      }),
+      dto.repoShape,
+    );
 
     // 2. Load template and build workflow YAML
     const { workflowFiles, outputFileName } =
