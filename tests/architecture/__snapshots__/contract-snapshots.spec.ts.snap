@@ -113,6 +113,25 @@ exports[`post-consolidation public contract snapshots records the staged workflo
         "system-name": "orders-api",
       },
     },
+    "deploy-vercel-frontend-dev": {
+      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'dev' }}",
+      "needs": [
+        "build",
+      ],
+      "secrets": {
+        "GH_PR_TOKEN": "\${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
+        "VERCEL_ORG_ID": "\${{ secrets.VERCEL_FRONTEND_ORG_ID }}",
+        "VERCEL_PROJECT_ID": "\${{ secrets.VERCEL_FRONTEND_PROJECT_ID }}",
+        "VERCEL_TOKEN": "\${{ secrets.VERCEL_FRONTEND_TOKEN }}",
+      },
+      "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
+      "with": {
+        "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
+        "environment": "preview",
+        "system-name": "orders-api",
+        "working-directory": "frontend",
+      },
+    },
     "deploy-vercel-frontend-main": {
       "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' }}",
       "needs": [

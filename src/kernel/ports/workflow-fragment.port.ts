@@ -1,4 +1,13 @@
-export type WorkflowFragmentBranch = 'uat' | 'main';
+/**
+ * Branches a deployment fragment can target, in promotion order.
+ *
+ * `dev` is where work lands, `uat` is the QA tier that must pass before
+ * promotion, and `main` is production. Fragments were previously typed to only
+ * the last two, which is why the third environment that render-deploy.yml has
+ * always supported was unreachable: the workflow could deploy it, the secrets
+ * existed for it, and no caller could ask for it.
+ */
+export type WorkflowFragmentBranch = 'dev' | 'uat' | 'main';
 
 export interface WorkflowFragmentTarget {
   readonly provider: string;

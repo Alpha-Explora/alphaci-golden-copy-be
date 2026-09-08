@@ -106,7 +106,7 @@ describe('buildStagedWorkflowBundle', () => {
     ]);
   });
 
-  it('triggers generated workflows only for uat and main', () => {
+  it('triggers generated workflows for the dev, uat and main promotion flow', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
@@ -117,8 +117,8 @@ describe('buildStagedWorkflowBundle', () => {
     >;
 
     expect(access['on']).toEqual({
-      push: { branches: ['uat', 'main'] },
-      pull_request: { branches: ['uat', 'main'] },
+      push: { branches: ['dev', 'uat', 'main'] },
+      pull_request: { branches: ['dev', 'uat', 'main'] },
       workflow_dispatch: {},
     });
   });
@@ -504,27 +504,36 @@ describe('buildStagedWorkflowBundle', () => {
     ]);
   });
 
-  it('creates only the uat→main promotion PR job', () => {
+  it('creates one promotion PR job per hop, each gated to its source branch', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const toUat = pkg.jobs['promote-to-uat'];
     const toMain = pkg.jobs['promote-to-main'];
 
-    expect(pkg.jobs['promote-to-uat']).toBeUndefined();
-    expect(toMain?.uses).toBe(
-      'Alpha-Explora/alphaci-workflow/.github/workflows/promotion.yml@v1',
-    );
-    expect(toMain?.with?.['system1-name']).toBe('orders-api');
-    expect(toMain?.secrets).toEqual({
-      PR_TOKEN:
-        "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
-    });
+    for (const job of [toUat, toMain]) {
+      expect(job?.uses).toBe(
+        'Alpha-Explora/alphaci-workflow/.github/workflows/promotion.yml@v1',
+      );
+      expect(job?.with?.['system1-name']).toBe('orders-api');
+      expect(job?.secrets).toEqual({
+        PR_TOKEN:
+          "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
+      });
+    }
 
-    expect(toMain?.if).toContain("== 'uat'");
+    // Both jobs exist in every generated pipeline; the branch gate is what
+    // decides which one acts, so a run on dev cannot open the production PR.
+    expect(toUat?.with?.['direction']).toBe('dev-to-uat');
+    expect(toUat?.if).toContain("== 'dev'");
+    expect(toUat?.if).not.toContain("== 'uat'");
+
     expect(toMain?.with?.['direction']).toBe('uat-to-main');
+    expect(toMain?.if).toContain("== 'uat'");
+    expect(toMain?.if).not.toContain("== 'dev'");
   });
 
   it('keeps promotion independent when no deployment targets are present', () => {
@@ -557,13 +566,13 @@ describe('buildStagedWorkflowBundle', () => {
       expect(guardOf('frontend')).toBeUndefined();
     });
 
-    it('watches only protected branch pushes and pull requests', () => {
+    it('watches every promotion-flow branch on push and pull request', () => {
       const guard = guardOf()!;
       const wf = yaml.load(guard.yaml) as Record<string, unknown>;
 
       expect(wf['on']).toEqual({
-        push: { branches: ['uat', 'main'] },
-        pull_request: { branches: ['uat', 'main'] },
+        push: { branches: ['dev', 'uat', 'main'] },
+        pull_request: { branches: ['dev', 'uat', 'main'] },
       });
       expect(wf['permissions']).toEqual({
         contents: 'write',

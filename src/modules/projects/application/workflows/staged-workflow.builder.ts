@@ -3,7 +3,10 @@ import yaml from 'js-yaml';
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import type {
+  WorkflowFragmentBranch,
+  WorkflowFragmentRegistry,
+} from '#kernel/ports/workflow-fragment.port';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
@@ -100,12 +103,19 @@ export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
 /**
  * Branch promotion model enforced by the generated pipelines:
  *
- *   uat  → integration and test under a stricter governance policy: higher
+ *   dev  → where work lands. Full quality stage under a relaxed policy: the
+ *          baseline coverage threshold, lint warnings are advisory, and the
+ *          SonarCloud gate reports without blocking. Builds, so a break is
+ *          found here rather than after a promotion.
+ *   uat  → the QA tier. Same checks under a stricter governance policy: higher
  *          coverage threshold, lint warnings fail the build, and the
  *          SonarCloud quality gate is blocking.
  *   main → production. A production-readiness gate (GitHub `production`
  *          environment — honours required reviewers when configured) must
  *          pass before promotion.
+ *
+ * Each hop opens a promotion pull request into the next branch, gated on the
+ * originating branch, so only one promotion job acts per run.
  *
  * Quality/package stages are `workflow_run`-triggered, which always executes
  * in the default-branch context, so every branch decision below must use the
@@ -114,6 +124,21 @@ export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
 const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
 
 const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
+
+/**
+ * A job `if:` matching any of the given branches.
+ *
+ * Branch conditions were written out by hand per job, so each one had to be
+ * found and edited when the promotion flow changed — and a missed one is not a
+ * failure, it is a job that quietly stops running on a branch nobody checked.
+ */
+function branchIsOneOf(branches: readonly string[]): string {
+  const test = branches
+    .map((branch) => `(${BRANCH_EXPR}) == '${branch}'`)
+    .join(' || ');
+
+  return `\${{ ${test} }}`;
+}
 
 /** Extra coverage demanded on uat/main on top of the baseline, capped. */
 const STRICT_COVERAGE_BONUS = 10;
@@ -138,12 +163,43 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   hasTestsDirectory?: boolean;
 }
 
-type DeployBranch = 'uat' | 'main';
+/**
+ * The promotion flow, in order. Work lands on dev, uat is the QA tier that must
+ * pass before promotion, main is production.
+ *
+ * Declared once because the list previously appeared as four separate literals
+ * across triggers, deploy planning and promotion. Adding a branch meant finding
+ * all of them, and the type carried no exhaustiveness, so a missed one failed
+ * silently rather than at compile time.
+ */
+const PIPELINE_BRANCHES = [
+  'dev',
+  'uat',
+  'main',
+] as const satisfies readonly WorkflowFragmentBranch[];
+
+type DeployBranch = WorkflowFragmentBranch;
+
+/**
+ * A deployment target that was configured but produced no job.
+ *
+ * Both causes are silent by nature — nothing fails, the pipeline is simply
+ * smaller than the configuration implies — so they are carried out of the
+ * builder rather than dropped, and belong in whatever the promotion decision
+ * reads.
+ */
+interface SkippedDeploymentTarget {
+  provider: string;
+  slot: string;
+  branch: DeployBranch;
+  reason: 'no-fragment-registered' | 'duplicate-job-id';
+}
 
 interface PackageDeploymentPlan {
   jobs: Record<string, unknown>;
   jobIds: string[];
   promotionNeeds: Record<Exclude<DeployBranch, 'main'>, string[]>;
+  skippedTargets: SkippedDeploymentTarget[];
 }
 
 interface StagedNames {
@@ -249,8 +305,8 @@ function buildAccessWorkflowFile(
     yaml: dumpWorkflow({
       name: accessName,
       on: {
-        push: { branches: ['uat', 'main'] },
-        pull_request: { branches: ['uat', 'main'] },
+        push: { branches: [...PIPELINE_BRANCHES] },
+        pull_request: { branches: [...PIPELINE_BRANCHES] },
         workflow_dispatch: {},
       },
       permissions: { contents: 'read' },
@@ -429,6 +485,16 @@ function buildPackageWorkflowFile(
           ctx.centralWorkflowRef,
         ),
         ...deploymentPlan.jobs,
+        // One promotion job per hop in the flow. Each is branch-gated, so only
+        // the one matching the running branch opens a PR: dev opens dev -> uat,
+        // uat opens uat -> main.
+        'promote-to-uat': promotionJob(
+          'dev-to-uat',
+          'dev',
+          ctx.serviceName,
+          ctx.centralWorkflowRef,
+          deploymentPlan.promotionNeeds.dev,
+        ),
         'promote-to-main': promotionJob(
           'uat-to-main',
           'uat',
@@ -576,8 +642,8 @@ export function buildEnvGuardWorkflowFile(): StagedWorkflowFile {
     yaml: dumpWorkflow({
       name: ENV_GUARD_WORKFLOW_NAME,
       on: {
-        push: { branches: ['uat', 'main'] },
-        pull_request: { branches: ['uat', 'main'] },
+        push: { branches: [...PIPELINE_BRANCHES] },
+        pull_request: { branches: [...PIPELINE_BRANCHES] },
       },
       permissions: {
         contents: 'write',
@@ -763,7 +829,11 @@ function typecheckJob(servicePath: string, nodeVersion: string) {
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
-    if: `\${{ (${BRANCH_EXPR}) == 'uat' || (${BRANCH_EXPR}) == 'main' }}`,
+    // Builds on every promotion-flow branch, dev included. A build break found
+    // on dev is a minute of CI; the same break found on uat has already cost a
+    // promotion and a QA cycle. The condition is derived from the branch list
+    // rather than spelled out, so it cannot fall behind it.
+    if: branchIsOneOf(PIPELINE_BRANCHES),
     runs_on: 'ubuntu-latest',
     defaults: {
       run: {
@@ -803,9 +873,16 @@ function buildPackageDeploymentPlan(
 ): PackageDeploymentPlan {
   const jobs: Record<string, unknown> = {};
   const jobIds: string[] = [];
-  const promotionNeeds: Record<Exclude<DeployBranch, 'main'>, string[]> = {
-    uat: [],
-  };
+  const promotionNeeds: Record<
+    Exclude<DeployBranch, 'main'>,
+    string[]
+  > = Object.fromEntries(
+    PIPELINE_BRANCHES.filter((branch) => branch !== 'main').map((branch) => [
+      branch,
+      [] as string[],
+    ]),
+  ) as Record<Exclude<DeployBranch, 'main'>, string[]>;
+  const skippedTargets: SkippedDeploymentTarget[] = [];
 
   if (deploymentTargets.length > 0 && !workflowFragmentRegistry) {
     throw new Error(
@@ -820,29 +897,56 @@ function buildPackageDeploymentPlan(
         servicePath,
         centralWorkflowRef,
       });
-      if (!fragment || fragment.jobIds.some((jobId) => jobs[jobId])) {
+      // A target whose provider has no registered fragment produces no deploy
+      // job at all. Left as a bare `continue` this is invisible: the pipeline
+      // generates, runs green, and never deploys — and the person deciding
+      // whether to promote has nothing telling them a deploy was configured but
+      // never emitted. Record it so the caller can surface it.
+      if (!fragment) {
+        skippedTargets.push({
+          provider: target.provider,
+          slot: target.slot,
+          branch,
+          reason: 'no-fragment-registered',
+        });
+        continue;
+      }
+
+      if (fragment.jobIds.some((jobId) => jobs[jobId])) {
+        skippedTargets.push({
+          provider: target.provider,
+          slot: target.slot,
+          branch,
+          reason: 'duplicate-job-id',
+        });
         continue;
       }
 
       Object.assign(jobs, fragment.jobs);
       jobIds.push(...fragment.jobIds);
-      if (branch === 'uat') {
+      // Every branch except production promotes forward, so its deploy jobs
+      // gate the promotion PR out of it.
+      if (branch !== 'main') {
         promotionNeeds[branch].push(...fragment.promotionNeeds);
       }
     }
   }
 
-  return { jobs, jobIds, promotionNeeds };
+  return { jobs, jobIds, promotionNeeds, skippedTargets };
+}
+
+function isPipelineBranch(value: string | undefined): value is DeployBranch {
+  return (PIPELINE_BRANCHES as readonly string[]).includes(value ?? '');
 }
 
 function resolveDeploymentBranches(
   branchName: string | undefined,
 ): DeployBranch[] {
-  if (branchName === 'uat' || branchName === 'main') {
+  if (isPipelineBranch(branchName)) {
     return [branchName];
   }
 
-  return ['uat', 'main'];
+  return [...PIPELINE_BRANCHES];
 }
 
 /**
@@ -882,8 +986,8 @@ function productionGateJob(
  * creates the PR but GitHub suppresses workflow triggers for it.
  */
 function promotionJob(
-  direction: 'uat-to-main',
-  sourceBranch: 'uat',
+  direction: 'dev-to-uat' | 'uat-to-main',
+  sourceBranch: Exclude<DeployBranch, 'main'>,
   serviceName: string,
   centralWorkflowRef: string,
   additionalNeeds: string[] = [],
