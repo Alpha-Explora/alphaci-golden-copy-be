@@ -254,11 +254,14 @@ function resolveStagedContext(
   return {
     serviceName: dto.serviceName,
     servicePath: normalizeServicePath(dto.servicePath),
-    // The DTO only carries nodeVersion, which means nothing to a stack that
-    // does not run on Node. An explicit pin still wins; otherwise the catalog's
-    // declared default answers, and only a template with neither falls back to
-    // the historical Node major. See ADR-0006.
-    runtimeVersion: dto.nodeVersion ?? template.runtimeVersion ?? '24',
+    // The catalog's declared version wins over the DTO, not the other way
+    // round. The DTO only carries `nodeVersion`, and the create form sends it
+    // for every stack whether or not the stack runs on Node — so reading it
+    // first meant a .NET project was generated with `dotnet-version: 24` and
+    // every job failed on an SDK that does not exist. A stack that declares its
+    // runtime version owns it; only stacks that declare none take the DTO's,
+    // which is every Node stack. See ADR-0006.
+    runtimeVersion: template.runtimeVersion ?? dto.nodeVersion ?? '24',
     coverageThreshold,
     strictCoverageThreshold: Math.min(
       coverageThreshold + STRICT_COVERAGE_BONUS,
