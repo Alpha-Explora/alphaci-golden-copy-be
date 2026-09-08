@@ -144,7 +144,10 @@ describe('root directory against the repo shape', () => {
   it.each([['standalone'], ['multi'], [undefined]])(
     'points a %s project at the repo root',
     (shape) => {
-      const result = withRepoShapeRootDirectory(backendTarget('backend'), shape);
+      const result = withRepoShapeRootDirectory(
+        backendTarget('backend'),
+        shape,
+      );
 
       expect(result?.targets[0]?.rootDirectory).toBe('.');
     },

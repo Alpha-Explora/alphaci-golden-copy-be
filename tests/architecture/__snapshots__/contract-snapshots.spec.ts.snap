@@ -96,11 +96,11 @@ exports[`post-consolidation public contract snapshots records the staged workflo
         "docker-backend-uat",
       ],
       "secrets": {
+        "RENDER_DEPLOY_HOOK_URL_DEV": "\${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}",
         "RENDER_DEPLOY_HOOK_URL_MAIN": "\${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}",
-        "RENDER_DEPLOY_HOOK_URL_TEST": "\${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}",
         "RENDER_DEPLOY_HOOK_URL_UAT": "\${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}",
+        "RENDER_HEALTHCHECK_URL_DEV": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
         "RENDER_HEALTHCHECK_URL_MAIN": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
-        "RENDER_HEALTHCHECK_URL_TEST": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
         "RENDER_HEALTHCHECK_URL_UAT": "\${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}",
       },
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/render-deploy.yml@v1",
