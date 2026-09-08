@@ -20,7 +20,12 @@ function templatesConfig(env: NodeJS.ProcessEnv): AppConfig['templates'] {
     // deployed instances loaded the real one. Local and deployed disagreed with
     // only a log warning to say so.
     repoPath: env['TEMPLATE_REPO_PATH'] ?? '../alphaci-workflow',
-    workflowDir: env['TEMPLATE_WORKFLOW_DIR'] ?? 'workflow-templates',
+    // The templates are in workflow-templates/customer. The default named the
+    // parent, which is a real directory holding only subfolders, so the loader
+    // found no *.properties.json and every template lookup returned nothing —
+    // the same failure the repoPath comment above describes, one level down.
+    // Every deployment that worked was setting this explicitly to cover it.
+    workflowDir: env['TEMPLATE_WORKFLOW_DIR'] ?? 'workflow-templates/customer',
     centralWorkflowRepo: resolveCentralWorkflowRepo(env),
   };
 }

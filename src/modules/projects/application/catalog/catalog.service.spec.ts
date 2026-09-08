@@ -51,6 +51,7 @@ const sampleProperties = JSON.stringify({
 
 describe('CatalogService', () => {
   let service: CatalogService;
+  let warn: jest.SpyInstance;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -64,6 +65,50 @@ describe('CatalogService', () => {
 
     service = module.get(CatalogService);
     mockSyncFs.existsSync.mockReturnValue(true);
+    warn = jest
+      .spyOn(service['logger'], 'warn')
+      .mockImplementation(() => undefined);
+    jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+  });
+
+  describe('onModuleInit', () => {
+    // The check used to assert only that the templates directory existed. The
+    // templates live in a subdirectory, so a workflowDir naming the parent
+    // pointed at a real, template-free folder: boot succeeded, every lookup
+    // returned nothing, and project creation failed with `Template not found`
+    // for every stack. Existing but empty is the case that matters.
+    it('fails when the templates directory exists but holds no templates', async () => {
+      mockFs.access.mockResolvedValue(undefined);
+      mockReaddir([makeEntry('README.md')]);
+
+      await expect(service.onModuleInit()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('contains no *.properties.json'),
+      );
+    });
+
+    it('passes when templates are actually there', async () => {
+      mockFs.access.mockResolvedValue(undefined);
+      mockReaddir([makeEntry('be-nestjs.properties.json')]);
+
+      await expect(service.onModuleInit()).resolves.toBeUndefined();
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('refuses to boot in production rather than serving a fallback catalog', async () => {
+      mockFs.access.mockResolvedValue(undefined);
+      mockReaddir([makeEntry('README.md')]);
+      const previous = process.env['NODE_ENV'];
+      process.env['NODE_ENV'] = 'production';
+
+      try {
+        await expect(service.onModuleInit()).rejects.toThrow(
+          /contains no \*\.properties\.json/,
+        );
+      } finally {
+        process.env['NODE_ENV'] = previous;
+      }
+    });
   });
 
   describe('getProjectOptions', () => {

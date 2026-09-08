@@ -6,7 +6,9 @@ import {
 
 describe('central workflow repository resolution', () => {
   it('defaults to the repository the product runs on, so a deployment that configures nothing is still correct', () => {
-    expect(resolveCentralWorkflowRepo({})).toBe('Alpha-Explora/alphaci-workflow');
+    expect(resolveCentralWorkflowRepo({})).toBe(
+      'Alpha-Explora/alphaci-workflow',
+    );
     expect(resolveCentralWorkflowBase({})).toBe(
       'Alpha-Explora/alphaci-workflow/.github/workflows',
     );
@@ -17,7 +19,9 @@ describe('central workflow repository resolution', () => {
   // for a provider fragment and the quality stages of the same pipeline to name
   // different repositories.
   it('repoints both shapes together', () => {
-    const env = { CENTRAL_WORKFLOW_REPO: 'Alpha-Explora/alphaci-workflow-staging' };
+    const env = {
+      CENTRAL_WORKFLOW_REPO: 'Alpha-Explora/alphaci-workflow-staging',
+    };
 
     expect(resolveCentralWorkflowRepo(env)).toBe(
       'Alpha-Explora/alphaci-workflow-staging',

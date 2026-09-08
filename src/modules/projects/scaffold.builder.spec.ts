@@ -48,9 +48,17 @@ describe('normalizeProjectStack', () => {
   // a plausible result rather than an error, and only found out when the
   // generated pipeline ran `npm ci` against a project with no lockfile.
   it('rejects a stack that was asked for but cannot be scaffolded', () => {
-    expect(() => normalizeProjectStack('dotnet')).toThrow(/Unsupported project stack/);
-    expect(() => normalizeProjectStack('python')).toThrow(/dotnet|nextjs, react, nestjs or nodejs/);
+    expect(() => normalizeProjectStack('python')).toThrow(
+      /Unsupported project stack/,
+    );
+    expect(() => normalizeProjectStack('golang')).toThrow(
+      /nextjs, react, nestjs, nodejs or dotnet/,
+    );
     expect(() => normalizeProjectStack('unknown')).toThrow();
+  });
+
+  it('scaffolds dotnet, which now has a file tree of its own', () => {
+    expect(normalizeProjectStack('dotnet')).toBe('dotnet');
   });
 });
 

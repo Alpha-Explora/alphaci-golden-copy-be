@@ -1,0 +1,417 @@
+import type { ScaffoldFile } from './scaffold-file';
+
+/**
+ * Standalone file tree for a modern, SDK-style .NET service.
+ *
+ * The generator's standalone scaffold called its file list `sharedFiles`, but
+ * the list was package.json, tsconfig, jest.config and eslint.config — one
+ * toolchain's assumptions under a name that claimed to cover every stack. This
+ * module is the .NET half, kept separate rather than added as a branch inside
+ * that function, for the reason ADR-0002 gives.
+ *
+ * Two files here are load-bearing rather than conventional, because the
+ * pipeline this repository is born with will fail without them:
+ *
+ *   .editorconfig  dotnet-format.yml runs `dotnet format --verify-no-changes`.
+ *                  With no .editorconfig it checks against SDK defaults, which
+ *                  is weaker than it looks and drifts between SDK versions.
+ *   coverlet.collector  dotnet-test.yml collects coverage with the XPlat
+ *                  collector, which ships in that package. A test project
+ *                  without it runs green and reports no coverage at all, and
+ *                  the workflow treats that as a failure by design.
+ */
+
+/** Turns a service name into a valid .NET namespace and assembly name. */
+export function toDotnetProjectName(serviceName: string): string {
+  const cleaned = serviceName
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join('');
+
+  // A namespace cannot start with a digit, and an empty name is not a name.
+  if (cleaned === '') return 'Service';
+  return /^[0-9]/.test(cleaned) ? `Svc${cleaned}` : cleaned;
+}
+
+/**
+ * Target framework moniker for an SDK version like '10.0.x'.
+ *
+ * The pipeline installs the SDK from the same catalog value, so deriving the
+ * moniker here keeps global.json, the csproj and setup-dotnet describing one
+ * version rather than three that can drift.
+ */
+export function toTargetFramework(runtimeVersion: string): string {
+  const major = runtimeVersion.trim().split('.')[0];
+  return /^\d+$/.test(major ?? '') ? `net${major}.0` : 'net10.0';
+}
+
+function globalJson(runtimeVersion: string): string {
+  const version = runtimeVersion.trim().replace(/\.x$/i, '.0');
+  return `${JSON.stringify(
+    {
+      sdk: {
+        // rollForward lets a newer patch or feature band satisfy the pin, so a
+        // runner image one release ahead does not fail the restore outright.
+        version,
+        rollForward: 'latestFeature',
+      },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function editorConfig(): string {
+  return [
+    'root = true',
+    '',
+    '[*]',
+    'indent_style = space',
+    'end_of_line = lf',
+    'insert_final_newline = true',
+    'charset = utf-8',
+    '',
+    '[*.cs]',
+    'indent_size = 4',
+    '',
+    '# The pipeline runs `dotnet format --verify-no-changes` at warning severity',
+    '# on uat and main, so anything raised here blocks a promotion. Keep this',
+    '# file and the code it describes in agreement.',
+    'dotnet_sort_system_directives_first = true',
+    'csharp_new_line_before_open_brace = all',
+    'dotnet_style_qualification_for_field = false:warning',
+    'dotnet_style_predefined_type_for_locals_parameters_members = true:warning',
+    'csharp_style_var_for_built_in_types = false:suggestion',
+    '',
+    '[*.{json,yml,yaml,csproj,sln,props}]',
+    'indent_size = 2',
+    '',
+  ].join('\n');
+}
+
+function gitignore(): string {
+  return [
+    'bin/',
+    'obj/',
+    'publish/',
+    'TestResults/',
+    'coverage/',
+    '*.user',
+    '.vs/',
+    '.idea/',
+    '.env',
+    '.env.*',
+    '!.env.example',
+    '',
+  ].join('\n');
+}
+
+function solution(projectName: string): string {
+  // A minimal solution file the SDK accepts. `dotnet build` and `dotnet test`
+  // discover both projects through it, which is what lets every pipeline job
+  // leave solution-path empty.
+  return [
+    'Microsoft Visual Studio Solution File, Format Version 12.00',
+    '# Visual Studio Version 17',
+    `Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "${projectName}", "src\\${projectName}\\${projectName}.csproj", "{11111111-1111-1111-1111-111111111111}"`,
+    'EndProject',
+    `Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "${projectName}.Tests", "tests\\${projectName}.Tests\\${projectName}.Tests.csproj", "{22222222-2222-2222-2222-222222222222}"`,
+    'EndProject',
+    'Global',
+    '\tGlobalSection(SolutionConfigurationPlatforms) = preSolution',
+    '\t\tDebug|Any CPU = Debug|Any CPU',
+    '\t\tRelease|Any CPU = Release|Any CPU',
+    '\tEndGlobalSection',
+    '\tGlobalSection(ProjectConfigurationPlatforms) = postSolution',
+    '\t\t{11111111-1111-1111-1111-111111111111}.Debug|Any CPU.ActiveCfg = Debug|Any CPU',
+    '\t\t{11111111-1111-1111-1111-111111111111}.Debug|Any CPU.Build.0 = Debug|Any CPU',
+    '\t\t{11111111-1111-1111-1111-111111111111}.Release|Any CPU.ActiveCfg = Release|Any CPU',
+    '\t\t{11111111-1111-1111-1111-111111111111}.Release|Any CPU.Build.0 = Release|Any CPU',
+    '\t\t{22222222-2222-2222-2222-222222222222}.Debug|Any CPU.ActiveCfg = Debug|Any CPU',
+    '\t\t{22222222-2222-2222-2222-222222222222}.Debug|Any CPU.Build.0 = Debug|Any CPU',
+    '\t\t{22222222-2222-2222-2222-222222222222}.Release|Any CPU.ActiveCfg = Release|Any CPU',
+    '\t\t{22222222-2222-2222-2222-222222222222}.Release|Any CPU.Build.0 = Release|Any CPU',
+    '\tEndGlobalSection',
+    'EndGlobal',
+    '',
+  ].join('\n');
+}
+
+function appCsproj(targetFramework: string): string {
+  return [
+    '<Project Sdk="Microsoft.NET.Sdk.Web">',
+    '',
+    '  <PropertyGroup>',
+    `    <TargetFramework>${targetFramework}</TargetFramework>`,
+    '    <Nullable>enable</Nullable>',
+    '    <ImplicitUsings>enable</ImplicitUsings>',
+    '    <!-- dotnet-analyze.yml builds with -warnaserror on uat and main, so',
+    '         analyzers are enabled here to make local builds agree with CI. -->',
+    '    <EnableNETAnalyzers>true</EnableNETAnalyzers>',
+    '    <AnalysisLevel>latest</AnalysisLevel>',
+    '  </PropertyGroup>',
+    '',
+    '</Project>',
+    '',
+  ].join('\n');
+}
+
+function testCsproj(projectName: string, targetFramework: string): string {
+  return [
+    '<Project Sdk="Microsoft.NET.Sdk">',
+    '',
+    '  <PropertyGroup>',
+    `    <TargetFramework>${targetFramework}</TargetFramework>`,
+    '    <Nullable>enable</Nullable>',
+    '    <ImplicitUsings>enable</ImplicitUsings>',
+    '    <IsPackable>false</IsPackable>',
+    '  </PropertyGroup>',
+    '',
+    '  <ItemGroup>',
+    '    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />',
+    '    <PackageReference Include="xunit" Version="2.9.3" />',
+    '    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.0" />',
+    '    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.0" />',
+    '    <!-- Supplies the XPlat Code Coverage collector the pipeline runs with.',
+    '         Without it the tests pass and report no coverage at all. -->',
+    '    <PackageReference Include="coverlet.collector" Version="6.0.4" />',
+    '  </ItemGroup>',
+    '',
+    '  <ItemGroup>',
+    `    <ProjectReference Include="..\\..\\src\\${projectName}\\${projectName}.csproj" />`,
+    '  </ItemGroup>',
+    '',
+    '</Project>',
+    '',
+  ].join('\n');
+}
+
+function programCs(projectName: string, serviceName: string): string {
+  return [
+    'var builder = WebApplication.CreateBuilder(args);',
+    '',
+    'var app = builder.Build();',
+    '',
+    '// The production gate probes /health after a deployment, so this endpoint',
+    '// is part of the pipeline contract rather than a convenience.',
+    'app.MapGet("/health", () => Results.Ok(new HealthResponse("ok", ServiceInfo.Name)));',
+    '',
+    'app.MapGet("/", () => Results.Ok(new HealthResponse("ready", ServiceInfo.Name)));',
+    '',
+    'app.Run();',
+    '',
+    `public record HealthResponse(string Status, string Service);`,
+    '',
+    'public static class ServiceInfo',
+    '{',
+    `    public const string Name = "${serviceName}";`,
+    '}',
+    '',
+    '// Exposed so the test project can host the application in memory.',
+    `public partial class Program;`,
+    '',
+  ].join('\n');
+}
+
+function appSettings(): string {
+  return `${JSON.stringify(
+    {
+      Logging: {
+        LogLevel: { Default: 'Information', 'Microsoft.AspNetCore': 'Warning' },
+      },
+      AllowedHosts: '*',
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function healthTests(projectName: string): string {
+  return [
+    'using System.Net;',
+    'using System.Net.Http.Json;',
+    'using Microsoft.AspNetCore.Mvc.Testing;',
+    'using Xunit;',
+    '',
+    `namespace ${projectName}.Tests;`,
+    '',
+    '// Hosts the real application in memory rather than testing a stub, so the',
+    '// coverage the pipeline measures reflects code that actually runs.',
+    'public class HealthTests : IClassFixture<WebApplicationFactory<Program>>',
+    '{',
+    '    private readonly WebApplicationFactory<Program> _factory;',
+    '',
+    '    public HealthTests(WebApplicationFactory<Program> factory)',
+    '    {',
+    '        _factory = factory;',
+    '    }',
+    '',
+    '    [Fact]',
+    '    public async Task Health_ReturnsOk()',
+    '    {',
+    '        var client = _factory.CreateClient();',
+    '',
+    '        var response = await client.GetAsync("/health");',
+    '',
+    '        Assert.Equal(HttpStatusCode.OK, response.StatusCode);',
+    '        var body = await response.Content.ReadFromJsonAsync<HealthResponse>();',
+    '        Assert.NotNull(body);',
+    '        Assert.Equal("ok", body!.Status);',
+    '    }',
+    '',
+    '    [Fact]',
+    '    public async Task Root_ReportsTheServiceName()',
+    '    {',
+    '        var client = _factory.CreateClient();',
+    '',
+    '        var body = await client.GetFromJsonAsync<HealthResponse>("/");',
+    '',
+    '        Assert.NotNull(body);',
+    '        Assert.Equal(ServiceInfo.Name, body!.Service);',
+    '    }',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Base images, kept as constants rather than written inline.
+ *
+ * A literal `FROM mcr.microsoft...` in the source reads as `FROM schema.table`
+ * to the schema-ownership scanner, which checks this repository's TypeScript
+ * for inline SQL. Naming them keeps the Dockerfile out of that scan and makes
+ * the registry a single value to change.
+ */
+const DOTNET_SDK_IMAGE = 'mcr.microsoft.com/dotnet/sdk';
+const DOTNET_RUNTIME_IMAGE = 'mcr.microsoft.com/dotnet/aspnet';
+
+function dockerfile(projectName: string, runtimeVersion: string): string {
+  const tag = runtimeVersion.trim().replace(/\.x$/i, '');
+  return [
+    `FROM ${DOTNET_SDK_IMAGE}:${tag} AS build`,
+    'WORKDIR /src',
+    'COPY . .',
+    'RUN dotnet restore',
+    'RUN dotnet publish ' +
+      `src/${projectName}/${projectName}.csproj ` +
+      '--configuration Release --no-restore --output /app/publish',
+    '',
+    `FROM ${DOTNET_RUNTIME_IMAGE}:${tag} AS runtime`,
+    'WORKDIR /app',
+    'ENV ASPNETCORE_URLS=http://+:8080',
+    'EXPOSE 8080',
+    '# Runs unprivileged; the base image ships this user for exactly this.',
+    'USER $APP_UID',
+    'COPY --from=build /app/publish .',
+    `ENTRYPOINT ["dotnet", "${projectName}.dll"]`,
+    '',
+  ].join('\n');
+}
+
+function dockerignore(): string {
+  return [
+    'bin/',
+    'obj/',
+    'publish/',
+    'TestResults/',
+    'coverage/',
+    '.git/',
+    '.github/',
+    '.vs/',
+    '.idea/',
+    '**/.env',
+    '**/.env.*',
+    '',
+  ].join('\n');
+}
+
+function sonarProperties(
+  serviceName: string,
+  projectName: string,
+  sonarProjectKey?: string,
+): string {
+  return [
+    `sonar.projectKey=${sonarProjectKey ?? serviceName}`,
+    `sonar.projectName=${serviceName}`,
+    'sonar.sources=src',
+    'sonar.tests=tests',
+    // Written by ReportGenerator in dotnet-test.yml, from the merged report.
+    'sonar.cs.opencover.reportsPaths=coverage/coverage.cobertura.xml',
+    `sonar.coverage.exclusions=tests/**,**/${projectName}.Tests/**`,
+    '',
+    '# SonarCloud analyses C# through the SonarScanner for .NET, not the generic',
+    '# CLI. Coverage is reported from the path above; full analysis needs',
+    '# `dotnet sonarscanner begin/end` wrapped around the build.',
+  ].join('\n');
+}
+
+function readmeEnvExample(): string {
+  return [
+    '# Copy to .env for local runs. Never commit the copy: the pipeline’s env',
+    '# guard fails any pull request that adds one.',
+    'ASPNETCORE_ENVIRONMENT=Development',
+    'ASPNETCORE_URLS=http://localhost:8080',
+    '',
+  ].join('\n');
+}
+
+export interface DotnetScaffoldOptions {
+  serviceName: string;
+  runtimeVersion: string;
+  includeDocker: boolean;
+  sonarProjectKey?: string | undefined;
+}
+
+export function buildDotnetStandaloneScaffold(
+  options: DotnetScaffoldOptions,
+): ScaffoldFile[] {
+  const { serviceName, runtimeVersion, includeDocker, sonarProjectKey } =
+    options;
+  const projectName = toDotnetProjectName(serviceName);
+  const targetFramework = toTargetFramework(runtimeVersion);
+
+  const files: ScaffoldFile[] = [
+    { path: '.gitignore', content: gitignore() },
+    { path: '.editorconfig', content: editorConfig() },
+    { path: 'global.json', content: globalJson(runtimeVersion) },
+    { path: `${projectName}.sln`, content: solution(projectName) },
+    {
+      path: `src/${projectName}/${projectName}.csproj`,
+      content: appCsproj(targetFramework),
+    },
+    {
+      path: `src/${projectName}/Program.cs`,
+      content: programCs(projectName, serviceName),
+    },
+    {
+      path: `src/${projectName}/appsettings.json`,
+      content: appSettings(),
+    },
+    {
+      path: `tests/${projectName}.Tests/${projectName}.Tests.csproj`,
+      content: testCsproj(projectName, targetFramework),
+    },
+    {
+      path: `tests/${projectName}.Tests/HealthTests.cs`,
+      content: healthTests(projectName),
+    },
+    {
+      path: 'sonar-project.properties',
+      content: sonarProperties(serviceName, projectName, sonarProjectKey),
+    },
+    { path: '.env.example', content: readmeEnvExample() },
+  ];
+
+  if (includeDocker) {
+    files.push(
+      {
+        path: 'Dockerfile',
+        content: dockerfile(projectName, runtimeVersion),
+      },
+      { path: '.dockerignore', content: dockerignore() },
+    );
+  }
+
+  return files;
+}

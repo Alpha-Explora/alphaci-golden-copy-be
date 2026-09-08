@@ -8,10 +8,10 @@
 // Shape-aware: the scaffold structure varies by repoShape (standalone, monorepo,
 // microservices, multi-repo) as well as the technology stack.
 
-export interface ScaffoldFile {
-  path: string;
-  content: string;
-}
+import { buildDotnetStandaloneScaffold } from './scaffolds/dotnet-scaffold';
+import type { ScaffoldFile } from './scaffolds/scaffold-file';
+
+export type { ScaffoldFile } from './scaffolds/scaffold-file';
 
 export type CanonicalRepoShape =
   | 'standalone'
@@ -19,7 +19,12 @@ export type CanonicalRepoShape =
   | 'microservices'
   | 'multi-repo';
 
-export type CanonicalStack = 'nestjs' | 'nodejs' | 'nextjs' | 'react';
+export type CanonicalStack =
+  | 'nestjs'
+  | 'nodejs'
+  | 'nextjs'
+  | 'react'
+  | 'dotnet';
 
 /**
  * Accept legacy FE/API project type IDs as well as catalog stack keys. Older
@@ -50,6 +55,10 @@ export function normalizeProjectStack(
     return 'nodejs';
   }
 
+  if (normalized.includes('dotnet')) {
+    return 'dotnet';
+  }
+
   if (normalized.includes('next')) {
     return 'nextjs';
   }
@@ -67,7 +76,7 @@ export function normalizeProjectStack(
   }
 
   throw new Error(
-    `Unsupported project stack '${stack}'. The scaffold can emit nextjs, react, nestjs or nodejs; a stack outside that set needs a scaffold before it can be provisioned.`,
+    `Unsupported project stack '${stack}'. The scaffold can emit nextjs, react, nestjs, nodejs or dotnet; a stack outside that set needs a scaffold before it can be provisioned.`,
   );
 }
 
@@ -100,6 +109,11 @@ export interface BuildScaffoldOptions {
   stack: string;
   includeDocker: boolean;
   nodeVersion?: string;
+  /**
+   * Declared runtime version for stacks that do not run on Node, from the
+   * catalog. `nodeVersion` means nothing to them.
+   */
+  runtimeVersion?: string;
   /**
    * Per-repository SonarCloud key. Tokens and organization are centralized
    * through backend-managed GitHub secrets; this is the only repo-specific
@@ -820,8 +834,21 @@ function buildStandaloneScaffold(
     stack,
     includeDocker,
     nodeVersion = '22',
+    runtimeVersion,
     sonarProjectKey,
   } = options;
+
+  // The list below is the Node one despite being called shared: package.json,
+  // tsconfig, jest and eslint. A stack on another toolchain builds its own tree
+  // rather than adding branches through this function.
+  if (stack === 'dotnet') {
+    return buildDotnetStandaloneScaffold({
+      serviceName,
+      runtimeVersion: runtimeVersion ?? '10.0.x',
+      includeDocker,
+      sonarProjectKey,
+    });
+  }
   const packageName = toPackageName(serviceName);
 
   const sharedFiles: ScaffoldFile[] = [
@@ -1010,5 +1037,9 @@ export function buildProjectScaffold(
  */
 export function defaultIncludeDocker(stack: string): boolean {
   const normalizedStack = normalizeProjectStack(stack);
-  return normalizedStack === 'nestjs' || normalizedStack === 'nodejs';
+  return (
+    normalizedStack === 'nestjs' ||
+    normalizedStack === 'nodejs' ||
+    normalizedStack === 'dotnet'
+  );
 }

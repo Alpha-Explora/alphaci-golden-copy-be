@@ -397,11 +397,16 @@ export class ProjectProvisioningSupport {
       backendServiceName,
     } = opts;
 
+    // Declared per stack in the catalog. Absent for the Node stacks, which take
+    // their version from the generate DTO instead.
+    const runtimeVersion = this.catalogService.getStackRuntimeVersion(stack);
+
     const scaffoldFiles = buildProjectScaffold({
       serviceName: projectName,
       stack,
       includeDocker: opts.includeDocker ?? defaultIncludeDocker(stack),
       sonarProjectKey: sonarProjectKeyFor(owner, repo),
+      ...(runtimeVersion ? { runtimeVersion } : {}),
       ...(repoShape ? { repoShape } : {}),
       ...(frontendStack ? { frontendStack } : {}),
       ...(frontendServiceName ? { frontendServiceName } : {}),
