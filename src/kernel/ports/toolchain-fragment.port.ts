@@ -12,9 +12,21 @@
  * jobs. Adding a stack becomes a registration rather than another branch in a
  * conditional. See ADR-0006.
  *
- * Sonar is deliberately not part of this contract. `sonarcloud-scan.yml` has no
- * toolchain coupling at all, so every stack shares one job rather than each
- * fragment restating it.
+ * Sonar was originally left out of this contract on the grounds that
+ * `sonarcloud-scan.yml` had no toolchain coupling. That was only true while
+ * every stack ran on Node. It has two couplings:
+ *
+ *   which scanner  the generic sonar-scanner CLI cannot analyse C# at all;
+ *                  SonarQube Cloud supports the language, but only through
+ *                  SonarScanner for .NET, which wraps the build.
+ *   which paths    a stack that keeps tests in a directory of their own needs
+ *                  `sources` and `tests` to be disjoint. Passing the Node
+ *                  shape to a .NET project made them overlap and the scan
+ *                  aborted with "can't be indexed twice".
+ *
+ * So the fragment declares what Sonar needs to know about its stack, and the
+ * pipeline still owns the parts that are not the stack's business: the secrets,
+ * the coverage artifact, and whether the quality gate blocks.
  */
 
 /** What a fragment needs to know to build its jobs. */
@@ -87,6 +99,26 @@ export interface ToolchainFragmentResult {
    * supply one without breaking the deployment graph.
    */
   readonly packageBuildJob: Record<string, unknown>;
+  /** How this stack is analysed by Sonar. */
+  readonly sonar: ToolchainSonarConfig;
+}
+
+export interface ToolchainSonarConfig {
+  /** Reusable workflow that runs the scan for this stack. */
+  readonly workflow: string;
+  /** Value for `sonar.sources`. */
+  readonly sourcesPath: string;
+  /**
+   * Value for `sonar.tests`.
+   *
+   * Must not overlap `sourcesPath`: Sonar refuses to index a file as both a
+   * source and a test, and fails the whole scan rather than choosing.
+   */
+  readonly testsPath: string;
+  /** Path to the coverage report the scanner should ingest. */
+  readonly coverageReportPath: string;
+  /** Inputs only this stack's scanner declares. */
+  readonly extraWith?: Record<string, unknown>;
 }
 
 export interface ToolchainFragment {

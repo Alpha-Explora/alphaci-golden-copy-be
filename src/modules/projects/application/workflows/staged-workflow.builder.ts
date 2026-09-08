@@ -393,13 +393,14 @@ function buildQualityWorkflowFile(
           // is advisory for PR source refs and blocking on direct uat/main
           // runs (branch-policy decides via sonar-gate-wait).
           if: "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
-          uses: `${CENTRAL_WORKFLOW_BASE}/sonarcloud-scan.yml@${ctx.centralWorkflowRef}`,
+          uses: `${CENTRAL_WORKFLOW_BASE}/${toolchain.sonar.workflow}@${ctx.centralWorkflowRef}`,
           with: {
             'working-directory': ctx.servicePath,
             'system-name': ctx.serviceName,
-            'sources-path': 'src',
-            'tests-path': ctx.hasTestsDirectory ? 'src,tests' : 'src',
-            'coverage-report-path': 'coverage/lcov.info',
+            'sources-path': toolchain.sonar.sourcesPath,
+            'tests-path': toolchain.sonar.testsPath,
+            'coverage-report-path': toolchain.sonar.coverageReportPath,
+            ...(toolchain.sonar.extraWith ?? {}),
             'coverage-artifact-name': `${ctx.serviceName}-coverage`,
             'quality-gate-wait':
               '${{ fromJson(needs.branch-policy.outputs.sonar-gate-wait) }}',

@@ -172,6 +172,15 @@ function buildNodeQualityJobs(
     testJobId: profile.testJobId,
     qualityJobIds: [profile.testJobId, 'lint', 'typecheck', 'security'],
     packageBuildJob: packageBuildJob(context),
+    sonar: {
+      workflow: 'sonarcloud-scan.yml',
+      sourcesPath: 'src',
+      // Node keeps unit tests beside the code as *.spec.ts, so src appears in
+      // both and sonar-project.properties disambiguates with test.inclusions.
+      // A stack whose tests live only in their own folder must not copy this.
+      testsPath: context.hasTestsDirectory ? 'src,tests' : 'src',
+      coverageReportPath: 'coverage/lcov.info',
+    },
     qualityJobs: {
       [profile.testJobId]: {
         needs: [context.policyJobId],

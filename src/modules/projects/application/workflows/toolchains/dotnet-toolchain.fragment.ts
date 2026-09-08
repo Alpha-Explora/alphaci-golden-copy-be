@@ -99,6 +99,20 @@ function buildDotnetQualityJobs(
     testJobId: TEST_JOB_ID,
     qualityJobIds: [TEST_JOB_ID, 'lint', 'typecheck', 'security'],
     packageBuildJob: packageBuildJob(context),
+    sonar: {
+      // SonarQube Cloud analyses C#, but only through SonarScanner for .NET,
+      // which wraps the build so Roslyn analyzers emit findings as it compiles.
+      // The generic CLI cannot analyse the language at all.
+      workflow: 'sonarcloud-dotnet-scan.yml',
+      sourcesPath: 'src',
+      // Disjoint from sources. Passing Node's 'src,tests' made Program.cs both
+      // a source and a test file, and Sonar failed the scan outright.
+      testsPath: 'tests',
+      // ReportGenerator writes this in dotnet-test.yml; the .NET scanner reads
+      // Cobertura rather than the lcov the generic CLI consumes.
+      coverageReportPath: 'coverage/coverage.cobertura.xml',
+      extraWith: { 'dotnet-version': context.runtimeVersion },
+    },
     qualityJobs: {
       [TEST_JOB_ID]: {
         needs: [context.policyJobId],
