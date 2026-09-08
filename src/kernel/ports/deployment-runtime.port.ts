@@ -361,12 +361,27 @@ export const DEPLOYMENT_PROVISIONING_FACADE = Symbol(
 
 /** Runtime-owned product default resolved through a provider-neutral port. */
 export interface DeploymentProvisioningDefaultsPort {
+  /**
+   * Product default hosting target for a role.
+   *
+   * Takes the role because there are two defaults, not one. This resolved only
+   * the backend default, so a frontend project was created with no hosting at
+   * all while a backend got Render automatically — the asymmetry was silent,
+   * and the frontend provider default existed but was never read.
+   *
+   * Returns undefined when the role's default provider declares no create
+   * target, so a caller distinguishes "no default configured" from a target.
+   */
   resolveDefaultCreateTarget(input: {
+    role: DeploymentDefaultRole;
     serviceName: string;
     repoName: string;
     servicePath?: string | undefined;
-  }): DeploymentProvisioningTarget;
+  }): DeploymentProvisioningTarget | undefined;
 }
+
+/** Which half of a project a default hosting target is for. */
+export type DeploymentDefaultRole = 'backend' | 'frontend';
 
 export const DEPLOYMENT_PROVISIONING_DEFAULTS = Symbol(
   'DEPLOYMENT_PROVISIONING_DEFAULTS',

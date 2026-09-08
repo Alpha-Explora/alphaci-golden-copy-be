@@ -2,6 +2,9 @@
 
 ## 2026-09-08
 
+* **Update**: Gave frontend project types a default hosting target. A backend created without touching the wizard's hosting step got Render automatically; a frontend got nothing, so its pipeline built, tested and deployed nowhere. `vercel` was already named the default frontend provider but nothing read it.
+* **Update**: Made the provisioning defaults port resolve by role rather than assuming backend, so both defaults come from one call and a provider that declares none returns undefined instead of throwing.
+
 * **Creation**: Added `ToolchainFragment` and `ToolchainFragmentRegistry` in `kernel/ports`, mirroring the deployment provider contract, so the quality stage's stack-specific jobs resolve by lookup instead of an `isBackend` conditional.
 * **Creation**: Added the Node toolchain fragment covering `nextjs`, `react`, `nestjs`, `nodejs`, `react-native` and `expo`, and moved the test, lint, typecheck and security jobs into it from the staged workflow builder.
 * **Update**: Recorded the stack-as-a-declared-axis decision (ADR-0006) and the migration's verification result: 312 reachable bundle combinations byte-identical, with the 168 differing ones proven unreachable because `kind` is read from the catalog row the stack keys.

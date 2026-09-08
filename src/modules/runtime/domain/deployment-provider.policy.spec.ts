@@ -124,6 +124,7 @@ describe('DeploymentProviderPolicyRegistry', () => {
 
     expect(
       service.resolveDefaultCreateTarget({
+        role: 'backend',
         serviceName: 'orders-api',
         repoName: 'orders-api',
       }),

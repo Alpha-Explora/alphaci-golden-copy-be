@@ -25,6 +25,36 @@ export class VercelDeploymentPolicy implements DeploymentProviderPolicy {
   };
   readonly provisioning: DeploymentProviderProvisioningPolicy = {
     resolveDefaultTargetRole: () => 'frontend',
+    /**
+     * Product default for a frontend project that asked for no hosting.
+     *
+     * Mirrors Render's backend default. Without it a React project was created
+     * with no deployment target: `vercel` was named as the default frontend
+     * provider but nothing ever read that, so the wizard's hosting step was the
+     * only way to get a deploy job, and skipping it produced a pipeline that
+     * built and tested and then deployed nowhere.
+     *
+     * No branchName: Vercel deploys every promotion branch, so the target is
+     * branch-neutral and `expandTargets` leaves branch selection to the
+     * pipeline. Render's default pins uat because a Render service is
+     * per-branch.
+     */
+    resolveDefaultCreateTarget: ({ serviceName, repoName, servicePath }) => {
+      const base = (serviceName || repoName || 'frontend')
+        .trim()
+        .toLowerCase()
+        .replaceAll(/[^a-z0-9._-]+/g, '-')
+        .replaceAll(/^-+|-+$/g, '');
+      return {
+        slot: 'frontend',
+        provider: 'vercel',
+        ownershipMode: 'flowci_managed',
+        projectName: base || 'frontend',
+        rootDirectory: servicePath?.trim() || '.',
+        buildCommand: 'npm run build',
+        env: [],
+      };
+    },
     resolveCrossLinkLane: () => null,
     resolvePublicUrl: ({
       providerProjectName,
