@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
-import { DEFAULT_BACKEND_PROVIDER_ID } from '../core/deployment-provider.defaults';
+import {
+  DEFAULT_BACKEND_PROVIDER_ID,
+  DEFAULT_FRONTEND_PROVIDER_ID,
+} from '../core/deployment-provider.defaults';
 import { DeploymentProviderPolicyRegistry } from '../domain/deployment-provider.policy';
 import type { DeploymentProvisioningTarget } from '../core/deployment-provisioning.contract';
+import type { DeploymentDefaultRole } from '#kernel/ports/deployment-runtime.port';
 import type { DeploymentProvisioningDefaultsPort } from '../core/deployment-provisioning.defaults';
 
 /**
@@ -16,17 +20,27 @@ export class DeploymentProvisioningDefaultsService implements DeploymentProvisio
   ) {}
 
   resolveDefaultCreateTarget(input: {
+    role: DeploymentDefaultRole;
     serviceName: string;
     repoName: string;
     servicePath?: string | undefined;
-  }): DeploymentProvisioningTarget {
-    const policy = this.providerPolicies.get(DEFAULT_BACKEND_PROVIDER_ID);
-    if (!policy.provisioning?.resolveDefaultCreateTarget) {
-      throw new Error(
-        `Default deployment provider policy does not define a create target: ${DEFAULT_BACKEND_PROVIDER_ID}`,
-      );
-    }
+  }): DeploymentProvisioningTarget | undefined {
+    const providerId =
+      input.role === 'frontend'
+        ? DEFAULT_FRONTEND_PROVIDER_ID
+        : DEFAULT_BACKEND_PROVIDER_ID;
+    const policy = this.providerPolicies.get(providerId);
 
-    return policy.provisioning.resolveDefaultCreateTarget(input);
+    // Undefined rather than a throw: a provider that declares no create target
+    // means the product has no default hosting for that role, which is a
+    // configuration answer the caller can act on. Throwing here would fail
+    // project creation outright over a missing convenience.
+    return policy.provisioning?.resolveDefaultCreateTarget?.({
+      serviceName: input.serviceName,
+      repoName: input.repoName,
+      ...(input.servicePath === undefined
+        ? {}
+        : { servicePath: input.servicePath }),
+    });
   }
 }

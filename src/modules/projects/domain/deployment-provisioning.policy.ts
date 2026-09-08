@@ -72,9 +72,14 @@ export function isBackendProjectType(projectTypeId: string): boolean {
 }
 
 /**
- * Applies the Runtime-owned product default for backend project types that did
- * not explicitly ask for hosting. Projects only preserves the request shape;
+ * Applies the Runtime-owned product default for a project type that did not
+ * explicitly ask for hosting. Projects only preserves the request shape;
  * provider identity and provider-specific target fields come from Runtime.
+ *
+ * This used to return early for anything that was not a backend, so a React
+ * project created without touching the wizard's hosting step got no deployment
+ * target and its pipeline deployed nowhere — while an equivalent backend got
+ * Render automatically. Both roles now resolve their default.
  */
 export function withDefaultCreateDeploymentProvisioning(input: {
   request: DeploymentProvisioningRequestDto | undefined;
@@ -86,12 +91,13 @@ export function withDefaultCreateDeploymentProvisioning(input: {
     | DeploymentProvisioningDefaultsPort
     | undefined;
 }): DeploymentProvisioningRequestDto | undefined {
-  if (!isBackendProjectType(input.projectTypeId)) {
-    return input.request;
-  }
+  const role: 'backend' | 'frontend' = isBackendProjectType(input.projectTypeId)
+    ? 'backend'
+    : 'frontend';
 
   const defaultTarget =
     input.deploymentProvisioningDefaults?.resolveDefaultCreateTarget({
+      role,
       serviceName: input.serviceName,
       repoName: input.repoName,
       servicePath: input.servicePath,
@@ -100,10 +106,15 @@ export function withDefaultCreateDeploymentProvisioning(input: {
     return input.request;
   }
 
+  // A target the caller already configured for this role wins. 'standalone' is
+  // included because a single-repo project may describe its one service with
+  // that slot rather than naming a half.
+  const slotsForRole =
+    role === 'backend' ? ['backend', 'standalone'] : ['frontend', 'standalone'];
   const existingTargets = input.request?.targets ?? [];
   const hasDefaultProviderTarget = existingTargets.some(
     (target) =>
-      ['backend', 'standalone'].includes(target.slot) &&
+      slotsForRole.includes(target.slot) &&
       target.provider === defaultTarget.provider,
   );
   if (hasDefaultProviderTarget) {
