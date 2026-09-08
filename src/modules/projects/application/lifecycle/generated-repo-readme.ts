@@ -16,6 +16,8 @@ export function describeGeneratedStack(stack: string | undefined): string {
       return 'Next.js app';
     case 'react':
       return 'React app';
+    case 'dotnet':
+      return '.NET service';
     case 'nodejs':
     default:
       return 'Node.js service';
@@ -58,6 +60,15 @@ export function generatedStructureLines(opts: {
     ];
   }
 
+  if (stack === 'dotnet') {
+    return [
+      '- `src/<Project>/Program.cs` boots the minimal API and exposes `/health`, which the production gate probes after each deployment.',
+      '- `tests/<Project>.Tests/` hosts the application in memory with `WebApplicationFactory`, so coverage reflects code that actually runs.',
+      '- `.editorconfig` is what `dotnet format` checks against; the pipeline runs it at warning severity on uat and main.',
+      '- `global.json` pins the SDK so local builds and CI resolve the same version.',
+    ];
+  }
+
   if (stack === 'nextjs') {
     return [
       '- `src/app/layout.tsx` provides the App Router root layout.',
@@ -82,7 +93,27 @@ export function generatedStructureLines(opts: {
   ];
 }
 
-export function gettingStartedCommands(repoShape?: string): string[] {
+export function gettingStartedCommands(
+  repoShape?: string,
+  stack?: string,
+): string[] {
+  // The commands below are npm's. A .NET repository has no package.json, and a
+  // README telling its developer to run `npm install` is worse than no README.
+  if (
+    stack !== undefined &&
+    normalizeProjectStack(stack) === 'dotnet' &&
+    normalizeRepoShape(repoShape) !== 'microservices'
+  ) {
+    return [
+      '```bash',
+      'dotnet restore',
+      'dotnet format --verify-no-changes',
+      'dotnet build --configuration Release --no-restore',
+      'dotnet test --collect:"XPlat Code Coverage"',
+      '```',
+    ];
+  }
+
   if (normalizeRepoShape(repoShape) === 'microservices') {
     return [
       '```bash',
@@ -158,8 +189,8 @@ export function buildGeneratedRepoReadme(opts: {
     '',
     '## Getting started',
     '',
-    ...gettingStartedCommands(opts.repoShape),
+    ...gettingStartedCommands(opts.repoShape, opts.stack),
     '',
-    'Create a feature branch, open a pull request into `uat`, and let ALPHACI promote green changes to `main`.',
+    'Create a feature branch, open a pull request into `dev`, and let ALPHACI promote green changes through `uat` to `main`.',
   ].join('\n');
 }

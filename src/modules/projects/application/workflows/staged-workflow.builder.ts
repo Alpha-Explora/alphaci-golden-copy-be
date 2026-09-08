@@ -7,6 +7,9 @@ import type {
   WorkflowFragmentBranch,
   WorkflowFragmentRegistry,
 } from '#kernel/ports/workflow-fragment.port';
+import type { ToolchainFragmentResult } from '#kernel/ports/toolchain-fragment.port';
+import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
+import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
@@ -126,6 +129,19 @@ const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
 const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
 
 /**
+ * Job ids the toolchain fragments depend on.
+ *
+ * Named rather than repeated as literals because a fragment writes
+ * `needs: [policyJobId]` and reads `needs.<policyJobId>.outputs.*` without
+ * seeing this file. A rename that reached only one of the two would produce a
+ * workflow Actions rejects at parse time, which is the good case; the bad case
+ * is an `if:` referencing a job that no longer exists, which evaluates empty
+ * and skips the job silently.
+ */
+const VALIDATE_ACCESS_JOB_ID = 'validate-access';
+const BRANCH_POLICY_JOB_ID = 'branch-policy';
+
+/**
  * A job `if:` matching any of the given branches.
  *
  * Branch conditions were written out by hand per job, so each one had to be
@@ -163,21 +179,6 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   hasTestsDirectory?: boolean;
 }
 
-/**
- * The promotion flow, in order. Work lands on dev, uat is the QA tier that must
- * pass before promotion, main is production.
- *
- * Declared once because the list previously appeared as four separate literals
- * across triggers, deploy planning and promotion. Adding a branch meant finding
- * all of them, and the type carried no exhaustiveness, so a missed one failed
- * silently rather than at compile time.
- */
-const PIPELINE_BRANCHES = [
-  'dev',
-  'uat',
-  'main',
-] as const satisfies readonly WorkflowFragmentBranch[];
-
 type DeployBranch = WorkflowFragmentBranch;
 
 /**
@@ -212,17 +213,13 @@ interface StagedNames {
 interface StagedWorkflowContext {
   serviceName: string;
   servicePath: string;
-  nodeVersion: string;
+  runtimeVersion: string;
   coverageThreshold: number;
   strictCoverageThreshold: number;
   centralWorkflowRef: string;
   requireProductionApproval: boolean;
   stack: WorkflowTemplate['stack'];
   isBackend: boolean;
-  testWorkflow: string;
-  testJobId: string;
-  testCommand: string;
-  lintCommand: string;
   hasTestsDirectory: boolean | undefined;
   names: StagedNames;
 }
@@ -253,17 +250,15 @@ function resolveStagedContext(
     template.kind !== undefined
       ? template.kind === 'backend'
       : template.stack === 'nestjs' || template.stack === 'nodejs';
-  // The central test workflows enforce coverage by parsing
-  // coverage/coverage-summary.json, and SonarCloud ingests lcov, so the
-  // command must produce both reporters.
-  const testCommand = isBackend
-    ? 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json'
-    : 'npm run test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json';
 
   return {
     serviceName: dto.serviceName,
     servicePath: normalizeServicePath(dto.servicePath),
-    nodeVersion: dto.nodeVersion ?? '24',
+    // The DTO only carries nodeVersion, which means nothing to a stack that
+    // does not run on Node. An explicit pin still wins; otherwise the catalog's
+    // declared default answers, and only a template with neither falls back to
+    // the historical Node major. See ADR-0006.
+    runtimeVersion: dto.nodeVersion ?? template.runtimeVersion ?? '24',
     coverageThreshold,
     strictCoverageThreshold: Math.min(
       coverageThreshold + STRICT_COVERAGE_BONUS,
@@ -274,29 +269,8 @@ function resolveStagedContext(
       dto.enhancements?.includes('strictProductionApproval') ?? false,
     stack: template.stack,
     isBackend,
-    testWorkflow: isBackend ? 'backend-tests.yml' : 'frontend-tests.yml',
-    testJobId: isBackend ? 'backend-tests' : 'frontend-tests',
-    testCommand,
-    lintCommand: 'npm run lint',
     hasTestsDirectory: dto.hasTestsDirectory,
     names: resolveStagedNames(dto.workflowVariant),
-  };
-}
-
-function qualityTestWithExtras(
-  isBackend: boolean,
-  stack: WorkflowTemplate['stack'],
-  hasTestsDirectory: boolean | undefined,
-): Record<string, string> {
-  if (isBackend) {
-    return { 'backend-stack': stack };
-  }
-
-  // Repos born with the ALPHACI scaffold ship tests/unit and the guard
-  // enforces it stays; BYO repos fall back to src, the one folder every
-  // layout is guaranteed to have.
-  return {
-    'unit-tests-directory': hasTestsDirectory ? 'tests/unit' : 'src',
   };
 }
 
@@ -329,10 +303,51 @@ function buildAccessWorkflowFile(
   };
 }
 
+/**
+ * Toolchain key for a template, for the case where the template records no
+ * stack at all.
+ *
+ * Templates loaded through the catalog always carry one, but the type is not
+ * the guarantee it looks like: `WorkflowTemplate` is also produced by callers
+ * that predate the catalog, and an absent stack there used to fall through
+ * `isBackend` to a frontend pipeline — a backend template quietly tested as a
+ * web app. ADR-0006 separates the two cases: a stack that is *recorded* and
+ * unsupported must fail, while a stack that is *absent* keeps the behaviour it
+ * had. So absence resolves through the other declared axis, which reproduces
+ * the previous output exactly, and only a named stack reaches the registry's
+ * error path.
+ */
+function resolveToolchainStack(ctx: StagedWorkflowContext): string {
+  if (ctx.stack) {
+    return ctx.stack;
+  }
+
+  return ctx.isBackend ? 'nodejs' : 'react';
+}
+
+function resolveToolchain(ctx: StagedWorkflowContext): ToolchainFragmentResult {
+  // Throws for a stack no toolchain serves. Emitting a stage without its
+  // toolchain jobs would produce a green pipeline that tested nothing, which is
+  // the failure mode ADR-0006 exists to close.
+  return defaultToolchainRegistry.build(resolveToolchainStack(ctx), {
+    serviceName: ctx.serviceName,
+    servicePath: ctx.servicePath,
+    runtimeVersion: ctx.runtimeVersion,
+    centralWorkflowRef: ctx.centralWorkflowRef,
+    checkoutRef: HEAD_SHA_EXPR,
+    hasTestsDirectory: ctx.hasTestsDirectory,
+    buildBranchCondition: branchIsOneOf(PIPELINE_BRANCHES),
+    policyJobId: BRANCH_POLICY_JOB_ID,
+    accessJobId: VALIDATE_ACCESS_JOB_ID,
+  });
+}
+
 function buildQualityWorkflowFile(
   ctx: StagedWorkflowContext,
+  toolchain: ToolchainFragmentResult,
 ): StagedWorkflowFile {
   const { qualityName, fileSuffix } = ctx.names;
+
   return {
     stage: 'quality',
     name: qualityName,
@@ -356,61 +371,20 @@ function buildQualityWorkflowFile(
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
       jobs: {
-        'validate-access': {
+        [VALIDATE_ACCESS_JOB_ID]: {
           if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
           ...validationJob('quality'),
         },
-        'branch-policy': branchPolicyJob(
+        [BRANCH_POLICY_JOB_ID]: branchPolicyJob(
           ctx.coverageThreshold,
           ctx.strictCoverageThreshold,
         ),
-        [ctx.testJobId]: {
-          needs: ['branch-policy'],
-          uses: `${CENTRAL_WORKFLOW_BASE}/${ctx.testWorkflow}@${ctx.centralWorkflowRef}`,
-          with: {
-            'working-directory': ctx.servicePath,
-            'system-name': ctx.serviceName,
-            ...qualityTestWithExtras(
-              ctx.isBackend,
-              ctx.stack,
-              ctx.hasTestsDirectory,
-            ),
-            'node-version': Number(ctx.nodeVersion),
-            'coverage-threshold':
-              '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
-            'enforce-coverage': true,
-            'test-command': ctx.testCommand,
-            'checkout-ref': HEAD_SHA_EXPR,
-          },
-        },
-        lint: {
-          needs: ['branch-policy'],
-          uses: `${CENTRAL_WORKFLOW_BASE}/lint-check.yml@${ctx.centralWorkflowRef}`,
-          with: {
-            'working-directory': ctx.servicePath,
-            'system-name': ctx.serviceName,
-            'node-version': Number(ctx.nodeVersion),
-            'lint-command': ctx.lintCommand,
-            // PR source refs use the baseline; direct uat/main runs are strict.
-            'fail-on-warning':
-              '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
-            'checkout-ref': HEAD_SHA_EXPR,
-          },
-        },
-        typecheck: typecheckJob(ctx.servicePath, ctx.nodeVersion),
-        security: {
-          needs: ['validate-access'],
-          uses: `${CENTRAL_WORKFLOW_BASE}/security-scan.yml@${ctx.centralWorkflowRef}`,
-          with: {
-            'working-directory': ctx.servicePath,
-            'system-name': ctx.serviceName,
-            'node-version': Number(ctx.nodeVersion),
-            'fail-on-high': true,
-            'checkout-ref': HEAD_SHA_EXPR,
-          },
-        },
+        // Test, lint, typecheck and security are the toolchain's to define:
+        // every one of them names a language runtime. Sonar below is not, and
+        // stays here so one job serves every stack.
+        ...toolchain.qualityJobs,
         sonar: {
-          needs: ['branch-policy', ctx.testJobId],
+          needs: [BRANCH_POLICY_JOB_ID, toolchain.testJobId],
           // Runs only when the ALPHACI-provisioned SonarCloud secrets are
           // present so repos without Sonar keep passing. The quality gate
           // is advisory for PR source refs and blocking on direct uat/main
@@ -437,15 +411,12 @@ function buildQualityWorkflowFile(
         'report-results': reportingJob(
           'quality',
           [
-            'validate-access',
-            'branch-policy',
-            ctx.testJobId,
-            'lint',
-            'typecheck',
-            'security',
+            VALIDATE_ACCESS_JOB_ID,
+            BRANCH_POLICY_JOB_ID,
+            ...toolchain.qualityJobIds,
             'sonar',
           ],
-          { testJobId: ctx.testJobId },
+          { testJobId: toolchain.testJobId },
         ),
       },
     }),
@@ -455,6 +426,7 @@ function buildQualityWorkflowFile(
 function buildPackageWorkflowFile(
   ctx: StagedWorkflowContext,
   deploymentPlan: PackageDeploymentPlan,
+  toolchain: ToolchainFragmentResult,
 ): StagedWorkflowFile {
   const { packageName, qualityName, fileSuffix } = ctx.names;
   return {
@@ -484,7 +456,7 @@ function buildPackageWorkflowFile(
           if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
           ...validationJob('package'),
         },
-        build: buildJob(ctx.servicePath, ctx.nodeVersion),
+        build: toolchain.packageBuildJob,
         'production-gate': productionGateJob(
           ctx.serviceName,
           ctx.isBackend,
@@ -525,6 +497,7 @@ export function buildStagedWorkflowBundle(
   workflowFragmentRegistry?: WorkflowFragmentRegistry,
 ): StagedWorkflowBundle {
   const ctx = resolveStagedContext(template, dto);
+  const toolchain = resolveToolchain(ctx);
   const deploymentPlan = buildPackageDeploymentPlan(
     dto.deploymentTargets ?? [],
     ctx.serviceName,
@@ -535,8 +508,8 @@ export function buildStagedWorkflowBundle(
 
   const files: StagedWorkflowFile[] = [
     buildAccessWorkflowFile(ctx),
-    buildQualityWorkflowFile(ctx),
-    buildPackageWorkflowFile(ctx, deploymentPlan),
+    buildQualityWorkflowFile(ctx, toolchain),
+    buildPackageWorkflowFile(ctx, deploymentPlan, toolchain),
   ];
 
   // The env guard is repo-wide, not per-pipeline: in microservices repos both
@@ -791,82 +764,6 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
           'echo "Branch policy: branch=$BRANCH coverage>=$COVERAGE_THRESHOLD failOnWarning=$FAIL_ON_WARNING sonar=$SONAR_CONFIGURED gateWait=$SONAR_GATE_WAIT"',
         ].join('\n'),
       },
-    ],
-  };
-}
-
-function typecheckJob(servicePath: string, nodeVersion: string) {
-  return {
-    needs: ['branch-policy'],
-    runs_on: 'ubuntu-latest',
-    defaults: {
-      run: {
-        'working-directory': `./${servicePath}`,
-      },
-    },
-    steps: [
-      {
-        uses: 'actions/checkout@v6',
-        with: {
-          ref: HEAD_SHA_EXPR,
-        },
-      },
-      {
-        uses: 'actions/setup-node@v6',
-        with: {
-          'node-version': Number(nodeVersion),
-        },
-      },
-      {
-        name: 'Install dependencies',
-        run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
-      },
-      {
-        name: 'Run TypeScript type check',
-        run: [
-          "TYPECHECK_CMD=$(node -e \"const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); process.stdout.write(pkg.scripts && pkg.scripts.typecheck ? 'npm run typecheck' : 'npx tsc --noEmit');\")",
-          'echo "Running ${TYPECHECK_CMD}"',
-          'bash -lc "${TYPECHECK_CMD}"',
-        ].join('\n'),
-      },
-    ],
-  };
-}
-
-function buildJob(servicePath: string, nodeVersion: string) {
-  return {
-    needs: ['validate-access'],
-    // Builds on every promotion-flow branch, dev included. A build break found
-    // on dev is a minute of CI; the same break found on uat has already cost a
-    // promotion and a QA cycle. The condition is derived from the branch list
-    // rather than spelled out, so it cannot fall behind it.
-    if: branchIsOneOf(PIPELINE_BRANCHES),
-    runs_on: 'ubuntu-latest',
-    defaults: {
-      run: {
-        'working-directory': `./${servicePath}`,
-      },
-    },
-    steps: [
-      {
-        uses: 'actions/checkout@v6',
-        with: {
-          ref: '${{ github.event.workflow_run.head_sha || github.sha }}',
-        },
-      },
-      {
-        uses: 'actions/setup-node@v6',
-        with: {
-          'node-version': Number(nodeVersion),
-        },
-      },
-      {
-        name: 'Install dependencies',
-        // Fresh ALPHACI scaffolds have no package-lock.json yet (the customer
-        // generates it on first `npm install`), so npm ci would hard-fail.
-        run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
-      },
-      { run: 'npm run build' },
     ],
   };
 }

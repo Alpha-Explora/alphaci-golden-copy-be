@@ -35,6 +35,7 @@ const makeCatalogService = () =>
         },
       ],
     }),
+    getStackRuntimeVersion: jest.fn().mockReturnValue(undefined),
     getTemplateById: jest.fn().mockResolvedValue({
       id: 'be-nestjs',
       name: 'Backend API',
@@ -1341,7 +1342,7 @@ jobs:
       'oauth-token',
       'tone',
       'orders-api',
-      'develop',
+      'dev',
       'main',
     );
     expect(githubServiceMock.createBranch).toHaveBeenCalledWith(
@@ -1366,7 +1367,7 @@ jobs:
     );
     expect(
       githubServiceMock.applyBranchProtection.mock.calls.some(
-        (call) => call[3] === 'develop' || call[3] === 'test',
+        (call) => call[3] === 'dev' || call[3] === 'test',
       ),
     ).toBe(false);
   });

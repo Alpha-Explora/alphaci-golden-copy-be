@@ -39,6 +39,7 @@ const makeCatalogService = () =>
         },
       ],
     }),
+    getStackRuntimeVersion: jest.fn().mockReturnValue(undefined),
     getTemplateById: jest.fn().mockResolvedValue({
       id: 'be-nestjs',
       name: 'NestJS Backend',

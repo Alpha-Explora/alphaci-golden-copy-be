@@ -24,6 +24,8 @@ export interface CreateProjectResponse {
   githubCommitUrl: string | null;
   projectTypeId: string;
   workflowRecipeId: string;
+  /** Branches provisioning created, so the client shows what happened. */
+  branchesCreated: string[];
   additionalWorkflowPaths?: string[];
   secondaryRepoFullName?: string;
   secondaryRepoUrl?: string;

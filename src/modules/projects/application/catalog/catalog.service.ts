@@ -276,7 +276,14 @@ export interface WorkflowTemplate {
   iconName: string;
   categories: string[];
   filePatterns: string[];
-  stack: 'nextjs' | 'react' | 'react-native' | 'expo' | 'nestjs' | 'nodejs';
+  stack:
+    | 'nextjs'
+    | 'react'
+    | 'react-native'
+    | 'expo'
+    | 'nestjs'
+    | 'nodejs'
+    | 'dotnet';
   /**
    * Whether the stack produces a service or a site, taken from the catalog.
    *
@@ -289,8 +296,17 @@ export interface WorkflowTemplate {
    * callers fall back rather than assume.
    */
   kind?: 'frontend' | 'backend';
-  /** Toolchain the stack runs on, from the catalog. 'node' today. */
+  /** Toolchain family the stack runs on, from the catalog: 'node' or 'dotnet'. */
   runtime?: string;
+  /**
+   * Default version of that runtime, from the catalog.
+   *
+   * Declared per stack because the generate DTO only carries `nodeVersion`,
+   * which is meaningless to a stack that does not run on Node — handing a .NET
+   * pipeline a Node major would produce a `dotnet-version: 24` that resolves to
+   * no SDK. The DTO still wins when a project pins a version explicitly.
+   */
+  runtimeVersion?: string;
   propertiesPath: string;
   workflowPath: string;
 }
@@ -308,6 +324,35 @@ interface EngineStackFile {
   label?: string;
   kind?: string;
   runtime?: string;
+  /** Declared default runtime version, e.g. '10.0.x' for .NET. */
+  defaultRuntimeVersion?: string;
+  /**
+   * Customer pipeline template this stack provisions with.
+   *
+   * Declared because it was previously reconstructed from `serviceWorkflow`
+   * through a hardcoded map plus a `${key}-service-pipeline` fallback, so a new
+   * stack resolved to a filename nobody had written and creation failed with a
+   * 404 in front of the customer. The workflow repository validates that the
+   * declared file exists, which moves that failure to the commit causing it.
+   */
+  serviceTemplate?: string;
+  /**
+   * Repo shapes this stack can actually be provisioned in.
+   *
+   * Declared because the shapes were derived from `kind`, which offered every
+   * backend stack the monorepo and microservices shapes. Those assume npm
+   * workspaces and a docker-compose pair, so a stack without an equivalent was
+   * offered in the picker and then failed at provisioning.
+   */
+  repoShapes?: string[];
+  /**
+   * Source language shown in the project-type picker.
+   *
+   * Was hardcoded to 'TypeScript' for every stack, which was true only while
+   * every stack ran on Node. Declared here so adding a stack does not silently
+   * mislabel it.
+   */
+  language?: string;
   serviceWorkflow?: string;
 }
 
@@ -372,7 +417,25 @@ export class CatalogService implements OnModuleInit {
     const missing: string[] = [];
 
     const templatesRoot = join(repoPath, this.config.templates.workflowDir);
-    if (!(await this.pathExists(templatesRoot))) {
+    if (await this.pathExists(templatesRoot)) {
+      // Existing but empty is the failure this check used to miss. The
+      // templates live in a subdirectory, so a workflowDir pointing one level
+      // too high names a real directory that holds no templates at all: the
+      // assertion passed, every lookup then returned nothing, and project
+      // creation failed with `Template '...' not found` for every stack. A
+      // check that cannot tell zero templates from fifteen is not checking the
+      // thing that matters.
+      const entries = await readdir(templatesRoot, { withFileTypes: true });
+      const templateCount = entries.filter(
+        (entry) => entry.isFile() && entry.name.endsWith('.properties.json'),
+      ).length;
+
+      if (templateCount === 0) {
+        missing.push(
+          `workflow templates (${templatesRoot} exists but contains no *.properties.json; TEMPLATE_WORKFLOW_DIR may be pointing above the folder that holds them)`,
+        );
+      }
+    } else {
       missing.push(`workflow templates (${templatesRoot})`);
     }
 
@@ -528,6 +591,18 @@ export class CatalogService implements OnModuleInit {
     return templates.find((template) => template.id === templateId) ?? null;
   }
 
+  /**
+   * Declared default runtime version for a stack, from `catalog/stacks.json`.
+   *
+   * The scaffold needs it for stacks that do not run on Node, where the generate
+   * DTO's `nodeVersion` means nothing. Returned from the catalog rather than
+   * defaulted in the scaffold so the SDK the repository pins and the SDK the
+   * pipeline installs come from one place.
+   */
+  getStackRuntimeVersion(stackKey: string): string | undefined {
+    return this.readStackCatalog().get(stackKey)?.defaultRuntimeVersion;
+  }
+
   getResolvedStarterPath(projectTypeId: string): string | null {
     const option = STATIC_PROJECT_OPTIONS.projectTypes.find(
       (pt) => pt.id === projectTypeId,
@@ -612,6 +687,9 @@ export class CatalogService implements OnModuleInit {
               ? { kind: catalogEntry.kind }
               : {}),
             ...(catalogEntry?.runtime ? { runtime: catalogEntry.runtime } : {}),
+            ...(catalogEntry?.defaultRuntimeVersion
+              ? { runtimeVersion: catalogEntry.defaultRuntimeVersion }
+              : {}),
             propertiesPath,
             workflowPath,
           } satisfies WorkflowTemplate;
@@ -666,16 +744,18 @@ export class CatalogService implements OnModuleInit {
       // Frontend stacks must include 'multi': the multi-repo shape provisions
       // a frontend repository, so its Language picker draws from this list.
       const repoShapes =
-        stack.kind === 'backend'
-          ? ['standalone', 'multi', 'microservices']
-          : ['standalone', 'mono', 'multi', 'microservices'];
+        stack.repoShapes && stack.repoShapes.length > 0
+          ? stack.repoShapes
+          : stack.kind === 'backend'
+            ? ['standalone', 'multi', 'microservices']
+            : ['standalone', 'mono', 'multi', 'microservices'];
 
       return {
         id: stack.key,
         label: stack.label,
         kind: stack.kind === 'backend' ? 'backend' : 'frontend',
         runtime: stack.runtime ?? 'node',
-        language: 'TypeScript',
+        language: stack.language ?? 'TypeScript',
         framework: stack.label,
         repoShapes,
         defaultRecipe: 'standard',
@@ -687,7 +767,11 @@ export class CatalogService implements OnModuleInit {
     const templateByProjectType = Object.fromEntries(
       usableStacks.map((stack) => [
         stack.key,
-        this.templateIdForStack(stack.key, stack.serviceWorkflow),
+        this.templateIdForStack(
+          stack.key,
+          stack.serviceWorkflow,
+          stack.serviceTemplate,
+        ),
       ]),
     );
     const workflowRefByProjectType = Object.fromEntries(
@@ -810,6 +894,7 @@ export class CatalogService implements OnModuleInit {
   private templateIdForStack(
     stackKey: string,
     serviceWorkflow?: string,
+    serviceTemplate?: string,
   ): string {
     const workflowKeyMap: Record<string, string> = {
       nextjsService: 'nextjs-service-pipeline',
@@ -819,6 +904,12 @@ export class CatalogService implements OnModuleInit {
       reactNativeService: 'react-native-service-pipeline',
       expoService: 'expo-service-pipeline',
     };
+
+    // Declared value wins. The map below stays only for catalogs published
+    // before serviceTemplate existed.
+    if (serviceTemplate) {
+      return serviceTemplate;
+    }
 
     return serviceWorkflow
       ? (workflowKeyMap[serviceWorkflow] ?? `${stackKey}-service-pipeline`)
@@ -844,11 +935,23 @@ export class CatalogService implements OnModuleInit {
   private inferStack(
     templateId: string,
     categories: string[],
-  ): 'nextjs' | 'react' | 'react-native' | 'expo' | 'nestjs' | 'nodejs' {
+  ): WorkflowTemplate['stack'] {
     const normalizedId = templateId.toLowerCase();
     const normalizedCategories = categories.map((category) =>
       category.toLowerCase(),
     );
+
+    // Checked first because the fallback below returns 'react': a stack this
+    // function does not name is classified as a frontend rather than rejected,
+    // so a .NET template that reached the end would be handed setup-node and a
+    // frontend test workflow. See ADR-0006.
+    if (
+      normalizedId.includes('dotnet') ||
+      normalizedCategories.includes('dotnet') ||
+      normalizedCategories.includes('csharp')
+    ) {
+      return 'dotnet';
+    }
 
     if (
       normalizedId.includes('react-native') ||

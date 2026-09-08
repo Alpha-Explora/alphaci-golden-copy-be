@@ -15,6 +15,11 @@ import type { CreateProjectResponse } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
+import {
+  BRANCHES_CREATED_ON_PROVISION,
+  PROTECTED_BRANCHES,
+  PROVISIONED_BRANCHES,
+} from '#kernel/config/pipeline-branches';
 
 export type CreatedPackedGithubRepo = {
   repoUrl: string;
@@ -338,7 +343,7 @@ export async function createAndProtectPackedBranches(input: {
   ownerLogin: string;
   repoName: string;
 }): Promise<void> {
-  for (const branch of ['develop', 'uat'] as const) {
+  for (const branch of BRANCHES_CREATED_ON_PROVISION) {
     await input.support.githubService.createBranch(
       input.provisioningToken,
       input.ownerLogin,
@@ -348,7 +353,7 @@ export async function createAndProtectPackedBranches(input: {
     );
   }
 
-  for (const branch of ['uat', 'main'] as const) {
+  for (const branch of PROTECTED_BRANCHES) {
     await input.support.githubService.applyBranchProtection(
       input.provisioningToken,
       input.ownerLogin,
@@ -449,6 +454,7 @@ export function buildPackedCreateResponse(input: {
     repoFullName: input.repoFullName,
     repoUrl: input.repoUrl,
     status: 'provisioned',
+    branchesCreated: [...PROVISIONED_BRANCHES],
     workflowPath: input.backendWorkflowPath,
     workflowFiles: workflowFileMetadata(input.backendWorkflowFiles),
     githubCommitSha: input.backendCommitSha,
