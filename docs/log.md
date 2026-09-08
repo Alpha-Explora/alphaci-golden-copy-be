@@ -1,7 +1,24 @@
 # Directory Update Log
 
-## 2026-09-03
+## 2026-09-08
 
+* **Creation**: Added `ToolchainFragment` and `ToolchainFragmentRegistry` in `kernel/ports`, mirroring the deployment provider contract, so the quality stage's stack-specific jobs resolve by lookup instead of an `isBackend` conditional.
+* **Creation**: Added the Node toolchain fragment covering `nextjs`, `react`, `nestjs`, `nodejs`, `react-native` and `expo`, and moved the test, lint, typecheck and security jobs into it from the staged workflow builder.
+* **Update**: Recorded the stack-as-a-declared-axis decision (ADR-0006) and the migration's verification result: 312 reachable bundle combinations byte-identical, with the 168 differing ones proven unreachable because `kind` is read from the catalog row the stack keys.
+* **Update**: Made an unsupported stack raise instead of emitting a quality stage without its toolchain jobs, and made an *absent* stack keep its previous classification, so the two cases stop sharing one silent default.
+* **Update**: Named the access and branch-policy job ids so a fragment's `needs:` and the workflow's job keys cannot drift apart.
+* **Creation**: Added the .NET toolchain fragment and registered `dotnet`, so the generator emits `dotnet-test`, `dotnet-format`, `dotnet-analyze` and `dotnet-audit` instead of the Node quality workflows.
+* **Update**: Moved the package stage's `build` job into the toolchain contract. It was written against `setup-node` and `npm ci`, which a .NET repository has no answer for, and every provider deploy job depends on it.
+* **Update**: Declared the runtime version per stack in the catalog. The generate DTO only carries `nodeVersion`, which would have asked `setup-dotnet` for an SDK numbered 24.
+* **Update**: Taught `inferStack` to return `dotnet` and sourced the project-type `language` from the catalog, which was hardcoded to TypeScript for every stack.
+* **Update**: Fixed the branch the promotion flow starts on. Provisioning created `develop` on every new repository while the generated pipelines listened on `dev`, so the dev tier never ran and `promote-to-uat` could never fire. Both halves now derive from one declaration in `kernel/config/pipeline-branches.ts`.
+* **Creation**: Added a branch-model guard asserting that every branch the pipeline triggers on is a branch provisioning creates, that no generated trigger names a branch outside the flow, and that the working tier stays unprotected.
+* **Creation**: Added the .NET standalone scaffold, so a .NET project can be created rather than only connected. Verified by generating the tree and running the pipeline it ships with: restore, a `-warnaserror` build, the tests, the coverage gate at 100%, `dotnet format --severity warn`, and the NuGet audit all pass.
+* **Update**: Declared `serviceTemplate` and `repoShapes` per stack. The pipeline template was reconstructed from a hardcoded map plus a filename convention, so a new stack resolved to a template nobody had written; repo shapes were derived from `kind`, so a stack was offered shapes its scaffold could not build.
+* **Update**: Returned `branchesCreated` from project creation and rendered it in the frontend, which had hardcoded `["main", "uat", "develop"]` and told users a branch was created that was not.
+* **Update**: Made the generated README describe the stack it was generated for. It printed `npm install` for every stack and named `uat` as the first promotion target.
+
+## 2026-09-03
 * **Update**: Recorded that the frontend repository keeps a matching current-state bundle that snapshots this catalog.
 * **Update**: Recorded pack-specific target capabilities as `not-implemented` registry keys, with `not-applicable` pack status when a pack does not include the capability.
 * **Update**: Allowed empty `configurationFlags` on `not-implemented` records so absent product areas do not invent AppConfig flags.
