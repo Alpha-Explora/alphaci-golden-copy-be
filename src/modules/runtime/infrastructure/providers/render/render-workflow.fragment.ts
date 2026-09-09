@@ -1,3 +1,4 @@
+import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
 import type {
   WorkflowFragment,
   WorkflowFragmentBranch,
@@ -60,15 +61,34 @@ function buildRenderJob(
       'healthcheck-path': '/api/v1/health',
       'require-api-center-check': true,
     },
-    secrets: {
-      RENDER_DEPLOY_HOOK_URL_TEST: `\${{ secrets.${secretNames['deployHookUrl'] ?? 'RENDER_DEPLOY_HOOK_URL_TEST'} }}`,
-      RENDER_DEPLOY_HOOK_URL_UAT: `\${{ secrets.${secretNames['deployHookUrl'] ?? 'RENDER_DEPLOY_HOOK_URL_UAT'} }}`,
-      RENDER_DEPLOY_HOOK_URL_MAIN: `\${{ secrets.${secretNames['deployHookUrl'] ?? 'RENDER_DEPLOY_HOOK_URL_MAIN'} }}`,
-      RENDER_HEALTHCHECK_URL_TEST: `\${{ secrets.${secretNames['healthcheckUrl'] ?? 'RENDER_HEALTHCHECK_URL_TEST'} }}`,
-      RENDER_HEALTHCHECK_URL_UAT: `\${{ secrets.${secretNames['healthcheckUrl'] ?? 'RENDER_HEALTHCHECK_URL_UAT'} }}`,
-      RENDER_HEALTHCHECK_URL_MAIN: `\${{ secrets.${secretNames['healthcheckUrl'] ?? 'RENDER_HEALTHCHECK_URL_MAIN'} }}`,
-    },
+    // render-deploy.yml declares one secret per branch in the flow and picks the
+    // right one from its `branch` input, so every slot is handed the same
+    // branch-scoped value. The keys are derived from the branch model rather
+    // than listed: they were listed, the flow moved from `test` to `dev`, and
+    // the generator kept sending RENDER_*_TEST. Actions rejects a secret the
+    // called workflow does not declare, so the whole package stage failed to
+    // start — for every Render deploy, on every stack.
+    secrets: renderDeploySecrets(secretNames),
   };
+}
+
+function renderDeploySecrets(
+  secretNames: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    PIPELINE_BRANCHES.flatMap((pipelineBranch) => {
+      const suffix = pipelineBranch.toUpperCase();
+      const deployHook =
+        secretNames['deployHookUrl'] ?? `RENDER_DEPLOY_HOOK_URL_${suffix}`;
+      const healthcheck =
+        secretNames['healthcheckUrl'] ?? `RENDER_HEALTHCHECK_URL_${suffix}`;
+
+      return [
+        [`RENDER_DEPLOY_HOOK_URL_${suffix}`, `\${{ secrets.${deployHook} }}`],
+        [`RENDER_HEALTHCHECK_URL_${suffix}`, `\${{ secrets.${healthcheck} }}`],
+      ];
+    }),
+  );
 }
 
 function buildRenderFragment(
