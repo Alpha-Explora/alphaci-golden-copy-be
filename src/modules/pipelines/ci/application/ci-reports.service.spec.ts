@@ -74,13 +74,16 @@ describe('CiReportsService.getRuns grouping', () => {
     expect(byStage.get('package')?.githubRunUrl).toContain('/runs/300');
   });
 
-  it('keeps distinct commits as separate runs and marks truly missing stages as pending', async () => {
+  it('keeps a just-triggered stage pending while it could still be queueing', async () => {
     (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
       row({
         stage: 'access',
         run_id: '400',
         commit_sha: 'sha-2',
         status: 'success',
+        // Reported moments ago: quality may simply not have started yet.
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }),
     ]);
 
@@ -94,6 +97,29 @@ describe('CiReportsService.getRuns grouping', () => {
     expect(byStage.get('quality')?.status).toBe('pending');
     expect(byStage.get('package')?.status).toBe('pending');
     expect(run!.overallStatus).toBe('partial');
+  });
+
+  it('calls a long-silent stage stalled rather than leaving it pending forever', async () => {
+    // A workflow rejected at startup runs no jobs, so it never reports. The
+    // run sat on "pending" indefinitely and the pipeline looked merely slow.
+    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
+      row({
+        stage: 'access',
+        run_id: '400',
+        commit_sha: 'sha-2',
+        status: 'success',
+      }),
+    ]);
+
+    const { runs } = await service.getRuns('user-1');
+
+    const byStage = new Map(runs[0]!.stages.map((s) => [s.stage, s]));
+    expect(byStage.get('quality')?.status).toBe('stalled');
+    expect(byStage.get('quality')?.friendlyMessages[0]?.severity).toBe('error');
+    // Package is a consequence, not a second problem: naming both would report
+    // one broken pipeline as two.
+    expect(byStage.get('package')?.status).toBe('blocked');
+    expect(runs[0]!.overallStatus).toBe('failure');
   });
 
   it('ignores a stale re-run row for a stage that already has a more recent report', async () => {
