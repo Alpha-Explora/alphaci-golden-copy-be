@@ -8,6 +8,11 @@ import {
 import { DatabaseService } from '#kernel/db/database.service';
 import { CiRunReportsRepository } from '../infrastructure/ci-run-reports.repository';
 import { translateResults } from './translate-results';
+import {
+  resolveOverallStatus,
+  resolveStages,
+  type StageStatus,
+} from './resolve-stage-status';
 import type { CiReportBodyDto } from '../api/dto/ci-report-body.dto';
 import type { CiRunStatus } from '../infrastructure/ci-run-reports.repository';
 import type { FriendlyMessage } from './translate-results';
@@ -16,7 +21,7 @@ import type { FriendlyMessage } from './translate-results';
 
 export interface StageReport {
   stage: 'access' | 'quality' | 'package';
-  status: 'success' | 'failure' | 'running' | 'cancelled' | 'pending';
+  status: StageStatus;
   friendlyMessages: FriendlyMessage[];
   githubRunUrl: string;
   updatedAt: string;
@@ -283,17 +288,34 @@ export class CiReportsService {
         group.stageRunIds.get('access') ??
         0;
 
+      // A stage with no report is not simply "pending". It may be blocked by an
+      // earlier failure, or stalled — the stage before it succeeded and nothing
+      // ever arrived, which is what a workflow rejected at startup looks like
+      // from here, because it runs no jobs and so cannot report.
+      const resolved = resolveStages(
+        Object.fromEntries(
+          [...group.stages.entries()].map(([stageName, report]) => [
+            stageName,
+            { status: report.status, updatedAt: report.updatedAt },
+          ]),
+        ),
+      );
+
       const stages: StageReport[] = ALL_STAGES.map((stageName) => {
-        return (
-          group.stages.get(stageName) ?? {
-            stage: stageName,
-            status: 'pending' as const,
-            friendlyMessages: [],
-            githubRunUrl: `https://github.com/${group.repoFullName}/actions/runs/${String(primaryRunId)}`,
-            updatedAt: '',
-            rawLogs: null,
-          }
-        );
+        const report = group.stages.get(stageName);
+        if (report) {
+          return report;
+        }
+
+        const inferred = resolved[stageName];
+        return {
+          stage: stageName,
+          status: inferred.status,
+          friendlyMessages: inferred.friendlyMessages,
+          githubRunUrl: `https://github.com/${group.repoFullName}/actions/runs/${String(primaryRunId)}`,
+          updatedAt: '',
+          rawLogs: null,
+        };
       });
 
       return {
@@ -302,38 +324,9 @@ export class CiReportsService {
         branch: group.branch,
         commitSha: group.commitSha,
         startedAt: group.startedAt,
-        overallStatus: this.computeOverallStatus(stages),
+        overallStatus: resolveOverallStatus(stages),
         stages,
       };
     });
-  }
-
-  private computeOverallStatus(
-    stages: StageReport[],
-  ): RunGroup['overallStatus'] {
-    const statuses = stages.map((s) => s.status);
-    const present = statuses.filter((s) => s !== 'pending');
-
-    if (present.length < ALL_STAGES.length) {
-      return 'partial';
-    }
-
-    if (present.every((s) => s === 'success')) {
-      return 'success';
-    }
-
-    if (present.includes('failure')) {
-      return 'failure';
-    }
-
-    if (present.includes('running')) {
-      return 'running';
-    }
-
-    if (present.includes('cancelled')) {
-      return 'cancelled';
-    }
-
-    return 'partial';
   }
 }
