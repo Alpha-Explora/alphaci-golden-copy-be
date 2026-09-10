@@ -980,6 +980,21 @@ function reportingJob(
       `\${{ needs.${testJobId}.outputs.coverage-percent }}`;
     stepEnv['COVERAGE_THRESHOLD'] =
       '${{ needs.branch-policy.outputs.coverage-threshold }}';
+    /*
+     * Counts and failing test NAMES, so the product can say
+     * "2 test(s) failed: HealthTests.ReturnsServiceName" instead of handing
+     * over a log and letting someone read it.
+     *
+     * A central workflow that does not publish these outputs yields empty
+     * strings, and the script then omits `tests` entirely. A pipeline pinned
+     * to an older ref therefore reports exactly as it did before, rather
+     * than failing on an output it has never heard of.
+     */
+    stepEnv['TESTS_TOTAL'] = `\${{ needs.${testJobId}.outputs.tests-total }}`;
+    stepEnv['TESTS_PASSED'] = `\${{ needs.${testJobId}.outputs.tests-passed }}`;
+    stepEnv['TESTS_FAILED'] = `\${{ needs.${testJobId}.outputs.tests-failed }}`;
+    stepEnv['TESTS_FAILURES'] =
+      `\${{ needs.${testJobId}.outputs.tests-failures }}`;
   }
 
   const scriptLines = [
@@ -1021,6 +1036,19 @@ function reportingJob(
           '    --argjson pct "$COVERAGE_PCT" \\',
           '    --argjson threshold "${COVERAGE_THRESHOLD:-0}" \\',
           '    \'{"coverage":{"pct":$pct,"threshold":$threshold}}\')',
+          'fi',
+          '',
+          '# Include the test counts and failing names when the central workflow',
+          '# published them. An older ref publishes nothing, so these arrive empty',
+          '# and `tests` is simply left out of the payload.',
+          'if echo "$TESTS_TOTAL" | grep -qE \'^[0-9]+$\' && [ "$TESTS_TOTAL" -gt 0 ]; then',
+          '  TESTS=$(jq -n \\',
+          '    --argjson total "$TESTS_TOTAL" \\',
+          '    --argjson passed "${TESTS_PASSED:-0}" \\',
+          '    --argjson failed "${TESTS_FAILED:-0}" \\',
+          '    --argjson failures "${TESTS_FAILURES:-[]}" \\',
+          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures}')",
+          '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson tests "$TESTS" \'. + {tests:$tests}\')',
           'fi',
         ]
       : []),

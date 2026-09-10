@@ -684,3 +684,64 @@ describe('failure capture in the reporting job', () => {
     expect(line!.endsWith('\\\\')).toBe(false);
   });
 });
+
+describe('test results in the reporting payload', () => {
+  const qualityStep = (): { run: string; env: Record<string, string> } => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('dotnet'), {
+      templateId: 'dotnet-service-pipeline',
+      serviceName: 'orders-api',
+    });
+    const quality = bundle.workflowFiles.find((file) =>
+      file.path.includes('10-alphaci-quality'),
+    );
+    const parsed = yaml.load(quality!.yaml) as {
+      jobs: Record<
+        string,
+        { steps?: { run?: string; env?: Record<string, string> }[] }
+      >;
+    };
+    const step = parsed.jobs['report-results']!.steps![0]!;
+    return { run: step.run!, env: step.env ?? {} };
+  };
+
+  /*
+   * translate-results.ts could already turn counts into "2 test(s) failed"
+   * with the failing names listed, and had been able to since it was written.
+   * The pipeline never sent them: RESULTS only ever carried coverage, so that
+   * whole path was unreachable and every failing test showed up as a job name.
+   */
+  it('reads the test outputs the central workflow publishes', () => {
+    const { env } = qualityStep();
+
+    expect(env['TESTS_TOTAL']).toContain('outputs.tests-total');
+    expect(env['TESTS_FAILED']).toContain('outputs.tests-failed');
+    expect(env['TESTS_FAILURES']).toContain('outputs.tests-failures');
+  });
+
+  it('builds a tests object with the fields CiResults declares', () => {
+    const { run } = qualityStep();
+
+    expect(run).toContain('--argjson total "$TESTS_TOTAL"');
+    expect(run).toContain('--argjson failures "${TESTS_FAILURES:-[]}"');
+    expect(run).toContain(
+      '{total:$total,passed:$passed,failed:$failed,failures:$failures}',
+    );
+    expect(run).toContain('. + {tests:$tests}');
+  });
+
+  it('omits tests when the central workflow published nothing', () => {
+    // An older centralWorkflowRef has no such outputs, so the variables arrive
+    // empty. Guarding on a numeric, non-zero total keeps that pipeline
+    // reporting exactly as it did rather than posting a malformed payload.
+    const { run } = qualityStep();
+
+    expect(run).toContain('if echo "$TESTS_TOTAL" | grep -qE');
+    expect(run).toContain('[ "$TESTS_TOTAL" -gt 0 ]');
+  });
+
+  it('still sends coverage alongside, not instead', () => {
+    const { run } = qualityStep();
+
+    expect(run).toContain('"coverage":{"pct":$pct,"threshold":$threshold}');
+  });
+});
