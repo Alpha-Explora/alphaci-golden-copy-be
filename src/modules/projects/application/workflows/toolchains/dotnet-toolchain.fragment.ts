@@ -87,6 +87,21 @@ function buildDotnetQualityJobs(
   context: ToolchainFragmentContext,
 ): ToolchainFragmentResult {
   const failOnWarningExpr = `\${{ fromJson(needs.${context.policyJobId}.outputs.fail-on-warning) }}`;
+
+  /*
+   * The branch policy publishes ONE strictness signal, and every gate that can
+   * be loosened keys off it rather than inventing its own output.
+   *
+   * `fail-on-warning` is false on the working branch and true on the promoted
+   * ones, which is exactly the question the secret, licence and SBOM gates
+   * need answered: report on dev, block before uat and main. Reusing it means
+   * "how strict is this branch" is decided in one place — adding a
+   * per-gate policy output would let the answers drift apart, which is how a
+   * pipeline ends up strict about licences and lax about secrets for no
+   * reason anyone remembers.
+   */
+  const strictGateExpr = failOnWarningExpr;
+
   const shared = {
     'working-directory': context.servicePath,
     'system-name': context.serviceName,
@@ -95,9 +110,39 @@ function buildDotnetQualityJobs(
     'checkout-ref': context.checkoutRef,
   };
 
+  /*
+   * Inputs for a check that is not about .NET at all.
+   *
+   * A secret in a .cs file and a secret in a .ts file are the same problem, so
+   * gitleaks-scan.yml declares no dotnet-version and no solution-path. Passing
+   * the full `shared` set would fail the call: a reusable workflow rejects an
+   * input it does not declare.
+   */
+  const sharedLanguageAgnostic = {
+    'working-directory': context.servicePath,
+    'system-name': context.serviceName,
+    'checkout-ref': context.checkoutRef,
+  };
+
   return {
     testJobId: TEST_JOB_ID,
-    qualityJobIds: [TEST_JOB_ID, 'lint', 'typecheck', 'security'],
+    /*
+     * The four shared slots every stack fills, then the three this stack adds.
+     *
+     * The list is per-fragment on purpose, so a stack can carry more checks
+     * than another without either of them special-casing the reporting job —
+     * it takes whatever ids the fragment declares as its `needs`. Node has no
+     * NuGet licences to inventory; .NET does, and neither has to know that.
+     */
+    qualityJobIds: [
+      TEST_JOB_ID,
+      'lint',
+      'typecheck',
+      'security',
+      'secrets',
+      'licenses',
+      'sbom',
+    ],
     packageBuildJob: packageBuildJob(context),
     sonar: {
       // SonarQube Cloud analyses C#, but only through SonarScanner for .NET,
@@ -154,6 +199,56 @@ function buildDotnetQualityJobs(
           // severity rather than a boolean because the .NET audit reads NuGet's
           // four-level scale directly.
           'fail-on-severity': 'High',
+        },
+      },
+      /*
+       * A committed secret is not a .NET problem, so this job is the same for
+       * every stack that adopts it — no dotnet-version, no solution path.
+       *
+       * Working tree only. Scanning history would surface secrets removed long
+       * ago, which are real but are a backlog to work through rather than a
+       * gate to put in front of today's push; a stage that fails on the past
+       * gets switched off rather than fixed.
+       */
+      secrets: {
+        needs: [context.policyJobId],
+        uses: `${CENTRAL_WORKFLOW_BASE}/gitleaks-scan.yml@${context.centralWorkflowRef}`,
+        with: {
+          ...sharedLanguageAgnostic,
+          'fail-on-findings': strictGateExpr,
+        },
+      },
+      /*
+       * Licence terms of the resolved NuGet graph.
+       *
+       * The forbidden list is left at the workflow's default — the strong
+       * copyleft terms a hosted service cannot satisfy. It is an input there
+       * for the organisation that needs a different answer, but the platform
+       * should not be inventing one per project.
+       */
+      licenses: {
+        needs: [context.policyJobId],
+        uses: `${CENTRAL_WORKFLOW_BASE}/dotnet-license-scan.yml@${context.centralWorkflowRef}`,
+        with: {
+          ...shared,
+          'fail-on-forbidden': strictGateExpr,
+        },
+      },
+      /*
+       * The release record, not a verdict.
+       *
+       * It sits in the quality stage rather than the package stage because it
+       * describes the RESOLVED dependency graph, which restore has already
+       * decided by this point — and because the package stage does not run at
+       * all on the working branch, which would leave dev with no SBOM to
+       * compare a promotion against.
+       */
+      sbom: {
+        needs: [context.policyJobId],
+        uses: `${CENTRAL_WORKFLOW_BASE}/dotnet-sbom.yml@${context.centralWorkflowRef}`,
+        with: {
+          ...shared,
+          'require-sbom': strictGateExpr,
         },
       },
     },

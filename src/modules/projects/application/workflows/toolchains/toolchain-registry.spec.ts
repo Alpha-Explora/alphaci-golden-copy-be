@@ -173,9 +173,11 @@ describe('toolchain registry', () => {
   describe('dotnet toolchain', () => {
     const dotnetContext = { ...context, runtimeVersion: '10.0.x' };
 
-    it('fills the same four quality slots as every other stack', () => {
-      // The reporting job waits on a fixed slot list. A stack that named its
-      // jobs differently would drop out of the report rather than fail.
+    it('fills the four shared slots, then adds its own', () => {
+      // The reporting job waits on whatever ids the fragment declares, so a
+      // stack may carry more checks than another. What it may NOT do is rename
+      // a shared slot: a stack that called its linter 'dotnet-format' would
+      // drop out of the report rather than fail, which is worse than failing.
       const result = defaultToolchainRegistry.build('dotnet', dotnetContext);
 
       expect(Object.keys(result.qualityJobs)).toEqual([
@@ -183,8 +185,23 @@ describe('toolchain registry', () => {
         'lint',
         'typecheck',
         'security',
+        'secrets',
+        'licenses',
+        'sbom',
       ]);
       expect(result.testJobId).toBe('dotnet-tests');
+    });
+
+    it('declares every quality job it emits, so none is left unreported', () => {
+      // The reporting job's needs come from qualityJobIds. A job present in
+      // qualityJobs but missing from the id list still runs and still gates
+      // the branch, while its result never reaches the platform — the pipeline
+      // would be stricter than the product could explain.
+      const result = defaultToolchainRegistry.build('dotnet', dotnetContext);
+
+      expect([...result.qualityJobIds].sort()).toEqual(
+        Object.keys(result.qualityJobs).sort(),
+      );
     });
 
     it('calls the .NET workflows, never the Node ones', () => {
@@ -209,9 +226,41 @@ describe('toolchain registry', () => {
       const jobs = defaultToolchainRegistry.build('dotnet', dotnetContext)
         .qualityJobs as Record<string, { with: Record<string, unknown> }>;
 
-      for (const job of Object.values(jobs)) {
+      // 'secrets' is excluded by name rather than by loosening the rule,
+      // because it is the one job here that is not about .NET — see below.
+      for (const [id, job] of Object.entries(jobs)) {
+        if (id === 'secrets') continue;
         expect(job.with['dotnet-version']).toBe('10.0.x');
         expect(job.with).not.toHaveProperty('node-version');
+      }
+    });
+
+    it('sends the secret scan no .NET inputs, because it declares none', () => {
+      // gitleaks-scan.yml is language-agnostic: a secret in a .cs file and a
+      // secret in a .ts file are the same problem. A reusable workflow REJECTS
+      // an input it does not declare, so passing the .NET set would fail the
+      // call outright — this is a contract, not tidiness.
+      const jobs = defaultToolchainRegistry.build('dotnet', dotnetContext)
+        .qualityJobs as Record<string, { with: Record<string, unknown> }>;
+
+      expect(jobs['secrets']!.with).not.toHaveProperty('dotnet-version');
+      expect(jobs['secrets']!.with).not.toHaveProperty('solution-path');
+      expect(jobs['secrets']!.with['system-name']).toBe(context.serviceName);
+    });
+
+    it('ties the new gates to the branch policy, not to a constant', () => {
+      // Report on the working branch, block before uat and main. Hard-coding
+      // true here would block dev on a pre-existing finding, and a gate that
+      // blocks the branch people work on gets switched off rather than fixed.
+      const jobs = defaultToolchainRegistry.build('dotnet', dotnetContext)
+        .qualityJobs as Record<string, { with: Record<string, unknown> }>;
+
+      for (const [id, input] of [
+        ['secrets', 'fail-on-findings'],
+        ['licenses', 'fail-on-forbidden'],
+        ['sbom', 'require-sbom'],
+      ] as const) {
+        expect(jobs[id]!.with[input]).toContain('outputs.fail-on-warning');
       }
     });
 

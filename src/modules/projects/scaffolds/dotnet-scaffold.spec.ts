@@ -114,3 +114,48 @@ describe('dotnet scaffold', () => {
     expect(paths).not.toContain('sonar-project.properties');
   });
 });
+
+describe('dotnet scaffold — the tools a test project needs to be a test project', () => {
+  it('ships a substitute library, so a unit test can isolate a collaborator', () => {
+    // Without one there is no way to stand in for a dependency, so every
+    // "unit" test reaches the real thing and the suite is integration tests
+    // with extra steps. xUnit and Coverlet were present; this was not.
+    expect(
+      contentOf('tests/StPeterApi.Tests/StPeterApi.Tests.csproj'),
+    ).toContain('NSubstitute');
+  });
+
+  it('ships the architecture rules library', () => {
+    expect(
+      contentOf('tests/StPeterApi.Tests/StPeterApi.Tests.csproj'),
+    ).toContain('NetArchTest.Rules');
+  });
+
+  it('writes an architecture test that asserts something real', () => {
+    // A scaffolded architecture test with no rule in it passes forever and
+    // teaches the team that the file is decoration. This one fails if a domain
+    // type reaches for the web framework.
+    const test = contentOf('tests/StPeterApi.Tests/ArchitectureTests.cs');
+
+    expect(test).toContain('NetArchTest.Rules');
+    expect(test).toContain('ShouldNot()');
+    expect(test).toContain('HaveDependencyOn("Microsoft.AspNetCore")');
+    expect(test).toContain('Assert.True(');
+  });
+
+  it('names the architecture test after the project, not a fixed namespace', () => {
+    const test = contentOf('tests/StPeterApi.Tests/ArchitectureTests.cs');
+
+    expect(test).toContain('namespace StPeterApi.Tests;');
+    expect(test).toContain('typeof(StPeterApi.Program).Assembly');
+  });
+
+  it('keeps the architecture test in the test project the pipeline runs', () => {
+    // dotnet-test.yml runs the solution, so a rules file outside the test
+    // project would never execute — enforced by nothing, in a file that looks
+    // like enforcement.
+    const paths = files().map((file) => file.path);
+
+    expect(paths).toContain('tests/StPeterApi.Tests/ArchitectureTests.cs');
+  });
+});

@@ -176,6 +176,14 @@ function testCsproj(projectName: string, targetFramework: string): string {
     '    <!-- Supplies the XPlat Code Coverage collector the pipeline runs with.',
     '         Without it the tests pass and report no coverage at all. -->',
     '    <PackageReference Include="coverlet.collector" Version="6.0.4" />',
+    '    <!-- Without a substitute library there is no way to isolate a',
+    '         collaborator, so every test reaches the real one and "unit test"',
+    '         means integration test with extra steps. -->',
+    '    <PackageReference Include="NSubstitute" Version="5.3.0" />',
+    '    <!-- Layering assertions run as ordinary tests, so the architecture is',
+    '         enforced by the same command as everything else rather than by a',
+    '         separate tool nobody remembers to run. -->',
+    '    <PackageReference Include="NetArchTest.Rules" Version="1.3.2" />',
     '  </ItemGroup>',
     '',
     '  <ItemGroup>',
@@ -225,6 +233,52 @@ function appSettings(): string {
     null,
     2,
   )}\n`;
+}
+
+/**
+ * A starting layering rule, written as an ordinary test.
+ *
+ * NetArchTest asserts over the compiled assembly, so "clean architecture" stops
+ * being a diagram and becomes something `dotnet test` fails on. It ships with
+ * one real rule rather than a commented-out example: a scaffold whose
+ * architecture test asserts nothing passes forever and teaches the team that
+ * the file is decoration.
+ *
+ * The rule chosen is the one that survives any layout — a domain that reaches
+ * for the web framework has stopped being a domain. Projects that grow more
+ * layers add rules beside it.
+ */
+function architectureTests(projectName: string): string {
+  return [
+    'using NetArchTest.Rules;',
+    'using Xunit;',
+    '',
+    `namespace ${projectName}.Tests;`,
+    '',
+    '// Asserted against the compiled assembly, so the rule holds for what was',
+    '// actually built rather than for what the folder names suggest.',
+    'public class ArchitectureTests',
+    '{',
+    '    [Fact]',
+    '    public void Domain_Should_Not_Depend_On_AspNetCore()',
+    '    {',
+    '        // A domain type that references the web framework cannot be reused',
+    '        // outside a web host, and cannot be tested without one.',
+    `        var result = Types.InAssembly(typeof(${projectName}.Program).Assembly)`,
+    '            .That()',
+    `            .ResideInNamespace("${projectName}.Domain")`,
+    '            .ShouldNot()',
+    '            .HaveDependencyOn("Microsoft.AspNetCore")',
+    '            .GetResult();',
+    '',
+    '        Assert.True(',
+    '            result.IsSuccessful,',
+    '            "Domain types must not depend on ASP.NET Core: " +',
+    '                string.Join(", ", result.FailingTypeNames ?? []));',
+    '    }',
+    '}',
+    '',
+  ].join('\n');
 }
 
 function healthTests(projectName: string): string {
@@ -393,6 +447,10 @@ export function buildDotnetStandaloneScaffold(
     {
       path: `tests/${projectName}.Tests/HealthTests.cs`,
       content: healthTests(projectName),
+    },
+    {
+      path: `tests/${projectName}.Tests/ArchitectureTests.cs`,
+      content: architectureTests(projectName),
     },
     { path: '.env.example', content: readmeEnvExample() },
   ];
