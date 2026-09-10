@@ -26,6 +26,7 @@ import { ProjectWorkspaceService } from '../application/workspace/project-worksp
  *   GET runs                  — safe to poll
  *   GET runs/:runId/jobs      — on open only
  *   GET jobs/:jobId/logs      — on open only, never polled
+ *   GET runs/:runId/failure-log — on open only, never polled
  */
 @Controller('projects/:projectId/workspace')
 @UseGuards(SessionAuthGuard)
@@ -82,6 +83,27 @@ export class ProjectWorkspaceController {
     @Param('runId') runId: string,
   ) {
     return this.workspaceService.getRunJobs(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+      this.requireNumericId(runId, 'run'),
+    );
+  }
+
+  /**
+   * The error output of the job that failed in this run.
+   *
+   * Distinct from `jobs/:jobId/logs`, which needs the caller to already know
+   * which job to open. Here the caller has only a failed STAGE, and finding
+   * the job is the server's work.
+   */
+  @Get('runs/:runId/failure-log')
+  getRunFailureLog(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('runId') runId: string,
+  ) {
+    return this.workspaceService.getRunFailureLog(
       projectId,
       this.requireUserId(req),
       this.oauthToken(req),

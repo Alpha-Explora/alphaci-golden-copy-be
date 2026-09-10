@@ -70,6 +70,7 @@ GET /api/v1/projects/{projectId}/workspace/jobs/{jobId}/logs
 GET /api/v1/projects/{projectId}/workspace/pull-requests
 GET /api/v1/projects/{projectId}/workspace/pull-requests/{number}/files
 GET /api/v1/projects/{projectId}/workspace/runs
+GET /api/v1/projects/{projectId}/workspace/runs/{runId}/failure-log
 GET /api/v1/projects/{projectId}/workspace/runs/{runId}/jobs
 GET /api/v1/provider-connections
 GET /api/v1/repositories/{repositoryId}
