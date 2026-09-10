@@ -242,3 +242,66 @@ describe('dotnet scaffold — the seam both tools need to mean anything', () => 
     expect(test).toContain('Assert.Equal("degraded", body!.Status)');
   });
 });
+
+/*
+ * The scaffold has to pass its own strict lint gate.
+ *
+ * `dotnet format --severity warn` sorts using directives: System namespaces
+ * first, then the rest alphabetically. Two test files were added with the
+ * project namespace placed after `Xunit`, which sorts before it, and the
+ * generated repository failed `IMPORTS: Fix imports ordering` with exit 2.
+ *
+ * On dev that is invisible — `fail-on-warning` is false there, so the job
+ * reports and passes. It only bites on uat and main, where the same gate
+ * blocks. So a freshly scaffolded project built fine, tested fine, and could
+ * never be promoted, and nothing in this suite noticed. These assertions are
+ * cheap; running `dotnet format` in a unit test is not.
+ */
+describe('dotnet scaffold — usings survive the strict format gate', () => {
+  const usingsOf = (content: string): string[] =>
+    content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('using ') && line.endsWith(';'))
+      .map((line) => line.slice('using '.length, -1));
+
+  /** System directives first, then the rest alphabetically — the format rule. */
+  const sortedTheWayFormatWants = (usings: string[]): string[] => {
+    const isSystem = (name: string) =>
+      name === 'System' || name.startsWith('System.');
+    const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+    return [
+      ...usings.filter(isSystem).sort(compare),
+      ...usings.filter((name) => !isSystem(name)).sort(compare),
+    ];
+  };
+
+  const csharpFiles = () => files().filter((file) => file.path.endsWith('.cs'));
+
+  it('generates C# files to check, so this is not a vacuous pass', () => {
+    expect(csharpFiles().length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('orders every using directive the way dotnet format demands', () => {
+    for (const file of csharpFiles()) {
+      const usings = usingsOf(file.content);
+
+      expect({ path: file.path, usings }).toEqual({
+        path: file.path,
+        usings: sortedTheWayFormatWants(usings),
+      });
+    }
+  });
+
+  it('puts the project namespace before Xunit, which is where it broke', () => {
+    const architecture = contentOf(
+      'tests/StPeterApi.Tests/ArchitectureTests.cs',
+    );
+    const usings = usingsOf(architecture);
+
+    expect(usings.indexOf('StPeterApi.Domain')).toBeLessThan(
+      usings.indexOf('Xunit'),
+    );
+  });
+});

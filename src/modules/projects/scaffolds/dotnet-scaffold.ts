@@ -291,9 +291,12 @@ function appSettings(): string {
  */
 function architectureTests(projectName: string): string {
   return [
+    // Ordered as `dotnet format --severity warn` demands: the project
+    // namespace sorts before Xunit, and the strict lint gate on uat and main
+    // fails the build over it. A scaffold has to pass its own pipeline.
     'using NetArchTest.Rules;',
-    'using Xunit;',
     `using ${projectName}.Domain;`,
+    'using Xunit;',
     '',
     `namespace ${projectName}.Tests;`,
     '',
@@ -364,8 +367,8 @@ function serviceStatusTests(projectName: string): string {
     'using Microsoft.AspNetCore.TestHost;',
     'using Microsoft.Extensions.DependencyInjection;',
     'using NSubstitute;',
-    'using Xunit;',
     `using ${projectName}.Domain;`,
+    'using Xunit;',
     '',
     `namespace ${projectName}.Tests;`,
     '',
