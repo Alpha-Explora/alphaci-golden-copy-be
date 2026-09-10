@@ -359,7 +359,10 @@ function pushSecurityMessages(
       severity: 'error',
       title: `${String(security.critical)} critical vulnerability(s)`,
       detail: `${String(security.critical)} critical security vulnerability(s) found.`,
-      hint: 'Run `npm audit` to view details and apply fixes.',
+      // Tool-neutral: this path now serves .NET as well, where the command
+      // is `dotnet list package --vulnerable`, and naming the wrong one is
+      // worse than naming none. The packages are listed below regardless.
+      hint: 'Upgrade the packages listed below to a version without the advisory.',
     };
 
     if (security.items !== undefined && security.items.length > 0) {
@@ -381,7 +384,10 @@ function pushSecurityMessages(
       severity: 'warning',
       title: `${String(security.high)} high-severity vulnerability(s)`,
       detail: `${String(security.high)} high-severity vulnerability(s) found.`,
-      hint: 'Run `npm audit` to view details and apply fixes.',
+      // Tool-neutral: this path now serves .NET as well, where the command
+      // is `dotnet list package --vulnerable`, and naming the wrong one is
+      // worse than naming none. The packages are listed below regardless.
+      hint: 'Upgrade the packages listed below to a version without the advisory.',
     };
 
     if (security.items !== undefined && security.items.length > 0) {
