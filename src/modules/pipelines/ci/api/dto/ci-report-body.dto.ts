@@ -10,6 +10,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+import { STAGE_ORDER, type StageId } from '../../application/stages';
+
 // ─── Nested detail DTOs ───────────────────────────────────────────────────────
 
 export class CiReportTestFailureDto {
@@ -181,8 +183,8 @@ export class CiReportBodyDto {
   @Min(0)
   runId!: number;
 
-  @IsIn(['access', 'quality', 'package'])
-  stage!: 'access' | 'quality' | 'package';
+  @IsIn([...STAGE_ORDER])
+  stage!: StageId;
 
   @IsIn(['success', 'failure', 'cancelled'])
   conclusion!: 'success' | 'failure' | 'cancelled';

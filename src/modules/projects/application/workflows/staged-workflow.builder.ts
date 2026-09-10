@@ -12,7 +12,7 @@ import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
 import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
-export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
+export type WorkflowStage = 'access' | 'quality' | 'package' | 'verify' | 'guard';
 
 export interface StagedWorkflowFile {
   stage: WorkflowStage;

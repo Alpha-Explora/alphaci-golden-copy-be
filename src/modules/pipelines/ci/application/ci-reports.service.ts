@@ -11,6 +11,8 @@ import { translateResults } from './translate-results';
 import {
   resolveOverallStatus,
   resolveStages,
+  STAGE_ORDER,
+  type StageId,
   type StageStatus,
 } from './resolve-stage-status';
 import type { CiReportBodyDto } from '../api/dto/ci-report-body.dto';
@@ -20,7 +22,7 @@ import type { FriendlyMessage } from './translate-results';
 // ─── Response shapes ──────────────────────────────────────────────────────────
 
 export interface StageReport {
-  stage: 'access' | 'quality' | 'package';
+  stage: StageId;
   status: StageStatus;
   /**
    * The GitHub run this stage executed in.
@@ -55,7 +57,7 @@ interface OwnershipRow {
   user_id: string;
 }
 
-const ALL_STAGES = ['access', 'quality', 'package'] as const;
+const ALL_STAGES = STAGE_ORDER;
 
 @Injectable()
 export class CiReportsService {
@@ -234,7 +236,7 @@ export class CiReportsService {
    * stage with nothing to say is correct, not broken.
    */
   private explainedMessages(row: {
-    stage: 'access' | 'quality' | 'package';
+    stage: StageId;
     status: CiRunStatus;
     friendly_messages: FriendlyMessage[];
     results: unknown;

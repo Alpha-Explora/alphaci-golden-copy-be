@@ -1,3 +1,5 @@
+import type { StageId } from './stages';
+
 export interface FriendlyMessage {
   severity: 'info' | 'warning' | 'error' | 'success';
   title: string;
@@ -36,7 +38,7 @@ export interface CiResults {
   };
 }
 
-type Stage = 'access' | 'quality' | 'package';
+type Stage = StageId;
 type Conclusion = 'success' | 'failure' | 'cancelled';
 type MessageItem = { label: string; sub?: string };
 type TestsResult = NonNullable<CiResults['tests']>;
@@ -244,6 +246,21 @@ function unreportedFailureMessage(
       detail:
         'GitHub confirmed the package workflow failed, but it did not provide the failed build step or error output.',
       hint: 'Open the workflow logs, fix the first failed build or package step, then re-run the workflow.',
+    },
+    /*
+     * Verify fails differently from the three before it, and the wording has to
+     * say so. Those read source, so a failure is in the commit. This one drove
+     * a DEPLOYED service, so the same red can mean the code is wrong, the
+     * deployment is wrong, or the environment it was pointed at is wrong —
+     * and sending someone to re-read the diff first is sending them to the
+     * wrong place two times out of three.
+     */
+    verify: {
+      severity: 'error',
+      title: 'The deployed service failed its API checks',
+      detail:
+        'GitHub confirmed the verify workflow failed, but it did not provide the failing request or assertion.',
+      hint: 'Check the deployment answered at all before reading the code: an environment that never started fails every request the same way. The uploaded results file lists each request and assertion.',
     },
   };
 
