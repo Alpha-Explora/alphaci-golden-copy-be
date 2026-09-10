@@ -121,6 +121,31 @@ export class CiReportSecurityDto {
   items?: CiReportSecurityItemDto[];
 }
 
+/**
+ * Counts from gates that can pass while still having found something.
+ *
+ * On dev these gates are advisory, so the job concludes `success` whether it
+ * found nothing or found nine. The count is the only thing that separates the
+ * two, and it is what lets the product say "passed, 3 secrets found — not
+ * blocking here, will block at uat" instead of a bare green tick.
+ */
+export class CiReportFindingsDto {
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  secrets?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  forbiddenLicenses?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sbomComponents?: number;
+}
+
 export class CiReportResultsDto {
   @IsOptional()
   @ValidateNested()
@@ -141,6 +166,11 @@ export class CiReportResultsDto {
   @ValidateNested()
   @Type(() => CiReportSecurityDto)
   security?: CiReportSecurityDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CiReportFindingsDto)
+  findings?: CiReportFindingsDto;
 }
 
 /**
@@ -167,6 +197,41 @@ export class CiReportAnnotationDto {
   @IsOptional()
   @IsString()
   message?: string;
+
+  /**
+   * GitHub's own severity: 'failure', 'warning' or 'notice'.
+   *
+   * Carried because the same diagnostic means different things per branch. On
+   * dev a formatter reports warnings and the job still passes; on uat that
+   * identical annotation is what fails the build. Without the level the reader
+   * cannot tell a blocking error from advice.
+   */
+  @IsOptional()
+  @IsString()
+  level?: string;
+}
+
+/**
+ * One tool's outcome inside a stage.
+ *
+ * A stage status answers "did quality pass". It cannot answer "did the licence
+ * scan pass", and one bar covering seven tools is what sent people to GitHub to
+ * find out which of them was red.
+ */
+export class CiReportCheckDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  conclusion!: string;
+
+  @IsOptional()
+  @IsString()
+  startedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  completedAt?: string;
 }
 
 export class CiReportBodyDto {
@@ -210,4 +275,19 @@ export class CiReportBodyDto {
   @ValidateNested({ each: true })
   @Type(() => CiReportAnnotationDto)
   annotations?: CiReportAnnotationDto[];
+
+  /**
+   * Every job in the stage and what it concluded, so the product can show a
+   * row per tool rather than one status for all of them.
+   *
+   * Optional for the same reason as `annotations`: a pipeline generated before
+   * this field existed does not send it. That matters more than it looks —
+   * `forbidNonWhitelisted` is on, so an undeclared property does not get
+   * stripped, it rejects the whole report with a 400. A field added to the
+   * pipeline before it is declared here silently stops every run reporting.
+   */
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportCheckDto)
+  checks?: CiReportCheckDto[];
 }

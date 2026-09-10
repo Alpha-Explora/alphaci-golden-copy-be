@@ -1047,6 +1047,31 @@ function reportingJob(
     stepEnv['VULN_HIGH'] = '${{ needs.security.outputs.vulnerabilities-high }}';
     stepEnv['VULN_ITEMS'] =
       '${{ needs.security.outputs.vulnerabilities-items }}';
+    /*
+     * Findings from the gates whose counts were computed and discarded.
+     *
+     * gitleaks-scan, dotnet-license-scan and dotnet-sbom each publish a count
+     * and nothing read them. It matters most on dev, where these gates are
+     * advisory: the job passes, so its conclusion says nothing, and the count
+     * is the only thing separating 'clean' from '3 secrets found, not blocking
+     * on this branch'.
+     *
+     * Read only when the toolchain actually declares the job. Node fills four
+     * quality slots and has no licence inventory to take; `needs.licenses` there
+     * would name a job that is not in `needs`, which evaluates to empty and
+     * would post a count of nothing as though it were a count of zero.
+     */
+    const countOutputs: Record<string, [string, string]> = {
+      secrets: ['SECRETS_FINDINGS', 'findings-count'],
+      licenses: ['LICENSE_FORBIDDEN', 'forbidden-count'],
+      sbom: ['SBOM_COMPONENTS', 'component-count'],
+    };
+
+    for (const [jobId, [envName, output]] of Object.entries(countOutputs)) {
+      if (workJobIds.includes(jobId)) {
+        stepEnv[envName] = `\${{ needs.${jobId}.outputs.${output} }}`;
+      }
+    }
   }
 
   const scriptLines = [
@@ -1086,28 +1111,59 @@ function reportingJob(
     '# failed, which is what sent people to GitHub to learn anything useful.',
     'FAILED_JOBS=""',
     'ANNOTATIONS="[]"',
+    'CHECKS="[]"',
+    '',
+    '# ALWAYS fetch, on success as well as failure.',
+    '#',
+    '# This used to sit behind `if [ "$CONCLUSION" = "failure" ]`, which meant',
+    '# the branch that most needs the detail never collected any. On dev the',
+    '# gates are advisory - `fail-on-warning` is false - so a stage carrying',
+    '# twelve real diagnostics still concludes SUCCESS, skipped the capture',
+    '# entirely, and the developer saw a green tick and a coverage number.',
+    '# The warnings that would block them at uat were recorded nowhere, on the',
+    '# one branch where there was still time to fix them.',
+    'JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf \'{"jobs":[]}\')',
+    '',
+    '# Every job, with what it concluded - the per-TOOL view.',
+    '#',
+    '# A stage status answers "did the quality stage pass". It cannot answer',
+    '# "did the licence scan pass", and one red bar covering seven tools sends',
+    '# the reader to GitHub to find out which one. The reporting job is the only',
+    '# place that can see all of them at once, so it is the place that lists them.',
+    '#',
+    '# The reporting job itself is excluded: it is still running, so its',
+    '# conclusion is null, and it is plumbing rather than a check anyone asked for.',
+    'CHECKS=$(printf \'%s\' "$JOBS_JSON" | jq -c \'[.jobs[]? | select(.name != "report-results") | {name: .name, conclusion: (.conclusion // "running"), startedAt: .started_at, completedAt: .completed_at}]\' || printf \'[]\')',
+    '',
     'if [ "$CONCLUSION" = "failure" ]; then',
-    '  JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf \'{"jobs":[]}\')',
     '  FAILED_JOBS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'.jobs[] | select(.conclusion == "failure") | . as $job | (([$job.steps[]? | select(.conclusion == "failure") | .name] | first) // "") as $step | if $step == "" then "Failed GitHub Actions job: \\($job.name)" else "Failed GitHub Actions job: \\($job.name) > \\($step)" end\' | head -n 5 || true)',
-    '  # A job id is its check-run id for Actions, so one id addresses both.',
-    '  FAILED_IDS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'.jobs[] | select(.conclusion == "failure") | .id\' | head -n 3)',
-    '  for JOB_ID in $FAILED_IDS; do',
-    '    JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf \'[]\')',
-    '    # Keep the annotations that point at CODE, at any level.',
-    '    #',
-    '    # Filtering on annotation_level == "failure" looked right and threw away',
-    '    # every useful annotation. A Roslyn analyzer or formatter reports its',
-    '    # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -',
-    '    # while the only failure-level annotation is the runner\'s own "Process',
-    '    # completed with exit code 1", whose path is the workflow file. So the',
-    '    # filter kept the one annotation that says nothing and discarded every',
-    '    # one that named the actual problem.',
-    '    #',
-    '    # Deduplicated because a solution built more than once (analyze, then',
-    '    # sonar) reports the same diagnostic on each pass.',
-    '    ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.path and (.path | startswith(".github") | not))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
-    '  done',
     'fi',
+    '',
+    '# Annotations are the actual diagnostics - "Program.cs:11 Await RunAsync',
+    '# instead of blocking". Collected from every job that ran, not only the',
+    '# failed ones, because an advisory job on dev reports its findings as',
+    '# annotations and passes. Those ARE the errors the developer needs.',
+    '#',
+    '# A job id is its check-run id for Actions, so one id addresses both.',
+    '# Failed jobs first, so a capped list keeps the diagnostics that explain a',
+    '# failure ahead of the advisory noise from jobs that passed.',
+    'ANNOTATION_IDS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'[.jobs[]? | select(.name != "report-results")] | sort_by(.conclusion != "failure") | .[].id\' | head -n 8)',
+    'for JOB_ID in $ANNOTATION_IDS; do',
+    '  JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf \'[]\')',
+    '  # Keep the annotations that point at CODE, at any level.',
+    '  #',
+    '  # Filtering on annotation_level == "failure" looked right and threw away',
+    '  # every useful annotation. A Roslyn analyzer or formatter reports its',
+    '  # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -',
+    '  # while the only failure-level annotation is the runner\'s own "Process',
+    '  # completed with exit code 1", whose path is the workflow file. So the',
+    '  # filter kept the one annotation that says nothing and discarded every',
+    '  # one that named the actual problem.',
+    '  #',
+    '  # Deduplicated because a solution built more than once (analyze, then',
+    '  # sonar) reports the same diagnostic on each pass.',
+    '  ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.path and (.path | startswith(".github") | not))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
+    'done',
     '',
     '# Build results sub-object (quality stage only — reads from job outputs)',
     'RESULTS="{}"',
@@ -1147,6 +1203,31 @@ function reportingJob(
           "    '{critical:$critical,high:$high,items:$items}')",
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson security "$SECURITY" \'. + {security:$security}\')',
           'fi',
+          '',
+          '# Counts from the advisory gates, so "passed" can be told apart from',
+          '# "passed with findings".',
+          '#',
+          '# On dev these three do not block, so their job conclusion is `success`',
+          '# whether they found nothing or found nine. The count is the only thing',
+          '# that separates the two, and without it the developer reads a green tick',
+          '# and promotes into a uat run that fails on exactly what dev already knew.',
+          '#',
+          '# Absent when the toolchain does not declare the job, so an empty string',
+          '# leaves the key out rather than posting 0 - which would claim a clean',
+          '# scan for a scan that never ran.',
+          'FINDINGS="{}"',
+          'if echo "$SECRETS_FINDINGS" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$SECRETS_FINDINGS" \'. + {secrets:$n}\')',
+          'fi',
+          'if echo "$LICENSE_FORBIDDEN" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$LICENSE_FORBIDDEN" \'. + {forbiddenLicenses:$n}\')',
+          'fi',
+          'if echo "$SBOM_COMPONENTS" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$SBOM_COMPONENTS" \'. + {sbomComponents:$n}\')',
+          'fi',
+          'if [ "$FINDINGS" != "{}" ]; then',
+          '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson findings "$FINDINGS" \'. + {findings:$findings}\')',
+          'fi',
         ]
       : []),
     '',
@@ -1161,7 +1242,8 @@ function reportingJob(
     '  --arg rawLogs "$FAILED_JOBS" \\',
     '  --argjson results "$RESULTS" \\',
     '  --argjson annotations "$ANNOTATIONS" \\',
-    "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations}')",
+    '  --argjson checks "$CHECKS" \\',
+    "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations,checks:$checks}')",
     'curl -sf --max-time 5 \\',
     '  -X POST "$ALPHACI_REPORT_URL" \\',
     '  -H "Authorization: Bearer $ALPHACI_TOKEN" \\',

@@ -36,6 +36,24 @@ export interface CiResults {
       severity?: string;
     }[];
   };
+  /**
+   * Counts from gates that pass while still having found something.
+   *
+   * Advisory on dev, blocking on uat and main. The count is what separates
+   * "passed, clean" from "passed, 3 findings, and uat will reject them".
+   */
+  findings?: {
+    secrets?: number;
+    forbiddenLicenses?: number;
+    sbomComponents?: number;
+  };
+  /** Every job in the stage and what it concluded — the per-tool view. */
+  checks?: {
+    name: string;
+    conclusion: string;
+    startedAt?: string;
+    completedAt?: string;
+  }[];
 }
 
 type Stage = StageId;

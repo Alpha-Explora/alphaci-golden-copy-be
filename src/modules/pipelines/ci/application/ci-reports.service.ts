@@ -104,6 +104,19 @@ export class CiReportsService {
           ...(body.results.security !== undefined && {
             security: body.results.security,
           }),
+          ...(body.results.findings !== undefined && {
+            findings: body.results.findings,
+          }),
+          /*
+           * The per-tool list is stored inside `results` rather than in a
+           * column of its own, because `results` is already jsonb and this
+           * needs no schema change to carry it. A stage that reports no checks
+           * — an older pipeline — leaves the key out rather than storing an
+           * empty array, so "this pipeline predates per-tool reporting" stays
+           * distinguishable from "this stage ran no tools".
+           */
+          ...(body.checks !== undefined &&
+            body.checks.length > 0 && { checks: body.checks }),
         },
         friendlyMessages,
         ...(body.rawLogs !== undefined && { rawLogs: body.rawLogs }),

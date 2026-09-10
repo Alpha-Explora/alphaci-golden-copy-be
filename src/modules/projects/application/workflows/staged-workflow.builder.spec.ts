@@ -955,3 +955,128 @@ describe('a stage that never ran reports nothing', () => {
     expect(firstRequest).toBeGreaterThan(exit);
   });
 });
+
+/*
+ * Per-tool visibility, on the branch where it matters most.
+ *
+ * The capture used to sit behind `if [ "$CONCLUSION" = "failure" ]`. On dev the
+ * gates are advisory — `fail-on-warning` is false — so a stage carrying real
+ * diagnostics concludes SUCCESS, skipped the capture entirely, and the
+ * developer saw a green tick and a coverage number. The warnings that would
+ * block them at uat were recorded on no branch where there was time to fix
+ * them.
+ */
+describe('the reporting job captures on success, not only on failure', () => {
+  const qualityStep = (
+    stack: WorkflowTemplate['stack'] = 'dotnet',
+  ): { run: string; env: Record<string, string> } => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(stack), {
+      templateId: 'svc',
+      serviceName: 'orders-api',
+    });
+    const file = bundle.workflowFiles.find((candidate) =>
+      candidate.path.includes('10-alphaci-quality'),
+    );
+    const parsed = yaml.load(file!.yaml) as {
+      jobs: Record<
+        string,
+        { steps?: { run?: string; env?: Record<string, string> }[] }
+      >;
+    };
+    const step = parsed.jobs['report-results']!.steps![0]!;
+    return { run: step.run!, env: step.env ?? {} };
+  };
+
+  /** Lines of the emitted script, trimmed, with blank lines and comments gone. */
+  const codeLines = (run: string): string[] =>
+    run
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'));
+
+  it('fetches the job list outside any failure conditional', () => {
+    const lines = codeLines(qualityStep().run);
+
+    const fetchAt = lines.findIndex((line) => line.startsWith('JOBS_JSON='));
+    const firstFailureGuard = lines.findIndex((line) =>
+      line.includes('"$CONCLUSION" = "failure"'),
+    );
+
+    expect(fetchAt).toBeGreaterThanOrEqual(0);
+    expect(firstFailureGuard).toBeGreaterThanOrEqual(0);
+    // The fetch has to come FIRST. Behind the guard it never runs on dev.
+    expect(fetchAt).toBeLessThan(firstFailureGuard);
+  });
+
+  it('collects annotations for every job, not only the failed ones', () => {
+    const lines = codeLines(qualityStep().run);
+
+    const idsAt = lines.findIndex((line) => line.startsWith('ANNOTATION_IDS='));
+    const firstFailureGuard = lines.findIndex((line) =>
+      line.includes('"$CONCLUSION" = "failure"'),
+    );
+
+    expect(idsAt).toBeGreaterThan(firstFailureGuard);
+    // Sorted so failures come first, then capped — a cap that dropped the
+    // failing job's diagnostics would defeat the point.
+    const ids = lines[idsAt]!;
+    expect(ids).toContain('sort_by(.conclusion != "failure")');
+    expect(ids).not.toContain('select(.conclusion == "failure")');
+  });
+
+  it('sends a row per tool so one bar does not cover seven checks', () => {
+    const { run } = qualityStep();
+
+    expect(run).toContain('CHECKS=$(');
+    expect(run).toContain('--argjson checks "$CHECKS"');
+    expect(run).toContain('checks:$checks');
+    // The reporting job is still running while it reports, so its own
+    // conclusion is null and it is not a check anyone asked for.
+    expect(run).toContain('select(.name != "report-results")');
+  });
+
+  it('keeps the annotation level, which is what separates advice from a block', () => {
+    // The same formatter diagnostic is a warning on dev and the thing that
+    // fails the build on uat. Without the level they are indistinguishable.
+    expect(qualityStep().run).toContain('level: .annotation_level');
+  });
+
+  /*
+   * `forbidNonWhitelisted` is on, so an undeclared property does not get
+   * stripped — it rejects the whole report with a 400. A count read for a job
+   * the toolchain never declared would arrive as an empty string and post a
+   * count of nothing as though it were a count of zero.
+   */
+  it('reads the advisory counts only for a stack that declares those jobs', () => {
+    const dotnet = qualityStep('dotnet').env;
+
+    expect(dotnet['SECRETS_FINDINGS']).toBe(
+      '${{ needs.secrets.outputs.findings-count }}',
+    );
+    expect(dotnet['LICENSE_FORBIDDEN']).toBe(
+      '${{ needs.licenses.outputs.forbidden-count }}',
+    );
+    expect(dotnet['SBOM_COMPONENTS']).toBe(
+      '${{ needs.sbom.outputs.component-count }}',
+    );
+
+    const node = qualityStep('nestjs').env;
+
+    // Node fills four quality slots and has no licence inventory to take.
+    expect(node['SECRETS_FINDINGS']).toBeUndefined();
+    expect(node['LICENSE_FORBIDDEN']).toBeUndefined();
+    expect(node['SBOM_COMPONENTS']).toBeUndefined();
+  });
+
+  it('omits a count that arrived empty rather than posting it as zero', () => {
+    const { run } = qualityStep();
+
+    // Guarded on a digit, so an absent output leaves the key out. Zero is a
+    // real answer — "the scan ran and found nothing" — and an empty string
+    // must never be allowed to impersonate it.
+    expect(run).toContain(
+      'if echo "$SECRETS_FINDINGS" | grep -qE \'^[0-9]+$\'; then',
+    );
+    expect(run).toContain('if [ "$FINDINGS" != "{}" ]; then');
+  });
+});
