@@ -147,7 +147,29 @@ describe('dotnet scaffold — the tools a test project needs to be a test projec
     const test = contentOf('tests/StPeterApi.Tests/ArchitectureTests.cs');
 
     expect(test).toContain('namespace StPeterApi.Tests;');
-    expect(test).toContain('typeof(StPeterApi.Program).Assembly');
+    expect(test).toContain(
+      'const string DomainNamespace = "StPeterApi.Domain"',
+    );
+  });
+
+  it('anchors the assembly on a domain type, not on Program', () => {
+    // `Program` is declared in the GLOBAL namespace by the minimal-hosting
+    // template, so `typeof(StPeterApi.Program)` does not compile — the first
+    // version of this file would have failed the build rather than the rule.
+    const test = contentOf('tests/StPeterApi.Tests/ArchitectureTests.cs');
+
+    expect(test).toContain('typeof(IServiceStatus).Assembly');
+    expect(test).not.toContain('typeof(StPeterApi.Program)');
+  });
+
+  it('fails when the domain namespace is empty, rather than passing vacuously', () => {
+    // A NetArchTest rule with nothing to check reports success. Without this
+    // guard, renaming or emptying the namespace silently disables the rule
+    // while leaving a green test that looks like enforcement.
+    const test = contentOf('tests/StPeterApi.Tests/ArchitectureTests.cs');
+
+    expect(test).toContain('Domain_Namespace_Is_Not_Empty');
+    expect(test).toContain('Assert.NotEmpty(domainTypes)');
   });
 
   it('keeps the architecture test in the test project the pipeline runs', () => {
@@ -157,5 +179,66 @@ describe('dotnet scaffold — the tools a test project needs to be a test projec
     const paths = files().map((file) => file.path);
 
     expect(paths).toContain('tests/StPeterApi.Tests/ArchitectureTests.cs');
+  });
+});
+
+describe('dotnet scaffold — the seam both tools need to mean anything', () => {
+  it('ships a domain type, so the architecture rule has something to check', () => {
+    // Without this the rule matches an empty set and NetArchTest reports
+    // success. The gate would be green because it checked nothing.
+    const paths = files().map((file) => file.path);
+
+    expect(paths).toContain('src/StPeterApi/Domain/ServiceStatus.cs');
+    expect(contentOf('src/StPeterApi/Domain/ServiceStatus.cs')).toContain(
+      'namespace StPeterApi.Domain;',
+    );
+  });
+
+  it('keeps the domain free of the framework the rule forbids', () => {
+    // The scaffold must satisfy its own architecture test on the first run.
+    // Shipping a project whose own rule fails teaches the team to delete it.
+    const domain = contentOf('src/StPeterApi/Domain/ServiceStatus.cs');
+
+    expect(domain).not.toContain('Microsoft.AspNetCore');
+    expect(domain).not.toContain('using Microsoft');
+  });
+
+  it('registers the domain behind an interface, so it can be substituted', () => {
+    // A concrete registration would leave NSubstitute nothing to replace.
+    const program = contentOf('src/StPeterApi/Program.cs');
+
+    expect(program).toContain(
+      'builder.Services.AddSingleton<IServiceStatus, ServiceStatus>();',
+    );
+    expect(program).toContain('using StPeterApi.Domain;');
+  });
+
+  it('makes the endpoint consult the domain rather than a literal', () => {
+    // /health is what the production gate probes. If it answers "ok" from a
+    // constant it reports the endpoint is reachable, not that the service is
+    // healthy — and the substitution test could not detect the difference.
+    const program = contentOf('src/StPeterApi/Program.cs');
+
+    expect(program).toContain('status.CurrentStatus()');
+    expect(program).not.toContain('new HealthResponse("ok"');
+  });
+
+  it('demonstrates substitution through the real DI container', () => {
+    const test = contentOf('tests/StPeterApi.Tests/ServiceStatusTests.cs');
+
+    expect(test).toContain('Substitute.For<IServiceStatus>()');
+    // The part that is not guessable, and the reason writing it down matters.
+    expect(test).toContain('WithWebHostBuilder');
+    expect(test).toContain('ConfigureTestServices');
+    expect(test).toContain('status.Received(1).CurrentStatus()');
+  });
+
+  it('asserts the substitute actually changed the response', () => {
+    // Registering a substitute proves nothing on its own; the test has to show
+    // the endpoint returned the substituted value.
+    const test = contentOf('tests/StPeterApi.Tests/ServiceStatusTests.cs');
+
+    expect(test).toContain('Returns("degraded")');
+    expect(test).toContain('Assert.Equal("degraded", body!.Status)');
   });
 });

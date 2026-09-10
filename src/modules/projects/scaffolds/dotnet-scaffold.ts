@@ -195,15 +195,56 @@ function testCsproj(projectName: string, targetFramework: string): string {
   ].join('\n');
 }
 
+/**
+ * The one domain type the scaffold ships, and the seam everything else needs.
+ *
+ * Without it two of the tools in the pipeline are decorative. NetArchTest can
+ * only assert over types that exist, and a rule over an empty namespace passes
+ * vacuously; NSubstitute can only substitute an abstraction, and a service with
+ * no interfaces offers none. Adding both packages without a seam produces a
+ * project where the architecture gate is green because it checked nothing.
+ *
+ * Deliberately in `<Project>.Domain` while the web types stay in the global
+ * namespace, because that boundary is what the architecture rule asserts: the
+ * domain decides WHAT healthy means, the endpoint decides how to say it over
+ * HTTP. It references nothing from ASP.NET Core, which is the rule.
+ */
+function serviceStatusCs(projectName: string): string {
+  return [
+    `namespace ${projectName}.Domain;`,
+    '',
+    '// Whether the service considers itself healthy is a decision, not a',
+    '// transport concern, so it lives here and the endpoint asks for it.',
+    '// This is also the seam a unit test substitutes.',
+    'public interface IServiceStatus',
+    '{',
+    '    string CurrentStatus();',
+    '}',
+    '',
+    'public sealed class ServiceStatus : IServiceStatus',
+    '{',
+    '    public string CurrentStatus() => "ok";',
+    '}',
+    '',
+  ].join('\n');
+}
+
 function programCs(projectName: string, serviceName: string): string {
   return [
+    `using ${projectName}.Domain;`,
+    '',
     'var builder = WebApplication.CreateBuilder(args);',
+    '',
+    '// Registered as an interface so a test can replace it without replacing',
+    '// the host. A concrete registration would leave nothing to substitute.',
+    'builder.Services.AddSingleton<IServiceStatus, ServiceStatus>();',
     '',
     'var app = builder.Build();',
     '',
     '// The production gate probes /health after a deployment, so this endpoint',
     '// is part of the pipeline contract rather than a convenience.',
-    'app.MapGet("/health", () => Results.Ok(new HealthResponse("ok", ServiceInfo.Name)));',
+    'app.MapGet("/health", (IServiceStatus status) =>',
+    '    Results.Ok(new HealthResponse(status.CurrentStatus(), ServiceInfo.Name)));',
     '',
     'app.MapGet("/", () => Results.Ok(new HealthResponse("ready", ServiceInfo.Name)));',
     '',
@@ -252,6 +293,7 @@ function architectureTests(projectName: string): string {
   return [
     'using NetArchTest.Rules;',
     'using Xunit;',
+    `using ${projectName}.Domain;`,
     '',
     `namespace ${projectName}.Tests;`,
     '',
@@ -259,14 +301,33 @@ function architectureTests(projectName: string): string {
     '// actually built rather than for what the folder names suggest.',
     'public class ArchitectureTests',
     '{',
+    `    private static readonly System.Reflection.Assembly Target =`,
+    '        typeof(IServiceStatus).Assembly;',
+    '',
+    `    private const string DomainNamespace = "${projectName}.Domain";`,
+    '',
+    '    [Fact]',
+    '    public void Domain_Namespace_Is_Not_Empty()',
+    '    {',
+    '        // NetArchTest reports success for a rule with nothing to check, so',
+    '        // a renamed or emptied namespace would silently disable the rule',
+    '        // below rather than fail. This is the guard for that.',
+    '        var domainTypes = Types.InAssembly(Target)',
+    '            .That()',
+    '            .ResideInNamespace(DomainNamespace)',
+    '            .GetTypes();',
+    '',
+    '        Assert.NotEmpty(domainTypes);',
+    '    }',
+    '',
     '    [Fact]',
     '    public void Domain_Should_Not_Depend_On_AspNetCore()',
     '    {',
     '        // A domain type that references the web framework cannot be reused',
     '        // outside a web host, and cannot be tested without one.',
-    `        var result = Types.InAssembly(typeof(${projectName}.Program).Assembly)`,
+    '        var result = Types.InAssembly(Target)',
     '            .That()',
-    `            .ResideInNamespace("${projectName}.Domain")`,
+    '            .ResideInNamespace(DomainNamespace)',
     '            .ShouldNot()',
     '            .HaveDependencyOn("Microsoft.AspNetCore")',
     '            .GetResult();',
@@ -275,6 +336,72 @@ function architectureTests(projectName: string): string {
     '            result.IsSuccessful,',
     '            "Domain types must not depend on ASP.NET Core: " +',
     '                string.Join(", ", result.FailingTypeNames ?? []));',
+    '    }',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The substitution pattern, written once so the second test is easy.
+ *
+ * A PackageReference alone proves nothing. Replacing a DI-registered service
+ * in an in-memory host needs `WithWebHostBuilder` plus `ConfigureTestServices`,
+ * and that is not guessable — a developer's first attempt is usually to new up
+ * the factory again, or to substitute a concrete class and wonder why the real
+ * one still answers. Showing it here is the difference between the library
+ * being present and the team being able to use it.
+ *
+ * It also asserts the endpoint actually consults the domain rather than
+ * hard-coding "ok", which is a real property: the /health contract the
+ * production gate probes is only meaningful if it reflects the service's own
+ * view of itself.
+ */
+function serviceStatusTests(projectName: string): string {
+  return [
+    'using System.Net.Http.Json;',
+    'using Microsoft.AspNetCore.Mvc.Testing;',
+    'using Microsoft.AspNetCore.TestHost;',
+    'using Microsoft.Extensions.DependencyInjection;',
+    'using NSubstitute;',
+    'using Xunit;',
+    `using ${projectName}.Domain;`,
+    '',
+    `namespace ${projectName}.Tests;`,
+    '',
+    'public class ServiceStatusTests : IClassFixture<WebApplicationFactory<Program>>',
+    '{',
+    '    private readonly WebApplicationFactory<Program> _factory;',
+    '',
+    '    public ServiceStatusTests(WebApplicationFactory<Program> factory)',
+    '    {',
+    '        _factory = factory;',
+    '    }',
+    '',
+    '    [Fact]',
+    '    public async Task Health_Reports_What_The_Domain_Says()',
+    '    {',
+    '        // The substitute stands in for the real IServiceStatus, so this',
+    '        // asserts the endpoint asks the domain rather than answering "ok"',
+    '        // from a literal. A hard-coded endpoint would pass the other test',
+    '        // and fail this one.',
+    '        var status = Substitute.For<IServiceStatus>();',
+    '        status.CurrentStatus().Returns("degraded");',
+    '',
+    '        // ConfigureTestServices runs AFTER the application registers its',
+    '        // own services, and the last registration wins — which is what',
+    '        // makes the substitute take effect without touching Program.cs.',
+    '        var client = _factory',
+    '            .WithWebHostBuilder(builder =>',
+    '                builder.ConfigureTestServices(services =>',
+    '                    services.AddSingleton(status)))',
+    '            .CreateClient();',
+    '',
+    '        var body = await client.GetFromJsonAsync<HealthResponse>("/health");',
+    '',
+    '        Assert.NotNull(body);',
+    '        Assert.Equal("degraded", body!.Status);',
+    '        status.Received(1).CurrentStatus();',
     '    }',
     '}',
     '',
@@ -437,6 +564,10 @@ export function buildDotnetStandaloneScaffold(
       content: programCs(projectName, serviceName),
     },
     {
+      path: `src/${projectName}/Domain/ServiceStatus.cs`,
+      content: serviceStatusCs(projectName),
+    },
+    {
       path: `src/${projectName}/appsettings.json`,
       content: appSettings(),
     },
@@ -451,6 +582,10 @@ export function buildDotnetStandaloneScaffold(
     {
       path: `tests/${projectName}.Tests/ArchitectureTests.cs`,
       content: architectureTests(projectName),
+    },
+    {
+      path: `tests/${projectName}.Tests/ServiceStatusTests.cs`,
+      content: serviceStatusTests(projectName),
     },
     { path: '.env.example', content: readmeEnvExample() },
   ];
