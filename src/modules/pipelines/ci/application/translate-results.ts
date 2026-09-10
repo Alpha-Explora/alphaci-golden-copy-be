@@ -94,15 +94,6 @@ const FAILED_JOB_COPY: Record<
   },
 };
 
-function hasResults(results: CiResults): boolean {
-  return (
-    results.tests !== undefined ||
-    results.coverage !== undefined ||
-    results.lint !== undefined ||
-    results.security !== undefined
-  );
-}
-
 /**
  * Build a capped items array for a FriendlyMessage.
  * If the source array has more than ITEMS_CAP entries, a trailing summary item
@@ -153,11 +144,72 @@ function failedJobCopy(
   };
 }
 
+/**
+ * One error GitHub recorded against a failed job.
+ *
+ * Sent by pipelines generated after failure capture was added; absent from
+ * older ones, which is why every field is optional and the list may be empty.
+ */
+export interface CiAnnotation {
+  path?: string;
+  line?: number;
+  title?: string;
+  message?: string;
+}
+
+/**
+ * Annotations as message items: the concrete errors, with where they are.
+ *
+ * `label` leads with the location because that is what someone acts on first —
+ * the file and line they have to open. The message follows as context.
+ */
+function annotationItems(annotations: readonly CiAnnotation[]): MessageItem[] {
+  return capItems(
+    annotations.map((annotation) => {
+      const where =
+        annotation.path === undefined
+          ? undefined
+          : annotation.line === undefined
+            ? annotation.path
+            : `${annotation.path}:${String(annotation.line)}`;
+      const text = annotation.message ?? annotation.title ?? '';
+
+      return {
+        label: where ?? annotation.title ?? text,
+        ...(where !== undefined && text !== '' && { sub: text }),
+      };
+    }),
+  );
+}
+
 function unreportedFailureMessage(
   stage: Stage,
   rawLogs?: string,
+  annotations: readonly CiAnnotation[] = [],
 ): FriendlyMessage {
   const failedJobs = reportedFailedJobs(rawLogs);
+
+  // Annotations are the actual errors, so they outrank the job name. A job
+  // name says where to look; an annotation says what is wrong and on which
+  // line, which is the whole point of not sending people to GitHub.
+  if (annotations.length > 0) {
+    // With a job name we can say which check failed. Without one, the
+    // annotations still stand on their own — they name the files and lines.
+    const copy =
+      failedJobs.length > 0
+        ? failedJobCopy(classifyFailedJob(failedJobs[0]!), failedJobs[0]!)
+        : {
+            title: `The ${stage} stage reported errors`,
+            hint: DEFAULT_FAILED_JOB_HINT,
+          };
+    return {
+      severity: 'error',
+      title: copy.title,
+      detail: `GitHub reported ${annotations.length === 1 ? '1 error' : `${String(annotations.length)} errors`} in the ${stage} stage.`,
+      hint: copy.hint,
+      items: annotationItems(annotations),
+    };
+  }
 
   if (failedJobs.length > 0) {
     const firstJob = failedJobs[0]!;
@@ -348,6 +400,7 @@ export function translateResults(
   conclusion: Conclusion,
   results: CiResults,
   rawLogs?: string,
+  annotations: readonly CiAnnotation[] = [],
 ): FriendlyMessage[] {
   const messages: FriendlyMessage[] = [];
 
@@ -358,11 +411,6 @@ export function translateResults(
       detail: 'The CI stage was cancelled before completing.',
       hint: 'Re-run the workflow when ready.',
     });
-    return messages;
-  }
-
-  if (conclusion === 'failure' && !hasResults(results)) {
-    messages.push(unreportedFailureMessage(stage, rawLogs));
     return messages;
   }
 
@@ -387,6 +435,34 @@ export function translateResults(
 
   if (security !== undefined) {
     pushSecurityMessages(messages, security);
+  }
+
+  /*
+   * A failure must always be explained.
+   *
+   * This used to run only when `results` was empty, which quietly assumed that
+   * any result data would account for the failure. It does not. A quality stage
+   * that reported `{coverage: {pct: 100, threshold: 90}}` and failed on its
+   * Sonar job satisfied that guard, passed every check below it — 100 is above
+   * 90 — and returned NO messages at all. The stage showed as failed with
+   * nothing said about why, and the `rawLogs` naming the failed job were
+   * discarded. That is the single reason the product sent people to GitHub to
+   * find out what broke.
+   *
+   * The condition is therefore about the messages, not the inputs: if nothing
+   * above has already reported an error, the failure is still unexplained and
+   * gets the generic account. A stage whose results DO explain it — failing
+   * tests, lint errors, vulnerabilities — is left alone rather than given a
+   * second, vaguer message saying the same thing.
+   *
+   * Placed first, because the reason a stage failed outranks a warning about
+   * coverage that did not cause it.
+   */
+  if (
+    conclusion === 'failure' &&
+    !messages.some((message) => message.severity === 'error')
+  ) {
+    messages.unshift(unreportedFailureMessage(stage, rawLogs, annotations));
   }
 
   return messages;

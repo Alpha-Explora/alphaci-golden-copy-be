@@ -141,6 +141,32 @@ export class CiReportResultsDto {
   security?: CiReportSecurityDto;
 }
 
+/**
+ * One error GitHub recorded against a failed job, with its location.
+ *
+ * Annotations are what a linter, compiler or test runner reports through the
+ * Checks API — the file, the line and the message. They are the difference
+ * between "the quality stage failed" and "src/app.ts:42 no-unused-vars".
+ */
+export class CiReportAnnotationDto {
+  @IsOptional()
+  @IsString()
+  path?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  line?: number;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  message?: string;
+}
+
 export class CiReportBodyDto {
   @IsString()
   repoFullName!: string;
@@ -170,4 +196,16 @@ export class CiReportBodyDto {
   @IsOptional()
   @IsString()
   rawLogs?: string;
+
+  /**
+   * The individual errors behind the failure, from the GitHub Checks API.
+   *
+   * Optional because a pipeline generated before this existed does not send
+   * them, and an older workflow must keep reporting rather than start failing
+   * validation.
+   */
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportAnnotationDto)
+  annotations?: CiReportAnnotationDto[];
 }

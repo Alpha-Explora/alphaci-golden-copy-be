@@ -73,6 +73,7 @@ export class CiReportsService {
         body.conclusion,
         body.results,
         body.rawLogs,
+        body.annotations ?? [],
       );
 
       await this.ciRunReportsRepository.upsert({
@@ -207,6 +208,44 @@ export class CiReportsService {
     }
   }
 
+  /**
+   * The stored messages, or a recomputed explanation when a failure has none.
+   *
+   * Messages are written at ingest, so a row is stuck with whatever the
+   * translator said at the time. Two things left failures with nothing:
+   * `translateResults` only explained a failure when `results` was empty — so a
+   * stage that reported passing coverage and failed elsewhere was silent — and
+   * on private repositories the workflow captured no failed job name at all,
+   * because the reporting job lacked `actions: read`.
+   *
+   * Both are fixed going forward, but history would stay mute, and only a new
+   * run would repair it. Recomputing here from the columns we already store
+   * repairs those rows on read, without a migration, and keeps the product
+   * honest if a future ingest ever writes an empty set again.
+   *
+   * Deliberately narrow: only when a FAILURE carries no messages. A successful
+   * stage with nothing to say is correct, not broken.
+   */
+  private explainedMessages(row: {
+    stage: 'access' | 'quality' | 'package';
+    status: CiRunStatus;
+    friendly_messages: FriendlyMessage[];
+    results: unknown;
+    raw_logs: string | null;
+  }): FriendlyMessage[] {
+    const stored = row.friendly_messages;
+    if (row.status !== 'failure' || (stored && stored.length > 0)) {
+      return stored ?? [];
+    }
+
+    return translateResults(
+      row.stage,
+      'failure',
+      (row.results ?? {}) as Parameters<typeof translateResults>[2],
+      row.raw_logs ?? undefined,
+    );
+  }
+
   private groupIntoRuns(
     rows: Awaited<ReturnType<CiRunReportsRepository['findRecentByRepo']>>,
   ): RunGroup[] {
@@ -257,7 +296,7 @@ export class CiReportsService {
         group.stages.set(row.stage, {
           stage: row.stage,
           status: row.status,
-          friendlyMessages: row.friendly_messages,
+          friendlyMessages: this.explainedMessages(row),
           githubRunUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
           updatedAt: row.updated_at,
           rawLogs: row.raw_logs,

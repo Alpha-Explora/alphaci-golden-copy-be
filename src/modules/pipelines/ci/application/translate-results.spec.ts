@@ -210,3 +210,124 @@ describe('translateResults', () => {
     });
   });
 });
+
+describe('translateResults — a failure is always explained', () => {
+  /*
+   * Regression: the exact row behind the empty QUALITY failure in the product.
+   * Coverage was reported and PASSED (100 >= 90), which satisfied the old
+   * `!hasResults` guard, so the failure path was skipped and nothing else
+   * matched. The stage rendered as failed with no explanation at all.
+   */
+  it('explains a failure whose results passed and say nothing about it', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      { coverage: { pct: 100, threshold: 90 } },
+      'Failed GitHub Actions job: sonar / SonarCloud Analysis',
+    );
+
+    const error = messages.find((message) => message.severity === 'error');
+    expect(error).toBeDefined();
+    expect(error?.items?.[0]?.label).toContain('SonarCloud Analysis');
+  });
+
+  it('leads with the failure, not the coverage warning', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      { coverage: { pct: 50, threshold: 90 } },
+      'Failed GitHub Actions job: build',
+    );
+
+    expect(messages[0]?.severity).toBe('error');
+    expect(messages.some((m) => m.title === 'Coverage below threshold')).toBe(
+      true,
+    );
+  });
+
+  it('does not add a vaguer duplicate when the results already explain it', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      { tests: { total: 10, passed: 8, failed: 2 } },
+      'Failed GitHub Actions job: test',
+    );
+
+    const errors = messages.filter((message) => message.severity === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.title).toBe('2 test(s) failed');
+  });
+
+  it('still explains a failure that reported nothing at all', () => {
+    const messages = translateResults('quality', 'failure', {});
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.severity).toBe('error');
+  });
+
+  it('stays quiet on success', () => {
+    const messages = translateResults('quality', 'success', {
+      coverage: { pct: 100, threshold: 90 },
+    });
+
+    expect(messages.some((message) => message.severity === 'error')).toBe(
+      false,
+    );
+  });
+});
+
+describe('translateResults — annotations name the actual errors', () => {
+  it('reports the file and line of each error, not just the job', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      {},
+      'Failed GitHub Actions job: lint',
+      [
+        { path: 'src/app.ts', line: 42, message: "'x' is never used" },
+        { path: 'src/main.ts', line: 7, message: 'Missing return type' },
+      ],
+    );
+
+    const error = messages.find((message) => message.severity === 'error');
+    expect(error?.items?.[0]).toEqual({
+      label: 'src/app.ts:42',
+      sub: "'x' is never used",
+    });
+    expect(error?.detail).toContain('2 errors');
+  });
+
+  it('prefers annotations over the job name, since they say what is wrong', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      { coverage: { pct: 100, threshold: 90 } },
+      'Failed GitHub Actions job: sonar / SonarCloud Analysis',
+      [{ path: 'src/a.ts', line: 1, message: 'Cognitive complexity too high' }],
+    );
+
+    const error = messages.find((message) => message.severity === 'error');
+    expect(error?.items?.[0]?.label).toBe('src/a.ts:1');
+  });
+
+  it('still works for a pipeline too old to send annotations', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      {},
+      'Failed GitHub Actions job: lint',
+    );
+
+    const error = messages.find((message) => message.severity === 'error');
+    expect(error?.items?.[0]?.label).toContain('lint');
+  });
+
+  it('falls back to the message when an annotation has no file', () => {
+    const messages = translateResults('quality', 'failure', {}, undefined, [
+      { message: 'Process completed with exit code 1' },
+    ]);
+
+    const error = messages.find((message) => message.severity === 'error');
+    expect(error?.items?.[0]?.label).toBe('Process completed with exit code 1');
+  });
+});

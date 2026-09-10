@@ -604,3 +604,83 @@ describe('buildStagedWorkflowBundle', () => {
     });
   });
 });
+
+describe('failure capture in the reporting job', () => {
+  const reportScript = (): string => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+    const quality = bundle.workflowFiles.find((file) =>
+      file.path.includes('10-alphaci-quality'),
+    );
+    const parsed = yaml.load(quality!.yaml) as {
+      jobs: Record<
+        string,
+        { permissions?: Record<string, string>; steps?: { run?: string }[] }
+      >;
+    };
+    return parsed.jobs['report-results']!.steps![0]!.run!;
+  };
+
+  /*
+   * The bug this exists to prevent: the capture worked on every public test
+   * repo and on none of the private ones, because `permissions:` sets every
+   * unlisted scope to none and the jobs API needs `actions: read` unless the
+   * repository is public. `|| true` swallowed the 401, so the product recorded
+   * a failure with nothing said about it — on private repos, which is what
+   * real customers use.
+   */
+  it('grants the reporting job the scopes its API calls need', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+    const quality = bundle.workflowFiles.find((file) =>
+      file.path.includes('10-alphaci-quality'),
+    );
+    const parsed = yaml.load(quality!.yaml) as {
+      jobs: Record<string, { permissions?: Record<string, string> }>;
+    };
+
+    expect(parsed.jobs['report-results']!.permissions).toEqual({
+      contents: 'read',
+      actions: 'read',
+      checks: 'read',
+    });
+  });
+
+  it('keeps jq string interpolation intact through the JS string literal', () => {
+    // A single backslash would be eaten by JS, leaving jq to emit the literal
+    // text "($job.name)" instead of the job's name. Only the emitted script
+    // shows whether the escaping survived.
+    const script = reportScript();
+
+    expect(script).toContain('\\($job.name)');
+    expect(script).not.toContain('"Failed GitHub Actions job: ($job.name)"');
+  });
+
+  it('names the step that failed, not just the job', () => {
+    expect(reportScript()).toContain('$job.steps[]?');
+  });
+
+  it('collects annotations and sends them with the report', () => {
+    const script = reportScript();
+
+    expect(script).toContain('/check-runs/$JOB_ID/annotations');
+    expect(script).toContain('annotations:$annotations');
+    expect(script).toContain('--argjson annotations "$ANNOTATIONS"');
+  });
+
+  it('keeps the shell line continuations that build the payload', () => {
+    // One trailing backslash continues the jq command onto the next line.
+    // Two would end it, and jq would be handed a truncated argument list.
+    const line = reportScript()
+      .split('\n')
+      .find((l) => l.includes('--argjson annotations'));
+
+    expect(line).toBeDefined();
+    expect(line!.endsWith('\\')).toBe(true);
+    expect(line!.endsWith('\\\\')).toBe(false);
+  });
+});
