@@ -326,25 +326,25 @@ function dockerignore(): string {
   ].join('\n');
 }
 
-function sonarProperties(
-  serviceName: string,
-  projectName: string,
-  sonarProjectKey?: string,
-): string {
-  return [
-    `sonar.projectKey=${sonarProjectKey ?? serviceName}`,
-    `sonar.projectName=${serviceName}`,
-    'sonar.sources=src',
-    'sonar.tests=tests',
-    // Written by ReportGenerator in dotnet-test.yml, from the merged report.
-    'sonar.cs.opencover.reportsPaths=coverage/coverage.cobertura.xml',
-    `sonar.coverage.exclusions=tests/**,**/${projectName}.Tests/**`,
-    '',
-    '# SonarCloud analyses C# through the SonarScanner for .NET, not the generic',
-    '# CLI. Coverage is reported from the path above; full analysis needs',
-    '# `dotnet sonarscanner begin/end` wrapped around the build.',
-  ].join('\n');
-}
+/*
+ * `sonar-project.properties` is deliberately NOT scaffolded for .NET.
+ *
+ * SonarScanner for .NET refuses to start when one is present:
+ *
+ *     sonar-project.properties files are not understood by the SonarScanner
+ *     for .NET. Remove those files from the following folders: ...
+ *     Post-processing failed. Exit code: 1
+ *
+ * That failed the quality stage of every .NET project this scaffold produced.
+ * Node needs the file because the generic CLI reads its configuration from it
+ * and has to be told how to separate overlapping sources and tests; .NET is
+ * configured entirely on the command line by sonarcloud-dotnet-scan.yml, which
+ * passes /k:, /o:, sonar.sources, sonar.tests, the coverage paths and the
+ * quality-gate flag. Every value the file carried was already being sent.
+ *
+ * The duplication was the tell: configuration that exists in two places is
+ * usually wrong in one of them.
+ */
 
 function readmeEnvExample(): string {
   return [
@@ -360,14 +360,12 @@ export interface DotnetScaffoldOptions {
   serviceName: string;
   runtimeVersion: string;
   includeDocker: boolean;
-  sonarProjectKey?: string | undefined;
 }
 
 export function buildDotnetStandaloneScaffold(
   options: DotnetScaffoldOptions,
 ): ScaffoldFile[] {
-  const { serviceName, runtimeVersion, includeDocker, sonarProjectKey } =
-    options;
+  const { serviceName, runtimeVersion, includeDocker } = options;
   const projectName = toDotnetProjectName(serviceName);
   const targetFramework = toTargetFramework(runtimeVersion);
 
@@ -395,10 +393,6 @@ export function buildDotnetStandaloneScaffold(
     {
       path: `tests/${projectName}.Tests/HealthTests.cs`,
       content: healthTests(projectName),
-    },
-    {
-      path: 'sonar-project.properties',
-      content: sonarProperties(serviceName, projectName, sonarProjectKey),
     },
     { path: '.env.example', content: readmeEnvExample() },
   ];

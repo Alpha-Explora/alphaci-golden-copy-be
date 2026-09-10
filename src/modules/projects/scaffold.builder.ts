@@ -842,11 +842,13 @@ function buildStandaloneScaffold(
   // tsconfig, jest and eslint. A stack on another toolchain builds its own tree
   // rather than adding branches through this function.
   if (stack === 'dotnet') {
+    // No sonarProjectKey: .NET gets its key from sonarcloud-dotnet-scan.yml's
+    // `/k:` argument, and the properties file that used to carry it is exactly
+    // what SonarScanner for .NET refuses to start with.
     return buildDotnetStandaloneScaffold({
       serviceName,
       runtimeVersion: runtimeVersion ?? '10.0.x',
       includeDocker,
-      sonarProjectKey,
     });
   }
   const packageName = toPackageName(serviceName);
