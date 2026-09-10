@@ -745,3 +745,57 @@ describe('test results in the reporting payload', () => {
     expect(run).toContain('"coverage":{"pct":$pct,"threshold":$threshold}');
   });
 });
+
+describe('annotation capture keeps the real diagnostics', () => {
+  const captureLine = (): string => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('dotnet'), {
+      templateId: 'dotnet-service-pipeline',
+      serviceName: 'orders-api',
+    });
+    const quality = bundle.workflowFiles.find((file) =>
+      file.path.includes('10-alphaci-quality'),
+    );
+    const parsed = yaml.load(quality!.yaml) as {
+      jobs: Record<string, { steps?: { run?: string }[] }>;
+    };
+    const run = parsed.jobs['report-results']!.steps![0]!.run!;
+    // The jq program itself, not the surrounding comments — which mention the
+    // old filter by name in explaining why it was wrong.
+    return run.split('\n').find((line) => line.includes('unique_by'))!;
+  };
+
+  /*
+   * Verified against the live annotations of the failing SonarCloud job on
+   * Alphaexplora-Sandbox/testapp1234 (check run 102388067502): nine raw
+   * annotations reduce to the four real diagnostics.
+   *
+   * The previous filter kept `annotation_level == "failure"` only, which is
+   * the one annotation that says nothing — the runner's own "Process completed
+   * with exit code 1", whose path is the workflow file. Every diagnostic
+   * naming a real problem arrives at WARNING level, because that is how Roslyn
+   * analyzers and formatters report.
+   */
+  it('does not filter on annotation_level, which dropped every real one', () => {
+    expect(captureLine()).not.toContain('annotation_level == "failure"');
+  });
+
+  it('drops annotations pointing at the workflow file rather than the code', () => {
+    expect(captureLine()).toContain('startswith(".github")');
+  });
+
+  it("drops the runner's own exit-code notice", () => {
+    expect(captureLine()).toContain('Process completed with exit code');
+  });
+
+  it('deduplicates, since a second build pass repeats every diagnostic', () => {
+    expect(captureLine()).toContain('unique_by([.path, .line, .message])');
+  });
+
+  it('keeps the location, which is the point of an annotation', () => {
+    const line = captureLine();
+
+    expect(line).toContain('path: .path');
+    expect(line).toContain('line: .start_line');
+    expect(line).toContain('message: .message');
+  });
+});
