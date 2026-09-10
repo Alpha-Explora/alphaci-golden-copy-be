@@ -219,7 +219,11 @@ export class ProjectWorkflowsService {
     await this.assertWithinQuota(userId);
 
     const row = await this.loadOwnedProject(projectId, userId);
-    const token = await this.resolveProvisioningToken(userId, oauthAccessToken);
+    const token = await this.resolveProvisioningToken(
+      userId,
+      oauthAccessToken,
+      row.repo_full_name,
+    );
     const [owner, repo] = this.parseRepoFullName(row.repo_full_name);
     const preview = await this.previewWorkflowSettings(
       projectId,
@@ -386,17 +390,39 @@ export class ProjectWorkflowsService {
     await this.usageQuotaService?.assertWithinLimit(userId, 'workflow_prs', 1);
   }
 
+  /**
+   * A token for operating on a repository that already exists.
+   *
+   * The INSTALLATION token comes first here, which is the opposite of
+   * `ProvisioningTokenService.resolveProvisioningToken`. That order exists
+   * because creating a repository needs a user token — `POST /user/repos` is
+   * not available to an installation. Nothing on this path creates anything:
+   * it reads the repo, branches, commits files and opens a pull request, all
+   * of which an installation can do.
+   *
+   * Preferring OAuth here made a stale session fatal. A session's OAuth token
+   * expires, and this method returned it unconditionally, so the request died
+   * on `GitHub repo lookup failed (401): Bad credentials` while a working
+   * credential sat unused. An installation token is minted per call and so
+   * cannot be stale, which is exactly why it belongs first for existing-repo
+   * work. OAuth remains the fallback for a project whose repository is outside
+   * the app installation.
+   */
   private async resolveProvisioningToken(
     userId: string,
     oauthAccessToken: string | null | undefined,
+    repoFullName: string,
   ): Promise<string> {
-    if (oauthAccessToken) {
-      return oauthAccessToken;
-    }
     const installationToken =
-      await this.githubService.getInstallationAccessTokenForUser(userId);
+      await this.githubService.getInstallationAccessTokenForUserRepo(
+        userId,
+        repoFullName,
+      );
     if (installationToken) {
       return installationToken;
+    }
+    if (oauthAccessToken) {
+      return oauthAccessToken;
     }
     throw new UnauthorizedException(
       'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
