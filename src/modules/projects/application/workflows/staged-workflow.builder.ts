@@ -980,6 +980,9 @@ function reportingJob(
    * which is not the same question as "did this stage do anything", and the
    * gap between the two is what produced 24 package rows reporting a success
    * with an empty payload. Naming the work explicitly closes it.
+   *
+   * Defaults to `needs` for a stage whose needs ARE its work, which is the
+   * access stage: the gate is the only thing it does.
    */
   const workJobIds = opts?.workJobIds ?? needs;
   const workRanExpr = workJobIds
@@ -1058,13 +1061,15 @@ function reportingJob(
     '  # through to "success" and the platform recorded a package stage that',
     '  # built nothing and deployed nothing as a green deploy.',
     '  #',
-    '  # Reporting nothing is the honest answer, and it is also the useful one:',
-    '  # a stage with no report is resolved on read as `blocked`, naming the',
-    '  # earlier stage that stopped it. Inventing a `skipped` status would need',
-    '  # a migration to say something the reader can already work out.',
+    '  # Reporting nothing is the honest answer. When an earlier stage failed,',
+    '  # it is also the complete one: a stage with no report resolves on read',
+    '  # as `blocked`, naming the stage that stopped it. When the gate passed',
+    '  # and only the branch scope skipped the work, the reader currently sees',
+    '  # `pending`, which is imprecise but not a lie — unlike the `success` it',
+    '  # replaces. Saying `skipped` outright would need a migration.',
     '  echo "This stage did no work, so there is nothing to report."',
     '  echo "Either the stage before it did not pass, or this branch is not one"',
-    '  echo "this stage builds. The platform will show the stage as blocked."',
+    '  echo "this stage builds."',
     '  exit 0',
     'else',
     '  CONCLUSION="success"',
