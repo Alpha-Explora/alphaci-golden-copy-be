@@ -97,9 +97,20 @@ describe('dotnet scaffold', () => {
     expect(defaultIncludeDocker('dotnet')).toBe(true);
   });
 
-  it('points Sonar at the merged report the pipeline writes', () => {
-    expect(contentOf('sonar-project.properties')).toContain(
-      'coverage/coverage.cobertura.xml',
-    );
+  /*
+   * The inverse of what this used to assert, because the file it checked for
+   * was breaking every .NET pipeline it shipped in.
+   *
+   * SonarScanner for .NET refuses to start when a sonar-project.properties is
+   * present — "files are not understood by the SonarScanner for .NET" — and
+   * fails after the build. C# is configured entirely on the command line by
+   * sonarcloud-dotnet-scan.yml, which passes the project key, organisation,
+   * sources, tests, coverage paths and quality gate. The file only duplicated
+   * those and then refused the scan.
+   */
+  it('does not write a sonar-project.properties, which .NET cannot scan with', () => {
+    const paths = files().map((file) => file.path);
+
+    expect(paths).not.toContain('sonar-project.properties');
   });
 });
