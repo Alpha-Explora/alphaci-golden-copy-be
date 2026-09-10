@@ -833,3 +833,125 @@ describe('annotation capture keeps the real diagnostics', () => {
     expect(line).toContain('message: .message');
   });
 });
+
+/*
+ * A stage that did no work must report nothing at all.
+ *
+ * These exist because of 24 rows. Every `package` report the platform had ever
+ * stored said `success` with an empty payload, and the quality stage that gates
+ * it had never once passed — so the package stage had never legitimately run,
+ * and every one of those successes was invented. Two skips produced them:
+ * the access gate skipping when the previous stage failed, and `build` skipping
+ * on a pull request, whose head branch is the PR branch rather than dev.
+ *
+ * `skipped` is neither `failure` nor `cancelled`, so both fell through to the
+ * final `else` and were graded a success. Reporting nothing is the honest
+ * answer and also the useful one: a stage with no report resolves to `blocked`.
+ */
+describe('a stage that never ran reports nothing', () => {
+  const stageStep = (
+    pathFragment: string,
+  ): { run: string; env: Record<string, string> } => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('dotnet'), {
+      templateId: 'dotnet-service-pipeline',
+      serviceName: 'orders-api',
+    });
+    const file = bundle.workflowFiles.find((candidate) =>
+      candidate.path.includes(pathFragment),
+    );
+    const parsed = yaml.load(file!.yaml) as {
+      jobs: Record<
+        string,
+        { steps?: { run?: string; env?: Record<string, string> }[] }
+      >;
+    };
+    const step = parsed.jobs['report-results']!.steps![0]!;
+    return { run: step.run!, env: step.env ?? {} };
+  };
+
+  /*
+   * The precise fix. `contains(needs.*.result, 'success')` spans every job in
+   * `needs`, and `validate-access` is in every stage's needs — so the signal
+   * went true the moment the gate passed, which says nothing about whether the
+   * stage built anything. Reading `build` alone is the whole difference.
+   */
+  it('asks whether the package stage built, not whether its gate passed', () => {
+    const { env } = stageStep('20-alphaci-package');
+
+    expect(env['STAGE_WORK_RAN']).toBe(
+      "${{ needs.build.result != 'skipped' }}",
+    );
+  });
+
+  it('ignores the gate, the policy job and Sonar in the quality stage', () => {
+    const { env } = stageStep('10-alphaci-quality');
+
+    // Sonar is secret-gated and skips wherever it is unconfigured; the policy
+    // job and the access gate run regardless of whether any check does. None
+    // of the three can stand in for "the quality stage ran".
+    expect(env['STAGE_WORK_RAN']).not.toContain('validate-access');
+    expect(env['STAGE_WORK_RAN']).not.toContain('branch-policy');
+    expect(env['STAGE_WORK_RAN']).not.toContain('sonar');
+    expect(env['STAGE_WORK_RAN']).toContain(
+      "needs.dotnet-tests.result != 'skipped'",
+    );
+  });
+
+  it('gives every stage the guard, so none can report a phantom', () => {
+    for (const fragment of [
+      '00-alphaci-access',
+      '10-alphaci-quality',
+      '20-alphaci-package',
+    ]) {
+      const { run, env } = stageStep(fragment);
+
+      expect(env['STAGE_WORK_RAN']).toBeDefined();
+      expect(run).toContain('"$STAGE_WORK_RAN" != "true"');
+      // The old signal graded a skip as a success. It must be gone, not
+      // merely unread — an unused env var invites a future reader to key on it.
+      expect(env['STAGE_SUCCEEDED']).toBeUndefined();
+      expect(run).not.toContain('STAGE_SUCCEEDED');
+    }
+  });
+
+  /*
+   * Order is the correctness condition, not a style choice.
+   *
+   * A failure has to be tested before the guard: when the access gate FAILS,
+   * the work skips too, so a guard placed first would swallow a real failure
+   * and report nothing. Testing failure and cancellation first means the guard
+   * only ever catches the case where nothing went wrong because nothing ran.
+   */
+  it('lets a real failure outrank the guard', () => {
+    const lines = stageStep('20-alphaci-package')
+      .run.split('\n')
+      .map((line) => line.trim());
+
+    const failed = lines.findIndex((line) =>
+      line.startsWith('if [ "$STAGE_FAILED"'),
+    );
+    const cancelled = lines.findIndex((line) =>
+      line.startsWith('elif [ "$STAGE_CANCELLED"'),
+    );
+    const workRan = lines.findIndex((line) =>
+      line.startsWith('elif [ "$STAGE_WORK_RAN"'),
+    );
+
+    expect(failed).toBeGreaterThanOrEqual(0);
+    expect(cancelled).toBeGreaterThan(failed);
+    expect(workRan).toBeGreaterThan(cancelled);
+  });
+
+  it('leaves before it can send anything', () => {
+    const run = stageStep('20-alphaci-package').run;
+
+    const guard = run.indexOf('"$STAGE_WORK_RAN" != "true"');
+    const exit = run.indexOf('exit 0');
+    const firstRequest = run.indexOf('curl');
+
+    expect(guard).toBeGreaterThan(-1);
+    expect(exit).toBeGreaterThan(guard);
+    // Nothing reaches the network between the guard and its exit.
+    expect(firstRequest).toBeGreaterThan(exit);
+  });
+});

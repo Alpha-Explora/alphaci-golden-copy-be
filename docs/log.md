@@ -1,5 +1,12 @@
 # Directory Update Log
 
+## 2026-09-11
+
+* **Update**: Stopped the pipeline reporting a stage that never ran as a success. The stage conclusion was derived from `needs.*.result` by testing for `failure` and then `cancelled`, and `skipped` is neither, so a stage whose jobs all skipped fell through to the final `else`. Every `package` report the platform had ever stored — 24 of 24 — said `success` with an empty payload, while the quality stage gating it had never once passed, so not one of those successes described a build that happened. The stage now reports nothing when its work did not run, which resolves on read as `blocked` against the stage that stopped it.
+* **Update**: Made "did this stage run" read the stage's own work rather than any job in `needs`. `validate-access` is in every stage's `needs`, so a signal spanning all of them went true as soon as the gate passed — which also graded a pull request into `dev` a successful package, because `build` is branch-scoped and skips when the head branch is the PR branch. The package stage now reads `build`, and the quality stage reads its toolchain's checks, excluding the gate, the branch-policy job and the secret-gated Sonar job.
+* **Creation**: Added the .NET secret, licence and SBOM quality slots, calling `gitleaks-scan.yml`, `dotnet-license-scan.yml` and `dotnet-sbom.yml`. All three key their strictness off the single `fail-on-warning` branch-policy output rather than inventing a per-gate policy, so a branch is not strict about licences and lax about secrets for reasons nobody remembers.
+* **Update**: Gave the .NET scaffold the seam its test libraries need. `NSubstitute` and `NetArchTest.Rules` were declared as package references with nothing exercising them, and the architecture test as first written both failed to compile against a global-namespace `Program` and asserted over an empty type set, which NetArchTest reports as a pass. The scaffold now ships an `IServiceStatus` domain seam, a substituted-dependency test, and an architecture test guarded against a vacuous match.
+
 ## 2026-09-08
 
 * **Update**: Gave frontend project types a default hosting target. A backend created without touching the wizard's hosting step got Render automatically; a frontend got nothing, so its pipeline built, tested and deployed nowhere. `vercel` was already named the default frontend provider but nothing read it.

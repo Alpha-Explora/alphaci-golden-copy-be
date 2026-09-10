@@ -420,7 +420,12 @@ function buildQualityWorkflowFile(
             ...toolchain.qualityJobIds,
             'sonar',
           ],
-          { testJobId: toolchain.testJobId },
+          {
+            testJobId: toolchain.testJobId,
+            // Sonar is secret-gated and skips on repositories that have not
+            // configured it, so it cannot stand in for "the stage ran".
+            workJobIds: toolchain.qualityJobIds,
+          },
         ),
       },
     }),
@@ -485,11 +490,15 @@ function buildPackageWorkflowFile(
           ctx.centralWorkflowRef,
           deploymentPlan.promotionNeeds.uat,
         ),
-        'report-results': reportingJob('package', [
-          'validate-access',
-          'build',
-          ...deploymentPlan.jobIds,
-        ]),
+        'report-results': reportingJob(
+          'package',
+          ['validate-access', 'build', ...deploymentPlan.jobIds],
+          {
+            // The deploy jobs are branch-scoped and skip by design, so `build`
+            // alone decides whether this stage packaged anything.
+            workJobIds: ['build'],
+          },
+        ),
       },
     }),
   };
@@ -957,10 +966,25 @@ function promotionJob(
 function reportingJob(
   stage: WorkflowStage,
   needs: string[],
-  opts?: { testJobId?: string },
+  opts?: { testJobId?: string; workJobIds?: string[] },
 ) {
   const isQuality = stage === 'quality';
   const testJobId = opts?.testJobId;
+
+  /*
+   * The jobs that ARE the stage, as opposed to the ones that let it start.
+   *
+   * Every stage needs `validate-access`, and in the two later stages it is
+   * plumbing: it re-checks the caller and then hands over to the work. Asking
+   * "did any job succeed?" therefore answered yes as soon as that gate passed,
+   * which is not the same question as "did this stage do anything", and the
+   * gap between the two is what produced 24 package rows reporting a success
+   * with an empty payload. Naming the work explicitly closes it.
+   */
+  const workJobIds = opts?.workJobIds ?? needs;
+  const workRanExpr = workJobIds
+    .map((jobId) => `needs.${jobId}.result != 'skipped'`)
+    .join(' || ');
 
   // env vars injected into the step — NO ${{ }} inside the run: script
   const stepEnv: Record<string, string> = {
@@ -973,6 +997,14 @@ function reportingJob(
     GITHUB_TOKEN: '${{ github.token }}',
     STAGE_FAILED: "${{ contains(needs.*.result, 'failure') }}",
     STAGE_CANCELLED: "${{ contains(needs.*.result, 'cancelled') }}",
+    /*
+     * Whether this stage's actual work ran, rather than whether any job did.
+     *
+     * `skipped` is neither failure nor cancelled, so without this a stage whose
+     * work never started fell through to "success" — see the conclusion block
+     * below for what that produced.
+     */
+    STAGE_WORK_RAN: `\${{ ${workRanExpr} }}`,
   };
 
   if (isQuality && testJobId) {
@@ -1015,6 +1047,25 @@ function reportingJob(
     '  CONCLUSION="failure"',
     'elif [ "$STAGE_CANCELLED" = "true" ]; then',
     '  CONCLUSION="cancelled"',
+    'elif [ "$STAGE_WORK_RAN" != "true" ]; then',
+    '  # THE WORK OF THIS STAGE NEVER RAN.',
+    '  #',
+    '  # Two ways to get here. The stage before it did not pass, so the access',
+    '  # gate skipped and everything needing it skipped in turn; or the gate',
+    '  # passed but the work is branch-scoped and this branch is not one it',
+    '  # builds — a pull request into dev, whose head branch is the PR branch.',
+    '  # `skipped` is neither failure nor cancelled, so this used to fall',
+    '  # through to "success" and the platform recorded a package stage that',
+    '  # built nothing and deployed nothing as a green deploy.',
+    '  #',
+    '  # Reporting nothing is the honest answer, and it is also the useful one:',
+    '  # a stage with no report is resolved on read as `blocked`, naming the',
+    '  # earlier stage that stopped it. Inventing a `skipped` status would need',
+    '  # a migration to say something the reader can already work out.',
+    '  echo "This stage did no work, so there is nothing to report."',
+    '  echo "Either the stage before it did not pass, or this branch is not one"',
+    '  echo "this stage builds. The platform will show the stage as blocked."',
+    '  exit 0',
     'else',
     '  CONCLUSION="success"',
     'fi',
