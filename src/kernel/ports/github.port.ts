@@ -128,6 +128,40 @@ export interface GitHubPullRequestSummary {
   changedFiles: number | null;
 }
 
+/**
+ * One pull request in detail, including whether GitHub will let it merge.
+ *
+ * `mergeableState` is the field that matters and the one a list cannot give:
+ * `blocked` means a protection rule stands in the way (a missing review, a
+ * failing required check), `dirty` means the branch conflicts, `clean` means
+ * it will merge. Surfacing it is what lets the product explain a refusal
+ * instead of only reporting one.
+ */
+export interface GitHubPullRequestDetail extends GitHubPullRequestSummary {
+  /** GitHub's own verdict: null while it is still computing one. */
+  mergeable: boolean | null;
+  mergeableState: string;
+  headSha: string;
+  body: string | null;
+}
+
+/** One check GitHub ran against a pull request's head commit. */
+export interface GitHubPullRequestCheck {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  detailsUrl: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+/** The outcome of asking GitHub to merge. */
+export interface GitHubMergeResult {
+  merged: boolean;
+  message: string;
+  sha: string | null;
+}
+
 export interface GitHubPullRequestFile {
   filename: string;
   status: string;
@@ -301,6 +335,22 @@ export interface GithubProjectPort {
     pullNumber: number,
     limit?: number,
   ): Promise<GitHubPullRequestFile[]>;
+  getPullRequest(
+    accessToken: string,
+    repoFullName: string,
+    pullNumber: number,
+  ): Promise<GitHubPullRequestDetail | null>;
+  getPullRequestChecks(
+    accessToken: string,
+    repoFullName: string,
+    headSha: string,
+  ): Promise<GitHubPullRequestCheck[]>;
+  mergePullRequest(
+    accessToken: string,
+    repoFullName: string,
+    pullNumber: number,
+    options?: { method?: 'merge' | 'squash' | 'rebase'; sha?: string },
+  ): Promise<GitHubMergeResult>;
 }
 
 export interface GithubTeamMembershipChangedEvent {

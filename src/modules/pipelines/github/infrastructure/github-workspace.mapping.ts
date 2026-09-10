@@ -3,6 +3,7 @@ import type {
   GitHubContentEntryType,
   GitHubContentListing,
   GitHubPullRequestFile,
+  GitHubPullRequestDetail,
   GitHubPullRequestSummary,
 } from './github-workspace.types';
 
@@ -103,8 +104,11 @@ export interface GitHubPullRequestRow {
   draft?: boolean;
   merged_at?: string | null;
   html_url?: string;
-  head?: { ref?: string };
+  head?: { ref?: string; sha?: string };
   base?: { ref?: string };
+  body?: string | null;
+  mergeable?: boolean | null;
+  mergeable_state?: string;
   user?: { login?: string; avatar_url?: string };
   created_at?: string;
   updated_at?: string;
@@ -141,6 +145,27 @@ export function toPullRequestSummary(
     additions: pr.additions ?? null,
     deletions: pr.deletions ?? null,
     changedFiles: pr.changed_files ?? null,
+  };
+}
+
+/**
+ * One pull request in detail.
+ *
+ * `mergeable_state` is why this exists separately from the summary: the list
+ * endpoint does not return it, and it is the field that explains a refusal.
+ * `blocked` is a protection rule, `dirty` is a conflict, `clean` will merge.
+ * GitHub computes it asynchronously and answers `unknown` until it has, which
+ * is passed through rather than guessed at.
+ */
+export function toPullRequestDetail(
+  pr: GitHubPullRequestRow,
+): GitHubPullRequestDetail {
+  return {
+    ...toPullRequestSummary(pr),
+    mergeable: pr.mergeable ?? null,
+    mergeableState: pr.mergeable_state ?? 'unknown',
+    headSha: pr.head?.sha ?? '',
+    body: pr.body ?? null,
   };
 }
 

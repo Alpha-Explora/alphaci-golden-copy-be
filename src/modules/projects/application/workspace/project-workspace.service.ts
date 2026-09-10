@@ -9,6 +9,8 @@ import {
 import type {
   GitHubBranchSummary,
   GitHubContentListing,
+  GitHubPullRequestCheck,
+  GitHubPullRequestDetail,
   GitHubPullRequestFile,
   GitHubPullRequestSummary,
   GitHubRunJob,
@@ -74,6 +76,33 @@ export interface ProjectRunFailureLogResponse {
   lines?: string[];
   truncated?: boolean;
   foundErrorMarker?: boolean;
+}
+
+/**
+ * One pull request, its checks, and whether the system may merge it.
+ *
+ * Assembled here rather than in the browser because it takes three GitHub
+ * reads and a token the browser must never hold.
+ */
+export interface ProjectPullRequestDetailResponse {
+  repoFullName: string;
+  pullRequest: GitHubPullRequestDetail;
+  checks: GitHubPullRequestCheck[];
+  /**
+   * True when the viewer opened the pull request themselves.
+   *
+   * GitHub refuses to let anyone approve their own pull request, so the UI
+   * must not offer an approve action that can only fail. Computed server-side
+   * because only the server knows which GitHub login the session belongs to.
+   */
+  viewerIsAuthor: boolean;
+}
+
+/** What happened when the system asked GitHub to merge. */
+export interface ProjectPullRequestMergeResponse {
+  merged: boolean;
+  message: string;
+  sha: string | null;
 }
 
 @Injectable()
@@ -278,6 +307,93 @@ export class ProjectWorkspaceService {
     }
 
     return { available: true, content: log.content, truncated: log.truncated };
+  }
+
+  /**
+   * One pull request with everything needed to decide about it.
+   *
+   * This exists so a person does not have to leave for GitHub to answer "is it
+   * safe to merge": the checks and the mergeable state are the two things that
+   * question turns on, and neither is in the list response.
+   */
+  async getPullRequestDetail(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+    pullNumber: number,
+    viewerLogin: string | null,
+  ): Promise<ProjectPullRequestDetailResponse> {
+    const { repoFullName, token } = await this.context(
+      projectId,
+      userId,
+      oauthToken,
+    );
+
+    const pullRequest = await this.githubService.getPullRequest(
+      token,
+      repoFullName,
+      pullNumber,
+    );
+
+    if (!pullRequest) {
+      throw new NotFoundException(
+        `Pull request #${String(pullNumber)} was not found in ${repoFullName}.`,
+      );
+    }
+
+    // No head sha means GitHub gave us an incomplete row; ask for no checks
+    // rather than for the checks of an empty ref.
+    const checks = pullRequest.headSha
+      ? await this.githubService.getPullRequestChecks(
+          token,
+          repoFullName,
+          pullRequest.headSha,
+        )
+      : [];
+
+    return {
+      repoFullName,
+      pullRequest,
+      checks,
+      // Taken from the session rather than from GitHub: an installation token
+      // identifies the app, not the person holding it, so asking GitHub who
+      // "we" are would answer the bot and never match the author.
+      viewerIsAuthor:
+        viewerLogin != null &&
+        pullRequest.author != null &&
+        viewerLogin === pullRequest.author,
+    };
+  }
+
+  /**
+   * Merge a pull request from inside the product.
+   *
+   * A refusal comes back as `merged: false` with GitHub's own sentence, rather
+   * than as an error: "at least 1 approving review is required" is an answer,
+   * and the point of merging here instead of on GitHub is that the product
+   * repeats what GitHub said rather than a shrug.
+   */
+  async mergePullRequest(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+    pullNumber: number,
+    method: 'merge' | 'squash' | 'rebase',
+  ): Promise<ProjectPullRequestMergeResponse> {
+    const { repoFullName, token } = await this.context(
+      projectId,
+      userId,
+      oauthToken,
+    );
+
+    return this.githubService.mergePullRequest(
+      token,
+      repoFullName,
+      pullNumber,
+      {
+        method,
+      },
+    );
   }
 
   async listPullRequests(

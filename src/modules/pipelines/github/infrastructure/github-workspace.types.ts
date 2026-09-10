@@ -106,6 +106,37 @@ export interface GitHubPullRequestSummary {
   changedFiles: number | null;
 }
 
+/**
+ * One pull request in detail.
+ *
+ * Separate from the summary because the LIST endpoint does not return
+ * `mergeable_state`, and that is the field which explains a refusal to merge:
+ * `blocked` is a protection rule, `dirty` a conflict, `clean` will merge.
+ */
+export interface GitHubPullRequestDetail extends GitHubPullRequestSummary {
+  mergeable: boolean | null;
+  mergeableState: string;
+  headSha: string;
+  body: string | null;
+}
+
+/** One check GitHub ran against a pull request's head commit. */
+export interface GitHubPullRequestCheck {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  detailsUrl: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+/** The outcome of asking GitHub to merge. */
+export interface GitHubMergeResult {
+  merged: boolean;
+  message: string;
+  sha: string | null;
+}
+
 export interface GitHubPullRequestFile {
   filename: string;
   status: string;
