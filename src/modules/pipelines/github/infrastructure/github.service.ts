@@ -41,6 +41,7 @@ import {
 import {
   mapContentEntries,
   toFileListing,
+  toPullRequestDetail,
   toPullRequestFile,
   toPullRequestSummary,
   type GitHubContentsRow,
@@ -50,6 +51,9 @@ import {
 import type {
   GitHubBranchSummary,
   GitHubContentListing,
+  GitHubMergeResult,
+  GitHubPullRequestCheck,
+  GitHubPullRequestDetail,
   GitHubPullRequestFile,
   GitHubPullRequestSummary,
   GitHubRunJob,
@@ -1627,6 +1631,169 @@ export class GithubService
     }
 
     return { number: payload.number, htmlUrl: payload.html_url };
+  }
+
+  /**
+   * One pull request in detail, including whether GitHub will let it merge.
+   *
+   * The list endpoint omits `mergeable_state`, and that is the field the
+   * product needs: it is the difference between "cannot merge" and "cannot
+   * merge because a review is required". GitHub computes it asynchronously and
+   * answers `unknown` until it has, which is passed through rather than
+   * guessed at.
+   *
+   * A missing pull request is null, not an error: a number typed into a URL is
+   * a normal way to arrive at one that does not exist.
+   */
+  async getPullRequest(
+    accessToken: string,
+    repoFullName: string,
+    pullNumber: number,
+  ): Promise<GitHubPullRequestDetail | null> {
+    const payload = await this.http.workspaceGet<GitHubPullRequestRow>(
+      `https://api.github.com/repos/${repoFullName}/pulls/${String(pullNumber)}`,
+      accessToken,
+      'pull request detail',
+    );
+
+    return payload ? toPullRequestDetail(payload) : null;
+  }
+
+  /**
+   * The checks GitHub ran against a pull request's head commit.
+   *
+   * Both APIs are read, because they report different things and a pipeline
+   * can use either: check RUNS come from GitHub Actions and apps, while the
+   * combined STATUS covers older integrations that post commit statuses. Asking
+   * only for check runs would show a green pull request whose required status
+   * context had failed.
+   */
+  async getPullRequestChecks(
+    accessToken: string,
+    repoFullName: string,
+    headSha: string,
+  ): Promise<GitHubPullRequestCheck[]> {
+    const runs = await this.http.workspaceGet<{
+      check_runs?: {
+        name?: string;
+        status?: string;
+        conclusion?: string | null;
+        details_url?: string | null;
+        started_at?: string | null;
+        completed_at?: string | null;
+      }[];
+    }>(
+      `https://api.github.com/repos/${repoFullName}/commits/${headSha}/check-runs?per_page=50`,
+      accessToken,
+      'pull request check runs',
+    );
+
+    const checks: GitHubPullRequestCheck[] = (runs?.check_runs ?? []).map(
+      (run) => ({
+        name: run.name ?? 'check',
+        status: run.status ?? 'unknown',
+        conclusion: run.conclusion ?? null,
+        detailsUrl: run.details_url ?? null,
+        startedAt: run.started_at ?? null,
+        completedAt: run.completed_at ?? null,
+      }),
+    );
+
+    const combined = await this.http.workspaceGet<{
+      statuses?: {
+        context?: string;
+        state?: string;
+        target_url?: string | null;
+        created_at?: string | null;
+        updated_at?: string | null;
+      }[];
+    }>(
+      `https://api.github.com/repos/${repoFullName}/commits/${headSha}/status`,
+      accessToken,
+      'pull request commit status',
+    );
+
+    for (const status of combined?.statuses ?? []) {
+      // A commit status has no separate status/conclusion: `state` is both.
+      // Mapped onto the same shape so the UI has one list to render.
+      const state = status.state ?? 'unknown';
+      checks.push({
+        name: status.context ?? 'status',
+        status: state === 'pending' ? 'in_progress' : 'completed',
+        conclusion: state === 'pending' ? null : state,
+        detailsUrl: status.target_url ?? null,
+        startedAt: status.created_at ?? null,
+        completedAt: status.updated_at ?? null,
+      });
+    }
+
+    return checks;
+  }
+
+  /**
+   * Ask GitHub to merge a pull request.
+   *
+   * A refusal is returned, not thrown, when GitHub explains it: 405 is
+   * "not mergeable" (a protection rule, a conflict) and 409 is "the head moved
+   * since you looked". Both are answers a person can act on, and turning them
+   * into a 502 would lose the sentence that says which one it was. Anything
+   * else is a genuine transport failure and still throws.
+   */
+  async mergePullRequest(
+    accessToken: string,
+    repoFullName: string,
+    pullNumber: number,
+    options: { method?: 'merge' | 'squash' | 'rebase'; sha?: string } = {},
+  ): Promise<GitHubMergeResult> {
+    const body: Record<string, string> = {
+      merge_method: options.method ?? 'merge',
+    };
+    if (options.sha) body['sha'] = options.sha;
+
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${repoFullName}/pulls/${String(pullNumber)}/merge`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    const text = await response.text();
+
+    if (response.status === 405 || response.status === 409) {
+      let message = text;
+      try {
+        const parsed = JSON.parse(text) as { message?: string };
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // Leave the raw body: an unparseable refusal is still the reason.
+      }
+      return { merged: false, message, sha: null };
+    }
+
+    if (!response.ok) {
+      throw new BadGatewayException(
+        `GitHub merge failed (${String(response.status)}): ${text.slice(0, 300)}`,
+      );
+    }
+
+    const parsed = JSON.parse(text) as {
+      merged?: boolean;
+      message?: string;
+      sha?: string;
+    };
+
+    return {
+      merged: parsed.merged === true,
+      message: parsed.message ?? 'Merged.',
+      sha: parsed.sha ?? null,
+    };
   }
 
   async setActionsSecret(

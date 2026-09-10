@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   Param,
+  Post,
   Query,
   Req,
   UnauthorizedException,
@@ -156,6 +158,57 @@ export class ProjectWorkspaceController {
     );
   }
 
+  /**
+   * One pull request, its checks, and whether the viewer may approve it.
+   *
+   * Exists so deciding about a pull request does not require leaving for
+   * GitHub: the checks and the mergeable state are what the decision turns on,
+   * and the list response carries neither.
+   */
+  @Get('pull-requests/:number')
+  getPullRequestDetail(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('number') pullNumber: string,
+  ) {
+    return this.workspaceService.getPullRequestDetail(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+      this.requireNumericId(pullNumber, 'pull request'),
+      this.viewerLogin(req),
+    );
+  }
+
+  /**
+   * Merge a pull request from inside the product.
+   *
+   * A refusal is a 200 with `merged: false` and GitHub's own sentence, because
+   * "at least 1 approving review is required" is an answer rather than a
+   * failure of this endpoint.
+   */
+  @Post('pull-requests/:number/merge')
+  mergePullRequest(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('number') pullNumber: string,
+    @Body() body: { method?: 'merge' | 'squash' | 'rebase' },
+  ) {
+    const method = body?.method ?? 'merge';
+    if (!['merge', 'squash', 'rebase'].includes(method)) {
+      throw new BadRequestException(
+        'Invalid merge method. Use merge, squash or rebase.',
+      );
+    }
+    return this.workspaceService.mergePullRequest(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+      this.requireNumericId(pullNumber, 'pull request'),
+      method,
+    );
+  }
+
   private requireUserId(req: Request): string {
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
@@ -166,6 +219,15 @@ export class ProjectWorkspaceController {
 
   private oauthToken(req: Request): string | null {
     return req.session.githubAccessToken ?? null;
+  }
+
+  /**
+   * The viewer's GitHub login, for deciding whether they authored a pull
+   * request. Read from the session because an installation token identifies
+   * the app rather than the person holding it.
+   */
+  private viewerLogin(req: Request): string | null {
+    return req.session.user?.login ?? null;
   }
 
   /**
