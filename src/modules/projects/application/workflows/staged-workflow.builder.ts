@@ -992,10 +992,21 @@ function reportingJob(
     '  CONCLUSION="success"',
     'fi',
     '',
-    '# Report the failed GitHub job name so ALPHACI can give a specific fix',
+    '# Capture WHY the stage failed: the job, the step inside it that failed,',
+    '# and the annotations GitHub recorded (lint errors, failing tests,',
+    '# compiler output). Without these the product can only say THAT a stage',
+    '# failed, which is what sent people to GitHub to learn anything useful.',
     'FAILED_JOBS=""',
+    'ANNOTATIONS="[]"',
     'if [ "$CONCLUSION" = "failure" ]; then',
-    '  FAILED_JOBS=$(curl -sf --max-time 5 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" | jq -r \'.jobs[] | select(.conclusion == "failure") | "Failed GitHub Actions job: \\(.name)"\' | head -n 5 || true)',
+    '  JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf \'{"jobs":[]}\')',
+    '  FAILED_JOBS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'.jobs[] | select(.conclusion == "failure") | . as $job | (([$job.steps[]? | select(.conclusion == "failure") | .name] | first) // "") as $step | if $step == "" then "Failed GitHub Actions job: \\($job.name)" else "Failed GitHub Actions job: \\($job.name) > \\($step)" end\' | head -n 5 || true)',
+    '  # A job id is its check-run id for Actions, so one id addresses both.',
+    '  FAILED_IDS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'.jobs[] | select(.conclusion == "failure") | .id\' | head -n 3)',
+    '  for JOB_ID in $FAILED_IDS; do',
+    '    JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf \'[]\')',
+    '    ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.annotation_level == "failure")) | map({path: .path, line: .start_line, title: .title, message: .message}) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
+    '  done',
     'fi',
     '',
     '# Build results sub-object (quality stage only — reads from job outputs)',
@@ -1024,7 +1035,8 @@ function reportingJob(
     '  --arg conclusion "$CONCLUSION" \\',
     '  --arg rawLogs "$FAILED_JOBS" \\',
     '  --argjson results "$RESULTS" \\',
-    "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs}')",
+    '  --argjson annotations "$ANNOTATIONS" \\',
+    "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations}')",
     'curl -sf --max-time 5 \\',
     '  -X POST "$ALPHACI_REPORT_URL" \\',
     '  -H "Authorization: Bearer $ALPHACI_TOKEN" \\',
@@ -1037,6 +1049,27 @@ function reportingJob(
     if: '${{ always() }}',
     needs,
     runs_on: 'ubuntu-latest',
+    /*
+     * Granted on this job alone, so reading run metadata cannot widen what the
+     * build and deploy jobs are allowed to do.
+     *
+     * `actions: read` is what makes failure capture work AT ALL on a private
+     * repository. Declaring `permissions:` sets every unlisted scope to none,
+     * and the jobs API needs `actions: read` unless the repository is public,
+     * where the same data is readable without it. That is exactly why the
+     * failed job name was recorded for every public test repo and for none of
+     * the private ones: the call 401'd and `|| true` swallowed it. Private is
+     * the default for real customers, so the product was blind precisely where
+     * it mattered.
+     *
+     * `checks: read` is for the annotations, which carry the file, line and
+     * message of each individual error.
+     */
+    permissions: {
+      contents: 'read',
+      actions: 'read',
+      checks: 'read',
+    },
     env: {
       ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
       ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
