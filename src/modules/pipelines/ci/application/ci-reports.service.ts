@@ -35,6 +35,25 @@ export interface StageReport {
   githubRunUrl: string;
   updatedAt: string;
   rawLogs: string | null;
+  /**
+   * What each tool in the stage concluded.
+   *
+   * A stage status answers "did quality pass". It cannot answer "did the
+   * licence scan pass", and the client had no way to ask: `results` was stored
+   * and never returned, so one bar stood in for seven tools.
+   *
+   * Empty for a stage reported by a pipeline generated before per-tool
+   * reporting existed. Empty means "not known", never "no tools ran".
+   */
+  checks: StageCheck[];
+}
+
+/** One tool's outcome inside a stage. */
+export interface StageCheck {
+  name: string;
+  conclusion: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface RunGroup {
@@ -58,6 +77,46 @@ interface OwnershipRow {
 }
 
 const ALL_STAGES = STAGE_ORDER;
+
+/**
+ * Pull the per-tool list back out of the stored `results` blob.
+ *
+ * `results` is jsonb and typed `Record<string, unknown>`, so nothing the
+ * database hands back is trusted here: a row written by an older pipeline has
+ * no `checks` key at all, and one written by a future pipeline could carry a
+ * shape this build does not know. Anything that is not a well-formed entry is
+ * dropped rather than rendered as `undefined` in the UI.
+ */
+function readChecks(results: Record<string, unknown>): StageCheck[] {
+  const raw = results['checks'];
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw.flatMap((entry): StageCheck[] => {
+    if (typeof entry !== 'object' || entry === null) {
+      return [];
+    }
+
+    const { name, conclusion, startedAt, completedAt } = entry as Record<
+      string,
+      unknown
+    >;
+
+    if (typeof name !== 'string' || typeof conclusion !== 'string') {
+      return [];
+    }
+
+    return [
+      {
+        name,
+        conclusion,
+        ...(typeof startedAt === 'string' && { startedAt }),
+        ...(typeof completedAt === 'string' && { completedAt }),
+      },
+    ];
+  });
+}
 
 @Injectable()
 export class CiReportsService {
@@ -323,6 +382,7 @@ export class CiReportsService {
           githubRunUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
           updatedAt: row.updated_at,
           rawLogs: row.raw_logs,
+          checks: readChecks(row.results),
         });
       }
     }
@@ -380,6 +440,8 @@ export class CiReportsService {
           githubRunUrl: `https://github.com/${group.repoFullName}/actions/runs/${String(primaryRunId)}`,
           updatedAt: '',
           rawLogs: null,
+          // A stage that never reported ran no tools we can name.
+          checks: [],
         };
       });
 
