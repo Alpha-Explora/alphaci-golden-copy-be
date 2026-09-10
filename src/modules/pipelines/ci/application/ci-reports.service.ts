@@ -22,6 +22,13 @@ import type { FriendlyMessage } from './translate-results';
 export interface StageReport {
   stage: 'access' | 'quality' | 'package';
   status: StageStatus;
+  /**
+   * The GitHub run this stage executed in.
+   *
+   * Sent so a client can ask for the stage's failure output without parsing it
+   * back out of `githubRunUrl`, which is a display string and free to change.
+   */
+  runId: number;
   friendlyMessages: FriendlyMessage[];
   githubRunUrl: string;
   updatedAt: string;
@@ -296,6 +303,7 @@ export class CiReportsService {
         group.stages.set(row.stage, {
           stage: row.stage,
           status: row.status,
+          runId,
           friendlyMessages: this.explainedMessages(row),
           githubRunUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
           updatedAt: row.updated_at,
@@ -350,6 +358,9 @@ export class CiReportsService {
         return {
           stage: stageName,
           status: inferred.status,
+          // A stage that never reported has no run of its own; the pipeline's
+          // representative run is the closest true answer.
+          runId: primaryRunId,
           friendlyMessages: inferred.friendlyMessages,
           githubRunUrl: `https://github.com/${group.repoFullName}/actions/runs/${String(primaryRunId)}`,
           updatedAt: '',

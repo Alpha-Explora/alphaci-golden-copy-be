@@ -19,6 +19,7 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
+import { extractFailureExcerpt } from './extract-failure-excerpt';
 
 export interface ProjectBranchesResponse {
   defaultBranch: string;
@@ -56,6 +57,25 @@ export interface ProjectJobLogResponse {
  * GitHub's job; this exists so that reading a project does not require leaving
  * the product, not so that ALPHACI becomes a second GitHub.
  */
+
+/**
+ * The failing job's error output, or why there is none to show.
+ *
+ * `available: false` is a normal answer, not an error: GitHub expires logs, and
+ * a run can conclude in failure with no failed job when it was the workflow
+ * itself that was rejected.
+ */
+export interface ProjectRunFailureLogResponse {
+  available: boolean;
+  reason?: 'no-failed-job' | 'log-expired';
+  jobName?: string;
+  stepName?: string;
+  jobUrl?: string;
+  lines?: string[];
+  truncated?: boolean;
+  foundErrorMarker?: boolean;
+}
+
 @Injectable()
 export class ProjectWorkspaceService {
   private readonly logger = new Logger(ProjectWorkspaceService.name);
@@ -154,6 +174,82 @@ export class ProjectWorkspaceService {
       oauthToken,
     );
     return this.githubService.getWorkflowRunJobs(token, repoFullName, runId);
+  }
+
+  /**
+   * The error output of whichever job failed in a run.
+   *
+   * This exists so the product can show the failure instead of telling someone
+   * to go and read it on GitHub. A hint that says "open the workflow logs" is
+   * an admission that the system knows a stage failed and will not say why.
+   *
+   * Three calls happen server-side — jobs, then that job's log, then the
+   * excerpt — because doing it in the browser would mean shipping a GitHub
+   * token to it. Never polled: it is reached only when someone asks to see the
+   * error, in keeping with the workspace read contract at the top of the
+   * controller.
+   */
+  async getRunFailureLog(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+    runId: number,
+  ): Promise<ProjectRunFailureLogResponse> {
+    const { repoFullName, token } = await this.context(
+      projectId,
+      userId,
+      oauthToken,
+    );
+
+    const jobs = await this.githubService.getWorkflowRunJobs(
+      token,
+      repoFullName,
+      runId,
+    );
+
+    const failed = jobs.find(
+      (job) => job.conclusion === 'failure' || job.conclusion === 'timed_out',
+    );
+
+    if (!failed) {
+      return { available: false, reason: 'no-failed-job' };
+    }
+
+    // The step is named separately because the job name alone is often a
+    // reusable-workflow path like "sonar / SonarCloud .NET Analysis", which
+    // says which check ran but not which part of it gave up.
+    const failedStep = failed.steps.find(
+      (step) =>
+        step.conclusion === 'failure' || step.conclusion === 'timed_out',
+    );
+
+    const log = await this.githubService.getJobLogs(
+      token,
+      repoFullName,
+      failed.id,
+    );
+
+    if (!log) {
+      return {
+        available: false,
+        reason: 'log-expired',
+        jobName: failed.name,
+        ...(failedStep && { stepName: failedStep.name }),
+        ...(failed.htmlUrl && { jobUrl: failed.htmlUrl }),
+      };
+    }
+
+    const excerpt = extractFailureExcerpt(log.content);
+
+    return {
+      available: true,
+      jobName: failed.name,
+      ...(failedStep && { stepName: failedStep.name }),
+      ...(failed.htmlUrl && { jobUrl: failed.htmlUrl }),
+      lines: excerpt.lines,
+      truncated: excerpt.truncated || log.truncated,
+      foundErrorMarker: excerpt.foundErrorMarker,
+    };
   }
 
   /**
