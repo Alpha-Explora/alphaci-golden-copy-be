@@ -718,6 +718,40 @@ describe('test results in the reporting payload', () => {
     expect(env['TESTS_FAILURES']).toContain('outputs.tests-failures');
   });
 
+  /*
+   * The same story as the tests: both audit workflows already had the findings
+   * and published only a count, or only echoed them. `security` was as
+   * unreachable in the translator as `tests` was.
+   */
+  it('reads the vulnerability outputs the security job publishes', () => {
+    const { env } = qualityStep();
+
+    expect(env['VULN_CRITICAL']).toContain(
+      'needs.security.outputs.vulnerabilities-critical',
+    );
+    expect(env['VULN_HIGH']).toContain(
+      'needs.security.outputs.vulnerabilities-high',
+    );
+    expect(env['VULN_ITEMS']).toContain(
+      'needs.security.outputs.vulnerabilities-items',
+    );
+  });
+
+  it('builds a security object with the fields CiResults declares', () => {
+    const { run } = qualityStep();
+
+    expect(run).toContain('--argjson critical "${VULN_CRITICAL:-0}"');
+    expect(run).toContain('--argjson items "${VULN_ITEMS:-[]}"');
+    expect(run).toContain('{critical:$critical,high:$high,items:$items}');
+    expect(run).toContain('. + {security:$security}');
+  });
+
+  it('omits security when the security job published nothing', () => {
+    const { run } = qualityStep();
+
+    expect(run).toContain('if echo "$VULN_CRITICAL$VULN_HIGH" | grep -qE');
+  });
+
   it('builds a tests object with the fields CiResults declares', () => {
     const { run } = qualityStep();
 

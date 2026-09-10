@@ -161,7 +161,10 @@ describe('translateResults', () => {
       );
       expect(err).toBeDefined();
       expect(err?.title).toBe('2 critical vulnerability(s)');
-      expect(err?.hint).toContain('npm audit');
+      // Tool-neutral: this path serves .NET too, where the command is
+      // `dotnet list package --vulnerable`, and naming the wrong one is worse
+      // than naming none.
+      expect(err?.hint).toContain('Upgrade the packages listed below');
     });
 
     it('returns warning when security.high > 0 and no critical', () => {
@@ -173,7 +176,7 @@ describe('translateResults', () => {
       );
       expect(warn).toBeDefined();
       expect(warn?.title).toBe('3 high-severity vulnerability(s)');
-      expect(warn?.hint).toContain('npm audit');
+      expect(warn?.hint).toContain('Upgrade the packages listed below');
     });
 
     it('does not return high warning when critical > 0', () => {

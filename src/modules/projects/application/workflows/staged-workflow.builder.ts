@@ -995,6 +995,18 @@ function reportingJob(
     stepEnv['TESTS_FAILED'] = `\${{ needs.${testJobId}.outputs.tests-failed }}`;
     stepEnv['TESTS_FAILURES'] =
       `\${{ needs.${testJobId}.outputs.tests-failures }}`;
+    /*
+     * Which packages are vulnerable, not just that the audit failed.
+     *
+     * The security job is named 'security' on every stack, which is why one
+     * set of reads serves .NET and Node alike: dotnet-audit.yml and
+     * security-scan.yml both publish these.
+     */
+    stepEnv['VULN_CRITICAL'] =
+      '${{ needs.security.outputs.vulnerabilities-critical }}';
+    stepEnv['VULN_HIGH'] = '${{ needs.security.outputs.vulnerabilities-high }}';
+    stepEnv['VULN_ITEMS'] =
+      '${{ needs.security.outputs.vulnerabilities-items }}';
   }
 
   const scriptLines = [
@@ -1061,6 +1073,18 @@ function reportingJob(
           '    --argjson failures "${TESTS_FAILURES:-[]}" \\',
           "    '{total:$total,passed:$passed,failed:$failed,failures:$failures}')",
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson tests "$TESTS" \'. + {tests:$tests}\')',
+          'fi',
+          '',
+          '# Include the vulnerability counts when the security job published them.',
+          '# Same guard as the tests: an older central ref publishes nothing, so these',
+          '# arrive empty and `security` is left out rather than posted as null.',
+          'if echo "$VULN_CRITICAL$VULN_HIGH" | grep -qE \'^[0-9]+$\'; then',
+          '  SECURITY=$(jq -n \\',
+          '    --argjson critical "${VULN_CRITICAL:-0}" \\',
+          '    --argjson high "${VULN_HIGH:-0}" \\',
+          '    --argjson items "${VULN_ITEMS:-[]}" \\',
+          "    '{critical:$critical,high:$high,items:$items}')",
+          '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson security "$SECURITY" \'. + {security:$security}\')',
           'fi',
         ]
       : []),
