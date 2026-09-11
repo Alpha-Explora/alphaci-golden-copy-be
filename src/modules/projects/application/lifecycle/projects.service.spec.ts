@@ -202,7 +202,7 @@ const makeOverviewReadRepositories = () => ({
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: ALPHACI Access Gate',
+        yaml: 'name: ALPHACI 1 Access',
       },
       {
         id: 'history-other',
@@ -230,7 +230,7 @@ const makeOverviewReadRepositories = () => ({
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: ALPHACI Access Gate',
+        yaml: 'name: ALPHACI 1 Access',
       },
     ]),
   },
@@ -1679,13 +1679,13 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'ALPHACI Access Gate',
+              name: 'ALPHACI 1 Access',
               path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
             {
               stage: 'quality',
-              name: 'ALPHACI Quality',
+              name: 'ALPHACI 2 Quality',
               path: '.github/workflows/10-alphaci-quality.yml',
               gated: true,
             },
@@ -1904,7 +1904,7 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'ALPHACI Access Gate',
+              name: 'ALPHACI 1 Access',
               path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
@@ -2100,7 +2100,7 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'ALPHACI Access Gate',
+              name: 'ALPHACI 1 Access',
               path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
@@ -2156,7 +2156,7 @@ jobs:
       '.github/workflows/20-alphaci-package.yml',
       '.github/workflows/05-alphaci-env-guard.yml',
     ]);
-    expect(result.workflowFiles[0]?.yaml).toContain('ALPHACI Access Gate');
+    expect(result.workflowFiles[0]?.yaml).toContain('ALPHACI 1 Access');
     expect(result.diffSummary).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2257,7 +2257,7 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'ALPHACI Access Gate',
+              name: 'ALPHACI 1 Access',
               path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },

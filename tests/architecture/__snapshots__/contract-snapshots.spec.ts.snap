@@ -66,19 +66,19 @@ exports[`post-consolidation public contract snapshots records the staged workflo
   "files": [
     {
       "gated": true,
-      "name": "ALPHACI Access Gate",
+      "name": "ALPHACI 1 Access",
       "path": ".github/workflows/00-alphaci-access.yml",
       "stage": "access",
     },
     {
       "gated": true,
-      "name": "ALPHACI Quality",
+      "name": "ALPHACI 2 Quality",
       "path": ".github/workflows/10-alphaci-quality.yml",
       "stage": "quality",
     },
     {
       "gated": true,
-      "name": "ALPHACI Package",
+      "name": "ALPHACI 3 Build and Deploy",
       "path": ".github/workflows/20-alphaci-package.yml",
       "stage": "package",
     },
@@ -126,7 +126,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       },
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
-        "branch-alias": "\${{ secrets.VERCEL_ALIAS_DEV }}",
+        "branch-alias": "\${{ vars.VERCEL_ALIAS_DEV }}",
         "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
         "environment": "preview",
         "system-name": "orders-api",
@@ -166,7 +166,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       },
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
-        "branch-alias": "\${{ secrets.VERCEL_ALIAS_UAT }}",
+        "branch-alias": "\${{ vars.VERCEL_ALIAS_UAT }}",
         "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
         "environment": "preview",
         "system-name": "orders-api",

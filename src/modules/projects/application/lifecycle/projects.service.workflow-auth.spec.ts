@@ -8,21 +8,21 @@ import type { ProjectsRepository } from '../../infrastructure/projects.repositor
 const stagedWorkflowFiles = [
   {
     stage: 'access' as const,
-    name: 'ALPHACI Access Gate',
+    name: 'ALPHACI 1 Access',
     path: '.github/workflows/00-alphaci-access.yml',
     gated: true,
     yaml: 'name: ALPHACI Access Gate\n',
   },
   {
     stage: 'quality' as const,
-    name: 'ALPHACI Quality',
+    name: 'ALPHACI 2 Quality',
     path: '.github/workflows/10-alphaci-quality.yml',
     gated: true,
     yaml: 'name: ALPHACI Quality\n',
   },
   {
     stage: 'package' as const,
-    name: 'ALPHACI Package',
+    name: 'ALPHACI 3 Build and Deploy',
     path: '.github/workflows/20-alphaci-package.yml',
     gated: true,
     yaml: 'name: ALPHACI Package\n',

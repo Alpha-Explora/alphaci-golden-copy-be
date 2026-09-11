@@ -99,9 +99,9 @@ describe('buildStagedWorkflowBundle', () => {
       '.github/workflows/05-alphaci-env-guard.yml',
     ]);
     expect(bundle.workflowFiles.map((file) => file.name)).toEqual([
-      'ALPHACI Access Gate',
-      'ALPHACI Quality',
-      'ALPHACI Package',
+      'ALPHACI 1 Access',
+      'ALPHACI 2 Quality',
+      'ALPHACI 3 Build and Deploy',
       'ALPHACI Env Guard',
     ]);
   });
@@ -224,13 +224,13 @@ describe('buildStagedWorkflowBundle', () => {
     const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
 
-    expect(quality.name).toBe('ALPHACI Quality (backend)');
+    expect(quality.name).toBe('ALPHACI 2 Quality (backend)');
     expect(quality.on.workflow_run?.workflows).toEqual([
-      'ALPHACI Access Gate (backend)',
+      'ALPHACI 1 Access (backend)',
     ]);
-    expect(pkg.name).toBe('ALPHACI Package (backend)');
+    expect(pkg.name).toBe('ALPHACI 3 Build and Deploy (backend)');
     expect(pkg.on.workflow_run?.workflows).toEqual([
-      'ALPHACI Quality (backend)',
+      'ALPHACI 2 Quality (backend)',
     ]);
   });
 
@@ -1198,7 +1198,9 @@ describe('the verify stage', () => {
 
     expect(verify).not.toBeNull();
     // Chained off package, so it runs after the artifact is live.
-    expect(verify!.on.workflow_run?.workflows).toEqual(['ALPHACI Package']);
+    expect(verify!.on.workflow_run?.workflows).toEqual([
+      'ALPHACI 3 Build and Deploy',
+    ]);
   });
 
   it('runs the whole collection on uat and only the read-only folder on main', () => {
@@ -1216,10 +1218,10 @@ describe('the verify stage', () => {
     const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
 
     expect(verify.jobs['api-tests-uat']?.with?.['base-url']).toBe(
-      '${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}',
+      '${{ needs.resolve-targets.outputs.api-uat }}',
     );
     expect(verify.jobs['api-tests-main']?.with?.['base-url']).toBe(
-      '${{ secrets.RENDER_HEALTHCHECK_URL_MAIN }}',
+      '${{ needs.resolve-targets.outputs.api-main }}',
     );
   });
 
@@ -1253,4 +1255,89 @@ describe('the verify stage', () => {
     );
     expect(env['STAGE_WORK_RAN']).not.toContain('validate-access');
   });
+});
+
+/*
+ * The invariant that D-04 violated, asserted directly.
+ *
+ * GitHub does not allow the `secrets` context inside a reusable workflow
+ * call's `with:` block, and it does not fail the one job - it refuses to parse
+ * the FILE. The run lasts zero seconds, has no jobs, and is listed by filename
+ * because the workflow's own name could not be read either. Three generated
+ * expressions had this shape and the verify stage never executed once on a
+ * real project as a result.
+ *
+ * Checked here rather than left to actionlint because this suite is what runs
+ * on every change to the generator, and because the rule is narrow enough to
+ * state exactly: a job with `uses:` is a reusable workflow call, and nothing
+ * under its `with:` may mention `secrets.`. A job's `secrets:` block is a
+ * different thing and remains the correct place for a credential.
+ */
+describe('generated workflows never put a secret in a reusable call input', () => {
+  const registry = new WorkflowFragmentRegistry([
+    renderWorkflowFragment,
+    vercelWorkflowFragment,
+  ]);
+
+  const targetsFor = (stack: 'dotnet' | 'react') =>
+    stack === 'dotnet'
+      ? (['uat', 'main'] as const).map((branchName) => ({
+          slot: 'backend',
+          provider: 'render',
+          branchName,
+          deploymentStrategy: 'render_image_pushed',
+          dockerContext: '.',
+          dockerfilePath: 'Dockerfile',
+          imageName: `alphaci-backend-${branchName}-svc`,
+          secretNames: {
+            deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchName.toUpperCase()}`,
+            healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchName.toUpperCase()}`,
+          },
+        }))
+      : (['dev', 'uat', 'main'] as const).map((branchName) => ({
+          slot: 'frontend',
+          provider: 'vercel',
+          branchName,
+          deploymentStrategy: 'vercel_cli',
+          secretNames: {
+            token: 'VERCEL_FRONTEND_TOKEN',
+            orgId: 'VERCEL_FRONTEND_ORG_ID',
+            projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+          },
+        }));
+
+  it.each(['dotnet', 'react'] as const)(
+    'holds for every %s workflow',
+    (stack) => {
+      const bundle = buildStagedWorkflowBundle(
+        makeTemplate(stack),
+        {
+          templateId: stack === 'dotnet' ? 'be-dotnet' : 'fe-react',
+          serviceName: 'orders-svc',
+          deploymentTargets: targetsFor(stack),
+        } as never,
+        registry,
+      );
+
+      const offenders: string[] = [];
+      for (const file of bundle.workflowFiles) {
+        const parsed = yaml.load(file.yaml) as {
+          jobs?: Record<
+            string,
+            { uses?: string; with?: Record<string, unknown> }
+          >;
+        };
+        for (const [jobId, job] of Object.entries(parsed.jobs ?? {})) {
+          if (!job?.uses || !job.with) continue;
+          for (const [input, value] of Object.entries(job.with)) {
+            if (typeof value === 'string' && value.includes('secrets.')) {
+              offenders.push(`${file.path} → ${jobId}.with.${input}`);
+            }
+          }
+        }
+      }
+
+      expect(offenders).toEqual([]);
+    },
+  );
 });

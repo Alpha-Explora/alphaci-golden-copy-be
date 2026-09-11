@@ -149,6 +149,7 @@ const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
  * and skips the job silently.
  */
 const VALIDATE_ACCESS_JOB_ID = 'validate-access';
+const RESOLVE_TARGETS_JOB_ID = 'resolve-targets';
 const BRANCH_POLICY_JOB_ID = 'branch-policy';
 
 /**
@@ -242,12 +243,34 @@ function resolveStagedNames(
   const nameSuffix = workflowVariant ? ` (${workflowVariant})` : '';
   return {
     fileSuffix,
-    accessName: `ALPHACI Access Gate${nameSuffix}`,
-    qualityName: `ALPHACI Quality${nameSuffix}`,
-    packageName: `ALPHACI Package${nameSuffix}`,
-    verifyName: `ALPHACI Verify${nameSuffix}`,
+    accessName: `ALPHACI 1 Access${nameSuffix}`,
+    qualityName: `ALPHACI 2 Quality${nameSuffix}`,
+    packageName: `ALPHACI 3 Build and Deploy${nameSuffix}`,
+    verifyName: `ALPHACI 4 Post-Deploy Tests${nameSuffix}`,
   };
 }
+
+/**
+ * The title GitHub shows for a run of a chained stage.
+ *
+ * A `workflow_run` stage executes in the DEFAULT branch context, so GitHub
+ * records its branch as `main` whatever branch the work was actually for, and
+ * its title as the workflow's own name. The result is a run list where four
+ * rows read "ALPHACI 2 Quality / main" and nothing distinguishes the dev run
+ * from the uat one - verified on a real run that GitHub recorded as `main`
+ * while the workflow itself resolved `branch=dev`.
+ *
+ * `display_title` rather than the commit message: a message can be several
+ * lines long, and a newline in a run-name mangles it. GitHub derives
+ * display_title as a single line.
+ *
+ * The direct-trigger workflows do not need this - GitHub already shows their
+ * real branch and commit, because they are triggered by the push itself.
+ */
+const CHAINED_RUN_NAME =
+  '${{ github.event.workflow_run.head_branch || github.ref_name }}' +
+  ' · ' +
+  '${{ github.event.workflow_run.display_title || github.sha }}';
 
 function resolveStagedContext(
   template: WorkflowTemplate,
@@ -370,6 +393,7 @@ function buildQualityWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: qualityName,
+      'run-name': CHAINED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [ctx.names.accessName],
@@ -475,21 +499,30 @@ function buildVerifyWorkflowFile(
   /*
    * Where each kind of test points.
    *
-   * An API is reached through the per-branch Render secret the deploy job
-   * used; a browser suite is reached through the Vercel alias that deploy set.
-   * Both are read straight from the repository rather than passed between
-   * workflows, because a `workflow_run` stage cannot see the triggering run's
-   * job outputs — and both providers now publish a stable per-branch address,
-   * which is the whole reason the alias exists.
+   * Read from `vars`, and passed on through the resolve-targets job below
+   * rather than inlined here. Three separate constraints force that shape:
+   *
+   *   1. `secrets` is NOT an allowed context inside a reusable workflow call's
+   *      `with:` block. GitHub rejects the WHOLE FILE at parse time, producing
+   *      a 0-second run with no jobs, listed by filename because the workflow
+   *      name could not be read either. This stage never ran once on a real
+   *      project because of it.
+   *   2. Routing a secret through a job output does not work either: GitHub
+   *      redacts job outputs containing a secret, so the URL arrives empty.
+   *   3. A `workflow_run` stage cannot see the triggering run's job outputs,
+   *      so the address cannot be handed over from the deploy that set it.
+   *
+   * `vars` satisfies all three, and is where these belong on their own merit:
+   * a healthcheck URL and a Vercel alias are public hostnames, not credentials.
    */
   const apiUrl = (branch: 'uat' | 'main') =>
-    `\${{ secrets.RENDER_HEALTHCHECK_URL_${branch.toUpperCase()} }}`;
+    `\${{ needs.${RESOLVE_TARGETS_JOB_ID}.outputs.api-${branch} }}`;
 
   const uiUrl = (branch: 'uat' | 'main') =>
-    `https://\${{ secrets.${vercelAliasSecret(branch)} }}`;
+    `https://\${{ needs.${RESOLVE_TARGETS_JOB_ID}.outputs.ui-${branch} }}`;
 
   const apiTestJob = (branch: 'uat' | 'main') => ({
-    needs: [VALIDATE_ACCESS_JOB_ID],
+    needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
     if: branchIsOneOf([branch]),
     uses: `${CENTRAL_WORKFLOW_BASE}/bruno-api-test.yml@${ctx.centralWorkflowRef}`,
     with: {
@@ -516,7 +549,7 @@ function buildVerifyWorkflowFile(
    * by promotion from uat, so the same artifact has already been fuzzed.
    */
   const contractTestJob = () => ({
-    needs: [VALIDATE_ACCESS_JOB_ID],
+    needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
     if: branchIsOneOf(['uat']),
     uses: `${CENTRAL_WORKFLOW_BASE}/schemathesis-scan.yml@${ctx.centralWorkflowRef}`,
     with: {
@@ -528,7 +561,7 @@ function buildVerifyWorkflowFile(
   });
 
   const uiTestJob = (branch: 'uat' | 'main') => ({
-    needs: [VALIDATE_ACCESS_JOB_ID],
+    needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
     if: branchIsOneOf([branch]),
     uses: `${CENTRAL_WORKFLOW_BASE}/playwright-e2e.yml@${ctx.centralWorkflowRef}`,
     with: {
@@ -548,7 +581,85 @@ function buildVerifyWorkflowFile(
    * for it. A stack declaring both gets both, which is what a full-stack
    * repository in one slot would want.
    */
+  /*
+   * Reads the deployment addresses out of `vars` and republishes them as job
+   * outputs, because `needs` IS allowed in a `with:` block and `secrets` is
+   * not - see the comment on apiUrl above.
+   *
+   * It also fails loudly when the variable this branch needs is missing. That
+   * is the half that matters day to day: an unset variable is an empty base
+   * URL, the suite requests "", and the connection error that follows reads
+   * like a broken API rather than like configuration nobody added.
+   */
+  const resolveTargetsJob = () => {
+    const outputs: Record<string, string> = {};
+    const env: Record<string, string> = {
+      BRANCH: `\${{ ${BRANCH_EXPR} }}`,
+    };
+    const lines: string[] = ['set -euo pipefail', '', '{'];
+    const cases: string[] = [];
+
+    for (const branch of ['uat', 'main'] as const) {
+      if (verification.api) {
+        const variable = `RENDER_HEALTHCHECK_URL_${branch.toUpperCase()}`;
+        outputs[`api-${branch}`] =
+          `\${{ steps.resolve.outputs.api-${branch} }}`;
+        env[variable] = `\${{ vars.${variable} }}`;
+        lines.push(`  echo "api-${branch}=\${${variable}}"`);
+        cases.push(
+          `  ${branch}) required="\${${variable}}"; name="${variable}" ;;`,
+        );
+      }
+      if (verification.ui) {
+        const variable = vercelAliasSecret(branch);
+        outputs[`ui-${branch}`] = `\${{ steps.resolve.outputs.ui-${branch} }}`;
+        env[variable] = `\${{ vars.${variable} }}`;
+        lines.push(`  echo "ui-${branch}=\${${variable}}"`);
+        cases.push(
+          `  ${branch}) required="\${${variable}}"; name="${variable}" ;;`,
+        );
+      }
+    }
+
+    lines.push(
+      '} >> "$GITHUB_OUTPUT"',
+      '',
+      '# Only the variable this branch needs is required. A dev run tests no',
+      '# deployed service, so demanding the uat address there would fail a',
+      '# branch that was never going to use it.',
+      'case "${BRANCH}" in',
+      ...cases,
+      '  *)',
+      '    echo "Branch ${BRANCH} runs no tests against a deployed environment."',
+      '    exit 0',
+      '    ;;',
+      'esac',
+      '',
+      'if [ -z "${required}" ]; then',
+      '  echo "::error::Repository variable ${name} is not set, so the ${BRANCH} deployment cannot be located and nothing was tested against it. Add it under Settings > Secrets and variables > Actions > Variables. It is a variable rather than a secret because it is a public address, and because GitHub redacts secrets passed between jobs."',
+      '  exit 1',
+      'fi',
+      '',
+      'echo "Testing ${BRANCH} against ${required}"',
+    );
+
+    return {
+      needs: [VALIDATE_ACCESS_JOB_ID],
+      'runs-on': 'ubuntu-latest',
+      outputs,
+      steps: [
+        {
+          name: 'Resolve deployment targets',
+          id: 'resolve',
+          env,
+          run: lines.join('\n'),
+        },
+      ],
+    };
+  };
+
   const verifyJobs: Record<string, unknown> = {
+    [RESOLVE_TARGETS_JOB_ID]: resolveTargetsJob(),
     ...(verification.api && {
       'api-tests-uat': apiTestJob('uat'),
       'api-tests-main': apiTestJob('main'),
@@ -560,7 +671,13 @@ function buildVerifyWorkflowFile(
     }),
   };
 
-  const workJobIds = Object.keys(verifyJobs);
+  // The resolver is plumbing, not work. Counting it would make a dev run -
+  // where every test job is branch-scoped out - report a successful verify
+  // stage that tested nothing. A failure in it is still reported, because
+  // STAGE_FAILED looks at every job's result.
+  const workJobIds = Object.keys(verifyJobs).filter(
+    (jobId) => jobId !== RESOLVE_TARGETS_JOB_ID,
+  );
   return {
     stage: 'verify',
     name: verifyName,
@@ -568,6 +685,7 @@ function buildVerifyWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: verifyName,
+      'run-name': CHAINED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [packageName],
@@ -619,6 +737,7 @@ function buildPackageWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: packageName,
+      'run-name': CHAINED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [qualityName],
