@@ -12,6 +12,8 @@
 - Clarified the executive report in plain language, including how the detailed documentation connects to capabilities, packs, runbooks, evidence, and leadership reporting.
 - Made the executive report self-contained by including the necessary current-state, pack, capability, operating, and evidence summaries.
 - Made the executive report context-independent and drop-in ready by including its complete explanation, status, priorities, and parallel delivery model.
+- Added ADR-0007, recording that capability composition resolves at runtime in the kernel, and that subscription entitlement stays a separate Billing decision applied after resolution.
+- Added ADR-0008, recording build profiles as declared pack sets whose artifacts exclude source for packs they do not contain.
 
 ### Changed
 
@@ -27,6 +29,8 @@
 - Made hierarchy member offboarding and revoke-event publication share one transaction, so a failed enqueue rolls back the member and assignment changes together.
 - Made the scheduled hierarchy relay require an explicit `live` or `stub` mode instead of relying on an implicit deployment default.
 - Updated the outbox reliability migration, topic quarantine migration, and rollback procedures to document the active schema and recovery behavior.
+- Linked ADR-0002 and ADR-0003 forward to the composition decisions instead of rewriting their original narrowing statements.
+- Moved the SaaS-to-Enterprise review out of the canonical documentation bundle, and made the bundle gate skip the `superpowers` directory.
 
 ### Fixed
 
