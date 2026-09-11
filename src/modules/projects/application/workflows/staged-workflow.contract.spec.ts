@@ -25,16 +25,24 @@ import type { StagedWorkflowOptions } from './staged-workflow.builder';
  */
 const EXPECTED_CENTRAL_WORKFLOWS = [
   'backend-tests.yml',
-  // The verify stage. Exists on the workflow side in the same change that
-  // added this line — which is the point of the list.
+  // The verify stage. Emitted only for a stack that declares an API suite and
+  // has somewhere deployed to run it against — .NET with a Render target.
   'bruno-api-test.yml',
   'docker-build.yml',
+  'dotnet-analyze.yml',
+  'dotnet-audit.yml',
+  'dotnet-format.yml',
+  'dotnet-license-scan.yml',
+  'dotnet-sbom.yml',
+  'dotnet-test.yml',
   'frontend-tests.yml',
+  'gitleaks-scan.yml',
   'lint-check.yml',
   'production-gate.yml',
   'promotion.yml',
   'render-deploy.yml',
   'security-scan.yml',
+  'sonarcloud-dotnet-scan.yml',
   'sonarcloud-scan.yml',
   'vercel-deploy.yml',
 ];
@@ -46,6 +54,14 @@ const ALL_STACKS: WorkflowTemplate['stack'][] = [
   'nodejs',
   'react-native',
   'expo',
+  /*
+   * .NET was missing from this list, and it is the stack with the most
+   * stack-specific `uses:` of any of them — six workflows no other stack
+   * references. The guard that exists to catch a `uses:` pointing at a file
+   * that is not there was not looking at the one place it was most likely to
+   * happen.
+   */
+  'dotnet',
 ];
 
 const makeTemplate = (stack: WorkflowTemplate['stack']): WorkflowTemplate => ({

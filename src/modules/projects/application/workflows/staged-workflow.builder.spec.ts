@@ -1137,6 +1137,54 @@ describe('the verify stage', () => {
     expect(verifyOf([])).toBeNull();
   });
 
+  /*
+   * The stack has to supply the suite, not just the provider a URL.
+   *
+   * A React bundle on a CDN has no /health to poll and no JSON to assert, and
+   * its scaffold ships no collection — so emitting this stage for it pointed a
+   * Bruno run at a Render secret a Vercel project does not have, at a
+   * collection that was never generated. Every React pipeline would have gone
+   * red at its last stage.
+   */
+  it('is not emitted for a stack that ships no API suite', () => {
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate('react'),
+      {
+        templateId: 'fe-react',
+        serviceName: 'orders-web',
+        deploymentTargets: [
+          {
+            slot: 'standalone',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            secretNames: {
+              token: 'VERCEL_TOKEN_STANDALONE',
+              orgId: 'VERCEL_ORG_ID_STANDALONE',
+              projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+            },
+          },
+        ],
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+    // The deployment exists — this is not the no-deployment case.
+    expect(bundle.workflowFiles.some((file) => file.stage === 'package')).toBe(
+      true,
+    );
+    expect(bundle.workflowFiles.some((file) => file.stage === 'verify')).toBe(
+      false,
+    );
+  });
+
+  it('takes the collection path from the toolchain, not a hardcoded guess', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    expect(verify.jobs['api-tests-uat']?.with?.['collection-path']).toBe(
+      'tests/api',
+    );
+  });
+
   it('is emitted once there is a deployment to verify', () => {
     const verify = verifyOf([renderTarget('uat')]);
 

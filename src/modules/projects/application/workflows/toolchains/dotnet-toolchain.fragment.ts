@@ -144,6 +144,16 @@ function buildDotnetQualityJobs(
       'sbom',
     ],
     packageBuildJob: packageBuildJob(context),
+    /*
+     * The .NET scaffold ships a Bruno collection, so this stack has something
+     * to run against a deployment. Node does not yet, and declaring it there
+     * would turn every Node pipeline red at the verify stage — the job fails
+     * on a missing collection by design.
+     */
+    apiVerification: {
+      collectionPath: 'tests/api',
+      smokeFolder: 'smoke',
+    },
     sonar: {
       // SonarQube Cloud analyses C#, but only through SonarScanner for .NET,
       // which wraps the build so Roslyn analyzers emit findings as it compiles.

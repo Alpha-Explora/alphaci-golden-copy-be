@@ -7,7 +7,10 @@ import type {
   WorkflowFragmentBranch,
   WorkflowFragmentRegistry,
 } from '#kernel/ports/workflow-fragment.port';
-import type { ToolchainFragmentResult } from '#kernel/ports/toolchain-fragment.port';
+import type {
+  ToolchainApiVerification,
+  ToolchainFragmentResult,
+} from '#kernel/ports/toolchain-fragment.port';
 import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
 import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
@@ -460,6 +463,7 @@ function buildQualityWorkflowFile(
  */
 function buildVerifyWorkflowFile(
   ctx: StagedWorkflowContext,
+  apiVerification: ToolchainApiVerification,
 ): StagedWorkflowFile {
   const { verifyName, packageName, fileSuffix } = ctx.names;
 
@@ -483,9 +487,9 @@ function buildVerifyWorkflowFile(
       'working-directory': ctx.servicePath,
       'system-name': ctx.serviceName,
       'base-url': baseUrlExpr(branch),
-      'collection-path': 'tests/api',
+      'collection-path': apiVerification.collectionPath,
       // Production runs the read-only folder; uat runs everything.
-      ...(branch === 'main' ? { folder: 'smoke' } : {}),
+      ...(branch === 'main' ? { folder: apiVerification.smokeFolder } : {}),
       'checkout-ref': HEAD_SHA_EXPR,
     },
     secrets: {
@@ -635,16 +639,22 @@ export function buildStagedWorkflowBundle(
   ];
 
   /*
-   * Verify only exists where there is something deployed to verify.
+   * Verify needs BOTH an API suite and somewhere it is deployed.
    *
    * Its subject is a running service, not a commit. A repository with no
-   * deployment targets has no URL to point an API suite at, and emitting the
-   * stage anyway would report the absence of an environment as a failure of
-   * the code — the same confusion as testing through a deploy that has not
+   * deployment target has no URL to point a suite at, and emitting the stage
+   * anyway would report the absence of an environment as a failure of the
+   * code — the same confusion as testing through a deploy that has not
    * finished starting.
+   *
+   * The stack has to supply the suite too. The verify job fails when the
+   * collection is missing, deliberately, so emitting this for a stack whose
+   * scaffold ships none turns every one of its pipelines red at the last
+   * stage. A React bundle on a CDN has no /health to poll and no JSON to
+   * assert; the tool for it is a browser, not an HTTP client.
    */
-  if (deploymentPlan.jobIds.length > 0) {
-    files.push(buildVerifyWorkflowFile(ctx));
+  if (toolchain.apiVerification && deploymentPlan.jobIds.length > 0) {
+    files.push(buildVerifyWorkflowFile(ctx, toolchain.apiVerification));
   }
 
   // The env guard is repo-wide, not per-pipeline: in microservices repos both
