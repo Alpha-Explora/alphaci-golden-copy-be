@@ -1,3 +1,5 @@
+import { vercelAliasSecret } from '#kernel/ports/workflow-fragment.port';
+
 import type {
   WorkflowFragment,
   WorkflowFragmentBranch,
@@ -31,6 +33,23 @@ function buildVercelFragment(
           'system-name': context.serviceName,
           'working-directory': target.rootDirectory ?? context.servicePath,
           environment: branch === 'main' ? 'production' : 'preview',
+          /*
+           * Pin the preview to a stable hostname.
+           *
+           * `vercel deploy` returns a URL unique to the deployment, and a
+           * later workflow_run stage cannot read this job's outputs — so a UI
+           * suite would have no address to aim at. Production needs none:
+           * --prod already lands on a fixed domain.
+           *
+           * The secret name is shared with the verify stage through
+           * vercelAliasSecret, so the address this deploy claims and the one
+           * the browser is sent to cannot drift apart.
+           */
+          ...(branch === 'main'
+            ? {}
+            : {
+                'branch-alias': `\${{ secrets.${vercelAliasSecret(branch)} }}`,
+              }),
           'checkout-ref': HEAD_SHA_EXPR,
         },
         secrets: {

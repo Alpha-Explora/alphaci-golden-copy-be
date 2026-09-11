@@ -120,3 +120,21 @@ export class WorkflowFragmentRegistry {
     return [...this.fragmentsByProvider.values()];
   }
 }
+
+/**
+ * Secret holding the stable hostname a Vercel branch deploy is aliased to.
+ *
+ * Named in one place because two different workflows depend on it agreeing:
+ * the deploy job passes it as `branch-alias` to point the preview at that
+ * hostname, and the verify stage reads it to know where to send a browser. A
+ * rename reaching only one of the two produces a deploy that is live at an
+ * address nothing looks at, and a UI suite pointed at nothing — neither of
+ * which fails loudly.
+ *
+ * A secret rather than a derived name: `<service>-<branch>.vercel.app` has to
+ * be globally unique across all of Vercel, so a convention would collide
+ * between two customers who happened to pick the same service name.
+ */
+export function vercelAliasSecret(branch: string): string {
+  return `VERCEL_ALIAS_${branch.toUpperCase()}`;
+}
