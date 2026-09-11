@@ -150,6 +150,17 @@ const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
  */
 const VALIDATE_ACCESS_JOB_ID = 'validate-access';
 const RESOLVE_TARGETS_JOB_ID = 'resolve-targets';
+const UPSTREAM_WORK_JOB_ID = 'upstream-work-check';
+
+/*
+ * Two conditions, not one. The previous run has to have CONCLUDED success
+ * and to have actually run something - see upstreamWorkCheckJob for why the
+ * conclusion alone is not enough.
+ */
+const CHAINED_STAGE_GATE =
+  "${{ github.event_name == 'workflow_dispatch' || " +
+  "(github.event.workflow_run.conclusion == 'success' && " +
+  `needs.${UPSTREAM_WORK_JOB_ID}.outputs.ran == 'true') }}`;
 const BRANCH_POLICY_JOB_ID = 'branch-policy';
 
 /**
@@ -410,8 +421,10 @@ function buildQualityWorkflowFile(
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
       jobs: {
+        [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         [VALIDATE_ACCESS_JOB_ID]: {
-          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          needs: [UPSTREAM_WORK_JOB_ID],
+          if: CHAINED_STAGE_GATE,
           ...validationJob('quality'),
         },
         [BRANCH_POLICY_JOB_ID]: branchPolicyJob(
@@ -701,8 +714,10 @@ function buildVerifyWorkflowFile(
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
       jobs: {
+        [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         'validate-access': {
-          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          needs: [UPSTREAM_WORK_JOB_ID],
+          if: CHAINED_STAGE_GATE,
           ...validationJob('verify'),
         },
         ...verifyJobs,
@@ -754,8 +769,10 @@ function buildPackageWorkflowFile(
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
       jobs: {
+        [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         'validate-access': {
-          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          needs: [UPSTREAM_WORK_JOB_ID],
+          if: CHAINED_STAGE_GATE,
           ...validationJob('package'),
         },
         build: toolchain.packageBuildJob,
@@ -1026,6 +1043,92 @@ function normalizeServicePath(servicePath: string | undefined): string {
   return trimmed === '' ? '.' : trimmed;
 }
 
+/*
+ * Did the stage this one follows actually do anything?
+ *
+ * `workflow_run.conclusion` cannot answer that. A workflow whose jobs ALL
+ * skipped concludes `success`, because skipped is not failed - so a stage
+ * whose own gate was closed hands the next stage a green light. Observed:
+ * quality failed, every job in the build stage skipped, the run concluded
+ * success, and the post-deploy stage opened its gate and began testing a
+ * commit that had never been deployed. Nothing bad happened only because a
+ * missing variable stopped it; with that variable set, the suite would have
+ * run against a stale deployment, passed, and recorded a green stage for a
+ * commit that was never shipped.
+ *
+ * The answer lives in the previous run's JOBS, so this asks for them. The
+ * reporting job is excluded because it carries `if: always()` and therefore
+ * runs even when the whole stage skipped - counting it would make every
+ * skipped stage look like it had worked.
+ *
+ * This job never fails. It publishes a fact, and the gate below consumes it,
+ * so a stage with no work to build on SKIPS rather than turning red. A red
+ * stage here would blame the wrong one: the fault is upstream, and the
+ * platform already renders a stage that reported nothing as blocked, naming
+ * the stage that stopped it.
+ */
+function upstreamWorkCheckJob() {
+  return {
+    runs_on: 'ubuntu-latest',
+    permissions: {
+      contents: 'read',
+      actions: 'read',
+    },
+    outputs: {
+      ran: '${{ steps.check.outputs.ran }}',
+    },
+    steps: [
+      {
+        name: 'Check the previous stage did its work',
+        id: 'check',
+        env: {
+          GH_TOKEN: '${{ github.token }}',
+          GH_REPO: '${{ github.repository }}',
+          PREVIOUS_RUN_ID: '${{ github.event.workflow_run.id }}',
+          PREVIOUS_NAME: '${{ github.event.workflow_run.name }}',
+          EVENT_NAME: '${{ github.event_name }}',
+        },
+        run: [
+          'set -euo pipefail',
+          '',
+          '# A manual run has no previous stage to inspect and is always allowed.',
+          'if [ "$EVENT_NAME" != "workflow_run" ]; then',
+          '  echo "ran=true" >> "$GITHUB_OUTPUT"',
+          '  exit 0',
+          'fi',
+          '',
+          'JOBS=$(curl -sf --max-time 10 \\',
+          '  -H "Authorization: Bearer $GH_TOKEN" \\',
+          '  -H "Accept: application/vnd.github+json" \\',
+          '  "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest" \\',
+          '  || printf \'{"jobs":[]}\')',
+          '',
+          '# An unreachable API is not evidence of a skipped stage. Letting the stage',
+          '# through on a failed lookup keeps a GitHub outage from silently halting',
+          '# every pipeline.',
+          "TOTAL=$(printf '%s' \"$JOBS\" | jq '[.jobs[]?] | length')",
+          'if [ "$TOTAL" -eq 0 ]; then',
+          '  echo "::warning::Could not read the jobs of $PREVIOUS_NAME, so this stage proceeds without checking whether it did any work."',
+          '  echo "ran=true" >> "$GITHUB_OUTPUT"',
+          '  exit 0',
+          'fi',
+          '',
+          'WORKED=$(printf \'%s\' "$JOBS" | jq \'[.jobs[]? | select(.name != "report-results") | select(.conclusion != "skipped")] | length\')',
+          '',
+          'if [ "$WORKED" -eq 0 ]; then',
+          '  echo "::warning::$PREVIOUS_NAME completed without running any of its jobs, so this stage has nothing to act on and will skip. Its gate was closed, which usually means the stage before IT did not pass - fix that one."',
+          '  echo "ran=false" >> "$GITHUB_OUTPUT"',
+          '  exit 0',
+          'fi',
+          '',
+          'echo "$PREVIOUS_NAME ran $WORKED job(s)."',
+          'echo "ran=true" >> "$GITHUB_OUTPUT"',
+        ].join('\n'),
+      },
+    ],
+  };
+}
+
 function validationJob(stage: WorkflowStage) {
   return {
     runs_on: 'ubuntu-latest',
@@ -1237,10 +1340,19 @@ function promotionJob(
     '!cancelled()',
     `(${BRANCH_EXPR}) == '${sourceBranch}'`,
     "needs.build.result == 'success'",
-    ...additionalNeeds.map(
-      (need) =>
-        `(needs['${need}'].result == 'success' || needs['${need}'].result == 'skipped')`,
-    ),
+    /*
+     * `success`, not `success || skipped`.
+     *
+     * These jobs are branch-scoped to the branch being promoted FROM, and the
+     * promotion only runs on that branch, so on a real run they are active. A
+     * skipped one therefore does not mean "not applicable here" - it means
+     * something upstream of it failed and it never ran. Accepting that opened
+     * a promotion PR for a commit whose deployment never happened, which is
+     * the same mistake as treating a stage whose jobs all skipped as a stage
+     * that succeeded. A provider with no job for this branch is absent from
+     * `needs` entirely and never reaches this line.
+     */
+    ...additionalNeeds.map((need) => `needs['${need}'].result == 'success'`),
   ];
 
   return {

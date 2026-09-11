@@ -108,7 +108,11 @@ function buildRenderFragment(
       [jobId]: buildRenderJob(target, branch, context, dockerJobId),
     },
     jobIds: [dockerJobId, jobId],
-    promotionNeeds: branch === 'uat' ? [dockerJobId, jobId] : [],
+    // Every branch that promotes onward, not just uat. Listing only uat meant
+    // promote-to-uat waited on nothing but the compile, so a dev deployment
+    // could fail and the code was promoted anyway. main never promotes, so it
+    // contributes nothing here.
+    promotionNeeds: branch === 'main' ? [] : [dockerJobId, jobId],
   };
 }
 

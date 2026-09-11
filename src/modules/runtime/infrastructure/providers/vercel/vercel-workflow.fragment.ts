@@ -68,7 +68,10 @@ function buildVercelFragment(
       },
     },
     jobIds: [jobId],
-    promotionNeeds: branch === 'uat' ? [jobId] : [],
+    // Every branch that promotes onward, not just uat. Listing only uat meant
+    // promote-to-uat waited on nothing but the compile, so a failed dev deploy
+    // still promoted. main never promotes, so it contributes nothing here.
+    promotionNeeds: branch === 'main' ? [] : [jobId],
   };
 }
 
