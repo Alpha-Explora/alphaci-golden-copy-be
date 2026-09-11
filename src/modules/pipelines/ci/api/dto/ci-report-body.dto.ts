@@ -146,6 +146,54 @@ export class CiReportFindingsDto {
   sbomComponents?: number;
 }
 
+/** One quality-gate condition SonarCloud failed, with the numbers behind it. */
+export class CiReportSonarConditionDto {
+  @IsString()
+  metric!: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  actual?: string;
+
+  @IsOptional()
+  @IsString()
+  threshold?: string;
+}
+
+/**
+ * What SonarCloud reported, rather than only whether it passed.
+ *
+ * `gate` can be UNKNOWN, which is kept rather than dropped: it means the
+ * analysis ran and the gate could not be read. That is a different thing from
+ * a gate that passed, and treating it as clean is how a broken reporting path
+ * starts to look like a healthy project.
+ */
+export class CiReportSonarDto {
+  @IsOptional()
+  @IsString()
+  gate?: string;
+
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportSonarConditionDto)
+  failedConditions?: CiReportSonarConditionDto[];
+
+  /**
+   * Bugs, vulnerabilities, code smells, hotspots, coverage, duplication.
+   *
+   * Left as an open string map because the metric keys are SonarCloud's, and
+   * pinning them here would mean a metric added upstream is rejected by
+   * `forbidNonWhitelisted` rather than shown.
+   */
+  @IsOptional()
+  @IsObject()
+  measures?: Record<string, string>;
+}
+
 export class CiReportResultsDto {
   @IsOptional()
   @ValidateNested()
@@ -171,6 +219,11 @@ export class CiReportResultsDto {
   @ValidateNested()
   @Type(() => CiReportFindingsDto)
   findings?: CiReportFindingsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CiReportSonarDto)
+  sonar?: CiReportSonarDto;
 }
 
 /**

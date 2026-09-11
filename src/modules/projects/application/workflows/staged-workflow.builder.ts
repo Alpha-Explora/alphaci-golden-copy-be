@@ -1072,6 +1072,23 @@ function reportingJob(
         stepEnv[envName] = `\${{ needs.${jobId}.outputs.${output} }}`;
       }
     }
+
+    /*
+     * What SonarCloud actually said, not just whether it passed.
+     *
+     * `sonar` is in the reporting job's `needs` on every stack, so these are
+     * read unconditionally — unlike the counts above, which belong to jobs only
+     * some toolchains declare. A repository without Sonar credentials skips the
+     * job, the outputs arrive empty, and the guards below leave the key out.
+     *
+     * Without these the product could say "sonar failed" and nothing else,
+     * which is an instruction to go and read SonarCloud — the thing this is
+     * supposed to remove.
+     */
+    stepEnv['SONAR_GATE'] = '${{ needs.sonar.outputs.gate-status }}';
+    stepEnv['SONAR_CONDITIONS'] =
+      '${{ needs.sonar.outputs.failed-conditions }}';
+    stepEnv['SONAR_MEASURES'] = '${{ needs.sonar.outputs.measures }}';
   }
 
   const scriptLines = [
@@ -1227,6 +1244,32 @@ function reportingJob(
           'fi',
           'if [ "$FINDINGS" != "{}" ]; then',
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson findings "$FINDINGS" \'. + {findings:$findings}\')',
+          'fi',
+          '',
+          '# What SonarCloud said, so nobody has to open SonarCloud to read it.',
+          '#',
+          '# The gate alone is the same problem one level up: "ERROR" tells a',
+          '# reader something is wrong and nothing about what. The conditions',
+          '# carry the metric, the actual value and the threshold, which is the',
+          '# difference between "quality gate failed" and "new coverage 61.2 is',
+          '# below the required 80".',
+          '#',
+          '# UNKNOWN is kept rather than dropped: it means the analysis ran and',
+          '# the gate could not be read, which is a different thing from a gate',
+          '# that passed, and silently treating it as clean is how a broken',
+          '# reporting path starts looking like a healthy project.',
+          'SONAR="{}"',
+          'if [ -n "$SONAR_GATE" ]; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --arg gate "$SONAR_GATE" \'. + {gate:$gate}\')',
+          'fi',
+          'if printf \'%s\' "${SONAR_CONDITIONS:-}" | jq -e \'type == "array" and length > 0\' >/dev/null 2>&1; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson c "$SONAR_CONDITIONS" \'. + {failedConditions:$c}\')',
+          'fi',
+          'if printf \'%s\' "${SONAR_MEASURES:-}" | jq -e \'type == "object" and length > 0\' >/dev/null 2>&1; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson m "$SONAR_MEASURES" \'. + {measures:$m}\')',
+          'fi',
+          'if [ "$SONAR" != "{}" ]; then',
+          '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson sonar "$SONAR" \'. + {sonar:$sonar}\')',
           'fi',
         ]
       : []),

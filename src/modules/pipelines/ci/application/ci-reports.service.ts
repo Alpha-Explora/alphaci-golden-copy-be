@@ -166,6 +166,9 @@ export class CiReportsService {
           ...(body.results.findings !== undefined && {
             findings: body.results.findings,
           }),
+          ...(body.results.sonar !== undefined && {
+            sonar: body.results.sonar,
+          }),
           /*
            * The per-tool list is stored inside `results` rather than in a
            * column of its own, because `results` is already jsonb and this

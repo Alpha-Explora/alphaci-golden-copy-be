@@ -334,3 +334,112 @@ describe('translateResults — annotations name the actual errors', () => {
     expect(error?.items?.[0]?.label).toBe('Process completed with exit code 1');
   });
 });
+
+/*
+ * SonarCloud's verdict, said in the product.
+ *
+ * "Quality gate failed" is the same non-answer as "the quality stage failed"
+ * one level down — it tells a reader something is wrong and nothing about
+ * what, and the only way on was to open SonarCloud, which is what this is
+ * meant to remove.
+ */
+describe('translateResults — SonarCloud findings', () => {
+  const sonarOf = (sonar: NonNullable<CiResults['sonar']>) =>
+    translateResults('quality', 'failure', { sonar });
+
+  it('names the failed condition, its value and the value required', () => {
+    const messages = sonarOf({
+      gate: 'ERROR',
+      failedConditions: [
+        {
+          metric: 'new_coverage',
+          status: 'ERROR',
+          actual: '61.2',
+          threshold: '80',
+        },
+      ],
+    });
+
+    const gate = messages.find((message) =>
+      message.title.includes('quality gate failed'),
+    );
+
+    expect(gate).toBeDefined();
+    expect(gate!.severity).toBe('error');
+    expect(gate!.items).toEqual([
+      { label: 'new_coverage: 61.2', sub: 'required 80' },
+    ]);
+  });
+
+  it('omits the threshold rather than sending it as null', () => {
+    const messages = sonarOf({
+      gate: 'ERROR',
+      failedConditions: [{ metric: 'new_bugs', actual: '3' }],
+    });
+
+    const gate = messages.find((message) =>
+      message.title.includes('quality gate failed'),
+    );
+
+    expect(gate!.items).toEqual([{ label: 'new_bugs: 3' }]);
+    expect(gate!.items![0]).not.toHaveProperty('sub');
+  });
+
+  /*
+   * The case this exists to prevent: the analysis ran, the verdict never came
+   * back, and the stage looks clean on the strength of a check nobody heard
+   * the result of. It is the same shape as a stage of skipped jobs reporting
+   * success — an unchecked state defaulting to the most optimistic answer.
+   */
+  it('reports a gate it could not read instead of passing over it', () => {
+    const messages = sonarOf({ gate: 'UNKNOWN' });
+
+    const unread = messages.find((message) =>
+      message.title.includes('could not be read'),
+    );
+
+    expect(unread).toBeDefined();
+    expect(unread!.severity).toBe('warning');
+    expect(unread!.hint).toContain('unverified');
+  });
+
+  it('says nothing about the gate when it passed', () => {
+    const messages = sonarOf({ gate: 'OK' });
+
+    expect(
+      messages.filter((message) => message.title.includes('quality gate')),
+    ).toHaveLength(0);
+  });
+
+  it('reports the totals even when the gate passed', () => {
+    // A gate decides on NEW code, so a project can clear it while still
+    // carrying bugs. A reader after that number should not have to fail the
+    // build to be shown it.
+    const messages = translateResults('quality', 'success', {
+      sonar: {
+        gate: 'OK',
+        measures: { bugs: '2', code_smells: '17', vulnerabilities: '0' },
+      },
+    });
+
+    const findings = messages.find(
+      (message) => message.title === 'SonarCloud findings',
+    );
+
+    expect(findings).toBeDefined();
+    expect(findings!.severity).toBe('info');
+    expect(findings!.detail).toBe('2 bug(s), 17 code smell(s)');
+    // Zero is not a finding.
+    expect(findings!.detail).not.toContain('vulnerability');
+  });
+
+  it('stays quiet when every measure is zero', () => {
+    const messages = translateResults('quality', 'success', {
+      sonar: { gate: 'OK', measures: { bugs: '0', code_smells: '0' } },
+    });
+
+    expect(
+      messages.filter((message) => message.title === 'SonarCloud findings'),
+    ).toHaveLength(0);
+  });
+});

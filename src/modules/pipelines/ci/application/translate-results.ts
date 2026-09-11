@@ -47,6 +47,22 @@ export interface CiResults {
     forbiddenLicenses?: number;
     sbomComponents?: number;
   };
+  /**
+   * What SonarCloud reported, rather than only whether it passed.
+   *
+   * `gate` of UNKNOWN means the analysis ran and the gate could not be read,
+   * which is deliberately not the same as a gate that passed.
+   */
+  sonar?: {
+    gate?: string;
+    failedConditions?: {
+      metric: string;
+      status?: string;
+      actual?: string;
+      threshold?: string;
+    }[];
+    measures?: Record<string, string>;
+  };
   /** Every job in the stage and what it concluded — the per-tool view. */
   checks?: {
     name: string;
@@ -385,6 +401,97 @@ function toSecurityItem(
   };
 }
 
+type SonarResult = NonNullable<CiResults['sonar']>;
+
+/**
+ * Say what SonarCloud found, in the product, in words.
+ *
+ * "Quality gate failed" is the same non-answer as "the quality stage failed"
+ * one level down: it tells a reader something is wrong and nothing about what,
+ * and the only way on was to open SonarCloud. Each failed condition carries the
+ * metric, the value it reached and the threshold it had to clear, so the
+ * message can name the gap instead of pointing at a dashboard.
+ */
+function pushSonarMessages(
+  messages: FriendlyMessage[],
+  sonar: SonarResult,
+): void {
+  if (sonar.gate === 'ERROR') {
+    const conditions = sonar.failedConditions ?? [];
+
+    messages.push({
+      severity: 'error',
+      title: 'SonarCloud quality gate failed',
+      detail:
+        conditions.length > 0
+          ? `${String(conditions.length)} quality gate condition(s) were not met.`
+          : 'SonarCloud rejected the analysis against its quality gate.',
+      hint: 'Fix the conditions listed below. Each shows the value reached and the value required.',
+      ...(conditions.length > 0 && {
+        items: capItems(
+          conditions.map((condition) => ({
+            label: `${condition.metric}: ${condition.actual ?? 'unknown'}`,
+            // Omitted rather than set undefined: exactOptionalPropertyTypes
+            // draws the distinction, and a present-but-undefined `sub`
+            // serialises into the payload as an explicit null.
+            ...(condition.threshold !== undefined && {
+              sub: `required ${condition.threshold}`,
+            }),
+          })),
+        ),
+      }),
+    });
+  }
+
+  /*
+   * A gate that could not be read is reported, not ignored.
+   *
+   * It means the analysis ran and the verdict did not come back — a rate limit,
+   * a permissions change, an API that moved. Passing over it in silence leaves
+   * the stage looking clean on the strength of a check nobody actually heard
+   * the result of.
+   */
+  if (sonar.gate === 'UNKNOWN') {
+    messages.push({
+      severity: 'warning',
+      title: 'SonarCloud quality gate could not be read',
+      detail:
+        'The analysis ran, but its quality gate result could not be retrieved.',
+      hint: 'Treat this stage as unverified by SonarCloud rather than as passing it. Check the SonarCloud token and the project key.',
+    });
+  }
+
+  const measures = sonar.measures;
+  if (measures === undefined) {
+    return;
+  }
+
+  // Reported whatever the gate said: a gate can pass while the project still
+  // carries bugs, and a reader looking for the number should not have to fail
+  // the build first to be shown it.
+  const counted: { key: string; label: string }[] = [
+    { key: 'bugs', label: 'bug(s)' },
+    { key: 'vulnerabilities', label: 'vulnerability(s)' },
+    { key: 'security_hotspots', label: 'security hotspot(s)' },
+    { key: 'code_smells', label: 'code smell(s)' },
+  ];
+
+  const found = counted
+    .map(({ key, label }) => ({ label, value: Number(measures[key] ?? '0') }))
+    .filter((entry) => Number.isFinite(entry.value) && entry.value > 0);
+
+  if (found.length > 0) {
+    messages.push({
+      severity: sonar.gate === 'ERROR' ? 'warning' : 'info',
+      title: 'SonarCloud findings',
+      detail: found
+        .map((entry) => `${String(entry.value)} ${entry.label}`)
+        .join(', '),
+      hint: 'These do not necessarily fail the gate. The gate decides on new code; these are the totals for the project.',
+    });
+  }
+}
+
 function pushSecurityMessages(
   messages: FriendlyMessage[],
   security: SecurityResult,
@@ -455,7 +562,7 @@ export function translateResults(
     return messages;
   }
 
-  const { tests, coverage, lint, security } = results;
+  const { tests, coverage, lint, security, sonar } = results;
 
   if (tests !== undefined) {
     pushTestMessages(messages, tests, conclusion);
@@ -476,6 +583,10 @@ export function translateResults(
 
   if (security !== undefined) {
     pushSecurityMessages(messages, security);
+  }
+
+  if (sonar !== undefined) {
+    pushSonarMessages(messages, sonar);
   }
 
   /*
