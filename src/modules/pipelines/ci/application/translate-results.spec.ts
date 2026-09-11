@@ -443,3 +443,136 @@ describe('translateResults — SonarCloud findings', () => {
     ).toHaveLength(0);
   });
 });
+
+/*
+ * Diagnostics have to reach the reader on the branch that can still act on them.
+ *
+ * The annotation message only ever ran when a failure had nothing else to
+ * explain it. On dev the gates are advisory, so the stage concludes SUCCESS,
+ * and the annotations were fetched, sent, stored and never shown — on the one
+ * branch where there was still time to fix them.
+ */
+describe('translateResults — diagnostics on a stage that passed', () => {
+  const annotations = [
+    {
+      path: 'src/Program.cs',
+      line: 11,
+      message: 'Await RunAsync instead of blocking.',
+      level: 'warning',
+    },
+    {
+      path: 'src/Domain/ServiceStatus.cs',
+      line: 4,
+      message: 'Remove this unused using.',
+      level: 'warning',
+    },
+  ];
+
+  it('shows diagnostics from a stage that succeeded', () => {
+    const messages = translateResults(
+      'quality',
+      'success',
+      {},
+      undefined,
+      annotations,
+    );
+
+    const advisory = messages.find((message) =>
+      message.title.includes('without failing this stage'),
+    );
+
+    expect(advisory).toBeDefined();
+    expect(advisory!.items).toHaveLength(2);
+    expect(advisory!.items![0]!.label).toBe('src/Program.cs:11');
+    expect(advisory!.items![0]!.sub).toBe(
+      'Await RunAsync instead of blocking.',
+    );
+  });
+
+  /*
+   * A passing stage must not be coloured as an error. The point is that these
+   * did not block here — overstating them is its own lie, in the opposite
+   * direction from hiding them.
+   */
+  it('marks them advisory, not as errors, when the stage passed', () => {
+    const messages = translateResults(
+      'quality',
+      'success',
+      {},
+      undefined,
+      annotations,
+    );
+
+    const advisory = messages.find((message) =>
+      message.title.includes('without failing this stage'),
+    );
+
+    expect(advisory!.severity).toBe('warning');
+    expect(messages.some((message) => message.severity === 'error')).toBe(
+      false,
+    );
+  });
+
+  it('says the promotion is what they will block', () => {
+    const messages = translateResults(
+      'quality',
+      'success',
+      {},
+      undefined,
+      annotations,
+    );
+
+    const advisory = messages.find((message) =>
+      message.title.includes('without failing this stage'),
+    );
+
+    // The whole reason to show an advisory warning is that it stops being
+    // advisory one branch later.
+    expect(advisory!.hint).toContain('uat');
+  });
+
+  /*
+   * A failure that already explains itself still had its annotations thrown
+   * away: tests failing does not make twelve formatter diagnostics
+   * uninteresting.
+   */
+  it('keeps diagnostics alongside a failure that already has a reason', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      { tests: { passed: 3, failed: 1, total: 4 } },
+      undefined,
+      annotations,
+    );
+
+    expect(messages.some((message) => message.severity === 'error')).toBe(true);
+    const extra = messages.find((message) =>
+      message.title.includes('more diagnostic'),
+    );
+    expect(extra).toBeDefined();
+    expect(extra!.items).toHaveLength(2);
+  });
+
+  it('still explains a bare failure with the annotations themselves', () => {
+    const messages = translateResults(
+      'quality',
+      'failure',
+      {},
+      undefined,
+      annotations,
+    );
+
+    // Unchanged behaviour: with nothing else to go on, the annotations ARE the
+    // explanation and lead the list rather than trailing it.
+    expect(messages[0]!.severity).toBe('error');
+    expect(messages[0]!.items).toHaveLength(2);
+  });
+
+  it('says nothing when there are no diagnostics', () => {
+    const messages = translateResults('quality', 'success', {}, undefined, []);
+
+    expect(
+      messages.filter((message) => message.title.includes('diagnostic')),
+    ).toHaveLength(0);
+  });
+});

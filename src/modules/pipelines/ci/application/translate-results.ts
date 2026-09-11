@@ -191,6 +191,15 @@ export interface CiAnnotation {
   line?: number;
   title?: string;
   message?: string;
+  /**
+   * GitHub's severity: 'failure', 'warning' or 'notice'.
+   *
+   * The same diagnostic means different things per branch. On dev a formatter
+   * reports warnings and the job still passes; on uat that identical
+   * annotation is what fails the build. Without the level, advice and a block
+   * are indistinguishable.
+   */
+  level?: string;
 }
 
 /**
@@ -216,6 +225,45 @@ function annotationItems(annotations: readonly CiAnnotation[]): MessageItem[] {
       };
     }),
   );
+}
+
+/**
+ * Diagnostics that did not stop this stage, said out loud anyway.
+ *
+ * These were collected and then dropped. The message below only ever ran when a
+ * failure had nothing else to explain it, so on dev — where the gates are
+ * advisory and the stage therefore concludes SUCCESS — the annotations were
+ * fetched, sent, stored, and never shown. The one branch where there is still
+ * time to act on a diagnostic was the one branch that never displayed one.
+ *
+ * It also covers a failure that already has an explanation: tests failing does
+ * not make twelve formatter diagnostics uninteresting, and the old guard threw
+ * them away because an error message already existed.
+ */
+function advisoryAnnotationMessage(
+  stage: Stage,
+  conclusion: Conclusion,
+  annotations: readonly CiAnnotation[],
+): FriendlyMessage {
+  const blocking = conclusion === 'failure';
+  const count = annotations.length;
+  const noun = count === 1 ? 'diagnostic' : 'diagnostics';
+
+  return {
+    // Never an error on a stage that passed. Marking a green stage red in the
+    // summary would be its own lie, in the opposite direction.
+    severity: blocking ? 'error' : 'warning',
+    title: blocking
+      ? `${String(count)} more ${noun} in the ${stage} stage`
+      : `${String(count)} ${noun} reported without failing this stage`,
+    detail: blocking
+      ? `Reported alongside the failure above.`
+      : `The ${stage} stage passed. These were reported as advice on this branch.`,
+    hint: blocking
+      ? 'Each names the file and line it was raised on.'
+      : 'Warnings are advisory on the working branch and fail the build on uat and main. Fixing them here costs nothing; leaving them blocks the promotion.',
+    items: annotationItems(annotations),
+  };
 }
 
 function unreportedFailureMessage(
@@ -610,11 +658,19 @@ export function translateResults(
    * Placed first, because the reason a stage failed outranks a warning about
    * coverage that did not cause it.
    */
-  if (
-    conclusion === 'failure' &&
-    !messages.some((message) => message.severity === 'error')
-  ) {
+  const alreadyExplained = messages.some(
+    (message) => message.severity === 'error',
+  );
+
+  if (conclusion === 'failure' && !alreadyExplained) {
     messages.unshift(unreportedFailureMessage(stage, rawLogs, annotations));
+  } else if (annotations.length > 0) {
+    /*
+     * Everything else that carries annotations: a stage that passed, and a
+     * failure that already explained itself. Appended rather than unshifted —
+     * the reason a stage failed still leads, and advice follows it.
+     */
+    messages.push(advisoryAnnotationMessage(stage, conclusion, annotations));
   }
 
   return messages;
