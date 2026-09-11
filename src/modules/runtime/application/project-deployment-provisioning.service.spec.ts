@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 import { ProjectDeploymentProvisioningService } from './project-deployment-provisioning.service';
 import { DeploymentProviderPolicyRegistry } from '../domain/deployment-provider.policy';
 import { RenderDeploymentPolicy } from '../infrastructure/providers/render/render-deployment.policy';
@@ -752,5 +754,159 @@ describe('ProjectDeploymentProvisioningService', () => {
 
       expect(envVarsService.provisionEnvVars).not.toHaveBeenCalled();
     });
+  });
+});
+
+/*
+ * A declined secret install has to be findable.
+ *
+ * Two paths decide the same thing from different sources: the workflow
+ * generator emits deploy jobs from the target's OWNERSHIP MODE, this installs
+ * the secrets those jobs read from its DEPLOYMENT STRATEGY. When they
+ * disagree the repository gets `deploy-vercel-frontend-uat` referencing
+ * `secrets.VERCEL_FRONTEND_TOKEN` that nothing set — observed on real
+ * projects, both providers, with provisioning reporting success.
+ *
+ * The deploy then fails on an empty credential, in another repository, in
+ * another workflow, with an error naming none of this.
+ */
+describe('ProjectDeploymentProvisioningService — declined secret installs', () => {
+  // Its own mocks: the harness above is scoped to the first describe.
+  const deploymentTargetsServiceRef = {
+    createDeploymentTarget: jest.fn(),
+    updateProviderMetadata: jest.fn(),
+  };
+  const envVarsServiceRef = {
+    provisionEnvVars: jest.fn().mockResolvedValue({ applied: [] }),
+  };
+  const providerPolicyRegistryRef = new DeploymentProviderPolicyRegistry([
+    new RenderDeploymentPolicy({} as RenderCostPolicyService),
+    new VercelDeploymentPolicy(),
+  ]);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    envVarsServiceRef.provisionEnvVars.mockResolvedValue({ applied: [] });
+    deploymentTargetsServiceRef.updateProviderMetadata.mockResolvedValue(
+      undefined,
+    );
+  });
+
+  const targetFor = (overrides: Record<string, unknown>) => ({
+    id: 'target-9',
+    projectId: 'project-1',
+    slot: 'frontend',
+    ownershipMode: 'flowci_managed',
+    provider: 'vercel',
+    providerConnectionId: null,
+    providerProjectId: 'prj_9',
+    providerProjectName: 'orders-ui-uat',
+    repoFullName: 'tone/orders-ui',
+    branchName: 'uat',
+    rootDirectory: '.',
+    buildCommand: 'npm run build',
+    startCommand: null,
+    environmentMap: {},
+    deploymentStrategy: 'vercel_ci_pushed',
+    providerMetadata: { vercelOrgId: 'team_flowci' },
+    status: 'active',
+    ...overrides,
+  });
+
+  const provision = async (installers: { get: jest.Mock }) => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+
+    const service = new ProjectDeploymentProvisioningService(
+      deploymentTargetsServiceRef as never,
+      envVarsServiceRef as never,
+      installers as never,
+      providerPolicyRegistryRef,
+    );
+
+    await service.provisionForProject({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'tone/orders-ui',
+      githubAccessToken: 'github-token',
+      request: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-ui-test',
+            branchName: 'uat',
+            rootDirectory: '.',
+            buildCommand: 'npm run build',
+            env: [],
+          },
+        ],
+      },
+    });
+
+    const messages = warn.mock.calls.map((call) => String(call[0]));
+    warn.mockRestore();
+    return messages;
+  };
+
+  it('says so when the installer declines the target, and why', async () => {
+    deploymentTargetsServiceRef.createDeploymentTarget.mockResolvedValueOnce(
+      // The strategy the workflow generator never reads, and this one does.
+      targetFor({ deploymentStrategy: 'provider_native' }),
+    );
+
+    const messages = await provision({
+      get: jest.fn(() => ({
+        supports: jest.fn(() => false),
+        installForTarget: jest.fn(),
+      })),
+    });
+
+    const declined = messages.find((message) => message.includes('declined'));
+    expect(declined).toBeDefined();
+    // Both halves of the disagreement, so the reader does not have to guess
+    // which one is wrong.
+    expect(declined).toContain('provider_native');
+    expect(declined).toContain('flowci_managed');
+    expect(declined).toContain('tone/orders-ui');
+    expect(declined).toContain('without credentials');
+  });
+
+  it('says so when no installer is registered for the provider at all', async () => {
+    deploymentTargetsServiceRef.createDeploymentTarget.mockResolvedValueOnce(
+      targetFor({}),
+    );
+
+    const messages = await provision({ get: jest.fn(() => undefined) });
+
+    const missing = messages.find((message) =>
+      message.includes('No CI secrets installer'),
+    );
+    expect(missing).toBeDefined();
+    expect(missing).toContain('vercel');
+  });
+
+  it('stays quiet when the installer accepts the target', async () => {
+    deploymentTargetsServiceRef.createDeploymentTarget.mockResolvedValueOnce(
+      targetFor({}),
+    );
+
+    const messages = await provision({
+      get: jest.fn(() => ({
+        supports: jest.fn(() => true),
+        installForTarget: jest.fn().mockResolvedValue({ githubSecrets: {} }),
+      })),
+    });
+
+    expect(
+      messages.filter(
+        (message) =>
+          message.includes('declined') ||
+          message.includes('No CI secrets installer'),
+      ),
+    ).toHaveLength(0);
   });
 });

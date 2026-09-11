@@ -182,7 +182,42 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     const ciSecretsInstaller = this.ciSecretsInstallers.get(
       input.target.provider,
     );
-    if (!ciSecretsInstaller?.supports(input.target)) {
+
+    /*
+     * Declining to install credentials is not a quiet outcome.
+     *
+     * This returned silently, and the consequence showed up far away: the
+     * workflow generator decides whether to emit deploy jobs from the target's
+     * OWNERSHIP MODE, while this decides whether to install the secrets those
+     * jobs read from its DEPLOYMENT STRATEGY. When the two disagree, a
+     * repository gets `deploy-vercel-frontend-uat` referencing
+     * `secrets.VERCEL_FRONTEND_TOKEN` that nothing ever set — observed on real
+     * projects, for both providers: deploy jobs present, zero provider secrets
+     * on the repository, provisioning reported success.
+     *
+     * The deploy then fails on an empty credential, in another repository, in
+     * another workflow, with an error that names none of this.
+     *
+     * So say it here, where the decision is made, and say which of the two
+     * reasons it was. This does not throw: a provider that legitimately needs
+     * no CI secrets must still provision. It makes the skip findable, which is
+     * the thing that was missing.
+     */
+    if (!ciSecretsInstaller) {
+      this.logger.warn(
+        `No CI secrets installer is registered for provider "${input.target.provider}". ` +
+          `Deployment jobs generated for ${input.repoFullName} will read secrets that nothing installs.`,
+      );
+      return input.target.providerMetadata;
+    }
+
+    if (!ciSecretsInstaller.supports(input.target)) {
+      this.logger.warn(
+        `The ${input.target.provider} CI secrets installer declined target ${input.target.id} ` +
+          `(strategy "${input.target.deploymentStrategy}", ownership "${input.target.ownershipMode}"). ` +
+          `No provider secrets were installed on ${input.repoFullName}, so any deploy job ` +
+          `generated for this target will run without credentials.`,
+      );
       return input.target.providerMetadata;
     }
     if (!input.githubAccessToken) {
