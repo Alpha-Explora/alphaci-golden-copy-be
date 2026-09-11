@@ -305,3 +305,73 @@ describe('dotnet scaffold — usings survive the strict format gate', () => {
     );
   });
 });
+
+/*
+ * The schema the contract tests read.
+ *
+ * Schemathesis generates its cases FROM a schema, so without one there is
+ * nothing to fuzz. Verified by generating this scaffold, building it, and
+ * running Schemathesis against the document the build produced: 18 cases
+ * across both operations, all passing — and failing with "Response violates
+ * schema" once the endpoint was changed to return a shape the document does
+ * not declare.
+ */
+describe('dotnet scaffold — the OpenAPI document', () => {
+  const program = () => contentOf('src/StPeterApi/Program.cs');
+  const csproj = () => contentOf('src/StPeterApi/StPeterApi.csproj');
+
+  it('generates the document at build time rather than serving it', () => {
+    // A file, not an endpoint. The contract tests read it from the build
+    // output, so a deployed service publishes nothing extra describing its
+    // own attack surface.
+    expect(csproj()).toContain('Microsoft.Extensions.ApiDescription.Server');
+    expect(csproj()).toContain('<OpenApiDocumentsDirectory>');
+  });
+
+  it('ships document generation without Swagger UI', () => {
+    // ASP.NET Core generates documents only; an interactive UI is a separate
+    // package. The schema is here to be tested against, not published.
+    expect(csproj()).toContain('Microsoft.AspNetCore.OpenApi');
+    expect(csproj()).not.toContain('Swashbuckle');
+    expect(program()).not.toContain('UseSwaggerUI');
+    expect(program()).not.toContain('MapOpenApi');
+  });
+
+  /*
+   * Without .Produces<T>() the document records that an endpoint exists and
+   * nothing about what it returns. A contract test generated from that can
+   * only check the status code — it would pass against an endpoint returning
+   * anything at all, which is the vacuous pass in a new place.
+   */
+  it('declares a response shape for every endpoint', () => {
+    const source = program();
+    const endpoints = source
+      .split('\n')
+      .filter((line) => line.trim().startsWith('app.MapGet('));
+
+    expect(endpoints.length).toBeGreaterThanOrEqual(2);
+    expect(source).toContain(
+      '.Produces<HealthResponse>(StatusCodes.Status200OK)',
+    );
+    // One declaration per endpoint. Counted from code lines only — the
+    // comment above the endpoints names `.Produces<T>()` too, and matching
+    // the whole file would count the explanation as a declaration.
+    const declarations = source
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('.Produces<'));
+
+    expect(declarations.length).toBe(endpoints.length);
+  });
+
+  it('keeps the generated document out of git but keeps appsettings in', () => {
+    const ignore = contentOf('.gitignore');
+
+    expect(ignore).toContain('src/*/[A-Z]*.json');
+    // Negation must follow the pattern it exempts, or appsettings.json is
+    // swept up with the build output it sits beside.
+    expect(ignore.indexOf('!src/*/appsettings*.json')).toBeGreaterThan(
+      ignore.indexOf('src/*/[A-Z]*.json'),
+    );
+  });
+});

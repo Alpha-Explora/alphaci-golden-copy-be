@@ -116,6 +116,25 @@ export interface ToolchainFragmentResult {
    * the tool for it is a browser, not an HTTP client.
    */
   readonly apiVerification?: ToolchainApiVerification;
+  /**
+   * How this stack's user interface is exercised, when it has one.
+   *
+   * Separate from `apiVerification` because they answer different questions
+   * with different tools. An API is checked by sending requests and reading
+   * JSON; a bundle served from a CDN has no /health to poll and no JSON to
+   * assert, and the only way to know it works is to drive a browser.
+   *
+   * Absent means the stack ships no browser suite, and no UI job is emitted
+   * for it. A stack can declare both, one, or neither.
+   */
+  readonly uiVerification?: ToolchainUiVerification;
+}
+
+export interface ToolchainUiVerification {
+  /** Directory of Playwright specs inside the repository. */
+  readonly testsDirectory: string;
+  /** Browsers to run against, as the Playwright workflow expects them. */
+  readonly browsers: string;
 }
 
 export interface ToolchainApiVerification {

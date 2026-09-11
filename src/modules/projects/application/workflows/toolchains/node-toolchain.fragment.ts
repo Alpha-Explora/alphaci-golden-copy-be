@@ -1,6 +1,7 @@
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import type {
   ToolchainFragment,
+  ToolchainUiVerification,
   ToolchainFragmentContext,
   ToolchainFragmentResult,
 } from '#kernel/ports/toolchain-fragment.port';
@@ -31,6 +32,14 @@ const CENTRAL_WORKFLOW_BASE = resolveCentralWorkflowBase();
 /** How a Node stack's test job is shaped. */
 interface NodeStackProfile {
   /** Reusable workflow that runs the tests. */
+  /**
+   * Where a browser suite lives, for the stacks that render in one.
+   *
+   * On the profile rather than per stack because it follows exactly the split
+   * this profile already draws: a frontend serves pages a browser can drive, a
+   * Node service serves JSON it cannot.
+   */
+  readonly uiVerification?: ToolchainUiVerification;
   readonly testWorkflow: 'backend-tests.yml' | 'frontend-tests.yml';
   /** Job id, which is also what Sonar waits on for the coverage artifact. */
   readonly testJobId: 'backend-tests' | 'frontend-tests';
@@ -65,6 +74,23 @@ const BACKEND_PROFILE: NodeStackProfile = {
 };
 
 const FRONTEND_PROFILE: NodeStackProfile = {
+  /*
+   * Browser tests for the stacks that have a browser.
+   *
+   * `tests/e2e` is the directory the scaffold's README already names, and the
+   * Playwright workflow fails when it is absent — so a stack declaring this
+   * has to ship specs there, exactly as a stack declaring apiVerification has
+   * to ship a collection.
+   *
+   * Chromium alone by default. A three-browser matrix triples the runtime of
+   * the slowest stage in the pipeline to catch a class of bug that is rare in
+   * an app this size; widening it is a per-project decision, not a default
+   * everyone pays for.
+   */
+  uiVerification: {
+    testsDirectory: 'tests/e2e',
+    browsers: 'chromium',
+  },
   testWorkflow: 'frontend-tests.yml',
   testJobId: 'frontend-tests',
   testCommand:
@@ -231,7 +257,12 @@ function nodeFragment(
 ): ToolchainFragment {
   return {
     stack,
-    build: (context) => buildNodeQualityJobs(stack, profile, context),
+    build: (context) => ({
+      ...buildNodeQualityJobs(stack, profile, context),
+      ...(profile.uiVerification && {
+        uiVerification: profile.uiVerification,
+      }),
+    }),
   };
 }
 

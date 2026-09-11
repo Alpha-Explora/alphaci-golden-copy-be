@@ -3,6 +3,7 @@ import yaml from 'js-yaml';
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
+import { vercelAliasSecret } from '#kernel/ports/workflow-fragment.port';
 import type {
   WorkflowFragmentBranch,
   WorkflowFragmentRegistry,
@@ -10,6 +11,7 @@ import type {
 import type {
   ToolchainApiVerification,
   ToolchainFragmentResult,
+  ToolchainUiVerification,
 } from '#kernel/ports/toolchain-fragment.port';
 import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
 import { defaultToolchainRegistry } from './toolchains';
@@ -463,21 +465,28 @@ function buildQualityWorkflowFile(
  */
 function buildVerifyWorkflowFile(
   ctx: StagedWorkflowContext,
-  apiVerification: ToolchainApiVerification,
+  verification: {
+    api?: ToolchainApiVerification | undefined;
+    ui?: ToolchainUiVerification | undefined;
+  },
 ): StagedWorkflowFile {
   const { verifyName, packageName, fileSuffix } = ctx.names;
 
   /*
-   * Where the tests point.
+   * Where each kind of test points.
    *
-   * The same per-branch secret the deploy job used, read straight from the
-   * repository rather than passed between workflows. A `workflow_run` stage
-   * cannot see the triggering run's job outputs, so plumbing the deploy's
-   * resolved URL across would mean an artifact hand-off for a value both
-   * stages can already read.
+   * An API is reached through the per-branch Render secret the deploy job
+   * used; a browser suite is reached through the Vercel alias that deploy set.
+   * Both are read straight from the repository rather than passed between
+   * workflows, because a `workflow_run` stage cannot see the triggering run's
+   * job outputs — and both providers now publish a stable per-branch address,
+   * which is the whole reason the alias exists.
    */
-  const baseUrlExpr = (branch: 'uat' | 'main') =>
+  const apiUrl = (branch: 'uat' | 'main') =>
     `\${{ secrets.RENDER_HEALTHCHECK_URL_${branch.toUpperCase()} }}`;
+
+  const uiUrl = (branch: 'uat' | 'main') =>
+    `https://\${{ secrets.${vercelAliasSecret(branch)} }}`;
 
   const apiTestJob = (branch: 'uat' | 'main') => ({
     needs: [VALIDATE_ACCESS_JOB_ID],
@@ -486,10 +495,10 @@ function buildVerifyWorkflowFile(
     with: {
       'working-directory': ctx.servicePath,
       'system-name': ctx.serviceName,
-      'base-url': baseUrlExpr(branch),
-      'collection-path': apiVerification.collectionPath,
+      'base-url': apiUrl(branch),
+      'collection-path': verification.api!.collectionPath,
       // Production runs the read-only folder; uat runs everything.
-      ...(branch === 'main' ? { folder: apiVerification.smokeFolder } : {}),
+      ...(branch === 'main' ? { folder: verification.api!.smokeFolder } : {}),
       'checkout-ref': HEAD_SHA_EXPR,
     },
     secrets: {
@@ -499,6 +508,59 @@ function buildVerifyWorkflowFile(
     },
   });
 
+  /*
+   * Contract tests, uat only.
+   *
+   * This sends deliberately malformed payloads. Aimed at production that is
+   * not a test, it is an attack on a live service — and main is reached only
+   * by promotion from uat, so the same artifact has already been fuzzed.
+   */
+  const contractTestJob = () => ({
+    needs: [VALIDATE_ACCESS_JOB_ID],
+    if: branchIsOneOf(['uat']),
+    uses: `${CENTRAL_WORKFLOW_BASE}/schemathesis-scan.yml@${ctx.centralWorkflowRef}`,
+    with: {
+      'working-directory': ctx.servicePath,
+      'system-name': ctx.serviceName,
+      'base-url': apiUrl('uat'),
+      'checkout-ref': HEAD_SHA_EXPR,
+    },
+  });
+
+  const uiTestJob = (branch: 'uat' | 'main') => ({
+    needs: [VALIDATE_ACCESS_JOB_ID],
+    if: branchIsOneOf([branch]),
+    uses: `${CENTRAL_WORKFLOW_BASE}/playwright-e2e.yml@${ctx.centralWorkflowRef}`,
+    with: {
+      'working-directory': ctx.servicePath,
+      'system-name': ctx.serviceName,
+      'e2e-base-url': uiUrl(branch),
+      'e2e-tests-directory': verification.ui!.testsDirectory,
+      'browser-list': verification.ui!.browsers,
+      'upload-artifacts': true,
+    },
+  });
+
+  /*
+   * Only the jobs this stack can actually supply.
+   *
+   * A stack declaring neither never reaches here — the stage is not emitted
+   * for it. A stack declaring both gets both, which is what a full-stack
+   * repository in one slot would want.
+   */
+  const verifyJobs: Record<string, unknown> = {
+    ...(verification.api && {
+      'api-tests-uat': apiTestJob('uat'),
+      'api-tests-main': apiTestJob('main'),
+      'contract-tests-uat': contractTestJob(),
+    }),
+    ...(verification.ui && {
+      'ui-tests-uat': uiTestJob('uat'),
+      'ui-tests-main': uiTestJob('main'),
+    }),
+  };
+
+  const workJobIds = Object.keys(verifyJobs);
   return {
     stage: 'verify',
     name: verifyName,
@@ -525,19 +587,18 @@ function buildVerifyWorkflowFile(
           if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
           ...validationJob('verify'),
         },
-        'api-tests-uat': apiTestJob('uat'),
-        'api-tests-main': apiTestJob('main'),
+        ...verifyJobs,
         'report-results': reportingJob(
           'verify',
-          [VALIDATE_ACCESS_JOB_ID, 'api-tests-uat', 'api-tests-main'],
+          [VALIDATE_ACCESS_JOB_ID, ...workJobIds],
           {
             /*
-             * Only the API jobs count as work. Both are branch-scoped, so one
-             * of the two always skips — and on dev both do, which is what
-             * makes the stage report nothing there rather than a success it
-             * did not earn.
+             * Only the test jobs count as work. Every one is branch-scoped, so
+             * some always skip — and on dev they all do, which is what makes
+             * the stage report nothing there rather than a success it did not
+             * earn.
              */
-            workJobIds: ['api-tests-uat', 'api-tests-main'],
+            workJobIds,
           },
         ),
       },
@@ -647,14 +708,25 @@ export function buildStagedWorkflowBundle(
    * code — the same confusion as testing through a deploy that has not
    * finished starting.
    *
-   * The stack has to supply the suite too. The verify job fails when the
-   * collection is missing, deliberately, so emitting this for a stack whose
-   * scaffold ships none turns every one of its pipelines red at the last
-   * stage. A React bundle on a CDN has no /health to poll and no JSON to
-   * assert; the tool for it is a browser, not an HTTP client.
+   * The stack has to supply a suite too, of either kind. These jobs fail when
+   * the collection or the specs directory is missing, deliberately, so
+   * emitting the stage for a stack whose scaffold ships neither turns every
+   * one of its pipelines red at the last stage.
+   *
+   * Which kind follows the stack, not the provider: an API is checked by
+   * sending requests and reading JSON, a bundle on a CDN by driving a browser.
+   * A stack may declare both, and a full-stack repository in one slot would.
    */
-  if (toolchain.apiVerification && deploymentPlan.jobIds.length > 0) {
-    files.push(buildVerifyWorkflowFile(ctx, toolchain.apiVerification));
+  if (
+    (toolchain.apiVerification || toolchain.uiVerification) &&
+    deploymentPlan.jobIds.length > 0
+  ) {
+    files.push(
+      buildVerifyWorkflowFile(ctx, {
+        api: toolchain.apiVerification,
+        ui: toolchain.uiVerification,
+      }),
+    );
   }
 
   // The env guard is repo-wide, not per-pipeline: in microservices repos both
