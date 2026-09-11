@@ -41,6 +41,34 @@ export function toDotnetProjectName(serviceName: string): string {
  * moniker here keeps global.json, the csproj and setup-dotnet describing one
  * version rather than three that can drift.
  */
+/**
+ * OpenAPI package version for a runtime.
+ *
+ * These ship in lockstep with .NET: 9.0.x targets net9.0, 10.0.x targets
+ * net10.0. Pinning one version for every framework is what broke the first
+ * real build — a net10.0 project restored the 9.0.0 tools package, whose
+ * `tools/` folder has no net10.0 GetDocument.Insider.dll, and publish failed
+ * with "The application to execute does not exist" after a clean compile.
+ *
+ * An unknown major floats within its own band rather than pinning a version
+ * that may not exist. A future .NET then builds against whatever that band
+ * published, instead of failing on a number nobody has released.
+ */
+export function toOpenApiPackageVersion(runtimeVersion: string): string {
+  const major = runtimeVersion.trim().split('.')[0];
+  const pinned: Record<string, string> = {
+    '8': '8.0.11',
+    '9': '9.0.20',
+    '10': '10.0.12',
+  };
+
+  if (major !== undefined && pinned[major] !== undefined) {
+    return pinned[major];
+  }
+
+  return /^\d+$/.test(major ?? '') ? `${major}.0.*` : '10.0.*';
+}
+
 export function toTargetFramework(runtimeVersion: string): string {
   const major = runtimeVersion.trim().split('.')[0];
   return /^\d+$/.test(major ?? '') ? `net${major}.0` : 'net10.0';
@@ -145,7 +173,7 @@ function solution(projectName: string): string {
   ].join('\n');
 }
 
-function appCsproj(targetFramework: string): string {
+function appCsproj(targetFramework: string, openApiVersion: string): string {
   return [
     '<Project Sdk="Microsoft.NET.Sdk.Web">',
     '',
@@ -168,10 +196,10 @@ function appCsproj(targetFramework: string): string {
     '    <!-- Document generation only. Swagger UI is a separate package and is',
     '         deliberately absent: the schema is here to be TESTED against, not',
     '         published. -->',
-    '    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0" />',
+    `    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="${openApiVersion}" />`,
     '    <!-- Emits the document at build time so it exists as an artifact',
     '         without the app having to serve it. -->',
-    '    <PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="9.0.0">',
+    `    <PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="${openApiVersion}">`,
     '      <PrivateAssets>all</PrivateAssets>',
     '      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>',
     '    </PackageReference>',
@@ -673,6 +701,7 @@ export function buildDotnetStandaloneScaffold(
   const { serviceName, runtimeVersion, includeDocker } = options;
   const projectName = toDotnetProjectName(serviceName);
   const targetFramework = toTargetFramework(runtimeVersion);
+  const openApiVersion = toOpenApiPackageVersion(runtimeVersion);
 
   const files: ScaffoldFile[] = [
     { path: '.gitignore', content: gitignore() },
@@ -681,7 +710,7 @@ export function buildDotnetStandaloneScaffold(
     { path: `${projectName}.sln`, content: solution(projectName) },
     {
       path: `src/${projectName}/${projectName}.csproj`,
-      content: appCsproj(targetFramework),
+      content: appCsproj(targetFramework, openApiVersion),
     },
     {
       path: `src/${projectName}/Program.cs`,
