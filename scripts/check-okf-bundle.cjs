@@ -8,14 +8,19 @@ const yaml = require('js-yaml');
 const OKF_VERSION = '0.2';
 const RESERVED_FILES = new Set(['index.md', 'log.md']);
 const LIFECYCLE_STATUSES = new Set(['draft', 'stable', 'deprecated']);
+const SKIP_DIRECTORIES = new Set(['superpowers', 'node_modules']);
 
 function filesUnder(directory) {
   if (!fs.existsSync(directory)) return [];
   const files = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...filesUnder(fullPath));
-    else files.push(fullPath);
+    if (entry.isDirectory()) {
+      if (SKIP_DIRECTORIES.has(entry.name)) continue;
+      files.push(...filesUnder(fullPath));
+      continue;
+    }
+    files.push(fullPath);
   }
   return files;
 }
