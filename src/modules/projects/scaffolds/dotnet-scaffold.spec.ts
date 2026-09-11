@@ -2,7 +2,11 @@ import {
   buildProjectScaffold,
   defaultIncludeDocker,
 } from '../scaffold.builder';
-import { toDotnetProjectName, toTargetFramework } from './dotnet-scaffold';
+import {
+  toDotnetProjectName,
+  toOpenApiPackageVersion,
+  toTargetFramework,
+} from './dotnet-scaffold';
 
 /**
  * The scaffold has to pass the pipeline the same repository is born with. The
@@ -373,5 +377,76 @@ describe('dotnet scaffold — the OpenAPI document', () => {
     expect(ignore.indexOf('!src/*/appsettings*.json')).toBeGreaterThan(
       ignore.indexOf('src/*/[A-Z]*.json'),
     );
+  });
+});
+
+/*
+ * The OpenAPI tooling has to match the framework it runs against.
+ *
+ * These packages ship in lockstep with .NET, and the tools package carries a
+ * target-framework-specific binary: 9.0.0 has tools/net9.0 and no net10.0.
+ * A single pinned version therefore compiled cleanly and then failed publish
+ * with "The application to execute does not exist" — inside a Docker build,
+ * on a real project, after everything else had passed.
+ *
+ * `toTargetFramework` already derived the framework from the runtime version.
+ * The package version did not, and that asymmetry was the whole bug.
+ */
+describe('dotnet scaffold — OpenAPI package versions track the framework', () => {
+  const csprojFor = (runtimeVersion: string): string => {
+    const files = buildProjectScaffold({
+      serviceName: 'st-peter-api',
+      stack: 'dotnet',
+      includeDocker: true,
+      runtimeVersion,
+    });
+    const file = files.find((candidate) =>
+      candidate.path.endsWith('StPeterApi.csproj'),
+    );
+    return file!.content;
+  };
+
+  it.each([
+    ['8.0.x', 'net8.0', '8.'],
+    ['9.0.x', 'net9.0', '9.'],
+    ['10.0.x', 'net10.0', '10.'],
+  ])(
+    'pins a %s-compatible package for %s',
+    (runtimeVersion, framework, versionPrefix) => {
+      const csproj = csprojFor(runtimeVersion);
+
+      expect(csproj).toContain(
+        `<TargetFramework>${framework}</TargetFramework>`,
+      );
+
+      const versions = [...csproj.matchAll(/OpenApi|ApiDescription\.Server/g)];
+      expect(versions.length).toBeGreaterThanOrEqual(2);
+
+      for (const match of csproj.matchAll(
+        /Include="Microsoft\.(?:AspNetCore\.OpenApi|Extensions\.ApiDescription\.Server)" Version="([^"]+)"/g,
+      )) {
+        expect(match[1]!.startsWith(versionPrefix)).toBe(true);
+      }
+    },
+  );
+
+  it('floats within the band for a framework it has never heard of', () => {
+    // Better than pinning a number nobody has released: a future .NET builds
+    // against whatever that band published rather than failing on restore.
+    expect(toOpenApiPackageVersion('42.0.x')).toBe('42.0.*');
+  });
+
+  it('matches every declared package version to the framework major', () => {
+    for (const runtimeVersion of ['8.0.x', '9.0.x', '10.0.x']) {
+      const csproj = csprojFor(runtimeVersion);
+      const framework = /<TargetFramework>net(\d+)\.0<\/TargetFramework>/.exec(
+        csproj,
+      );
+      expect(framework).not.toBeNull();
+
+      for (const match of csproj.matchAll(/Version="(\d+)\.[^"]*"/g)) {
+        expect(match[1]).toBe(framework![1]);
+      }
+    }
   });
 });
