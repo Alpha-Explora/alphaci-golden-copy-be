@@ -126,6 +126,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       },
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
+        "branch-alias": "\${{ secrets.VERCEL_ALIAS_DEV }}",
         "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
         "environment": "preview",
         "system-name": "orders-api",
@@ -165,6 +166,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       },
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
+        "branch-alias": "\${{ secrets.VERCEL_ALIAS_UAT }}",
         "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
         "environment": "preview",
         "system-name": "orders-api",

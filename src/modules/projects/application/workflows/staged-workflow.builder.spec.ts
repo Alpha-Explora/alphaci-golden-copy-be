@@ -1146,7 +1146,7 @@ describe('the verify stage', () => {
    * collection that was never generated. Every React pipeline would have gone
    * red at its last stage.
    */
-  it('is not emitted for a stack that ships no API suite', () => {
+  it('gives a browser stack UI jobs and no API jobs', () => {
     const bundle = buildStagedWorkflowBundle(
       makeTemplate('react'),
       {
@@ -1168,13 +1168,21 @@ describe('the verify stage', () => {
       workflowFragmentRegistry,
     );
 
-    // The deployment exists — this is not the no-deployment case.
-    expect(bundle.workflowFiles.some((file) => file.stage === 'package')).toBe(
-      true,
+    const file = bundle.workflowFiles.find(
+      (candidate) => candidate.stage === 'verify',
     );
-    expect(bundle.workflowFiles.some((file) => file.stage === 'verify')).toBe(
-      false,
-    );
+    expect(file).toBeDefined();
+
+    const parsed = yaml.load(file!.yaml) as ParsedWorkflow;
+    const jobs = Object.keys(parsed.jobs);
+
+    // A browser suite, because a bundle on a CDN has no /health to poll and no
+    // JSON to assert. Pointing Bruno at it would send a Vercel project to a
+    // Render secret, for a collection its scaffold never generates.
+    expect(jobs).toContain('ui-tests-uat');
+    expect(jobs).toContain('ui-tests-main');
+    expect(jobs.some((id) => id.startsWith('api-tests'))).toBe(false);
+    expect(jobs.some((id) => id.startsWith('contract-tests'))).toBe(false);
   });
 
   it('takes the collection path from the toolchain, not a hardcoded guess', () => {
@@ -1228,7 +1236,7 @@ describe('the verify stage', () => {
    * to report the stage a success it did not earn, which is the bug this
    * whole guard exists for.
    */
-  it('counts only the API jobs as the work of the stage', () => {
+  it('counts only the test jobs as the work of the stage', () => {
     const bundle = bundleWith([renderTarget('uat'), renderTarget('main')]);
     const file = bundle.workflowFiles.find(
       (candidate) => candidate.stage === 'verify',
@@ -1239,7 +1247,9 @@ describe('the verify stage', () => {
     const env = parsed.jobs['report-results']!.steps![0]!.env!;
 
     expect(env['STAGE_WORK_RAN']).toBe(
-      "${{ needs.api-tests-uat.result != 'skipped' || needs.api-tests-main.result != 'skipped' }}",
+      "${{ needs.api-tests-uat.result != 'skipped' || " +
+        "needs.api-tests-main.result != 'skipped' || " +
+        "needs.contract-tests-uat.result != 'skipped' }}",
     );
     expect(env['STAGE_WORK_RAN']).not.toContain('validate-access');
   });
