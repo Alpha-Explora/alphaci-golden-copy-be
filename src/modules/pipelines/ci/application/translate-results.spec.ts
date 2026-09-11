@@ -713,3 +713,71 @@ describe('translateResults — secret and licence findings', () => {
     ).toHaveLength(0);
   });
 });
+
+/*
+ * A setting stopped the analysis, so the code was never judged.
+ *
+ * Automatic Analysis is on by default for every new SonarCloud project, and
+ * the organisation-level switch that would disable it is Enterprise-only — so
+ * this is not one project's quirk, it is what every project meets on its first
+ * run. The reason cannot arrive as an annotation either: a workflow-level
+ * error is attributed to `.github`, and those are filtered out.
+ */
+describe('translateResults — SonarCloud blocked by a setting', () => {
+  it('names the setting and where to change it', () => {
+    const messages = translateResults('quality', 'failure', {
+      sonar: { blockedBy: 'automatic-analysis' },
+    });
+
+    const blocked = messages.find((message) =>
+      message.title.includes('analyse this project itself'),
+    );
+
+    expect(blocked).toBeDefined();
+    expect(blocked!.severity).toBe('error');
+    expect(blocked!.hint).toContain('Analysis Method');
+    expect(blocked!.detail).toContain('not analysed');
+  });
+
+  /*
+   * It has to lead. A gate status or a measure count from a scanner that
+   * refused to start is stale or absent, and reporting it first sends the
+   * reader to fix code nobody looked at.
+   */
+  it('does not also report a gate the scanner never reached', () => {
+    const messages = translateResults('quality', 'failure', {
+      sonar: {
+        blockedBy: 'automatic-analysis',
+        gate: 'UNKNOWN',
+        measures: { bugs: '4' },
+      },
+    });
+
+    expect(
+      messages.filter((message) => message.title.includes('could not be read')),
+    ).toHaveLength(0);
+    expect(
+      messages.filter((message) => message.title === 'SonarCloud findings'),
+    ).toHaveLength(0);
+  });
+
+  it('keeps reporting normally when nothing blocked it', () => {
+    const messages = translateResults('quality', 'failure', {
+      sonar: {
+        gate: 'ERROR',
+        failedConditions: [
+          { metric: 'new_coverage', actual: '61.2', threshold: '80' },
+        ],
+      },
+    });
+
+    expect(
+      messages.filter((message) =>
+        message.title.includes('analyse this project itself'),
+      ),
+    ).toHaveLength(0);
+    expect(
+      messages.find((message) => message.title.includes('quality gate failed')),
+    ).toBeDefined();
+  });
+});

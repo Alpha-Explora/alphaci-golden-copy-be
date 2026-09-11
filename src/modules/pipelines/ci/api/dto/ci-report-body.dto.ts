@@ -237,6 +237,15 @@ export class CiReportSonarDto {
   @IsString()
   gate?: string;
 
+  /**
+   * Why the analysis could not run, when the cause is a setting rather than
+   * the code. Carried as a field because it cannot arrive as an annotation:
+   * a workflow-level error is attributed to `.github`, and those are filtered.
+   */
+  @IsOptional()
+  @IsString()
+  blockedBy?: string;
+
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => CiReportSonarConditionDto)

@@ -1102,6 +1102,15 @@ function reportingJob(
      * supposed to remove.
      */
     stepEnv['SONAR_GATE'] = '${{ needs.sonar.outputs.gate-status }}';
+    /*
+     * Why the analysis could not run, when the cause is a setting.
+     *
+     * It cannot arrive as an annotation: a workflow-level error is attributed
+     * to `.github`, and those are filtered out because the runner's own
+     * "Process completed with exit code 1" arrives the same way and says
+     * nothing. So the reason travels as an output or not at all.
+     */
+    stepEnv['SONAR_BLOCKED_BY'] = '${{ needs.sonar.outputs.blocked-by }}';
     stepEnv['SONAR_CONDITIONS'] =
       '${{ needs.sonar.outputs.failed-conditions }}';
     stepEnv['SONAR_MEASURES'] = '${{ needs.sonar.outputs.measures }}';
@@ -1291,6 +1300,13 @@ function reportingJob(
           '# that passed, and silently treating it as clean is how a broken',
           '# reporting path starts looking like a healthy project.',
           'SONAR="{}"',
+          '# Why the analysis could not run, when the cause is a setting rather',
+          '# than the code. Carried as a fact because it cannot arrive any other',
+          '# way: a workflow-level error is attributed to `.github`, and those',
+          '# annotations are filtered out.',
+          'if [ -n "$SONAR_BLOCKED_BY" ]; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --arg b "$SONAR_BLOCKED_BY" \'. + {blockedBy:$b}\')',
+          'fi',
           'if [ -n "$SONAR_GATE" ]; then',
           '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --arg gate "$SONAR_GATE" \'. + {gate:$gate}\')',
           'fi',

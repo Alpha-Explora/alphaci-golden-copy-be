@@ -60,6 +60,8 @@ export interface CiResults {
    */
   sonar?: {
     gate?: string;
+    /** A setting stopped the analysis, rather than the code failing it. */
+    blockedBy?: string;
     failedConditions?: {
       metric: string;
       status?: string;
@@ -564,6 +566,29 @@ function pushSonarMessages(
   messages: FriendlyMessage[],
   sonar: SonarResult,
 ): void {
+  /*
+   * A setting stopped the analysis, so the code was never judged.
+   *
+   * This has to lead. Everything else this function can say describes an
+   * analysis that ran; when the scanner refused to start, a gate status or a
+   * measure count is either stale or absent, and reporting those first tells
+   * the reader to go and fix code that was never looked at.
+   *
+   * It bites every new project rather than once per organisation: SonarCloud
+   * turns automatic analysis on by default for new projects, and the switch
+   * that would disable it for all of them is Enterprise-plan only.
+   */
+  if (sonar.blockedBy === 'automatic-analysis') {
+    messages.push({
+      severity: 'error',
+      title: 'SonarCloud is set to analyse this project itself',
+      detail:
+        'Automatic Analysis is enabled for this project, and SonarCloud refuses to run a CI analysis alongside it. The code was not analysed.',
+      hint: "In SonarCloud open this project, then Administration > Analysis Method, and unselect 'Enabled for this project'. Keep the CI analysis: Automatic Analysis cannot read a coverage report, so the coverage gate would stop meaning anything.",
+    });
+    return;
+  }
+
   if (sonar.gate === 'ERROR') {
     const conditions = sonar.failedConditions ?? [];
 
