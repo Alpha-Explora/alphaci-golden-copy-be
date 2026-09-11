@@ -83,6 +83,12 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       "stage": "package",
     },
     {
+      "gated": true,
+      "name": "ALPHACI Verify",
+      "path": ".github/workflows/30-alphaci-verify.yml",
+      "stage": "verify",
+    },
+    {
       "gated": false,
       "name": "ALPHACI Env Guard",
       "path": ".github/workflows/05-alphaci-env-guard.yml",

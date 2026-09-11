@@ -25,6 +25,9 @@ import type { StagedWorkflowOptions } from './staged-workflow.builder';
  */
 const EXPECTED_CENTRAL_WORKFLOWS = [
   'backend-tests.yml',
+  // The verify stage. Exists on the workflow side in the same change that
+  // added this line — which is the point of the list.
+  'bruno-api-test.yml',
   'docker-build.yml',
   'frontend-tests.yml',
   'lint-check.yml',

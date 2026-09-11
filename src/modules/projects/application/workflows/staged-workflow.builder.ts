@@ -213,6 +213,7 @@ interface StagedNames {
   accessName: string;
   qualityName: string;
   packageName: string;
+  verifyName: string;
 }
 
 interface StagedWorkflowContext {
@@ -239,6 +240,7 @@ function resolveStagedNames(
     accessName: `ALPHACI Access Gate${nameSuffix}`,
     qualityName: `ALPHACI Quality${nameSuffix}`,
     packageName: `ALPHACI Package${nameSuffix}`,
+    verifyName: `ALPHACI Verify${nameSuffix}`,
   };
 }
 
@@ -437,6 +439,108 @@ function buildQualityWorkflowFile(
   };
 }
 
+/**
+ * The verify stage: exercise the service that was just deployed.
+ *
+ * Every earlier stage reads source. Access checks entitlement, quality
+ * analyses the code, package builds and deploys the artifact — and none of
+ * them can answer whether the thing now running actually behaves. That is the
+ * question this stage exists for, and it is why it needs a stage rather than a
+ * job inside package: its subject is a deployment, not a commit.
+ *
+ * It runs only where there IS a deployment. Render targets are generated for
+ * uat and main, so dev builds and is never deployed; pointing an API suite at
+ * a service that does not exist would report the absence of an environment as
+ * a failure of the code.
+ *
+ * uat runs the whole collection, main runs the read-only subset. A CRUD suite
+ * aimed at production is not a test, it is a write — and main is reached only
+ * by promotion from uat, so the destructive coverage has already run against
+ * the same artifact.
+ */
+function buildVerifyWorkflowFile(
+  ctx: StagedWorkflowContext,
+): StagedWorkflowFile {
+  const { verifyName, packageName, fileSuffix } = ctx.names;
+
+  /*
+   * Where the tests point.
+   *
+   * The same per-branch secret the deploy job used, read straight from the
+   * repository rather than passed between workflows. A `workflow_run` stage
+   * cannot see the triggering run's job outputs, so plumbing the deploy's
+   * resolved URL across would mean an artifact hand-off for a value both
+   * stages can already read.
+   */
+  const baseUrlExpr = (branch: 'uat' | 'main') =>
+    `\${{ secrets.RENDER_HEALTHCHECK_URL_${branch.toUpperCase()} }}`;
+
+  const apiTestJob = (branch: 'uat' | 'main') => ({
+    needs: [VALIDATE_ACCESS_JOB_ID],
+    if: branchIsOneOf([branch]),
+    uses: `${CENTRAL_WORKFLOW_BASE}/bruno-api-test.yml@${ctx.centralWorkflowRef}`,
+    with: {
+      'working-directory': ctx.servicePath,
+      'system-name': ctx.serviceName,
+      'base-url': baseUrlExpr(branch),
+      'collection-path': 'tests/api',
+      // Production runs the read-only folder; uat runs everything.
+      ...(branch === 'main' ? { folder: 'smoke' } : {}),
+      'checkout-ref': HEAD_SHA_EXPR,
+    },
+    secrets: {
+      API_USERNAME: '${{ secrets.API_USERNAME }}',
+      API_PASSWORD: '${{ secrets.API_PASSWORD }}',
+      API_TOKEN: '${{ secrets.API_TOKEN }}',
+    },
+  });
+
+  return {
+    stage: 'verify',
+    name: verifyName,
+    path: `.github/workflows/30-alphaci-verify${fileSuffix}.yml`,
+    gated: true,
+    yaml: dumpWorkflow({
+      name: verifyName,
+      on: {
+        workflow_run: {
+          workflows: [packageName],
+          types: ['completed'],
+        },
+        workflow_dispatch: {},
+      },
+      permissions: {
+        contents: 'read',
+      },
+      env: {
+        ALPHACI_VALIDATE_URL,
+        ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
+      },
+      jobs: {
+        'validate-access': {
+          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          ...validationJob('verify'),
+        },
+        'api-tests-uat': apiTestJob('uat'),
+        'api-tests-main': apiTestJob('main'),
+        'report-results': reportingJob(
+          'verify',
+          [VALIDATE_ACCESS_JOB_ID, 'api-tests-uat', 'api-tests-main'],
+          {
+            /*
+             * Only the API jobs count as work. Both are branch-scoped, so one
+             * of the two always skips — and on dev both do, which is what
+             * makes the stage report nothing there rather than a success it
+             * did not earn.
+             */
+            workJobIds: ['api-tests-uat', 'api-tests-main'],
+          },
+        ),
+      },
+    }),
+  };
+}
+
 function buildPackageWorkflowFile(
   ctx: StagedWorkflowContext,
   deploymentPlan: PackageDeploymentPlan,
@@ -529,6 +633,19 @@ export function buildStagedWorkflowBundle(
     buildQualityWorkflowFile(ctx, toolchain),
     buildPackageWorkflowFile(ctx, deploymentPlan, toolchain),
   ];
+
+  /*
+   * Verify only exists where there is something deployed to verify.
+   *
+   * Its subject is a running service, not a commit. A repository with no
+   * deployment targets has no URL to point an API suite at, and emitting the
+   * stage anyway would report the absence of an environment as a failure of
+   * the code — the same confusion as testing through a deploy that has not
+   * finished starting.
+   */
+  if (deploymentPlan.jobIds.length > 0) {
+    files.push(buildVerifyWorkflowFile(ctx));
+  }
 
   // The env guard is repo-wide, not per-pipeline: in microservices repos both
   // the backend and frontend chains are generated into the same repository, so

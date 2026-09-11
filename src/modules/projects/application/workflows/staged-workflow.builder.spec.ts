@@ -1080,3 +1080,119 @@ describe('the reporting job captures on success, not only on failure', () => {
     expect(run).toContain('if [ "$FINDINGS" != "{}" ]; then');
   });
 });
+
+/*
+ * The verify stage: exercise the service that was just deployed.
+ *
+ * Every earlier stage reads source. None of them can answer whether the thing
+ * now running actually behaves, which is why this needs a stage rather than a
+ * job inside package — its subject is a deployment, not a commit.
+ */
+describe('the verify stage', () => {
+  // Scoped here: the registry in the first describe is not in scope, and the
+  // verify stage only exists when a deployment fragment produced jobs.
+  const workflowFragmentRegistry = new WorkflowFragmentRegistry([
+    renderWorkflowFragment,
+    vercelWorkflowFragment,
+  ]);
+
+  const renderTarget = (branchName: 'uat' | 'main') => ({
+    slot: 'backend',
+    provider: 'render',
+    branchName,
+    deploymentStrategy: 'render_image_pushed',
+    dockerContext: '.',
+    dockerfilePath: 'Dockerfile',
+    imageName: `alphaci-backend-${branchName}-orders-api`,
+    secretNames: {
+      deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchName.toUpperCase()}`,
+      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchName.toUpperCase()}`,
+    },
+  });
+
+  const bundleWith = (deploymentTargets: unknown[]) =>
+    buildStagedWorkflowBundle(
+      makeTemplate('dotnet'),
+      {
+        templateId: 'be-dotnet',
+        serviceName: 'orders-api',
+        ...(deploymentTargets.length > 0 && { deploymentTargets }),
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+  const verifyOf = (deploymentTargets: unknown[]) => {
+    const file = bundleWith(deploymentTargets).workflowFiles.find(
+      (candidate) => candidate.stage === 'verify',
+    );
+    return file ? (yaml.load(file.yaml) as ParsedWorkflow) : null;
+  };
+
+  /*
+   * Its subject is a running service. A repository with no deployment targets
+   * has no URL to point a suite at, and emitting the stage anyway would report
+   * the absence of an environment as a failure of the code.
+   */
+  it('is not emitted when nothing is deployed', () => {
+    expect(verifyOf([])).toBeNull();
+  });
+
+  it('is emitted once there is a deployment to verify', () => {
+    const verify = verifyOf([renderTarget('uat')]);
+
+    expect(verify).not.toBeNull();
+    // Chained off package, so it runs after the artifact is live.
+    expect(verify!.on.workflow_run?.workflows).toEqual(['ALPHACI Package']);
+  });
+
+  it('runs the whole collection on uat and only the read-only folder on main', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    // uat is the QA tier: everything, including requests that write.
+    expect(verify.jobs['api-tests-uat']?.with?.['folder']).toBeUndefined();
+    // A CRUD suite aimed at production is not a test, it is a write. main is
+    // reached only by promotion from uat, so the destructive coverage has
+    // already run against this same artifact.
+    expect(verify.jobs['api-tests-main']?.with?.['folder']).toBe('smoke');
+  });
+
+  it('points each branch at its own deployment', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    expect(verify.jobs['api-tests-uat']?.with?.['base-url']).toBe(
+      '${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}',
+    );
+    expect(verify.jobs['api-tests-main']?.with?.['base-url']).toBe(
+      '${{ secrets.RENDER_HEALTHCHECK_URL_MAIN }}',
+    );
+  });
+
+  it('gates each API job to its own branch', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    expect(verify.jobs['api-tests-uat']?.if).toContain("== 'uat'");
+    expect(verify.jobs['api-tests-main']?.if).toContain("== 'main'");
+  });
+
+  /*
+   * Both API jobs are branch-scoped, so one always skips — and on dev both do.
+   * Without naming them as the work, the access gate passing would be enough
+   * to report the stage a success it did not earn, which is the bug this
+   * whole guard exists for.
+   */
+  it('counts only the API jobs as the work of the stage', () => {
+    const bundle = bundleWith([renderTarget('uat'), renderTarget('main')]);
+    const file = bundle.workflowFiles.find(
+      (candidate) => candidate.stage === 'verify',
+    );
+    const parsed = yaml.load(file!.yaml) as {
+      jobs: Record<string, { steps?: { env?: Record<string, string> }[] }>;
+    };
+    const env = parsed.jobs['report-results']!.steps![0]!.env!;
+
+    expect(env['STAGE_WORK_RAN']).toBe(
+      "${{ needs.api-tests-uat.result != 'skipped' || needs.api-tests-main.result != 'skipped' }}",
+    );
+    expect(env['STAGE_WORK_RAN']).not.toContain('validate-access');
+  });
+});

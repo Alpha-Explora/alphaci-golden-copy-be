@@ -546,6 +546,91 @@ export interface DotnetScaffoldOptions {
   includeDocker: boolean;
 }
 
+/**
+ * Bruno collection root.
+ *
+ * The verify stage fails when this file is missing, deliberately: a skipped
+ * API test reads as "nothing to worry about" on a dashboard, and here it would
+ * mean the service shipped unverified. So every scaffolded repository is born
+ * with a collection rather than acquiring one later.
+ */
+function brunoCollection(serviceName: string): string {
+  return [
+    '{',
+    '  "version": "1",',
+    `  "name": "${serviceName}",`,
+    '  "type": "collection"',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The smoke requests, run against the DEPLOYED service.
+ *
+ * Read-only on purpose. This folder is what runs against production after a
+ * deploy, where a suite that creates and deletes is not a test, it is a write.
+ * The uat tier runs the whole collection, so CRUD requests belong beside this
+ * folder rather than inside it.
+ *
+ * Every request asserts something. Bruno reports a request with no assert
+ * block as PASSED — observed directly: one request, no assertions, "Status
+ * PASS, exit 0" — so an unasserted request is a green tick for nothing. The
+ * verify job refuses a run whose assertion count is zero, and these are what
+ * keep it above that floor.
+ */
+function brunoHealthRequest(serviceName: string): string {
+  return [
+    'meta {',
+    '  name: Health',
+    '  type: http',
+    '  seq: 1',
+    '}',
+    '',
+    'get {',
+    '  url: {{BASE_URL}}/health',
+    '}',
+    '',
+    'assert {',
+    '  res.status: eq 200',
+    '  res.body.status: eq ok',
+    '}',
+    '',
+    'tests {',
+    '  test("reports the service it is", function() {',
+    `    expect(res.body.service).to.equal("${serviceName}");`,
+    '  });',
+    '',
+    '  // A deployment answering at all is not the same as the right one',
+    '  // answering. Without this, a stale service on the same URL passes.',
+    '  test("answers as json", function() {',
+    '    expect(res.headers["content-type"]).to.contain("application/json");',
+    '  });',
+    '}',
+    '',
+  ].join('\n');
+}
+
+function brunoRootRequest(): string {
+  return [
+    'meta {',
+    '  name: Root',
+    '  type: http',
+    '  seq: 2',
+    '}',
+    '',
+    'get {',
+    '  url: {{BASE_URL}}/',
+    '}',
+    '',
+    'assert {',
+    '  res.status: eq 200',
+    '  res.body.status: eq ready',
+    '}',
+    '',
+  ].join('\n');
+}
+
 export function buildDotnetStandaloneScaffold(
   options: DotnetScaffoldOptions,
 ): ScaffoldFile[] {
@@ -591,6 +676,12 @@ export function buildDotnetStandaloneScaffold(
       content: serviceStatusTests(projectName),
     },
     { path: '.env.example', content: readmeEnvExample() },
+    { path: 'tests/api/bruno.json', content: brunoCollection(serviceName) },
+    {
+      path: 'tests/api/smoke/health.bru',
+      content: brunoHealthRequest(serviceName),
+    },
+    { path: 'tests/api/smoke/root.bru', content: brunoRootRequest() },
   ];
 
   if (includeDocker) {
