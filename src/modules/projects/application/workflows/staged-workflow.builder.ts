@@ -7,12 +7,20 @@ import type {
   WorkflowFragmentBranch,
   WorkflowFragmentRegistry,
 } from '#kernel/ports/workflow-fragment.port';
-import type { ToolchainFragmentResult } from '#kernel/ports/toolchain-fragment.port';
+import type {
+  ToolchainApiVerification,
+  ToolchainFragmentResult,
+} from '#kernel/ports/toolchain-fragment.port';
 import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
 import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
-export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
+export type WorkflowStage =
+  | 'access'
+  | 'quality'
+  | 'package'
+  | 'verify'
+  | 'guard';
 
 export interface StagedWorkflowFile {
   stage: WorkflowStage;
@@ -208,6 +216,7 @@ interface StagedNames {
   accessName: string;
   qualityName: string;
   packageName: string;
+  verifyName: string;
 }
 
 interface StagedWorkflowContext {
@@ -234,6 +243,7 @@ function resolveStagedNames(
     accessName: `ALPHACI Access Gate${nameSuffix}`,
     qualityName: `ALPHACI Quality${nameSuffix}`,
     packageName: `ALPHACI Package${nameSuffix}`,
+    verifyName: `ALPHACI Verify${nameSuffix}`,
   };
 }
 
@@ -420,7 +430,115 @@ function buildQualityWorkflowFile(
             ...toolchain.qualityJobIds,
             'sonar',
           ],
-          { testJobId: toolchain.testJobId },
+          {
+            testJobId: toolchain.testJobId,
+            // Sonar is secret-gated and skips on repositories that have not
+            // configured it, so it cannot stand in for "the stage ran".
+            workJobIds: toolchain.qualityJobIds,
+          },
+        ),
+      },
+    }),
+  };
+}
+
+/**
+ * The verify stage: exercise the service that was just deployed.
+ *
+ * Every earlier stage reads source. Access checks entitlement, quality
+ * analyses the code, package builds and deploys the artifact — and none of
+ * them can answer whether the thing now running actually behaves. That is the
+ * question this stage exists for, and it is why it needs a stage rather than a
+ * job inside package: its subject is a deployment, not a commit.
+ *
+ * It runs only where there IS a deployment. Render targets are generated for
+ * uat and main, so dev builds and is never deployed; pointing an API suite at
+ * a service that does not exist would report the absence of an environment as
+ * a failure of the code.
+ *
+ * uat runs the whole collection, main runs the read-only subset. A CRUD suite
+ * aimed at production is not a test, it is a write — and main is reached only
+ * by promotion from uat, so the destructive coverage has already run against
+ * the same artifact.
+ */
+function buildVerifyWorkflowFile(
+  ctx: StagedWorkflowContext,
+  apiVerification: ToolchainApiVerification,
+): StagedWorkflowFile {
+  const { verifyName, packageName, fileSuffix } = ctx.names;
+
+  /*
+   * Where the tests point.
+   *
+   * The same per-branch secret the deploy job used, read straight from the
+   * repository rather than passed between workflows. A `workflow_run` stage
+   * cannot see the triggering run's job outputs, so plumbing the deploy's
+   * resolved URL across would mean an artifact hand-off for a value both
+   * stages can already read.
+   */
+  const baseUrlExpr = (branch: 'uat' | 'main') =>
+    `\${{ secrets.RENDER_HEALTHCHECK_URL_${branch.toUpperCase()} }}`;
+
+  const apiTestJob = (branch: 'uat' | 'main') => ({
+    needs: [VALIDATE_ACCESS_JOB_ID],
+    if: branchIsOneOf([branch]),
+    uses: `${CENTRAL_WORKFLOW_BASE}/bruno-api-test.yml@${ctx.centralWorkflowRef}`,
+    with: {
+      'working-directory': ctx.servicePath,
+      'system-name': ctx.serviceName,
+      'base-url': baseUrlExpr(branch),
+      'collection-path': apiVerification.collectionPath,
+      // Production runs the read-only folder; uat runs everything.
+      ...(branch === 'main' ? { folder: apiVerification.smokeFolder } : {}),
+      'checkout-ref': HEAD_SHA_EXPR,
+    },
+    secrets: {
+      API_USERNAME: '${{ secrets.API_USERNAME }}',
+      API_PASSWORD: '${{ secrets.API_PASSWORD }}',
+      API_TOKEN: '${{ secrets.API_TOKEN }}',
+    },
+  });
+
+  return {
+    stage: 'verify',
+    name: verifyName,
+    path: `.github/workflows/30-alphaci-verify${fileSuffix}.yml`,
+    gated: true,
+    yaml: dumpWorkflow({
+      name: verifyName,
+      on: {
+        workflow_run: {
+          workflows: [packageName],
+          types: ['completed'],
+        },
+        workflow_dispatch: {},
+      },
+      permissions: {
+        contents: 'read',
+      },
+      env: {
+        ALPHACI_VALIDATE_URL,
+        ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
+      },
+      jobs: {
+        'validate-access': {
+          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          ...validationJob('verify'),
+        },
+        'api-tests-uat': apiTestJob('uat'),
+        'api-tests-main': apiTestJob('main'),
+        'report-results': reportingJob(
+          'verify',
+          [VALIDATE_ACCESS_JOB_ID, 'api-tests-uat', 'api-tests-main'],
+          {
+            /*
+             * Only the API jobs count as work. Both are branch-scoped, so one
+             * of the two always skips — and on dev both do, which is what
+             * makes the stage report nothing there rather than a success it
+             * did not earn.
+             */
+            workJobIds: ['api-tests-uat', 'api-tests-main'],
+          },
         ),
       },
     }),
@@ -485,11 +603,15 @@ function buildPackageWorkflowFile(
           ctx.centralWorkflowRef,
           deploymentPlan.promotionNeeds.uat,
         ),
-        'report-results': reportingJob('package', [
-          'validate-access',
-          'build',
-          ...deploymentPlan.jobIds,
-        ]),
+        'report-results': reportingJob(
+          'package',
+          ['validate-access', 'build', ...deploymentPlan.jobIds],
+          {
+            // The deploy jobs are branch-scoped and skip by design, so `build`
+            // alone decides whether this stage packaged anything.
+            workJobIds: ['build'],
+          },
+        ),
       },
     }),
   };
@@ -515,6 +637,25 @@ export function buildStagedWorkflowBundle(
     buildQualityWorkflowFile(ctx, toolchain),
     buildPackageWorkflowFile(ctx, deploymentPlan, toolchain),
   ];
+
+  /*
+   * Verify needs BOTH an API suite and somewhere it is deployed.
+   *
+   * Its subject is a running service, not a commit. A repository with no
+   * deployment target has no URL to point a suite at, and emitting the stage
+   * anyway would report the absence of an environment as a failure of the
+   * code — the same confusion as testing through a deploy that has not
+   * finished starting.
+   *
+   * The stack has to supply the suite too. The verify job fails when the
+   * collection is missing, deliberately, so emitting this for a stack whose
+   * scaffold ships none turns every one of its pipelines red at the last
+   * stage. A React bundle on a CDN has no /health to poll and no JSON to
+   * assert; the tool for it is a browser, not an HTTP client.
+   */
+  if (toolchain.apiVerification && deploymentPlan.jobIds.length > 0) {
+    files.push(buildVerifyWorkflowFile(ctx, toolchain.apiVerification));
+  }
 
   // The env guard is repo-wide, not per-pipeline: in microservices repos both
   // the backend and frontend chains are generated into the same repository, so
@@ -957,10 +1098,28 @@ function promotionJob(
 function reportingJob(
   stage: WorkflowStage,
   needs: string[],
-  opts?: { testJobId?: string },
+  opts?: { testJobId?: string; workJobIds?: string[] },
 ) {
   const isQuality = stage === 'quality';
   const testJobId = opts?.testJobId;
+
+  /*
+   * The jobs that ARE the stage, as opposed to the ones that let it start.
+   *
+   * Every stage needs `validate-access`, and in the two later stages it is
+   * plumbing: it re-checks the caller and then hands over to the work. Asking
+   * "did any job succeed?" therefore answered yes as soon as that gate passed,
+   * which is not the same question as "did this stage do anything", and the
+   * gap between the two is what produced 24 package rows reporting a success
+   * with an empty payload. Naming the work explicitly closes it.
+   *
+   * Defaults to `needs` for a stage whose needs ARE its work, which is the
+   * access stage: the gate is the only thing it does.
+   */
+  const workJobIds = opts?.workJobIds ?? needs;
+  const workRanExpr = workJobIds
+    .map((jobId) => `needs.${jobId}.result != 'skipped'`)
+    .join(' || ');
 
   // env vars injected into the step — NO ${{ }} inside the run: script
   const stepEnv: Record<string, string> = {
@@ -973,6 +1132,14 @@ function reportingJob(
     GITHUB_TOKEN: '${{ github.token }}',
     STAGE_FAILED: "${{ contains(needs.*.result, 'failure') }}",
     STAGE_CANCELLED: "${{ contains(needs.*.result, 'cancelled') }}",
+    /*
+     * Whether this stage's actual work ran, rather than whether any job did.
+     *
+     * `skipped` is neither failure nor cancelled, so without this a stage whose
+     * work never started fell through to "success" — see the conclusion block
+     * below for what that produced.
+     */
+    STAGE_WORK_RAN: `\${{ ${workRanExpr} }}`,
   };
 
   if (isQuality && testJobId) {
@@ -1007,6 +1174,73 @@ function reportingJob(
     stepEnv['VULN_HIGH'] = '${{ needs.security.outputs.vulnerabilities-high }}';
     stepEnv['VULN_ITEMS'] =
       '${{ needs.security.outputs.vulnerabilities-items }}';
+    /*
+     * Findings from the gates whose counts were computed and discarded.
+     *
+     * gitleaks-scan, dotnet-license-scan and dotnet-sbom each publish a count
+     * and nothing read them. It matters most on dev, where these gates are
+     * advisory: the job passes, so its conclusion says nothing, and the count
+     * is the only thing separating 'clean' from '3 secrets found, not blocking
+     * on this branch'.
+     *
+     * Read only when the toolchain actually declares the job. Node fills four
+     * quality slots and has no licence inventory to take; `needs.licenses` there
+     * would name a job that is not in `needs`, which evaluates to empty and
+     * would post a count of nothing as though it were a count of zero.
+     */
+    const countOutputs: Record<string, [string, string][]> = {
+      secrets: [
+        ['SECRETS_FINDINGS', 'findings-count'],
+        // Rule and location. The secret value is absent by construction
+        // upstream — see gitleaks-scan.yml — because a report that carries it
+        // has leaked it into somewhere more people can read than the repo.
+        ['SECRETS_ITEMS', 'findings-items'],
+      ],
+      licenses: [
+        ['LICENSE_FORBIDDEN', 'forbidden-count'],
+        ['LICENSE_ITEMS', 'forbidden-items'],
+        // Kept apart from the forbidden count on purpose: "this one is
+        // disallowed" and "we could not tell" need different responses, and
+        // merging them either buries a real hit or invents one.
+        ['LICENSE_UNKNOWN', 'unknown-count'],
+      ],
+      sbom: [['SBOM_COMPONENTS', 'component-count']],
+    };
+
+    for (const [jobId, outputs] of Object.entries(countOutputs)) {
+      if (!workJobIds.includes(jobId)) {
+        continue;
+      }
+      for (const [envName, output] of outputs) {
+        stepEnv[envName] = `\${{ needs.${jobId}.outputs.${output} }}`;
+      }
+    }
+
+    /*
+     * What SonarCloud actually said, not just whether it passed.
+     *
+     * `sonar` is in the reporting job's `needs` on every stack, so these are
+     * read unconditionally — unlike the counts above, which belong to jobs only
+     * some toolchains declare. A repository without Sonar credentials skips the
+     * job, the outputs arrive empty, and the guards below leave the key out.
+     *
+     * Without these the product could say "sonar failed" and nothing else,
+     * which is an instruction to go and read SonarCloud — the thing this is
+     * supposed to remove.
+     */
+    stepEnv['SONAR_GATE'] = '${{ needs.sonar.outputs.gate-status }}';
+    /*
+     * Why the analysis could not run, when the cause is a setting.
+     *
+     * It cannot arrive as an annotation: a workflow-level error is attributed
+     * to `.github`, and those are filtered out because the runner's own
+     * "Process completed with exit code 1" arrives the same way and says
+     * nothing. So the reason travels as an output or not at all.
+     */
+    stepEnv['SONAR_BLOCKED_BY'] = '${{ needs.sonar.outputs.blocked-by }}';
+    stepEnv['SONAR_CONDITIONS'] =
+      '${{ needs.sonar.outputs.failed-conditions }}';
+    stepEnv['SONAR_MEASURES'] = '${{ needs.sonar.outputs.measures }}';
   }
 
   const scriptLines = [
@@ -1015,6 +1249,27 @@ function reportingJob(
     '  CONCLUSION="failure"',
     'elif [ "$STAGE_CANCELLED" = "true" ]; then',
     '  CONCLUSION="cancelled"',
+    'elif [ "$STAGE_WORK_RAN" != "true" ]; then',
+    '  # THE WORK OF THIS STAGE NEVER RAN.',
+    '  #',
+    '  # Two ways to get here. The stage before it did not pass, so the access',
+    '  # gate skipped and everything needing it skipped in turn; or the gate',
+    '  # passed but the work is branch-scoped and this branch is not one it',
+    '  # builds — a pull request into dev, whose head branch is the PR branch.',
+    '  # `skipped` is neither failure nor cancelled, so this used to fall',
+    '  # through to "success" and the platform recorded a package stage that',
+    '  # built nothing and deployed nothing as a green deploy.',
+    '  #',
+    '  # Reporting nothing is the honest answer. When an earlier stage failed,',
+    '  # it is also the complete one: a stage with no report resolves on read',
+    '  # as `blocked`, naming the stage that stopped it. When the gate passed',
+    '  # and only the branch scope skipped the work, the reader currently sees',
+    '  # `pending`, which is imprecise but not a lie — unlike the `success` it',
+    '  # replaces. Saying `skipped` outright would need a migration.',
+    '  echo "This stage did no work, so there is nothing to report."',
+    '  echo "Either the stage before it did not pass, or this branch is not one"',
+    '  echo "this stage builds."',
+    '  exit 0',
     'else',
     '  CONCLUSION="success"',
     'fi',
@@ -1025,28 +1280,59 @@ function reportingJob(
     '# failed, which is what sent people to GitHub to learn anything useful.',
     'FAILED_JOBS=""',
     'ANNOTATIONS="[]"',
+    'CHECKS="[]"',
+    '',
+    '# ALWAYS fetch, on success as well as failure.',
+    '#',
+    '# This used to sit behind `if [ "$CONCLUSION" = "failure" ]`, which meant',
+    '# the branch that most needs the detail never collected any. On dev the',
+    '# gates are advisory - `fail-on-warning` is false - so a stage carrying',
+    '# twelve real diagnostics still concludes SUCCESS, skipped the capture',
+    '# entirely, and the developer saw a green tick and a coverage number.',
+    '# The warnings that would block them at uat were recorded nowhere, on the',
+    '# one branch where there was still time to fix them.',
+    'JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf \'{"jobs":[]}\')',
+    '',
+    '# Every job, with what it concluded - the per-TOOL view.',
+    '#',
+    '# A stage status answers "did the quality stage pass". It cannot answer',
+    '# "did the licence scan pass", and one red bar covering seven tools sends',
+    '# the reader to GitHub to find out which one. The reporting job is the only',
+    '# place that can see all of them at once, so it is the place that lists them.',
+    '#',
+    '# The reporting job itself is excluded: it is still running, so its',
+    '# conclusion is null, and it is plumbing rather than a check anyone asked for.',
+    'CHECKS=$(printf \'%s\' "$JOBS_JSON" | jq -c \'[.jobs[]? | select(.name != "report-results") | {name: .name, conclusion: (.conclusion // "running"), startedAt: .started_at, completedAt: .completed_at}]\' || printf \'[]\')',
+    '',
     'if [ "$CONCLUSION" = "failure" ]; then',
-    '  JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf \'{"jobs":[]}\')',
     '  FAILED_JOBS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'.jobs[] | select(.conclusion == "failure") | . as $job | (([$job.steps[]? | select(.conclusion == "failure") | .name] | first) // "") as $step | if $step == "" then "Failed GitHub Actions job: \\($job.name)" else "Failed GitHub Actions job: \\($job.name) > \\($step)" end\' | head -n 5 || true)',
-    '  # A job id is its check-run id for Actions, so one id addresses both.',
-    '  FAILED_IDS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'.jobs[] | select(.conclusion == "failure") | .id\' | head -n 3)',
-    '  for JOB_ID in $FAILED_IDS; do',
-    '    JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf \'[]\')',
-    '    # Keep the annotations that point at CODE, at any level.',
-    '    #',
-    '    # Filtering on annotation_level == "failure" looked right and threw away',
-    '    # every useful annotation. A Roslyn analyzer or formatter reports its',
-    '    # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -',
-    '    # while the only failure-level annotation is the runner\'s own "Process',
-    '    # completed with exit code 1", whose path is the workflow file. So the',
-    '    # filter kept the one annotation that says nothing and discarded every',
-    '    # one that named the actual problem.',
-    '    #',
-    '    # Deduplicated because a solution built more than once (analyze, then',
-    '    # sonar) reports the same diagnostic on each pass.',
-    '    ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.path and (.path | startswith(".github") | not))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
-    '  done',
     'fi',
+    '',
+    '# Annotations are the actual diagnostics - "Program.cs:11 Await RunAsync',
+    '# instead of blocking". Collected from every job that ran, not only the',
+    '# failed ones, because an advisory job on dev reports its findings as',
+    '# annotations and passes. Those ARE the errors the developer needs.',
+    '#',
+    '# A job id is its check-run id for Actions, so one id addresses both.',
+    '# Failed jobs first, so a capped list keeps the diagnostics that explain a',
+    '# failure ahead of the advisory noise from jobs that passed.',
+    'ANNOTATION_IDS=$(printf \'%s\' "$JOBS_JSON" | jq -r \'[.jobs[]? | select(.name != "report-results")] | sort_by(.conclusion != "failure") | .[].id\' | head -n 8)',
+    'for JOB_ID in $ANNOTATION_IDS; do',
+    '  JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf \'[]\')',
+    '  # Keep the annotations that point at CODE, at any level.',
+    '  #',
+    '  # Filtering on annotation_level == "failure" looked right and threw away',
+    '  # every useful annotation. A Roslyn analyzer or formatter reports its',
+    '  # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -',
+    '  # while the only failure-level annotation is the runner\'s own "Process',
+    '  # completed with exit code 1", whose path is the workflow file. So the',
+    '  # filter kept the one annotation that says nothing and discarded every',
+    '  # one that named the actual problem.',
+    '  #',
+    '  # Deduplicated because a solution built more than once (analyze, then',
+    '  # sonar) reports the same diagnostic on each pass.',
+    '  ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.path and (.path | startswith(".github") | not))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
+    'done',
     '',
     '# Build results sub-object (quality stage only — reads from job outputs)',
     'RESULTS="{}"',
@@ -1086,6 +1372,80 @@ function reportingJob(
           "    '{critical:$critical,high:$high,items:$items}')",
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson security "$SECURITY" \'. + {security:$security}\')',
           'fi',
+          '',
+          '# Counts from the advisory gates, so "passed" can be told apart from',
+          '# "passed with findings".',
+          '#',
+          '# On dev these three do not block, so their job conclusion is `success`',
+          '# whether they found nothing or found nine. The count is the only thing',
+          '# that separates the two, and without it the developer reads a green tick',
+          '# and promotes into a uat run that fails on exactly what dev already knew.',
+          '#',
+          '# Absent when the toolchain does not declare the job, so an empty string',
+          '# leaves the key out rather than posting 0 - which would claim a clean',
+          '# scan for a scan that never ran.',
+          'FINDINGS="{}"',
+          'if echo "$SECRETS_FINDINGS" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$SECRETS_FINDINGS" \'. + {secrets:$n}\')',
+          'fi',
+          'if echo "$LICENSE_FORBIDDEN" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$LICENSE_FORBIDDEN" \'. + {forbiddenLicenses:$n}\')',
+          'fi',
+          'if echo "$SBOM_COMPONENTS" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$SBOM_COMPONENTS" \'. + {sbomComponents:$n}\')',
+          'fi',
+          'if echo "$LICENSE_UNKNOWN" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$LICENSE_UNKNOWN" \'. + {undeterminedLicenses:$n}\')',
+          'fi',
+          '',
+          '# The lists, not just the totals. A count cannot be acted on: it says a',
+          '# problem exists and leaves finding it as homework.',
+          '#',
+          '# The secret VALUES are not here and must never be. gitleaks-scan.yml',
+          '# selects rule and location only, so what arrives is already safe to',
+          '# store and to render.',
+          'if printf \'%s\' "${SECRETS_ITEMS:-}" | jq -e \'type == "array" and length > 0\' >/dev/null 2>&1; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson i "$SECRETS_ITEMS" \'. + {secretItems:$i}\')',
+          'fi',
+          'if printf \'%s\' "${LICENSE_ITEMS:-}" | jq -e \'type == "array" and length > 0\' >/dev/null 2>&1; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson i "$LICENSE_ITEMS" \'. + {licenseItems:$i}\')',
+          'fi',
+          'if [ "$FINDINGS" != "{}" ]; then',
+          '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson findings "$FINDINGS" \'. + {findings:$findings}\')',
+          'fi',
+          '',
+          '# What SonarCloud said, so nobody has to open SonarCloud to read it.',
+          '#',
+          '# The gate alone is the same problem one level up: "ERROR" tells a',
+          '# reader something is wrong and nothing about what. The conditions',
+          '# carry the metric, the actual value and the threshold, which is the',
+          '# difference between "quality gate failed" and "new coverage 61.2 is',
+          '# below the required 80".',
+          '#',
+          '# UNKNOWN is kept rather than dropped: it means the analysis ran and',
+          '# the gate could not be read, which is a different thing from a gate',
+          '# that passed, and silently treating it as clean is how a broken',
+          '# reporting path starts looking like a healthy project.',
+          'SONAR="{}"',
+          '# Why the analysis could not run, when the cause is a setting rather',
+          '# than the code. Carried as a fact because it cannot arrive any other',
+          '# way: a workflow-level error is attributed to `.github`, and those',
+          '# annotations are filtered out.',
+          'if [ -n "$SONAR_BLOCKED_BY" ]; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --arg b "$SONAR_BLOCKED_BY" \'. + {blockedBy:$b}\')',
+          'fi',
+          'if [ -n "$SONAR_GATE" ]; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --arg gate "$SONAR_GATE" \'. + {gate:$gate}\')',
+          'fi',
+          'if printf \'%s\' "${SONAR_CONDITIONS:-}" | jq -e \'type == "array" and length > 0\' >/dev/null 2>&1; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson c "$SONAR_CONDITIONS" \'. + {failedConditions:$c}\')',
+          'fi',
+          'if printf \'%s\' "${SONAR_MEASURES:-}" | jq -e \'type == "object" and length > 0\' >/dev/null 2>&1; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson m "$SONAR_MEASURES" \'. + {measures:$m}\')',
+          'fi',
+          'if [ "$SONAR" != "{}" ]; then',
+          '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson sonar "$SONAR" \'. + {sonar:$sonar}\')',
+          'fi',
         ]
       : []),
     '',
@@ -1100,7 +1460,8 @@ function reportingJob(
     '  --arg rawLogs "$FAILED_JOBS" \\',
     '  --argjson results "$RESULTS" \\',
     '  --argjson annotations "$ANNOTATIONS" \\',
-    "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations}')",
+    '  --argjson checks "$CHECKS" \\',
+    "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations,checks:$checks}')",
     'curl -sf --max-time 5 \\',
     '  -X POST "$ALPHACI_REPORT_URL" \\',
     '  -H "Authorization: Bearer $ALPHACI_TOKEN" \\',

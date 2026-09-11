@@ -1,3 +1,5 @@
+import type { StageId } from './stages';
+
 export interface FriendlyMessage {
   severity: 'info' | 'warning' | 'error' | 'success';
   title: string;
@@ -34,9 +36,50 @@ export interface CiResults {
       severity?: string;
     }[];
   };
+  /**
+   * Counts from gates that pass while still having found something.
+   *
+   * Advisory on dev, blocking on uat and main. The count is what separates
+   * "passed, clean" from "passed, 3 findings, and uat will reject them".
+   */
+  findings?: {
+    secrets?: number;
+    forbiddenLicenses?: number;
+    sbomComponents?: number;
+    /** Could not be determined — not forbidden, but not cleared either. */
+    undeterminedLicenses?: number;
+    /** Rule and location only. Never the secret value. */
+    secretItems?: { rule?: string; file?: string; line?: number }[];
+    licenseItems?: { package?: string; version?: string; license?: string }[];
+  };
+  /**
+   * What SonarCloud reported, rather than only whether it passed.
+   *
+   * `gate` of UNKNOWN means the analysis ran and the gate could not be read,
+   * which is deliberately not the same as a gate that passed.
+   */
+  sonar?: {
+    gate?: string;
+    /** A setting stopped the analysis, rather than the code failing it. */
+    blockedBy?: string;
+    failedConditions?: {
+      metric: string;
+      status?: string;
+      actual?: string;
+      threshold?: string;
+    }[];
+    measures?: Record<string, string>;
+  };
+  /** Every job in the stage and what it concluded — the per-tool view. */
+  checks?: {
+    name: string;
+    conclusion: string;
+    startedAt?: string;
+    completedAt?: string;
+  }[];
 }
 
-type Stage = 'access' | 'quality' | 'package';
+type Stage = StageId;
 type Conclusion = 'success' | 'failure' | 'cancelled';
 type MessageItem = { label: string; sub?: string };
 type TestsResult = NonNullable<CiResults['tests']>;
@@ -155,6 +198,15 @@ export interface CiAnnotation {
   line?: number;
   title?: string;
   message?: string;
+  /**
+   * GitHub's severity: 'failure', 'warning' or 'notice'.
+   *
+   * The same diagnostic means different things per branch. On dev a formatter
+   * reports warnings and the job still passes; on uat that identical
+   * annotation is what fails the build. Without the level, advice and a block
+   * are indistinguishable.
+   */
+  level?: string;
 }
 
 /**
@@ -180,6 +232,45 @@ function annotationItems(annotations: readonly CiAnnotation[]): MessageItem[] {
       };
     }),
   );
+}
+
+/**
+ * Diagnostics that did not stop this stage, said out loud anyway.
+ *
+ * These were collected and then dropped. The message below only ever ran when a
+ * failure had nothing else to explain it, so on dev — where the gates are
+ * advisory and the stage therefore concludes SUCCESS — the annotations were
+ * fetched, sent, stored, and never shown. The one branch where there is still
+ * time to act on a diagnostic was the one branch that never displayed one.
+ *
+ * It also covers a failure that already has an explanation: tests failing does
+ * not make twelve formatter diagnostics uninteresting, and the old guard threw
+ * them away because an error message already existed.
+ */
+function advisoryAnnotationMessage(
+  stage: Stage,
+  conclusion: Conclusion,
+  annotations: readonly CiAnnotation[],
+): FriendlyMessage {
+  const blocking = conclusion === 'failure';
+  const count = annotations.length;
+  const noun = count === 1 ? 'diagnostic' : 'diagnostics';
+
+  return {
+    // Never an error on a stage that passed. Marking a green stage red in the
+    // summary would be its own lie, in the opposite direction.
+    severity: blocking ? 'error' : 'warning',
+    title: blocking
+      ? `${String(count)} more ${noun} in the ${stage} stage`
+      : `${String(count)} ${noun} reported without failing this stage`,
+    detail: blocking
+      ? `Reported alongside the failure above.`
+      : `The ${stage} stage passed. These were reported as advice on this branch.`,
+    hint: blocking
+      ? 'Each names the file and line it was raised on.'
+      : 'Warnings are advisory on the working branch and fail the build on uat and main. Fixing them here costs nothing; leaving them blocks the promotion.',
+    items: annotationItems(annotations),
+  };
 }
 
 function unreportedFailureMessage(
@@ -244,6 +335,21 @@ function unreportedFailureMessage(
       detail:
         'GitHub confirmed the package workflow failed, but it did not provide the failed build step or error output.',
       hint: 'Open the workflow logs, fix the first failed build or package step, then re-run the workflow.',
+    },
+    /*
+     * Verify fails differently from the three before it, and the wording has to
+     * say so. Those read source, so a failure is in the commit. This one drove
+     * a DEPLOYED service, so the same red can mean the code is wrong, the
+     * deployment is wrong, or the environment it was pointed at is wrong —
+     * and sending someone to re-read the diff first is sending them to the
+     * wrong place two times out of three.
+     */
+    verify: {
+      severity: 'error',
+      title: 'The deployed service failed its API checks',
+      detail:
+        'GitHub confirmed the verify workflow failed, but it did not provide the failing request or assertion.',
+      hint: 'Check the deployment answered at all before reading the code: an environment that never started fails every request the same way. The uploaded results file lists each request and assertion.',
     },
   };
 
@@ -350,6 +456,215 @@ function toSecurityItem(
   };
 }
 
+type FindingsResult = NonNullable<CiResults['findings']>;
+
+/**
+ * Say which secret and which licence, not how many.
+ *
+ * These counts were collected and stored and never turned into anything a
+ * reader sees. Even shown, "3 findings" is barely better than a red tick: it
+ * reports that a problem exists and leaves locating it as homework, which is
+ * the trip to GitHub this is meant to replace.
+ *
+ * Severity follows the branch, not the finding. On dev these gates are
+ * advisory — the job passes — so an error here would contradict a stage the
+ * product just called green. The hint carries the part that matters instead:
+ * it blocks at the promotion.
+ */
+function pushFindingsMessages(
+  messages: FriendlyMessage[],
+  findings: FindingsResult,
+  conclusion: Conclusion,
+): void {
+  const blocking = conclusion === 'failure';
+
+  const secrets = findings.secrets ?? 0;
+  if (secrets > 0) {
+    const items = findings.secretItems ?? [];
+
+    messages.push({
+      severity: blocking ? 'error' : 'warning',
+      title: `${String(secrets)} committed secret(s)`,
+      detail: blocking
+        ? `${String(secrets)} secret(s) were found in the working tree.`
+        : `${String(secrets)} secret(s) were found. Not blocking on this branch.`,
+      // Rotation first. Removing the line does not un-leak anything that has
+      // already been pushed, and a secret treated as fixed because it is gone
+      // from HEAD is still live wherever it was published.
+      hint: 'Rotate each secret first — deleting the line does not revoke a credential that has already been pushed — then remove it from the code and use a repository secret.',
+      ...(items.length > 0 && {
+        items: capItems(
+          items.map((item) => ({
+            label:
+              item.file === undefined
+                ? (item.rule ?? 'secret')
+                : item.line === undefined
+                  ? item.file
+                  : `${item.file}:${String(item.line)}`,
+            ...(item.rule !== undefined && { sub: item.rule }),
+          })),
+        ),
+      }),
+    });
+  }
+
+  const forbidden = findings.forbiddenLicenses ?? 0;
+  if (forbidden > 0) {
+    const items = findings.licenseItems ?? [];
+
+    messages.push({
+      severity: blocking ? 'error' : 'warning',
+      title: `${String(forbidden)} package(s) under a forbidden licence`,
+      detail: blocking
+        ? `${String(forbidden)} dependency licence(s) are not permitted.`
+        : `${String(forbidden)} dependency licence(s) are not permitted. Not blocking on this branch.`,
+      hint: 'Replace the package, or record an exception, before promoting to uat.',
+      ...(items.length > 0 && {
+        items: capItems(
+          items.map((item) => ({
+            label: `${item.package ?? 'unknown'}${
+              item.version === undefined ? '' : `@${item.version}`
+            }`,
+            ...(item.license !== undefined && { sub: item.license }),
+          })),
+        ),
+      }),
+    });
+  }
+
+  /*
+   * Reported, never counted as forbidden.
+   *
+   * A licence nobody could read is not a licence nobody needs to read. Folding
+   * it into the forbidden count would invent a violation; dropping it silently
+   * would clear a dependency on the strength of a question nobody answered.
+   */
+  const undetermined = findings.undeterminedLicenses ?? 0;
+  if (undetermined > 0) {
+    messages.push({
+      severity: 'info',
+      title: `${String(undetermined)} package licence(s) could not be determined`,
+      detail:
+        'These are not forbidden. The scanner could not read a licence for them.',
+      hint: 'Check them by hand if your policy requires every dependency to be cleared. A package that declares no licence is not the same as one that permits use.',
+    });
+  }
+}
+
+type SonarResult = NonNullable<CiResults['sonar']>;
+
+/**
+ * Say what SonarCloud found, in the product, in words.
+ *
+ * "Quality gate failed" is the same non-answer as "the quality stage failed"
+ * one level down: it tells a reader something is wrong and nothing about what,
+ * and the only way on was to open SonarCloud. Each failed condition carries the
+ * metric, the value it reached and the threshold it had to clear, so the
+ * message can name the gap instead of pointing at a dashboard.
+ */
+function pushSonarMessages(
+  messages: FriendlyMessage[],
+  sonar: SonarResult,
+): void {
+  /*
+   * A setting stopped the analysis, so the code was never judged.
+   *
+   * This has to lead. Everything else this function can say describes an
+   * analysis that ran; when the scanner refused to start, a gate status or a
+   * measure count is either stale or absent, and reporting those first tells
+   * the reader to go and fix code that was never looked at.
+   *
+   * It bites every new project rather than once per organisation: SonarCloud
+   * turns automatic analysis on by default for new projects, and the switch
+   * that would disable it for all of them is Enterprise-plan only.
+   */
+  if (sonar.blockedBy === 'automatic-analysis') {
+    messages.push({
+      severity: 'error',
+      title: 'SonarCloud is set to analyse this project itself',
+      detail:
+        'Automatic Analysis is enabled for this project, and SonarCloud refuses to run a CI analysis alongside it. The code was not analysed.',
+      hint: "In SonarCloud open this project, then Administration > Analysis Method, and unselect 'Enabled for this project'. Keep the CI analysis: Automatic Analysis cannot read a coverage report, so the coverage gate would stop meaning anything.",
+    });
+    return;
+  }
+
+  if (sonar.gate === 'ERROR') {
+    const conditions = sonar.failedConditions ?? [];
+
+    messages.push({
+      severity: 'error',
+      title: 'SonarCloud quality gate failed',
+      detail:
+        conditions.length > 0
+          ? `${String(conditions.length)} quality gate condition(s) were not met.`
+          : 'SonarCloud rejected the analysis against its quality gate.',
+      hint: 'Fix the conditions listed below. Each shows the value reached and the value required.',
+      ...(conditions.length > 0 && {
+        items: capItems(
+          conditions.map((condition) => ({
+            label: `${condition.metric}: ${condition.actual ?? 'unknown'}`,
+            // Omitted rather than set undefined: exactOptionalPropertyTypes
+            // draws the distinction, and a present-but-undefined `sub`
+            // serialises into the payload as an explicit null.
+            ...(condition.threshold !== undefined && {
+              sub: `required ${condition.threshold}`,
+            }),
+          })),
+        ),
+      }),
+    });
+  }
+
+  /*
+   * A gate that could not be read is reported, not ignored.
+   *
+   * It means the analysis ran and the verdict did not come back — a rate limit,
+   * a permissions change, an API that moved. Passing over it in silence leaves
+   * the stage looking clean on the strength of a check nobody actually heard
+   * the result of.
+   */
+  if (sonar.gate === 'UNKNOWN') {
+    messages.push({
+      severity: 'warning',
+      title: 'SonarCloud quality gate could not be read',
+      detail:
+        'The analysis ran, but its quality gate result could not be retrieved.',
+      hint: 'Treat this stage as unverified by SonarCloud rather than as passing it. Check the SonarCloud token and the project key.',
+    });
+  }
+
+  const measures = sonar.measures;
+  if (measures === undefined) {
+    return;
+  }
+
+  // Reported whatever the gate said: a gate can pass while the project still
+  // carries bugs, and a reader looking for the number should not have to fail
+  // the build first to be shown it.
+  const counted: { key: string; label: string }[] = [
+    { key: 'bugs', label: 'bug(s)' },
+    { key: 'vulnerabilities', label: 'vulnerability(s)' },
+    { key: 'security_hotspots', label: 'security hotspot(s)' },
+    { key: 'code_smells', label: 'code smell(s)' },
+  ];
+
+  const found = counted
+    .map(({ key, label }) => ({ label, value: Number(measures[key] ?? '0') }))
+    .filter((entry) => Number.isFinite(entry.value) && entry.value > 0);
+
+  if (found.length > 0) {
+    messages.push({
+      severity: sonar.gate === 'ERROR' ? 'warning' : 'info',
+      title: 'SonarCloud findings',
+      detail: found
+        .map((entry) => `${String(entry.value)} ${entry.label}`)
+        .join(', '),
+      hint: 'These do not necessarily fail the gate. The gate decides on new code; these are the totals for the project.',
+    });
+  }
+}
+
 function pushSecurityMessages(
   messages: FriendlyMessage[],
   security: SecurityResult,
@@ -420,7 +735,7 @@ export function translateResults(
     return messages;
   }
 
-  const { tests, coverage, lint, security } = results;
+  const { tests, coverage, lint, security, sonar, findings } = results;
 
   if (tests !== undefined) {
     pushTestMessages(messages, tests, conclusion);
@@ -441,6 +756,14 @@ export function translateResults(
 
   if (security !== undefined) {
     pushSecurityMessages(messages, security);
+  }
+
+  if (findings !== undefined) {
+    pushFindingsMessages(messages, findings, conclusion);
+  }
+
+  if (sonar !== undefined) {
+    pushSonarMessages(messages, sonar);
   }
 
   /*
@@ -464,11 +787,19 @@ export function translateResults(
    * Placed first, because the reason a stage failed outranks a warning about
    * coverage that did not cause it.
    */
-  if (
-    conclusion === 'failure' &&
-    !messages.some((message) => message.severity === 'error')
-  ) {
+  const alreadyExplained = messages.some(
+    (message) => message.severity === 'error',
+  );
+
+  if (conclusion === 'failure' && !alreadyExplained) {
     messages.unshift(unreportedFailureMessage(stage, rawLogs, annotations));
+  } else if (annotations.length > 0) {
+    /*
+     * Everything else that carries annotations: a stage that passed, and a
+     * failure that already explained itself. Appended rather than unshifted —
+     * the reason a stage failed still leads, and advice follows it.
+     */
+    messages.push(advisoryAnnotationMessage(stage, conclusion, annotations));
   }
 
   return messages;

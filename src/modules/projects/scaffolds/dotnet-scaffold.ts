@@ -176,6 +176,14 @@ function testCsproj(projectName: string, targetFramework: string): string {
     '    <!-- Supplies the XPlat Code Coverage collector the pipeline runs with.',
     '         Without it the tests pass and report no coverage at all. -->',
     '    <PackageReference Include="coverlet.collector" Version="6.0.4" />',
+    '    <!-- Without a substitute library there is no way to isolate a',
+    '         collaborator, so every test reaches the real one and "unit test"',
+    '         means integration test with extra steps. -->',
+    '    <PackageReference Include="NSubstitute" Version="5.3.0" />',
+    '    <!-- Layering assertions run as ordinary tests, so the architecture is',
+    '         enforced by the same command as everything else rather than by a',
+    '         separate tool nobody remembers to run. -->',
+    '    <PackageReference Include="NetArchTest.Rules" Version="1.3.2" />',
     '  </ItemGroup>',
     '',
     '  <ItemGroup>',
@@ -187,15 +195,56 @@ function testCsproj(projectName: string, targetFramework: string): string {
   ].join('\n');
 }
 
+/**
+ * The one domain type the scaffold ships, and the seam everything else needs.
+ *
+ * Without it two of the tools in the pipeline are decorative. NetArchTest can
+ * only assert over types that exist, and a rule over an empty namespace passes
+ * vacuously; NSubstitute can only substitute an abstraction, and a service with
+ * no interfaces offers none. Adding both packages without a seam produces a
+ * project where the architecture gate is green because it checked nothing.
+ *
+ * Deliberately in `<Project>.Domain` while the web types stay in the global
+ * namespace, because that boundary is what the architecture rule asserts: the
+ * domain decides WHAT healthy means, the endpoint decides how to say it over
+ * HTTP. It references nothing from ASP.NET Core, which is the rule.
+ */
+function serviceStatusCs(projectName: string): string {
+  return [
+    `namespace ${projectName}.Domain;`,
+    '',
+    '// Whether the service considers itself healthy is a decision, not a',
+    '// transport concern, so it lives here and the endpoint asks for it.',
+    '// This is also the seam a unit test substitutes.',
+    'public interface IServiceStatus',
+    '{',
+    '    string CurrentStatus();',
+    '}',
+    '',
+    'public sealed class ServiceStatus : IServiceStatus',
+    '{',
+    '    public string CurrentStatus() => "ok";',
+    '}',
+    '',
+  ].join('\n');
+}
+
 function programCs(projectName: string, serviceName: string): string {
   return [
+    `using ${projectName}.Domain;`,
+    '',
     'var builder = WebApplication.CreateBuilder(args);',
+    '',
+    '// Registered as an interface so a test can replace it without replacing',
+    '// the host. A concrete registration would leave nothing to substitute.',
+    'builder.Services.AddSingleton<IServiceStatus, ServiceStatus>();',
     '',
     'var app = builder.Build();',
     '',
     '// The production gate probes /health after a deployment, so this endpoint',
     '// is part of the pipeline contract rather than a convenience.',
-    'app.MapGet("/health", () => Results.Ok(new HealthResponse("ok", ServiceInfo.Name)));',
+    'app.MapGet("/health", (IServiceStatus status) =>',
+    '    Results.Ok(new HealthResponse(status.CurrentStatus(), ServiceInfo.Name)));',
     '',
     'app.MapGet("/", () => Results.Ok(new HealthResponse("ready", ServiceInfo.Name)));',
     '',
@@ -225,6 +274,141 @@ function appSettings(): string {
     null,
     2,
   )}\n`;
+}
+
+/**
+ * A starting layering rule, written as an ordinary test.
+ *
+ * NetArchTest asserts over the compiled assembly, so "clean architecture" stops
+ * being a diagram and becomes something `dotnet test` fails on. It ships with
+ * one real rule rather than a commented-out example: a scaffold whose
+ * architecture test asserts nothing passes forever and teaches the team that
+ * the file is decoration.
+ *
+ * The rule chosen is the one that survives any layout — a domain that reaches
+ * for the web framework has stopped being a domain. Projects that grow more
+ * layers add rules beside it.
+ */
+function architectureTests(projectName: string): string {
+  return [
+    // Ordered as `dotnet format --severity warn` demands: the project
+    // namespace sorts before Xunit, and the strict lint gate on uat and main
+    // fails the build over it. A scaffold has to pass its own pipeline.
+    'using NetArchTest.Rules;',
+    `using ${projectName}.Domain;`,
+    'using Xunit;',
+    '',
+    `namespace ${projectName}.Tests;`,
+    '',
+    '// Asserted against the compiled assembly, so the rule holds for what was',
+    '// actually built rather than for what the folder names suggest.',
+    'public class ArchitectureTests',
+    '{',
+    `    private static readonly System.Reflection.Assembly Target =`,
+    '        typeof(IServiceStatus).Assembly;',
+    '',
+    `    private const string DomainNamespace = "${projectName}.Domain";`,
+    '',
+    '    [Fact]',
+    '    public void Domain_Namespace_Is_Not_Empty()',
+    '    {',
+    '        // NetArchTest reports success for a rule with nothing to check, so',
+    '        // a renamed or emptied namespace would silently disable the rule',
+    '        // below rather than fail. This is the guard for that.',
+    '        var domainTypes = Types.InAssembly(Target)',
+    '            .That()',
+    '            .ResideInNamespace(DomainNamespace)',
+    '            .GetTypes();',
+    '',
+    '        Assert.NotEmpty(domainTypes);',
+    '    }',
+    '',
+    '    [Fact]',
+    '    public void Domain_Should_Not_Depend_On_AspNetCore()',
+    '    {',
+    '        // A domain type that references the web framework cannot be reused',
+    '        // outside a web host, and cannot be tested without one.',
+    '        var result = Types.InAssembly(Target)',
+    '            .That()',
+    '            .ResideInNamespace(DomainNamespace)',
+    '            .ShouldNot()',
+    '            .HaveDependencyOn("Microsoft.AspNetCore")',
+    '            .GetResult();',
+    '',
+    '        Assert.True(',
+    '            result.IsSuccessful,',
+    '            "Domain types must not depend on ASP.NET Core: " +',
+    '                string.Join(", ", result.FailingTypeNames ?? []));',
+    '    }',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The substitution pattern, written once so the second test is easy.
+ *
+ * A PackageReference alone proves nothing. Replacing a DI-registered service
+ * in an in-memory host needs `WithWebHostBuilder` plus `ConfigureTestServices`,
+ * and that is not guessable — a developer's first attempt is usually to new up
+ * the factory again, or to substitute a concrete class and wonder why the real
+ * one still answers. Showing it here is the difference between the library
+ * being present and the team being able to use it.
+ *
+ * It also asserts the endpoint actually consults the domain rather than
+ * hard-coding "ok", which is a real property: the /health contract the
+ * production gate probes is only meaningful if it reflects the service's own
+ * view of itself.
+ */
+function serviceStatusTests(projectName: string): string {
+  return [
+    'using System.Net.Http.Json;',
+    'using Microsoft.AspNetCore.Mvc.Testing;',
+    'using Microsoft.AspNetCore.TestHost;',
+    'using Microsoft.Extensions.DependencyInjection;',
+    'using NSubstitute;',
+    `using ${projectName}.Domain;`,
+    'using Xunit;',
+    '',
+    `namespace ${projectName}.Tests;`,
+    '',
+    'public class ServiceStatusTests : IClassFixture<WebApplicationFactory<Program>>',
+    '{',
+    '    private readonly WebApplicationFactory<Program> _factory;',
+    '',
+    '    public ServiceStatusTests(WebApplicationFactory<Program> factory)',
+    '    {',
+    '        _factory = factory;',
+    '    }',
+    '',
+    '    [Fact]',
+    '    public async Task Health_Reports_What_The_Domain_Says()',
+    '    {',
+    '        // The substitute stands in for the real IServiceStatus, so this',
+    '        // asserts the endpoint asks the domain rather than answering "ok"',
+    '        // from a literal. A hard-coded endpoint would pass the other test',
+    '        // and fail this one.',
+    '        var status = Substitute.For<IServiceStatus>();',
+    '        status.CurrentStatus().Returns("degraded");',
+    '',
+    '        // ConfigureTestServices runs AFTER the application registers its',
+    '        // own services, and the last registration wins — which is what',
+    '        // makes the substitute take effect without touching Program.cs.',
+    '        var client = _factory',
+    '            .WithWebHostBuilder(builder =>',
+    '                builder.ConfigureTestServices(services =>',
+    '                    services.AddSingleton(status)))',
+    '            .CreateClient();',
+    '',
+    '        var body = await client.GetFromJsonAsync<HealthResponse>("/health");',
+    '',
+    '        Assert.NotNull(body);',
+    '        Assert.Equal("degraded", body!.Status);',
+    '        status.Received(1).CurrentStatus();',
+    '    }',
+    '}',
+    '',
+  ].join('\n');
 }
 
 function healthTests(projectName: string): string {
@@ -362,6 +546,91 @@ export interface DotnetScaffoldOptions {
   includeDocker: boolean;
 }
 
+/**
+ * Bruno collection root.
+ *
+ * The verify stage fails when this file is missing, deliberately: a skipped
+ * API test reads as "nothing to worry about" on a dashboard, and here it would
+ * mean the service shipped unverified. So every scaffolded repository is born
+ * with a collection rather than acquiring one later.
+ */
+function brunoCollection(serviceName: string): string {
+  return [
+    '{',
+    '  "version": "1",',
+    `  "name": "${serviceName}",`,
+    '  "type": "collection"',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The smoke requests, run against the DEPLOYED service.
+ *
+ * Read-only on purpose. This folder is what runs against production after a
+ * deploy, where a suite that creates and deletes is not a test, it is a write.
+ * The uat tier runs the whole collection, so CRUD requests belong beside this
+ * folder rather than inside it.
+ *
+ * Every request asserts something. Bruno reports a request with no assert
+ * block as PASSED — observed directly: one request, no assertions, "Status
+ * PASS, exit 0" — so an unasserted request is a green tick for nothing. The
+ * verify job refuses a run whose assertion count is zero, and these are what
+ * keep it above that floor.
+ */
+function brunoHealthRequest(serviceName: string): string {
+  return [
+    'meta {',
+    '  name: Health',
+    '  type: http',
+    '  seq: 1',
+    '}',
+    '',
+    'get {',
+    '  url: {{BASE_URL}}/health',
+    '}',
+    '',
+    'assert {',
+    '  res.status: eq 200',
+    '  res.body.status: eq ok',
+    '}',
+    '',
+    'tests {',
+    '  test("reports the service it is", function() {',
+    `    expect(res.body.service).to.equal("${serviceName}");`,
+    '  });',
+    '',
+    '  // A deployment answering at all is not the same as the right one',
+    '  // answering. Without this, a stale service on the same URL passes.',
+    '  test("answers as json", function() {',
+    '    expect(res.headers["content-type"]).to.contain("application/json");',
+    '  });',
+    '}',
+    '',
+  ].join('\n');
+}
+
+function brunoRootRequest(): string {
+  return [
+    'meta {',
+    '  name: Root',
+    '  type: http',
+    '  seq: 2',
+    '}',
+    '',
+    'get {',
+    '  url: {{BASE_URL}}/',
+    '}',
+    '',
+    'assert {',
+    '  res.status: eq 200',
+    '  res.body.status: eq ready',
+    '}',
+    '',
+  ].join('\n');
+}
+
 export function buildDotnetStandaloneScaffold(
   options: DotnetScaffoldOptions,
 ): ScaffoldFile[] {
@@ -383,6 +652,10 @@ export function buildDotnetStandaloneScaffold(
       content: programCs(projectName, serviceName),
     },
     {
+      path: `src/${projectName}/Domain/ServiceStatus.cs`,
+      content: serviceStatusCs(projectName),
+    },
+    {
       path: `src/${projectName}/appsettings.json`,
       content: appSettings(),
     },
@@ -394,7 +667,21 @@ export function buildDotnetStandaloneScaffold(
       path: `tests/${projectName}.Tests/HealthTests.cs`,
       content: healthTests(projectName),
     },
+    {
+      path: `tests/${projectName}.Tests/ArchitectureTests.cs`,
+      content: architectureTests(projectName),
+    },
+    {
+      path: `tests/${projectName}.Tests/ServiceStatusTests.cs`,
+      content: serviceStatusTests(projectName),
+    },
     { path: '.env.example', content: readmeEnvExample() },
+    { path: 'tests/api/bruno.json', content: brunoCollection(serviceName) },
+    {
+      path: 'tests/api/smoke/health.bru',
+      content: brunoHealthRequest(serviceName),
+    },
+    { path: 'tests/api/smoke/root.bru', content: brunoRootRequest() },
   ];
 
   if (includeDocker) {

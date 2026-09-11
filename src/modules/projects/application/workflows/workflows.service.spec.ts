@@ -6,6 +6,7 @@ import { CatalogService } from '../catalog/catalog.service.js';
 import { WorkflowHistoryRepository } from './infrastructure/workflow-history.repository.js';
 import type { WorkflowTemplate } from '../catalog/catalog.service.js';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import type { WorkflowStage } from './staged-workflow.builder';
 import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
 import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
 
@@ -52,7 +53,7 @@ const makeHistoryRepo = () =>
   }) as unknown as WorkflowHistoryRepository;
 
 const toWorkflowMetadata = (file: {
-  stage: 'access' | 'quality' | 'package' | 'guard';
+  stage: WorkflowStage;
   name: string;
   path: string;
   gated: boolean;

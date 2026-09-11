@@ -101,6 +101,28 @@ export interface ToolchainFragmentResult {
   readonly packageBuildJob: Record<string, unknown>;
   /** How this stack is analysed by Sonar. */
   readonly sonar: ToolchainSonarConfig;
+  /**
+   * Where this stack's API suite lives, when it has one.
+   *
+   * Absent means the stack ships nothing to run against a deployment, and the
+   * verify stage is not emitted for it. That is not a detail — the verify job
+   * fails when the collection is missing, on purpose, so emitting the stage
+   * for a stack whose scaffold has no suite turns every one of its pipelines
+   * red at the last stage.
+   *
+   * It also keeps the question in the right place. "Is there an API to
+   * exercise" is a property of the stack, not of the provider it deploys to:
+   * a React bundle on a CDN has no /health to poll and no JSON to assert, and
+   * the tool for it is a browser, not an HTTP client.
+   */
+  readonly apiVerification?: ToolchainApiVerification;
+}
+
+export interface ToolchainApiVerification {
+  /** Collection root inside the repository, holding bruno.json. */
+  readonly collectionPath: string;
+  /** Subfolder of read-only requests, safe to run against production. */
+  readonly smokeFolder: string;
 }
 
 export interface ToolchainSonarConfig {

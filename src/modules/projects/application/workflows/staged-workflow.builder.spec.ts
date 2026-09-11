@@ -833,3 +833,414 @@ describe('annotation capture keeps the real diagnostics', () => {
     expect(line).toContain('message: .message');
   });
 });
+
+/*
+ * A stage that did no work must report nothing at all.
+ *
+ * These exist because of 24 rows. Every `package` report the platform had ever
+ * stored said `success` with an empty payload, and the quality stage that gates
+ * it had never once passed — so the package stage had never legitimately run,
+ * and every one of those successes was invented. Two skips produced them:
+ * the access gate skipping when the previous stage failed, and `build` skipping
+ * on a pull request, whose head branch is the PR branch rather than dev.
+ *
+ * `skipped` is neither `failure` nor `cancelled`, so both fell through to the
+ * final `else` and were graded a success. Reporting nothing is the honest
+ * answer and also the useful one: a stage with no report resolves to `blocked`.
+ */
+describe('a stage that never ran reports nothing', () => {
+  const stageStep = (
+    pathFragment: string,
+  ): { run: string; env: Record<string, string> } => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('dotnet'), {
+      templateId: 'dotnet-service-pipeline',
+      serviceName: 'orders-api',
+    });
+    const file = bundle.workflowFiles.find((candidate) =>
+      candidate.path.includes(pathFragment),
+    );
+    const parsed = yaml.load(file!.yaml) as {
+      jobs: Record<
+        string,
+        { steps?: { run?: string; env?: Record<string, string> }[] }
+      >;
+    };
+    const step = parsed.jobs['report-results']!.steps![0]!;
+    return { run: step.run!, env: step.env ?? {} };
+  };
+
+  /*
+   * The precise fix. `contains(needs.*.result, 'success')` spans every job in
+   * `needs`, and `validate-access` is in every stage's needs — so the signal
+   * went true the moment the gate passed, which says nothing about whether the
+   * stage built anything. Reading `build` alone is the whole difference.
+   */
+  it('asks whether the package stage built, not whether its gate passed', () => {
+    const { env } = stageStep('20-alphaci-package');
+
+    expect(env['STAGE_WORK_RAN']).toBe(
+      "${{ needs.build.result != 'skipped' }}",
+    );
+  });
+
+  it('ignores the gate, the policy job and Sonar in the quality stage', () => {
+    const { env } = stageStep('10-alphaci-quality');
+
+    // Sonar is secret-gated and skips wherever it is unconfigured; the policy
+    // job and the access gate run regardless of whether any check does. None
+    // of the three can stand in for "the quality stage ran".
+    expect(env['STAGE_WORK_RAN']).not.toContain('validate-access');
+    expect(env['STAGE_WORK_RAN']).not.toContain('branch-policy');
+    expect(env['STAGE_WORK_RAN']).not.toContain('sonar');
+    expect(env['STAGE_WORK_RAN']).toContain(
+      "needs.dotnet-tests.result != 'skipped'",
+    );
+  });
+
+  it('gives every stage the guard, so none can report a phantom', () => {
+    for (const fragment of [
+      '00-alphaci-access',
+      '10-alphaci-quality',
+      '20-alphaci-package',
+    ]) {
+      const { run, env } = stageStep(fragment);
+
+      expect(env['STAGE_WORK_RAN']).toBeDefined();
+      expect(run).toContain('"$STAGE_WORK_RAN" != "true"');
+      // The old signal graded a skip as a success. It must be gone, not
+      // merely unread — an unused env var invites a future reader to key on it.
+      expect(env['STAGE_SUCCEEDED']).toBeUndefined();
+      expect(run).not.toContain('STAGE_SUCCEEDED');
+    }
+  });
+
+  /*
+   * Order is the correctness condition, not a style choice.
+   *
+   * A failure has to be tested before the guard: when the access gate FAILS,
+   * the work skips too, so a guard placed first would swallow a real failure
+   * and report nothing. Testing failure and cancellation first means the guard
+   * only ever catches the case where nothing went wrong because nothing ran.
+   */
+  it('lets a real failure outrank the guard', () => {
+    const lines = stageStep('20-alphaci-package')
+      .run.split('\n')
+      .map((line) => line.trim());
+
+    const failed = lines.findIndex((line) =>
+      line.startsWith('if [ "$STAGE_FAILED"'),
+    );
+    const cancelled = lines.findIndex((line) =>
+      line.startsWith('elif [ "$STAGE_CANCELLED"'),
+    );
+    const workRan = lines.findIndex((line) =>
+      line.startsWith('elif [ "$STAGE_WORK_RAN"'),
+    );
+
+    expect(failed).toBeGreaterThanOrEqual(0);
+    expect(cancelled).toBeGreaterThan(failed);
+    expect(workRan).toBeGreaterThan(cancelled);
+  });
+
+  it('leaves before it can send anything', () => {
+    const run = stageStep('20-alphaci-package').run;
+
+    const guard = run.indexOf('"$STAGE_WORK_RAN" != "true"');
+    const exit = run.indexOf('exit 0');
+    const firstRequest = run.indexOf('curl');
+
+    expect(guard).toBeGreaterThan(-1);
+    expect(exit).toBeGreaterThan(guard);
+    // Nothing reaches the network between the guard and its exit.
+    expect(firstRequest).toBeGreaterThan(exit);
+  });
+});
+
+/*
+ * Per-tool visibility, on the branch where it matters most.
+ *
+ * The capture used to sit behind `if [ "$CONCLUSION" = "failure" ]`. On dev the
+ * gates are advisory — `fail-on-warning` is false — so a stage carrying real
+ * diagnostics concludes SUCCESS, skipped the capture entirely, and the
+ * developer saw a green tick and a coverage number. The warnings that would
+ * block them at uat were recorded on no branch where there was time to fix
+ * them.
+ */
+describe('the reporting job captures on success, not only on failure', () => {
+  const qualityStep = (
+    stack: WorkflowTemplate['stack'] = 'dotnet',
+  ): { run: string; env: Record<string, string> } => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(stack), {
+      templateId: 'svc',
+      serviceName: 'orders-api',
+    });
+    const file = bundle.workflowFiles.find((candidate) =>
+      candidate.path.includes('10-alphaci-quality'),
+    );
+    const parsed = yaml.load(file!.yaml) as {
+      jobs: Record<
+        string,
+        { steps?: { run?: string; env?: Record<string, string> }[] }
+      >;
+    };
+    const step = parsed.jobs['report-results']!.steps![0]!;
+    return { run: step.run!, env: step.env ?? {} };
+  };
+
+  /** Lines of the emitted script, trimmed, with blank lines and comments gone. */
+  const codeLines = (run: string): string[] =>
+    run
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'));
+
+  it('fetches the job list outside any failure conditional', () => {
+    const lines = codeLines(qualityStep().run);
+
+    const fetchAt = lines.findIndex((line) => line.startsWith('JOBS_JSON='));
+    const firstFailureGuard = lines.findIndex((line) =>
+      line.includes('"$CONCLUSION" = "failure"'),
+    );
+
+    expect(fetchAt).toBeGreaterThanOrEqual(0);
+    expect(firstFailureGuard).toBeGreaterThanOrEqual(0);
+    // The fetch has to come FIRST. Behind the guard it never runs on dev.
+    expect(fetchAt).toBeLessThan(firstFailureGuard);
+  });
+
+  it('collects annotations for every job, not only the failed ones', () => {
+    const lines = codeLines(qualityStep().run);
+
+    const idsAt = lines.findIndex((line) => line.startsWith('ANNOTATION_IDS='));
+    const firstFailureGuard = lines.findIndex((line) =>
+      line.includes('"$CONCLUSION" = "failure"'),
+    );
+
+    expect(idsAt).toBeGreaterThan(firstFailureGuard);
+    // Sorted so failures come first, then capped — a cap that dropped the
+    // failing job's diagnostics would defeat the point.
+    const ids = lines[idsAt]!;
+    expect(ids).toContain('sort_by(.conclusion != "failure")');
+    expect(ids).not.toContain('select(.conclusion == "failure")');
+  });
+
+  it('sends a row per tool so one bar does not cover seven checks', () => {
+    const { run } = qualityStep();
+
+    expect(run).toContain('CHECKS=$(');
+    expect(run).toContain('--argjson checks "$CHECKS"');
+    expect(run).toContain('checks:$checks');
+    // The reporting job is still running while it reports, so its own
+    // conclusion is null and it is not a check anyone asked for.
+    expect(run).toContain('select(.name != "report-results")');
+  });
+
+  it('keeps the annotation level, which is what separates advice from a block', () => {
+    // The same formatter diagnostic is a warning on dev and the thing that
+    // fails the build on uat. Without the level they are indistinguishable.
+    expect(qualityStep().run).toContain('level: .annotation_level');
+  });
+
+  /*
+   * `forbidNonWhitelisted` is on, so an undeclared property does not get
+   * stripped — it rejects the whole report with a 400. A count read for a job
+   * the toolchain never declared would arrive as an empty string and post a
+   * count of nothing as though it were a count of zero.
+   */
+  it('reads the advisory counts only for a stack that declares those jobs', () => {
+    const dotnet = qualityStep('dotnet').env;
+
+    expect(dotnet['SECRETS_FINDINGS']).toBe(
+      '${{ needs.secrets.outputs.findings-count }}',
+    );
+    expect(dotnet['LICENSE_FORBIDDEN']).toBe(
+      '${{ needs.licenses.outputs.forbidden-count }}',
+    );
+    expect(dotnet['SBOM_COMPONENTS']).toBe(
+      '${{ needs.sbom.outputs.component-count }}',
+    );
+
+    const node = qualityStep('nestjs').env;
+
+    // Node fills four quality slots and has no licence inventory to take.
+    expect(node['SECRETS_FINDINGS']).toBeUndefined();
+    expect(node['LICENSE_FORBIDDEN']).toBeUndefined();
+    expect(node['SBOM_COMPONENTS']).toBeUndefined();
+  });
+
+  it('omits a count that arrived empty rather than posting it as zero', () => {
+    const { run } = qualityStep();
+
+    // Guarded on a digit, so an absent output leaves the key out. Zero is a
+    // real answer — "the scan ran and found nothing" — and an empty string
+    // must never be allowed to impersonate it.
+    expect(run).toContain(
+      'if echo "$SECRETS_FINDINGS" | grep -qE \'^[0-9]+$\'; then',
+    );
+    expect(run).toContain('if [ "$FINDINGS" != "{}" ]; then');
+  });
+});
+
+/*
+ * The verify stage: exercise the service that was just deployed.
+ *
+ * Every earlier stage reads source. None of them can answer whether the thing
+ * now running actually behaves, which is why this needs a stage rather than a
+ * job inside package — its subject is a deployment, not a commit.
+ */
+describe('the verify stage', () => {
+  // Scoped here: the registry in the first describe is not in scope, and the
+  // verify stage only exists when a deployment fragment produced jobs.
+  const workflowFragmentRegistry = new WorkflowFragmentRegistry([
+    renderWorkflowFragment,
+    vercelWorkflowFragment,
+  ]);
+
+  const renderTarget = (branchName: 'uat' | 'main') => ({
+    slot: 'backend',
+    provider: 'render',
+    branchName,
+    deploymentStrategy: 'render_image_pushed',
+    dockerContext: '.',
+    dockerfilePath: 'Dockerfile',
+    imageName: `alphaci-backend-${branchName}-orders-api`,
+    secretNames: {
+      deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchName.toUpperCase()}`,
+      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchName.toUpperCase()}`,
+    },
+  });
+
+  const bundleWith = (deploymentTargets: unknown[]) =>
+    buildStagedWorkflowBundle(
+      makeTemplate('dotnet'),
+      {
+        templateId: 'be-dotnet',
+        serviceName: 'orders-api',
+        ...(deploymentTargets.length > 0 && { deploymentTargets }),
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+  const verifyOf = (deploymentTargets: unknown[]) => {
+    const file = bundleWith(deploymentTargets).workflowFiles.find(
+      (candidate) => candidate.stage === 'verify',
+    );
+    return file ? (yaml.load(file.yaml) as ParsedWorkflow) : null;
+  };
+
+  /*
+   * Its subject is a running service. A repository with no deployment targets
+   * has no URL to point a suite at, and emitting the stage anyway would report
+   * the absence of an environment as a failure of the code.
+   */
+  it('is not emitted when nothing is deployed', () => {
+    expect(verifyOf([])).toBeNull();
+  });
+
+  /*
+   * The stack has to supply the suite, not just the provider a URL.
+   *
+   * A React bundle on a CDN has no /health to poll and no JSON to assert, and
+   * its scaffold ships no collection — so emitting this stage for it pointed a
+   * Bruno run at a Render secret a Vercel project does not have, at a
+   * collection that was never generated. Every React pipeline would have gone
+   * red at its last stage.
+   */
+  it('is not emitted for a stack that ships no API suite', () => {
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate('react'),
+      {
+        templateId: 'fe-react',
+        serviceName: 'orders-web',
+        deploymentTargets: [
+          {
+            slot: 'standalone',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            secretNames: {
+              token: 'VERCEL_TOKEN_STANDALONE',
+              orgId: 'VERCEL_ORG_ID_STANDALONE',
+              projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+            },
+          },
+        ],
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+    // The deployment exists — this is not the no-deployment case.
+    expect(bundle.workflowFiles.some((file) => file.stage === 'package')).toBe(
+      true,
+    );
+    expect(bundle.workflowFiles.some((file) => file.stage === 'verify')).toBe(
+      false,
+    );
+  });
+
+  it('takes the collection path from the toolchain, not a hardcoded guess', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    expect(verify.jobs['api-tests-uat']?.with?.['collection-path']).toBe(
+      'tests/api',
+    );
+  });
+
+  it('is emitted once there is a deployment to verify', () => {
+    const verify = verifyOf([renderTarget('uat')]);
+
+    expect(verify).not.toBeNull();
+    // Chained off package, so it runs after the artifact is live.
+    expect(verify!.on.workflow_run?.workflows).toEqual(['ALPHACI Package']);
+  });
+
+  it('runs the whole collection on uat and only the read-only folder on main', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    // uat is the QA tier: everything, including requests that write.
+    expect(verify.jobs['api-tests-uat']?.with?.['folder']).toBeUndefined();
+    // A CRUD suite aimed at production is not a test, it is a write. main is
+    // reached only by promotion from uat, so the destructive coverage has
+    // already run against this same artifact.
+    expect(verify.jobs['api-tests-main']?.with?.['folder']).toBe('smoke');
+  });
+
+  it('points each branch at its own deployment', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    expect(verify.jobs['api-tests-uat']?.with?.['base-url']).toBe(
+      '${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}',
+    );
+    expect(verify.jobs['api-tests-main']?.with?.['base-url']).toBe(
+      '${{ secrets.RENDER_HEALTHCHECK_URL_MAIN }}',
+    );
+  });
+
+  it('gates each API job to its own branch', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+
+    expect(verify.jobs['api-tests-uat']?.if).toContain("== 'uat'");
+    expect(verify.jobs['api-tests-main']?.if).toContain("== 'main'");
+  });
+
+  /*
+   * Both API jobs are branch-scoped, so one always skips — and on dev both do.
+   * Without naming them as the work, the access gate passing would be enough
+   * to report the stage a success it did not earn, which is the bug this
+   * whole guard exists for.
+   */
+  it('counts only the API jobs as the work of the stage', () => {
+    const bundle = bundleWith([renderTarget('uat'), renderTarget('main')]);
+    const file = bundle.workflowFiles.find(
+      (candidate) => candidate.stage === 'verify',
+    );
+    const parsed = yaml.load(file!.yaml) as {
+      jobs: Record<string, { steps?: { env?: Record<string, string> }[] }>;
+    };
+    const env = parsed.jobs['report-results']!.steps![0]!.env!;
+
+    expect(env['STAGE_WORK_RAN']).toBe(
+      "${{ needs.api-tests-uat.result != 'skipped' || needs.api-tests-main.result != 'skipped' }}",
+    );
+    expect(env['STAGE_WORK_RAN']).not.toContain('validate-access');
+  });
+});

@@ -24,10 +24,15 @@ import type { FriendlyMessage } from './translate-results';
  * already exists; this decides *that* something is wrong.
  */
 
-/** Stage order. Each stage is triggered by the one before it completing. */
-export const STAGE_ORDER = ['access', 'quality', 'package'] as const;
+/*
+ * Stage order lives in ./stages, which the translator also reads. Imported and
+ * re-exported rather than forwarded straight through, so this module keeps a
+ * local binding: `Record<StageId, ...>` is built here, and a bare
+ * `export ... from` leaves nothing local for that mapped type to close over.
+ */
+import { STAGE_ORDER, type StageId } from './stages';
 
-export type StageId = (typeof STAGE_ORDER)[number];
+export { STAGE_ORDER, type StageId };
 
 export type StageStatus =
   | 'success'

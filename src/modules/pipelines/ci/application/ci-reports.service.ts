@@ -11,6 +11,8 @@ import { translateResults } from './translate-results';
 import {
   resolveOverallStatus,
   resolveStages,
+  STAGE_ORDER,
+  type StageId,
   type StageStatus,
 } from './resolve-stage-status';
 import type { CiReportBodyDto } from '../api/dto/ci-report-body.dto';
@@ -20,7 +22,7 @@ import type { FriendlyMessage } from './translate-results';
 // ─── Response shapes ──────────────────────────────────────────────────────────
 
 export interface StageReport {
-  stage: 'access' | 'quality' | 'package';
+  stage: StageId;
   status: StageStatus;
   /**
    * The GitHub run this stage executed in.
@@ -33,6 +35,25 @@ export interface StageReport {
   githubRunUrl: string;
   updatedAt: string;
   rawLogs: string | null;
+  /**
+   * What each tool in the stage concluded.
+   *
+   * A stage status answers "did quality pass". It cannot answer "did the
+   * licence scan pass", and the client had no way to ask: `results` was stored
+   * and never returned, so one bar stood in for seven tools.
+   *
+   * Empty for a stage reported by a pipeline generated before per-tool
+   * reporting existed. Empty means "not known", never "no tools ran".
+   */
+  checks: StageCheck[];
+}
+
+/** One tool's outcome inside a stage. */
+export interface StageCheck {
+  name: string;
+  conclusion: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface RunGroup {
@@ -55,7 +76,47 @@ interface OwnershipRow {
   user_id: string;
 }
 
-const ALL_STAGES = ['access', 'quality', 'package'] as const;
+const ALL_STAGES = STAGE_ORDER;
+
+/**
+ * Pull the per-tool list back out of the stored `results` blob.
+ *
+ * `results` is jsonb and typed `Record<string, unknown>`, so nothing the
+ * database hands back is trusted here: a row written by an older pipeline has
+ * no `checks` key at all, and one written by a future pipeline could carry a
+ * shape this build does not know. Anything that is not a well-formed entry is
+ * dropped rather than rendered as `undefined` in the UI.
+ */
+function readChecks(results: Record<string, unknown>): StageCheck[] {
+  const raw = results['checks'];
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw.flatMap((entry): StageCheck[] => {
+    if (typeof entry !== 'object' || entry === null) {
+      return [];
+    }
+
+    const { name, conclusion, startedAt, completedAt } = entry as Record<
+      string,
+      unknown
+    >;
+
+    if (typeof name !== 'string' || typeof conclusion !== 'string') {
+      return [];
+    }
+
+    return [
+      {
+        name,
+        conclusion,
+        ...(typeof startedAt === 'string' && { startedAt }),
+        ...(typeof completedAt === 'string' && { completedAt }),
+      },
+    ];
+  });
+}
 
 @Injectable()
 export class CiReportsService {
@@ -102,6 +163,22 @@ export class CiReportsService {
           ...(body.results.security !== undefined && {
             security: body.results.security,
           }),
+          ...(body.results.findings !== undefined && {
+            findings: body.results.findings,
+          }),
+          ...(body.results.sonar !== undefined && {
+            sonar: body.results.sonar,
+          }),
+          /*
+           * The per-tool list is stored inside `results` rather than in a
+           * column of its own, because `results` is already jsonb and this
+           * needs no schema change to carry it. A stage that reports no checks
+           * — an older pipeline — leaves the key out rather than storing an
+           * empty array, so "this pipeline predates per-tool reporting" stays
+           * distinguishable from "this stage ran no tools".
+           */
+          ...(body.checks !== undefined &&
+            body.checks.length > 0 && { checks: body.checks }),
         },
         friendlyMessages,
         ...(body.rawLogs !== undefined && { rawLogs: body.rawLogs }),
@@ -234,7 +311,7 @@ export class CiReportsService {
    * stage with nothing to say is correct, not broken.
    */
   private explainedMessages(row: {
-    stage: 'access' | 'quality' | 'package';
+    stage: StageId;
     status: CiRunStatus;
     friendly_messages: FriendlyMessage[];
     results: unknown;
@@ -308,6 +385,7 @@ export class CiReportsService {
           githubRunUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
           updatedAt: row.updated_at,
           rawLogs: row.raw_logs,
+          checks: readChecks(row.results),
         });
       }
     }
@@ -365,6 +443,8 @@ export class CiReportsService {
           githubRunUrl: `https://github.com/${group.repoFullName}/actions/runs/${String(primaryRunId)}`,
           updatedAt: '',
           rawLogs: null,
+          // A stage that never reported ran no tools we can name.
+          checks: [],
         };
       });
 

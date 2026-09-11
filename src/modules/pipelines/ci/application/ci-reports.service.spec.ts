@@ -136,3 +136,126 @@ describe('CiReportsService.getRuns grouping', () => {
     expect(byStage.get('access')?.githubRunUrl).toContain('/runs/150');
   });
 });
+
+/*
+ * The per-tool list has to survive the round trip.
+ *
+ * It is stored inside `results`, which is jsonb typed `Record<string, unknown>`,
+ * and `results` was never returned to the client at all — so the data existed in
+ * the database and one bar still stood in for seven tools. These cover the
+ * reading half: what comes back out, and what is refused.
+ */
+describe('CiReportsService.getRuns per-tool checks', () => {
+  let databaseService: DatabaseService;
+  let runReportsRepository: CiRunReportsRepository;
+  let service: CiReportsService;
+
+  beforeEach(() => {
+    databaseService = makeDatabaseService();
+    runReportsRepository = makeRunReportsRepository();
+    service = new CiReportsService(databaseService, runReportsRepository);
+  });
+
+  const stageOf = async (results: Record<string, unknown>) => {
+    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
+      row({ stage: 'quality', run_id: '200', status: 'success', results }),
+    ]);
+
+    const { runs } = await service.getRuns('user-1');
+    return runs[0]!.stages.find((stage) => stage.stage === 'quality')!;
+  };
+
+  it('returns every tool the stage reported', async () => {
+    const stage = await stageOf({
+      checks: [
+        { name: 'dotnet-tests', conclusion: 'success' },
+        { name: 'lint', conclusion: 'success' },
+        { name: 'sonar', conclusion: 'failure' },
+      ],
+    });
+
+    expect(stage.checks.map((check) => check.name)).toEqual([
+      'dotnet-tests',
+      'lint',
+      'sonar',
+    ]);
+    expect(stage.checks.find((c) => c.name === 'sonar')?.conclusion).toBe(
+      'failure',
+    );
+  });
+
+  /*
+   * The distinction that matters: a stage can be green while a tool inside it
+   * is not. That is the whole point of the list, and it is the normal state on
+   * dev, where the gates are advisory.
+   */
+  it('reports a failed tool inside a stage that passed', async () => {
+    const stage = await stageOf({
+      checks: [
+        { name: 'lint', conclusion: 'success' },
+        { name: 'secrets', conclusion: 'failure' },
+      ],
+    });
+
+    expect(stage.status).toBe('success');
+    expect(stage.checks.find((c) => c.name === 'secrets')?.conclusion).toBe(
+      'failure',
+    );
+  });
+
+  it('carries the timings when the pipeline sent them, and omits them when it did not', async () => {
+    const stage = await stageOf({
+      checks: [
+        {
+          name: 'lint',
+          conclusion: 'success',
+          startedAt: '2026-09-11T00:00:00Z',
+          completedAt: '2026-09-11T00:01:00Z',
+        },
+        { name: 'sbom', conclusion: 'success' },
+      ],
+    });
+
+    expect(stage.checks[0]).toEqual({
+      name: 'lint',
+      conclusion: 'success',
+      startedAt: '2026-09-11T00:00:00Z',
+      completedAt: '2026-09-11T00:01:00Z',
+    });
+    // Absent rather than present-and-undefined, so the client can tell the
+    // difference between "not sent" and "sent as null".
+    expect(stage.checks[1]).toEqual({ name: 'sbom', conclusion: 'success' });
+  });
+
+  it('is empty for a pipeline generated before per-tool reporting', async () => {
+    const stage = await stageOf({ coverage: { pct: 100, threshold: 80 } });
+
+    expect(stage.checks).toEqual([]);
+  });
+
+  /*
+   * `results` is jsonb: the shape is whatever was written, including by a
+   * pipeline newer than this build. Malformed entries are dropped rather than
+   * rendered, because a check with an undefined name reaches the UI as a blank
+   * row that reads like a tool nobody can identify.
+   */
+  it('drops entries it cannot trust rather than rendering them', async () => {
+    const stage = await stageOf({
+      checks: [
+        { name: 'lint', conclusion: 'success' },
+        { name: 'missing-conclusion' },
+        { conclusion: 'success' },
+        'not-an-object',
+        null,
+        { name: 42, conclusion: 'success' },
+      ],
+    });
+
+    expect(stage.checks).toEqual([{ name: 'lint', conclusion: 'success' }]);
+  });
+
+  it('survives checks arriving as something other than an array', async () => {
+    expect((await stageOf({ checks: 'lint,sonar' })).checks).toEqual([]);
+    expect((await stageOf({ checks: null })).checks).toEqual([]);
+  });
+});

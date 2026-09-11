@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type { FriendlyMessage } from '../application/translate-results';
+import type { StageId } from '../application/stages';
 
 export type CiRunStatus = 'success' | 'failure' | 'running' | 'cancelled';
 
@@ -11,7 +12,7 @@ export interface UpsertCiRunReportInput {
   branch: string;
   commitSha: string;
   runId: number;
-  stage: 'access' | 'quality' | 'package';
+  stage: StageId;
   status: CiRunStatus;
   results: Record<string, unknown>;
   friendlyMessages: FriendlyMessage[];
@@ -25,7 +26,7 @@ export interface CiRunReportRow {
   branch: string;
   commit_sha: string;
   run_id: string; // bigint comes back as string from pg driver
-  stage: 'access' | 'quality' | 'package';
+  stage: StageId;
   status: CiRunStatus;
   results: Record<string, unknown>;
   friendly_messages: FriendlyMessage[];
