@@ -576,3 +576,140 @@ describe('translateResults — diagnostics on a stage that passed', () => {
     ).toHaveLength(0);
   });
 });
+
+/*
+ * Which secret, which licence — not how many.
+ *
+ * Both gates reported a count, and the count was stored and never shown. Even
+ * shown, "3 findings" is barely better than a red tick: it says a problem
+ * exists and leaves locating it as homework, which is the trip to GitHub this
+ * is meant to replace.
+ */
+describe('translateResults — secret and licence findings', () => {
+  it('names the file and line of each secret', () => {
+    const messages = translateResults('quality', 'failure', {
+      findings: {
+        secrets: 2,
+        secretItems: [
+          { rule: 'generic-api-key', file: 'src/appsettings.json', line: 12 },
+          { rule: 'aws-access-key', file: 'deploy/env.sh', line: 3 },
+        ],
+      },
+    });
+
+    const secrets = messages.find((message) =>
+      message.title.includes('committed secret'),
+    );
+
+    expect(secrets).toBeDefined();
+    expect(secrets!.items).toEqual([
+      { label: 'src/appsettings.json:12', sub: 'generic-api-key' },
+      { label: 'deploy/env.sh:3', sub: 'aws-access-key' },
+    ]);
+  });
+
+  /*
+   * The report must never carry the secret itself. It is redacted upstream by
+   * construction, and this asserts nothing downstream reintroduces it.
+   */
+  it('carries no secret value anywhere in the message', () => {
+    const messages = translateResults('quality', 'failure', {
+      findings: {
+        secrets: 1,
+        secretItems: [
+          { rule: 'generic-api-key', file: 'src/appsettings.json', line: 12 },
+        ],
+      },
+    });
+
+    expect(JSON.stringify(messages)).not.toMatch(
+      /secretvalue|password|token=/i,
+    );
+  });
+
+  it('tells the reader to rotate before deleting', () => {
+    const messages = translateResults('quality', 'failure', {
+      findings: { secrets: 1 },
+    });
+
+    // Removing the line does not revoke a credential that has already been
+    // pushed, and a secret treated as fixed because it is gone from HEAD is
+    // still live wherever it was published.
+    const secrets = messages.find((message) =>
+      message.title.includes('committed secret'),
+    );
+    expect(secrets!.hint).toMatch(/rotate/i);
+  });
+
+  it('names the package and licence, not just a number', () => {
+    const messages = translateResults('quality', 'failure', {
+      findings: {
+        forbiddenLicenses: 1,
+        licenseItems: [
+          {
+            package: 'Some.Copyleft.Lib',
+            version: '1.0.0',
+            license: 'GPL-3.0',
+          },
+        ],
+      },
+    });
+
+    const licences = messages.find((message) =>
+      message.title.includes('forbidden licence'),
+    );
+
+    expect(licences!.items).toEqual([
+      { label: 'Some.Copyleft.Lib@1.0.0', sub: 'GPL-3.0' },
+    ]);
+  });
+
+  /*
+   * Severity follows the branch, not the finding. On dev these gates are
+   * advisory and the job passes, so an error would contradict a stage the
+   * product just called green.
+   */
+  it('reports advisory findings as warnings on a stage that passed', () => {
+    const messages = translateResults('quality', 'success', {
+      findings: { secrets: 3, forbiddenLicenses: 1 },
+    });
+
+    for (const message of messages) {
+      expect(message.severity).not.toBe('error');
+    }
+    expect(
+      messages.find((message) => message.title.includes('committed secret'))!
+        .detail,
+    ).toContain('Not blocking on this branch');
+  });
+
+  it('keeps an undeterminable licence apart from a forbidden one', () => {
+    const messages = translateResults('quality', 'success', {
+      findings: { forbiddenLicenses: 0, undeterminedLicenses: 2 },
+    });
+
+    // Folding it into the forbidden count would invent a violation; dropping
+    // it would clear a dependency on a question nobody answered.
+    const undetermined = messages.find((message) =>
+      message.title.includes('could not be determined'),
+    );
+    expect(undetermined).toBeDefined();
+    expect(undetermined!.severity).toBe('info');
+    expect(
+      messages.filter((message) => message.title.includes('forbidden licence')),
+    ).toHaveLength(0);
+  });
+
+  it('says nothing when every gate is clean', () => {
+    const messages = translateResults('quality', 'success', {
+      findings: { secrets: 0, forbiddenLicenses: 0, sbomComponents: 51 },
+    });
+
+    expect(
+      messages.filter(
+        (message) =>
+          message.title.includes('secret') || message.title.includes('licence'),
+      ),
+    ).toHaveLength(0);
+  });
+});

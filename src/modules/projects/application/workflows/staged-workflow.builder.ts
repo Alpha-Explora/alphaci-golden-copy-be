@@ -1061,14 +1061,30 @@ function reportingJob(
      * would name a job that is not in `needs`, which evaluates to empty and
      * would post a count of nothing as though it were a count of zero.
      */
-    const countOutputs: Record<string, [string, string]> = {
-      secrets: ['SECRETS_FINDINGS', 'findings-count'],
-      licenses: ['LICENSE_FORBIDDEN', 'forbidden-count'],
-      sbom: ['SBOM_COMPONENTS', 'component-count'],
+    const countOutputs: Record<string, [string, string][]> = {
+      secrets: [
+        ['SECRETS_FINDINGS', 'findings-count'],
+        // Rule and location. The secret value is absent by construction
+        // upstream — see gitleaks-scan.yml — because a report that carries it
+        // has leaked it into somewhere more people can read than the repo.
+        ['SECRETS_ITEMS', 'findings-items'],
+      ],
+      licenses: [
+        ['LICENSE_FORBIDDEN', 'forbidden-count'],
+        ['LICENSE_ITEMS', 'forbidden-items'],
+        // Kept apart from the forbidden count on purpose: "this one is
+        // disallowed" and "we could not tell" need different responses, and
+        // merging them either buries a real hit or invents one.
+        ['LICENSE_UNKNOWN', 'unknown-count'],
+      ],
+      sbom: [['SBOM_COMPONENTS', 'component-count']],
     };
 
-    for (const [jobId, [envName, output]] of Object.entries(countOutputs)) {
-      if (workJobIds.includes(jobId)) {
+    for (const [jobId, outputs] of Object.entries(countOutputs)) {
+      if (!workJobIds.includes(jobId)) {
+        continue;
+      }
+      for (const [envName, output] of outputs) {
         stepEnv[envName] = `\${{ needs.${jobId}.outputs.${output} }}`;
       }
     }
@@ -1241,6 +1257,22 @@ function reportingJob(
           'fi',
           'if echo "$SBOM_COMPONENTS" | grep -qE \'^[0-9]+$\'; then',
           '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$SBOM_COMPONENTS" \'. + {sbomComponents:$n}\')',
+          'fi',
+          'if echo "$LICENSE_UNKNOWN" | grep -qE \'^[0-9]+$\'; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson n "$LICENSE_UNKNOWN" \'. + {undeterminedLicenses:$n}\')',
+          'fi',
+          '',
+          '# The lists, not just the totals. A count cannot be acted on: it says a',
+          '# problem exists and leaves finding it as homework.',
+          '#',
+          '# The secret VALUES are not here and must never be. gitleaks-scan.yml',
+          '# selects rule and location only, so what arrives is already safe to',
+          '# store and to render.',
+          'if printf \'%s\' "${SECRETS_ITEMS:-}" | jq -e \'type == "array" and length > 0\' >/dev/null 2>&1; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson i "$SECRETS_ITEMS" \'. + {secretItems:$i}\')',
+          'fi',
+          'if printf \'%s\' "${LICENSE_ITEMS:-}" | jq -e \'type == "array" and length > 0\' >/dev/null 2>&1; then',
+          '  FINDINGS=$(printf \'%s\' "$FINDINGS" | jq -c --argjson i "$LICENSE_ITEMS" \'. + {licenseItems:$i}\')',
           'fi',
           'if [ "$FINDINGS" != "{}" ]; then',
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson findings "$FINDINGS" \'. + {findings:$findings}\')',

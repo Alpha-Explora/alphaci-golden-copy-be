@@ -129,6 +129,44 @@ export class CiReportSecurityDto {
  * two, and it is what lets the product say "passed, 3 secrets found — not
  * blocking here, will block at uat" instead of a bare green tick.
  */
+/**
+ * One committed secret, named by rule and location.
+ *
+ * There is no value field and there must never be one. gitleaks redacts the
+ * log and the workflow selects three fields, so nothing downstream can store or
+ * render the secret itself — a report carrying it would leak it a second time,
+ * into a database and a web page more people can read than the repository.
+ */
+export class CiReportSecretItemDto {
+  @IsOptional()
+  @IsString()
+  rule?: string;
+
+  @IsOptional()
+  @IsString()
+  file?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  line?: number;
+}
+
+/** One package whose licence the policy forbids. */
+export class CiReportLicenseItemDto {
+  @IsOptional()
+  @IsString()
+  package?: string;
+
+  @IsOptional()
+  @IsString()
+  version?: string;
+
+  @IsOptional()
+  @IsString()
+  license?: string;
+}
+
 export class CiReportFindingsDto {
   @IsOptional()
   @IsInt()
@@ -144,6 +182,28 @@ export class CiReportFindingsDto {
   @IsInt()
   @Min(0)
   sbomComponents?: number;
+
+  /**
+   * Packages whose licence could not be determined.
+   *
+   * Deliberately separate from `forbiddenLicenses`: "this one is disallowed"
+   * and "we could not tell" need different responses, and merging them either
+   * buries a real hit or invents one.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  undeterminedLicenses?: number;
+
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportSecretItemDto)
+  secretItems?: CiReportSecretItemDto[];
+
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportLicenseItemDto)
+  licenseItems?: CiReportLicenseItemDto[];
 }
 
 /** One quality-gate condition SonarCloud failed, with the numbers behind it. */

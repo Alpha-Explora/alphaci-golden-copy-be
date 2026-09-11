@@ -46,6 +46,11 @@ export interface CiResults {
     secrets?: number;
     forbiddenLicenses?: number;
     sbomComponents?: number;
+    /** Could not be determined — not forbidden, but not cleared either. */
+    undeterminedLicenses?: number;
+    /** Rule and location only. Never the secret value. */
+    secretItems?: { rule?: string; file?: string; line?: number }[];
+    licenseItems?: { package?: string; version?: string; license?: string }[];
   };
   /**
    * What SonarCloud reported, rather than only whether it passed.
@@ -449,6 +454,101 @@ function toSecurityItem(
   };
 }
 
+type FindingsResult = NonNullable<CiResults['findings']>;
+
+/**
+ * Say which secret and which licence, not how many.
+ *
+ * These counts were collected and stored and never turned into anything a
+ * reader sees. Even shown, "3 findings" is barely better than a red tick: it
+ * reports that a problem exists and leaves locating it as homework, which is
+ * the trip to GitHub this is meant to replace.
+ *
+ * Severity follows the branch, not the finding. On dev these gates are
+ * advisory — the job passes — so an error here would contradict a stage the
+ * product just called green. The hint carries the part that matters instead:
+ * it blocks at the promotion.
+ */
+function pushFindingsMessages(
+  messages: FriendlyMessage[],
+  findings: FindingsResult,
+  conclusion: Conclusion,
+): void {
+  const blocking = conclusion === 'failure';
+
+  const secrets = findings.secrets ?? 0;
+  if (secrets > 0) {
+    const items = findings.secretItems ?? [];
+
+    messages.push({
+      severity: blocking ? 'error' : 'warning',
+      title: `${String(secrets)} committed secret(s)`,
+      detail: blocking
+        ? `${String(secrets)} secret(s) were found in the working tree.`
+        : `${String(secrets)} secret(s) were found. Not blocking on this branch.`,
+      // Rotation first. Removing the line does not un-leak anything that has
+      // already been pushed, and a secret treated as fixed because it is gone
+      // from HEAD is still live wherever it was published.
+      hint: 'Rotate each secret first — deleting the line does not revoke a credential that has already been pushed — then remove it from the code and use a repository secret.',
+      ...(items.length > 0 && {
+        items: capItems(
+          items.map((item) => ({
+            label:
+              item.file === undefined
+                ? (item.rule ?? 'secret')
+                : item.line === undefined
+                  ? item.file
+                  : `${item.file}:${String(item.line)}`,
+            ...(item.rule !== undefined && { sub: item.rule }),
+          })),
+        ),
+      }),
+    });
+  }
+
+  const forbidden = findings.forbiddenLicenses ?? 0;
+  if (forbidden > 0) {
+    const items = findings.licenseItems ?? [];
+
+    messages.push({
+      severity: blocking ? 'error' : 'warning',
+      title: `${String(forbidden)} package(s) under a forbidden licence`,
+      detail: blocking
+        ? `${String(forbidden)} dependency licence(s) are not permitted.`
+        : `${String(forbidden)} dependency licence(s) are not permitted. Not blocking on this branch.`,
+      hint: 'Replace the package, or record an exception, before promoting to uat.',
+      ...(items.length > 0 && {
+        items: capItems(
+          items.map((item) => ({
+            label: `${item.package ?? 'unknown'}${
+              item.version === undefined ? '' : `@${item.version}`
+            }`,
+            ...(item.license !== undefined && { sub: item.license }),
+          })),
+        ),
+      }),
+    });
+  }
+
+  /*
+   * Reported, never counted as forbidden.
+   *
+   * A licence nobody could read is not a licence nobody needs to read. Folding
+   * it into the forbidden count would invent a violation; dropping it silently
+   * would clear a dependency on the strength of a question nobody answered.
+   */
+  const undetermined = findings.undeterminedLicenses ?? 0;
+  if (undetermined > 0) {
+    messages.push({
+      severity: 'info',
+      title: `${String(undetermined)} package licence(s) could not be determined`,
+      detail:
+        'These are not forbidden. The scanner could not read a licence for them.',
+      hint: 'Check them by hand if your policy requires every dependency to be cleared. A package that declares no licence is not the same as one that permits use.',
+    });
+  }
+}
+
 type SonarResult = NonNullable<CiResults['sonar']>;
 
 /**
@@ -610,7 +710,7 @@ export function translateResults(
     return messages;
   }
 
-  const { tests, coverage, lint, security, sonar } = results;
+  const { tests, coverage, lint, security, sonar, findings } = results;
 
   if (tests !== undefined) {
     pushTestMessages(messages, tests, conclusion);
@@ -631,6 +731,10 @@ export function translateResults(
 
   if (security !== undefined) {
     pushSecurityMessages(messages, security);
+  }
+
+  if (findings !== undefined) {
+    pushFindingsMessages(messages, findings, conclusion);
   }
 
   if (sonar !== undefined) {
