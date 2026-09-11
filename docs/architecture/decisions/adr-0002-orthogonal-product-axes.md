@@ -47,3 +47,7 @@ A lower layer may disable a capability but may not enable one that an upper laye
 ## Verification
 
 The documentation check scans `src/` for edition comparison branches. Capability and pack references are reviewed against the [capability contract](/capabilities/capability-contract.md) and [pack contract](/packs/pack-contract.md).
+
+## Later decisions
+
+[ADR-0007](adr-0007-runtime-composition-resolution.md) makes composition resolution a runtime behaviour and states the narrowing layers in force. [ADR-0008](adr-0008-build-profiles-and-artifact-exclusion.md) makes the build layer an explicit set of packs. The orthogonality rule in this record is unchanged.

@@ -6,3 +6,5 @@
 * [ADR-0004: Provider and port boundaries](adr-0004-provider-and-port-boundaries.md) - Runtime provider ownership and focused ports.
 * [ADR-0005: PostgreSQL outbox delivery](adr-0005-postgresql-outbox-delivery.md) - current event persistence and relay guarantees.
 * [ADR-0006: Stack as a declared axis](adr-0006-stack-as-a-declared-axis.md) - catalog-declared stack identity and registry-resolved toolchains.
+* [ADR-0007: Runtime composition resolution](adr-0007-runtime-composition-resolution.md) - kernel-owned capability resolution and entitlement separation.
+* [ADR-0008: Build profiles and artifact exclusion](adr-0008-build-profiles-and-artifact-exclusion.md) - pack sets per artifact and excluded source.
