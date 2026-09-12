@@ -147,7 +147,7 @@ describe('WorkflowsService', () => {
       ).toBe(true);
       expect(result.workflowFiles[1]?.yaml).toContain('workflow_run:');
       expect(result.workflowFiles[1]?.yaml).toContain('workflows:');
-      expect(result.workflowFiles[1]?.yaml).toContain('ALPHACI Access Gate');
+      expect(result.workflowFiles[1]?.yaml).toContain('ALPHACI 1 Access');
       expect(result.workflowFiles[1]?.yaml).toContain(
         "conclusion == 'success'",
       );
@@ -157,7 +157,7 @@ describe('WorkflowsService', () => {
       expect(result.workflowFiles[1]?.yaml).toContain(
         'http://localhost:4000/api/v1/ci/validate',
       );
-      expect(result.workflowFiles[2]?.yaml).toContain('ALPHACI Quality');
+      expect(result.workflowFiles[2]?.yaml).toContain('ALPHACI 2 Quality');
       expect(result.workflowFiles[2]?.yaml).toContain(
         "conclusion == 'success'",
       );

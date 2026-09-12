@@ -149,6 +149,18 @@ const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
  * and skips the job silently.
  */
 const VALIDATE_ACCESS_JOB_ID = 'validate-access';
+const RESOLVE_TARGETS_JOB_ID = 'resolve-targets';
+const UPSTREAM_WORK_JOB_ID = 'upstream-work-check';
+
+/*
+ * Two conditions, not one. The previous run has to have CONCLUDED success
+ * and to have actually run something - see upstreamWorkCheckJob for why the
+ * conclusion alone is not enough.
+ */
+const CHAINED_STAGE_GATE =
+  "${{ github.event_name == 'workflow_dispatch' || " +
+  "(github.event.workflow_run.conclusion == 'success' && " +
+  `needs.${UPSTREAM_WORK_JOB_ID}.outputs.ran == 'true') }}`;
 const BRANCH_POLICY_JOB_ID = 'branch-policy';
 
 /**
@@ -242,12 +254,34 @@ function resolveStagedNames(
   const nameSuffix = workflowVariant ? ` (${workflowVariant})` : '';
   return {
     fileSuffix,
-    accessName: `ALPHACI Access Gate${nameSuffix}`,
-    qualityName: `ALPHACI Quality${nameSuffix}`,
-    packageName: `ALPHACI Package${nameSuffix}`,
-    verifyName: `ALPHACI Verify${nameSuffix}`,
+    accessName: `ALPHACI 1 Access${nameSuffix}`,
+    qualityName: `ALPHACI 2 Quality${nameSuffix}`,
+    packageName: `ALPHACI 3 Build and Deploy${nameSuffix}`,
+    verifyName: `ALPHACI 4 Post-Deploy Tests${nameSuffix}`,
   };
 }
+
+/**
+ * The title GitHub shows for a run of a chained stage.
+ *
+ * A `workflow_run` stage executes in the DEFAULT branch context, so GitHub
+ * records its branch as `main` whatever branch the work was actually for, and
+ * its title as the workflow's own name. The result is a run list where four
+ * rows read "ALPHACI 2 Quality / main" and nothing distinguishes the dev run
+ * from the uat one - verified on a real run that GitHub recorded as `main`
+ * while the workflow itself resolved `branch=dev`.
+ *
+ * `display_title` rather than the commit message: a message can be several
+ * lines long, and a newline in a run-name mangles it. GitHub derives
+ * display_title as a single line.
+ *
+ * The direct-trigger workflows do not need this - GitHub already shows their
+ * real branch and commit, because they are triggered by the push itself.
+ */
+const CHAINED_RUN_NAME =
+  '${{ github.event.workflow_run.head_branch || github.ref_name }}' +
+  ' · ' +
+  '${{ github.event.workflow_run.display_title || github.sha }}';
 
 function resolveStagedContext(
   template: WorkflowTemplate,
@@ -370,6 +404,7 @@ function buildQualityWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: qualityName,
+      'run-name': CHAINED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [ctx.names.accessName],
@@ -386,8 +421,10 @@ function buildQualityWorkflowFile(
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
       jobs: {
+        [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         [VALIDATE_ACCESS_JOB_ID]: {
-          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          needs: [UPSTREAM_WORK_JOB_ID],
+          if: CHAINED_STAGE_GATE,
           ...validationJob('quality'),
         },
         [BRANCH_POLICY_JOB_ID]: branchPolicyJob(
@@ -475,21 +512,30 @@ function buildVerifyWorkflowFile(
   /*
    * Where each kind of test points.
    *
-   * An API is reached through the per-branch Render secret the deploy job
-   * used; a browser suite is reached through the Vercel alias that deploy set.
-   * Both are read straight from the repository rather than passed between
-   * workflows, because a `workflow_run` stage cannot see the triggering run's
-   * job outputs — and both providers now publish a stable per-branch address,
-   * which is the whole reason the alias exists.
+   * Read from `vars`, and passed on through the resolve-targets job below
+   * rather than inlined here. Three separate constraints force that shape:
+   *
+   *   1. `secrets` is NOT an allowed context inside a reusable workflow call's
+   *      `with:` block. GitHub rejects the WHOLE FILE at parse time, producing
+   *      a 0-second run with no jobs, listed by filename because the workflow
+   *      name could not be read either. This stage never ran once on a real
+   *      project because of it.
+   *   2. Routing a secret through a job output does not work either: GitHub
+   *      redacts job outputs containing a secret, so the URL arrives empty.
+   *   3. A `workflow_run` stage cannot see the triggering run's job outputs,
+   *      so the address cannot be handed over from the deploy that set it.
+   *
+   * `vars` satisfies all three, and is where these belong on their own merit:
+   * a healthcheck URL and a Vercel alias are public hostnames, not credentials.
    */
   const apiUrl = (branch: 'uat' | 'main') =>
-    `\${{ secrets.RENDER_HEALTHCHECK_URL_${branch.toUpperCase()} }}`;
+    `\${{ needs.${RESOLVE_TARGETS_JOB_ID}.outputs.api-${branch} }}`;
 
   const uiUrl = (branch: 'uat' | 'main') =>
-    `https://\${{ secrets.${vercelAliasSecret(branch)} }}`;
+    `https://\${{ needs.${RESOLVE_TARGETS_JOB_ID}.outputs.ui-${branch} }}`;
 
   const apiTestJob = (branch: 'uat' | 'main') => ({
-    needs: [VALIDATE_ACCESS_JOB_ID],
+    needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
     if: branchIsOneOf([branch]),
     uses: `${CENTRAL_WORKFLOW_BASE}/bruno-api-test.yml@${ctx.centralWorkflowRef}`,
     with: {
@@ -516,7 +562,7 @@ function buildVerifyWorkflowFile(
    * by promotion from uat, so the same artifact has already been fuzzed.
    */
   const contractTestJob = () => ({
-    needs: [VALIDATE_ACCESS_JOB_ID],
+    needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
     if: branchIsOneOf(['uat']),
     uses: `${CENTRAL_WORKFLOW_BASE}/schemathesis-scan.yml@${ctx.centralWorkflowRef}`,
     with: {
@@ -528,7 +574,7 @@ function buildVerifyWorkflowFile(
   });
 
   const uiTestJob = (branch: 'uat' | 'main') => ({
-    needs: [VALIDATE_ACCESS_JOB_ID],
+    needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
     if: branchIsOneOf([branch]),
     uses: `${CENTRAL_WORKFLOW_BASE}/playwright-e2e.yml@${ctx.centralWorkflowRef}`,
     with: {
@@ -548,7 +594,85 @@ function buildVerifyWorkflowFile(
    * for it. A stack declaring both gets both, which is what a full-stack
    * repository in one slot would want.
    */
+  /*
+   * Reads the deployment addresses out of `vars` and republishes them as job
+   * outputs, because `needs` IS allowed in a `with:` block and `secrets` is
+   * not - see the comment on apiUrl above.
+   *
+   * It also fails loudly when the variable this branch needs is missing. That
+   * is the half that matters day to day: an unset variable is an empty base
+   * URL, the suite requests "", and the connection error that follows reads
+   * like a broken API rather than like configuration nobody added.
+   */
+  const resolveTargetsJob = () => {
+    const outputs: Record<string, string> = {};
+    const env: Record<string, string> = {
+      BRANCH: `\${{ ${BRANCH_EXPR} }}`,
+    };
+    const lines: string[] = ['set -euo pipefail', '', '{'];
+    const cases: string[] = [];
+
+    for (const branch of ['uat', 'main'] as const) {
+      if (verification.api) {
+        const variable = `RENDER_HEALTHCHECK_URL_${branch.toUpperCase()}`;
+        outputs[`api-${branch}`] =
+          `\${{ steps.resolve.outputs.api-${branch} }}`;
+        env[variable] = `\${{ vars.${variable} }}`;
+        lines.push(`  echo "api-${branch}=\${${variable}}"`);
+        cases.push(
+          `  ${branch}) required="\${${variable}}"; name="${variable}" ;;`,
+        );
+      }
+      if (verification.ui) {
+        const variable = vercelAliasSecret(branch);
+        outputs[`ui-${branch}`] = `\${{ steps.resolve.outputs.ui-${branch} }}`;
+        env[variable] = `\${{ vars.${variable} }}`;
+        lines.push(`  echo "ui-${branch}=\${${variable}}"`);
+        cases.push(
+          `  ${branch}) required="\${${variable}}"; name="${variable}" ;;`,
+        );
+      }
+    }
+
+    lines.push(
+      '} >> "$GITHUB_OUTPUT"',
+      '',
+      '# Only the variable this branch needs is required. A dev run tests no',
+      '# deployed service, so demanding the uat address there would fail a',
+      '# branch that was never going to use it.',
+      'case "${BRANCH}" in',
+      ...cases,
+      '  *)',
+      '    echo "Branch ${BRANCH} runs no tests against a deployed environment."',
+      '    exit 0',
+      '    ;;',
+      'esac',
+      '',
+      'if [ -z "${required}" ]; then',
+      '  echo "::error::Repository variable ${name} is not set, so the ${BRANCH} deployment cannot be located and nothing was tested against it. Add it under Settings > Secrets and variables > Actions > Variables. It is a variable rather than a secret because it is a public address, and because GitHub redacts secrets passed between jobs."',
+      '  exit 1',
+      'fi',
+      '',
+      'echo "Testing ${BRANCH} against ${required}"',
+    );
+
+    return {
+      needs: [VALIDATE_ACCESS_JOB_ID],
+      'runs-on': 'ubuntu-latest',
+      outputs,
+      steps: [
+        {
+          name: 'Resolve deployment targets',
+          id: 'resolve',
+          env,
+          run: lines.join('\n'),
+        },
+      ],
+    };
+  };
+
   const verifyJobs: Record<string, unknown> = {
+    [RESOLVE_TARGETS_JOB_ID]: resolveTargetsJob(),
     ...(verification.api && {
       'api-tests-uat': apiTestJob('uat'),
       'api-tests-main': apiTestJob('main'),
@@ -560,7 +684,13 @@ function buildVerifyWorkflowFile(
     }),
   };
 
-  const workJobIds = Object.keys(verifyJobs);
+  // The resolver is plumbing, not work. Counting it would make a dev run -
+  // where every test job is branch-scoped out - report a successful verify
+  // stage that tested nothing. A failure in it is still reported, because
+  // STAGE_FAILED looks at every job's result.
+  const workJobIds = Object.keys(verifyJobs).filter(
+    (jobId) => jobId !== RESOLVE_TARGETS_JOB_ID,
+  );
   return {
     stage: 'verify',
     name: verifyName,
@@ -568,6 +698,7 @@ function buildVerifyWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: verifyName,
+      'run-name': CHAINED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [packageName],
@@ -583,8 +714,10 @@ function buildVerifyWorkflowFile(
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
       jobs: {
+        [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         'validate-access': {
-          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          needs: [UPSTREAM_WORK_JOB_ID],
+          if: CHAINED_STAGE_GATE,
           ...validationJob('verify'),
         },
         ...verifyJobs,
@@ -619,6 +752,7 @@ function buildPackageWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: packageName,
+      'run-name': CHAINED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [qualityName],
@@ -635,8 +769,10 @@ function buildPackageWorkflowFile(
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
       jobs: {
+        [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         'validate-access': {
-          if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+          needs: [UPSTREAM_WORK_JOB_ID],
+          if: CHAINED_STAGE_GATE,
           ...validationJob('package'),
         },
         build: toolchain.packageBuildJob,
@@ -907,6 +1043,92 @@ function normalizeServicePath(servicePath: string | undefined): string {
   return trimmed === '' ? '.' : trimmed;
 }
 
+/*
+ * Did the stage this one follows actually do anything?
+ *
+ * `workflow_run.conclusion` cannot answer that. A workflow whose jobs ALL
+ * skipped concludes `success`, because skipped is not failed - so a stage
+ * whose own gate was closed hands the next stage a green light. Observed:
+ * quality failed, every job in the build stage skipped, the run concluded
+ * success, and the post-deploy stage opened its gate and began testing a
+ * commit that had never been deployed. Nothing bad happened only because a
+ * missing variable stopped it; with that variable set, the suite would have
+ * run against a stale deployment, passed, and recorded a green stage for a
+ * commit that was never shipped.
+ *
+ * The answer lives in the previous run's JOBS, so this asks for them. The
+ * reporting job is excluded because it carries `if: always()` and therefore
+ * runs even when the whole stage skipped - counting it would make every
+ * skipped stage look like it had worked.
+ *
+ * This job never fails. It publishes a fact, and the gate below consumes it,
+ * so a stage with no work to build on SKIPS rather than turning red. A red
+ * stage here would blame the wrong one: the fault is upstream, and the
+ * platform already renders a stage that reported nothing as blocked, naming
+ * the stage that stopped it.
+ */
+function upstreamWorkCheckJob() {
+  return {
+    runs_on: 'ubuntu-latest',
+    permissions: {
+      contents: 'read',
+      actions: 'read',
+    },
+    outputs: {
+      ran: '${{ steps.check.outputs.ran }}',
+    },
+    steps: [
+      {
+        name: 'Check the previous stage did its work',
+        id: 'check',
+        env: {
+          GH_TOKEN: '${{ github.token }}',
+          GH_REPO: '${{ github.repository }}',
+          PREVIOUS_RUN_ID: '${{ github.event.workflow_run.id }}',
+          PREVIOUS_NAME: '${{ github.event.workflow_run.name }}',
+          EVENT_NAME: '${{ github.event_name }}',
+        },
+        run: [
+          'set -euo pipefail',
+          '',
+          '# A manual run has no previous stage to inspect and is always allowed.',
+          'if [ "$EVENT_NAME" != "workflow_run" ]; then',
+          '  echo "ran=true" >> "$GITHUB_OUTPUT"',
+          '  exit 0',
+          'fi',
+          '',
+          'JOBS=$(curl -sf --max-time 10 \\',
+          '  -H "Authorization: Bearer $GH_TOKEN" \\',
+          '  -H "Accept: application/vnd.github+json" \\',
+          '  "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest" \\',
+          '  || printf \'{"jobs":[]}\')',
+          '',
+          '# An unreachable API is not evidence of a skipped stage. Letting the stage',
+          '# through on a failed lookup keeps a GitHub outage from silently halting',
+          '# every pipeline.',
+          "TOTAL=$(printf '%s' \"$JOBS\" | jq '[.jobs[]?] | length')",
+          'if [ "$TOTAL" -eq 0 ]; then',
+          '  echo "::warning::Could not read the jobs of $PREVIOUS_NAME, so this stage proceeds without checking whether it did any work."',
+          '  echo "ran=true" >> "$GITHUB_OUTPUT"',
+          '  exit 0',
+          'fi',
+          '',
+          'WORKED=$(printf \'%s\' "$JOBS" | jq \'[.jobs[]? | select(.name != "report-results") | select(.conclusion != "skipped")] | length\')',
+          '',
+          'if [ "$WORKED" -eq 0 ]; then',
+          '  echo "::warning::$PREVIOUS_NAME completed without running any of its jobs, so this stage has nothing to act on and will skip. Its gate was closed, which usually means the stage before IT did not pass - fix that one."',
+          '  echo "ran=false" >> "$GITHUB_OUTPUT"',
+          '  exit 0',
+          'fi',
+          '',
+          'echo "$PREVIOUS_NAME ran $WORKED job(s)."',
+          'echo "ran=true" >> "$GITHUB_OUTPUT"',
+        ].join('\n'),
+      },
+    ],
+  };
+}
+
 function validationJob(stage: WorkflowStage) {
   return {
     runs_on: 'ubuntu-latest',
@@ -1118,10 +1340,19 @@ function promotionJob(
     '!cancelled()',
     `(${BRANCH_EXPR}) == '${sourceBranch}'`,
     "needs.build.result == 'success'",
-    ...additionalNeeds.map(
-      (need) =>
-        `(needs['${need}'].result == 'success' || needs['${need}'].result == 'skipped')`,
-    ),
+    /*
+     * `success`, not `success || skipped`.
+     *
+     * These jobs are branch-scoped to the branch being promoted FROM, and the
+     * promotion only runs on that branch, so on a real run they are active. A
+     * skipped one therefore does not mean "not applicable here" - it means
+     * something upstream of it failed and it never ran. Accepting that opened
+     * a promotion PR for a commit whose deployment never happened, which is
+     * the same mistake as treating a stage whose jobs all skipped as a stage
+     * that succeeded. A provider with no job for this branch is absent from
+     * `needs` entirely and never reaches this line.
+     */
+    ...additionalNeeds.map((need) => `needs['${need}'].result == 'success'`),
   ];
 
   return {

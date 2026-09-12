@@ -41,14 +41,20 @@ function buildVercelFragment(
            * suite would have no address to aim at. Production needs none:
            * --prod already lands on a fixed domain.
            *
-           * The secret name is shared with the verify stage through
+           * The name is shared with the verify stage through
            * vercelAliasSecret, so the address this deploy claims and the one
            * the browser is sent to cannot drift apart.
+           *
+           * `vars`, not `secrets`: GitHub forbids the secrets context inside a
+           * reusable workflow call's `with:` block and rejects the whole file
+           * at parse time when it finds one - which is why the package stage
+           * could not be registered at all on a real project. An alias is a
+           * public hostname, so it belongs in vars regardless.
            */
           ...(branch === 'main'
             ? {}
             : {
-                'branch-alias': `\${{ secrets.${vercelAliasSecret(branch)} }}`,
+                'branch-alias': `\${{ vars.${vercelAliasSecret(branch)} }}`,
               }),
           'checkout-ref': HEAD_SHA_EXPR,
         },
@@ -62,7 +68,10 @@ function buildVercelFragment(
       },
     },
     jobIds: [jobId],
-    promotionNeeds: branch === 'uat' ? [jobId] : [],
+    // Every branch that promotes onward, not just uat. Listing only uat meant
+    // promote-to-uat waited on nothing but the compile, so a failed dev deploy
+    // still promoted. main never promotes, so it contributes nothing here.
+    promotionNeeds: branch === 'main' ? [] : [jobId],
   };
 }
 

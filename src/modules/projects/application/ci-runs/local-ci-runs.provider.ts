@@ -62,13 +62,32 @@ export class LocalCiRunsProvider implements CiRunsProvider {
     return runs.find((run) => run.id === runId) ?? null;
   }
 
+  /*
+   * Matched loosely, and against BOTH naming generations on purpose.
+   *
+   * The stage is derived from the workflow's display NAME, so renaming a
+   * generated workflow silently reclassifies every run of it as `unknown`.
+   * The stage names changed - "ALPHACI Access Gate" became "ALPHACI 1 Access"
+   * and "ALPHACI Package" became "ALPHACI 3 Build and Deploy" - and every
+   * repository generated before that change still carries the old names, so
+   * both have to resolve for as long as any of those repositories exist.
+   *
+   * Deploy providers are checked before the generic build stage: "Build and
+   * Deploy" contains the word deploy, and a provider-specific workflow must
+   * not be swallowed by it.
+   */
   mapWorkflowNameToStage(workflowName: string): CiRunStage {
     const normalized = workflowName.toLowerCase();
-    if (normalized.includes('access gate')) return 'access_gate';
-    if (normalized.includes('quality')) return 'quality';
-    if (normalized.includes('package')) return 'package';
     if (normalized.includes('deploy render')) return 'deploy_render';
     if (normalized.includes('deploy vercel')) return 'deploy_vercel';
+    if (normalized.includes('access')) return 'access_gate';
+    if (normalized.includes('quality')) return 'quality';
+    if (
+      normalized.includes('package') ||
+      normalized.includes('build and deploy')
+    ) {
+      return 'package';
+    }
     return 'unknown';
   }
 

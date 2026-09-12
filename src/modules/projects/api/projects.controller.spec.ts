@@ -107,10 +107,10 @@ const makeProjectsService = () =>
       workflowFiles: [
         {
           stage: 'access',
-          name: 'ALPHACI Access Gate',
+          name: 'ALPHACI 1 Access',
           path: '.github/workflows/00-alphaci-access.yml',
           gated: true,
-          yaml: 'name: ALPHACI Access Gate',
+          yaml: 'name: ALPHACI 1 Access',
         },
       ],
       diffSummary: [
@@ -127,7 +127,7 @@ const makeProjectsService = () =>
         {
           path: '.github/workflows/00-alphaci-access.yml',
           stage: 'access',
-          name: 'ALPHACI Access Gate',
+          name: 'ALPHACI 1 Access',
           gated: true,
         },
       ],
@@ -157,7 +157,7 @@ const makeProjectCiRunsService = () =>
     getRun: jest.fn().mockResolvedValue({
       id: 'local-project-1-quality',
       stage: 'quality',
-      workflowName: 'ALPHACI Quality',
+      workflowName: 'ALPHACI 2 Quality',
     }),
     rerun: jest.fn().mockResolvedValue({
       enabled: false,

@@ -9,6 +9,17 @@ describe('LocalCiRunsProvider', () => {
     );
     expect(provider.mapWorkflowNameToStage('ALPHACI Quality')).toBe('quality');
     expect(provider.mapWorkflowNameToStage('ALPHACI Package')).toBe('package');
+    // The current generation of names. Both must resolve: every repository
+    // generated before the rename still carries the old ones.
+    expect(provider.mapWorkflowNameToStage('ALPHACI 1 Access')).toBe(
+      'access_gate',
+    );
+    expect(provider.mapWorkflowNameToStage('ALPHACI 2 Quality')).toBe(
+      'quality',
+    );
+    expect(provider.mapWorkflowNameToStage('ALPHACI 3 Build and Deploy')).toBe(
+      'package',
+    );
     expect(provider.mapWorkflowNameToStage('Deploy Render')).toBe(
       'deploy_render',
     );
