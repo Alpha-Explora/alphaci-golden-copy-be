@@ -644,6 +644,48 @@ export class DeploymentTargetsService {
     }
   }
 
+  /**
+   * Records a target that could NOT be provisioned, on the same channel the
+   * successful one uses.
+   *
+   * Provisioning a target that fails leaves nothing behind: the row is never
+   * written, so the database shows no trace, and the only evidence is a
+   * `logger.warn` on a server nobody is watching. A React project reached
+   * production that way - three Vercel deploy jobs committed to its
+   * repository, zero deployment targets stored, a green "project created", and
+   * the deploy failing days later in another repository with an error naming
+   * none of it. Working out why took reading the provisioning source; it
+   * should have taken one query.
+   *
+   * An event rather than a `failed` row on purpose. Other code reads the
+   * targets table to decide what a pipeline deploys to, and a row that looks
+   * like a target but is not one would be a worse bug than the silence it
+   * replaces.
+   */
+  async recordTargetProvisioningFailure(input: {
+    userId: string;
+    projectId: string;
+    provider: string;
+    slot: string;
+    reason: string;
+  }): Promise<void> {
+    await this.recordTargetEvent({
+      userId: input.userId,
+      projectId: input.projectId,
+      eventCode: 'deployment_target_failed',
+      title: 'Deployment target could not be provisioned',
+      body:
+        `${input.provider} (${input.slot}) was not created: ${input.reason}. ` +
+        `The pipeline still contains deploy jobs for it, and they will run ` +
+        `with nothing to deploy to.`,
+      metadata: {
+        provider: input.provider,
+        slot: input.slot,
+        reason: input.reason,
+      },
+    });
+  }
+
   private async recordTargetEvent(input: {
     userId: string;
     projectId: string;

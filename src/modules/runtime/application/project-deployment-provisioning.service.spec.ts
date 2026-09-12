@@ -10,6 +10,7 @@ describe('ProjectDeploymentProvisioningService', () => {
   const deploymentTargetsService = {
     createDeploymentTarget: jest.fn(),
     updateProviderMetadata: jest.fn(),
+    recordTargetProvisioningFailure: jest.fn().mockResolvedValue(undefined),
   };
   const envVarsService = {
     provisionEnvVars: jest.fn(),
@@ -908,5 +909,82 @@ describe('ProjectDeploymentProvisioningService — declined secret installs', ()
           message.includes('No CI secrets installer'),
       ),
     ).toHaveLength(0);
+  });
+});
+
+/*
+ * A target that fails to provision writes no row, so before this the only
+ * trace was a warn line on the server - while the pipeline generated for that
+ * target shipped to the repository regardless. A React project reached
+ * production that way: three Vercel deploy jobs committed, zero deployment
+ * targets stored, and a green "project created".
+ */
+describe('ProjectDeploymentProvisioningService, a target that cannot be created', () => {
+  const targetsService = {
+    createDeploymentTarget: jest
+      .fn()
+      .mockRejectedValue(
+        new Error('ALPHACI-managed vercel token is not configured'),
+      ),
+    updateProviderMetadata: jest.fn(),
+    recordTargetProvisioningFailure: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const provision = async (overrides?: { recordFails?: boolean }) => {
+    targetsService.recordTargetProvisioningFailure.mockClear();
+    if (overrides?.recordFails) {
+      targetsService.recordTargetProvisioningFailure.mockRejectedValueOnce(
+        new Error('audit sink unreachable'),
+      );
+    }
+
+    const service = new ProjectDeploymentProvisioningService(
+      targetsService as never,
+      { provisionEnvVars: jest.fn() } as never,
+      { get: jest.fn(() => undefined) } as never,
+      new DeploymentProviderPolicyRegistry([
+        new RenderDeploymentPolicy({} as never),
+        new VercelDeploymentPolicy(),
+      ]),
+    );
+
+    return service.provisionForProject({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'acme/storefront',
+      githubAccessToken: 'token',
+      request: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            ownershipMode: 'flowci_managed',
+          },
+        ],
+      } as never,
+    });
+  };
+
+  it('records the failure where someone can find it', async () => {
+    const result = await provision();
+
+    expect(result.status).toBe('failed');
+    expect(targetsService.recordTargetProvisioningFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        provider: 'vercel',
+        slot: 'frontend',
+        reason: expect.stringContaining('vercel token'),
+      }),
+    );
+  });
+
+  it('still returns a result when recording the failure itself fails', async () => {
+    // Losing the record of a failure must not also lose the results of the
+    // targets that succeeded, so the recorder is awaited and swallowed.
+    await expect(provision({ recordFails: true })).resolves.toMatchObject({
+      status: 'failed',
+    });
   });
 });

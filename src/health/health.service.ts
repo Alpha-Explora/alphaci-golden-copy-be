@@ -25,11 +25,31 @@ export interface HealthDeployInfo {
   githubAppSlug: string;
 }
 
+/**
+ * Whether the RUNNING process has credentials for each hosting provider.
+ *
+ * Booleans only - never the tokens, never a prefix of them. The question this
+ * answers is "is hosting configured here", and that needs one bit per
+ * provider.
+ *
+ * It exists because answering it cost a source dive. A React project was
+ * created with three Vercel deploy jobs in its repository and no Vercel
+ * project behind them; the provisioning failure was a warn line on a server,
+ * so establishing whether the token was even set meant reading the
+ * provisioning code and inferring from what it did not do. One request should
+ * answer it.
+ */
+export interface HealthProviderInfo {
+  renderConfigured: boolean;
+  vercelConfigured: boolean;
+}
+
 export interface HealthResponse {
   status: HealthStatus;
   uptimeSeconds: number;
   checks: HealthChecks;
   deploy: HealthDeployInfo;
+  providers: HealthProviderInfo;
 }
 
 @Injectable()
@@ -46,6 +66,8 @@ export class HealthService {
 
     const status: HealthStatus = database ? 'ok' : 'error';
     const github = this.configService.get<AppConfig>('app')?.github;
+    const managed =
+      this.configService.get<AppConfig>('app')?.envProvisioning?.flowciManaged;
 
     return {
       status,
@@ -57,6 +79,10 @@ export class HealthService {
         githubAppConfigured: Boolean(github?.appId && github?.appPrivateKey),
         githubAppId: github?.appId || '(empty)',
         githubAppSlug: github?.appSlug || '(empty)',
+      },
+      providers: {
+        renderConfigured: Boolean(managed?.renderToken?.trim()),
+        vercelConfigured: Boolean(managed?.vercelToken?.trim()),
       },
     };
   }
