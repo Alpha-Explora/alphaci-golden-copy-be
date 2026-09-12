@@ -342,20 +342,21 @@ export class ProjectProvisioningSupport {
     }
 
     try {
-      return await this.projectDeploymentProvisioningService.provisionForProject(
-        {
+      const result =
+        await this.projectDeploymentProvisioningService.provisionForProject({
           projectId: input.projectId,
           userId: input.userId,
           repoFullName: input.repoFullName,
           githubAccessToken: input.githubAccessToken,
           request,
-        },
-      );
+        });
+      this.warnAboutDeployJobsWithNoTarget(input.repoFullName, result);
+      return result;
     } catch (error) {
       this.logger.warn(
         `Deployment provisioning failed for ${input.repoFullName}: ${String(error)}`,
       );
-      return {
+      const failed: DeploymentProvisioningResult = {
         status: 'failed',
         targets: request.targets.map((target) => ({
           slot: target.slot,
@@ -371,7 +372,60 @@ export class ProjectProvisioningSupport {
           env: [],
         })),
       };
+      // The throwing path strands deploy jobs exactly as the returning one
+      // does, so it says the same thing.
+      this.warnAboutDeployJobsWithNoTarget(input.repoFullName, failed);
+      return failed;
     }
+  }
+
+  /**
+   * Says out loud when a pipeline was generated for infrastructure that does
+   * not exist.
+   *
+   * The workflow files and the provider resources come from the same request
+   * but are produced by two different steps, and only the first one is
+   * required to succeed for the project to be reported as `provisioned`. So a
+   * provider whose creation failed leaves a repository carrying deploy jobs
+   * with nothing behind them - which is exactly what happened to a React
+   * project: three Vercel deploy jobs committed, zero deployment targets
+   * stored, and a green "project created".
+   *
+   * The failure is then discovered much later, in another repository, in
+   * another workflow, as a credential error that names none of this. Naming it
+   * here - where both halves are visible in the same place - is the difference
+   * between a five-minute fix and an afternoon.
+   *
+   * This does not throw. The repository and its pipeline are real and useful
+   * without a deployment, and failing project creation over it would destroy
+   * more than it protects.
+   */
+  private warnAboutDeployJobsWithNoTarget(
+    repoFullName: string,
+    result: DeploymentProvisioningResult,
+  ): void {
+    const stranded = result.targets.filter(
+      (target) => target.status !== 'created' && target.status !== 'registered',
+    );
+
+    if (stranded.length === 0) {
+      return;
+    }
+
+    const described = stranded
+      .map(
+        (target) =>
+          `${target.provider}/${target.slot}` +
+          (target.errorSummary ? ` (${target.errorSummary})` : ''),
+      )
+      .join(', ');
+
+    this.logger.warn(
+      `Deployment provisioning did not complete for ${described} on ${repoFullName}. ` +
+        `The pipeline generated for this repository still contains deploy jobs for ` +
+        `those targets, and they will run with nothing to deploy to. Either provision ` +
+        `them and add the deployment secrets, or regenerate the workflows without them.`,
+    );
   }
 
   async pushStarterFiles(
