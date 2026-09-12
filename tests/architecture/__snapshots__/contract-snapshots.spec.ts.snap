@@ -91,8 +91,9 @@ exports[`post-consolidation public contract snapshots records the staged workflo
   ],
   "providerJobs": {
     "deploy-render-backend-uat": {
-      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'uat' }}",
+      "if": "\${{ (needs.pipeline-context.outputs.branch) == 'uat' }}",
       "needs": [
+        "pipeline-context",
         "docker-backend-uat",
       ],
       "secrets": {
@@ -114,8 +115,9 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       },
     },
     "deploy-vercel-frontend-dev": {
-      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'dev' }}",
+      "if": "\${{ (needs.pipeline-context.outputs.branch) == 'dev' }}",
       "needs": [
+        "pipeline-context",
         "build",
       ],
       "secrets": {
@@ -127,15 +129,16 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
         "branch-alias": "\${{ vars.VERCEL_ALIAS_DEV }}",
-        "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
+        "checkout-ref": "\${{ needs.pipeline-context.outputs.sha }}",
         "environment": "preview",
         "system-name": "orders-api",
         "working-directory": "frontend",
       },
     },
     "deploy-vercel-frontend-main": {
-      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' }}",
+      "if": "\${{ (needs.pipeline-context.outputs.branch) == 'main' }}",
       "needs": [
+        "pipeline-context",
         "build",
         "production-gate",
       ],
@@ -147,15 +150,16 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       },
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
-        "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
+        "checkout-ref": "\${{ needs.pipeline-context.outputs.sha }}",
         "environment": "production",
         "system-name": "orders-api",
         "working-directory": "frontend",
       },
     },
     "deploy-vercel-frontend-uat": {
-      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'uat' }}",
+      "if": "\${{ (needs.pipeline-context.outputs.branch) == 'uat' }}",
       "needs": [
+        "pipeline-context",
         "build",
       ],
       "secrets": {
@@ -167,15 +171,16 @@ exports[`post-consolidation public contract snapshots records the staged workflo
       "uses": "Alpha-Explora/alphaci-workflow/.github/workflows/vercel-deploy.yml@v1",
       "with": {
         "branch-alias": "\${{ vars.VERCEL_ALIAS_UAT }}",
-        "checkout-ref": "\${{ github.event.workflow_run.head_sha || github.sha }}",
+        "checkout-ref": "\${{ needs.pipeline-context.outputs.sha }}",
         "environment": "preview",
         "system-name": "orders-api",
         "working-directory": "frontend",
       },
     },
     "docker-backend-uat": {
-      "if": "\${{ (github.event.workflow_run.head_branch || github.ref_name) == 'uat' }}",
+      "if": "\${{ (needs.pipeline-context.outputs.branch) == 'uat' }}",
       "needs": [
+        "pipeline-context",
         "build",
       ],
       "permissions": {

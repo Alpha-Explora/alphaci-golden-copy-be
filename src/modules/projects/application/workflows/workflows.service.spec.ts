@@ -193,7 +193,7 @@ describe('WorkflowsService', () => {
       expect(packageWorkflow).toContain('deploy-vercel-frontend-main:');
       expect(packageWorkflow).toContain('VERCEL_FRONTEND_TOKEN');
       expect(packageWorkflow).toContain(
-        'ref: ${{ github.event.workflow_run.head_sha || github.sha }}',
+        'ref: ${{ needs.pipeline-context.outputs.sha }}',
       );
     });
 
