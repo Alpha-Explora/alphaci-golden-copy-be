@@ -134,9 +134,140 @@ export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
  * in the default-branch context, so every branch decision below must use the
  * originating branch instead of `github.ref_name` alone.
  */
-const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
+const PIPELINE_CONTEXT_JOB_ID = 'pipeline-context';
+const PIPELINE_CONTEXT_ARTIFACT = 'alphaci-pipeline-context';
 
-const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
+/*
+ * WHICH BRANCH IS THIS RUN ACTUALLY FOR?
+ *
+ * Not the one GitHub reports. A `workflow_run` stage executes in the DEFAULT
+ * branch context, so its own run records the default branch and the default
+ * branch's commit - whatever branch the work was really for. That is survivable
+ * one hop out, because the FIRST chained stage reads the payload of the push
+ * run that triggered it, and a push run carries the truth.
+ *
+ * It is not survivable two hops out. The second chained stage reads the payload
+ * of a `workflow_run` run, and every field in it already says `main`. Measured
+ * on a real push to dev:
+ *
+ *     dev tip                    aa9911f5
+ *     package run head_sha       ad9d9090   <- main's tip
+ *     package run head_branch    main
+ *
+ * The consequences were not subtle. A push to dev ran the production gate,
+ * built the main image, and attempted a PRODUCTION deploy - of main's code,
+ * not the commit that was pushed - while promote-to-uat, which requires the
+ * branch to be dev, could never fire. That is why the promotion PR had never
+ * once been raised.
+ *
+ * Nothing in the event can recover it, so the context is carried instead: each
+ * chained stage republishes the branch and commit it resolved as an artifact,
+ * and the next stage reads it back from the run that triggered it. The first
+ * chained stage has no artifact to read and falls back to the payload, which
+ * is correct precisely there.
+ */
+/*
+ * The access stage and the env guard are triggered by the push itself, so
+ * the ref they run on IS the branch. They have no context job and must not
+ * reference one - actionlint rejects the workflow outright if they do.
+ */
+const DIRECT_BRANCH_EXPR = 'github.ref_name';
+const DIRECT_SHA_EXPR = '${{ github.sha }}';
+
+const BRANCH_EXPR = `needs.${PIPELINE_CONTEXT_JOB_ID}.outputs.branch`;
+
+const HEAD_SHA_EXPR = `\${{ needs.${PIPELINE_CONTEXT_JOB_ID}.outputs.sha }}`;
+
+/**
+ * Resolves the originating branch and commit, and republishes them for the
+ * stage after this one.
+ *
+ * The fallback is not a nicety: the first chained stage legitimately has no
+ * artifact to read, and a manual dispatch has no upstream run at all. In both
+ * cases the payload - or the ref the dispatch chose - is the right answer.
+ */
+function pipelineContextJob() {
+  const shell = [
+    'set -euo pipefail',
+    '',
+    'branch="${FALLBACK_BRANCH}"',
+    'sha="${FALLBACK_SHA}"',
+    'source="the triggering event"',
+    '',
+    '# An artifact published by the previous stage is the only channel that',
+    '# survives a second workflow_run hop, so it wins when it is there.',
+    'if [ "${EVENT_NAME}" = "workflow_run" ] && [ -n "${TRIGGER_RUN_ID}" ]; then',
+    '  api="https://api.github.com/repos/${GH_REPO}/actions/runs/${TRIGGER_RUN_ID}/artifacts"',
+    '  filter=\'[.artifacts[]? | select(.name == $name) | .archive_download_url] | first // ""\'',
+    '  url=$(curl -sf --max-time 10 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${api}" | jq -r --arg name "${ARTIFACT_NAME}" "${filter}" || printf "")',
+    '',
+    '  if [ -n "${url}" ] && curl -sfL --max-time 20 -o context.zip -H "Authorization: Bearer ${GH_TOKEN}" "${url}"; then',
+    '    unzip -o -q context.zip -d context-dir',
+    '    if [ -f context-dir/pipeline-context.env ]; then',
+    '      branch=$(grep -m1 "^branch=" context-dir/pipeline-context.env | cut -d= -f2-)',
+    '      sha=$(grep -m1 "^sha=" context-dir/pipeline-context.env | cut -d= -f2-)',
+    '      source="the ${PREVIOUS_NAME} stage"',
+    '    fi',
+    '  fi',
+    'fi',
+    '',
+    '# Refusing to guess. Every later job is branch-scoped, so an empty branch',
+    '# selects nothing - or worse, matches the wrong environment.',
+    'if [ -z "${branch}" ] || [ -z "${sha}" ]; then',
+    '  echo "::error::Could not determine which branch or commit this run is for. Without it every branch-scoped job would be selected wrongly, so the stage stops here."',
+    '  exit 1',
+    'fi',
+    '',
+    '{',
+    '  echo "branch=${branch}"',
+    '  echo "sha=${sha}"',
+    '} | tee pipeline-context.env >> "$GITHUB_OUTPUT"',
+    '',
+    'echo "Branch ${branch} at ${sha}, according to ${source}."',
+  ];
+
+  return {
+    runs_on: 'ubuntu-latest',
+    permissions: {
+      contents: 'read',
+      actions: 'read',
+    },
+    outputs: {
+      branch: '${{ steps.context.outputs.branch }}',
+      sha: '${{ steps.context.outputs.sha }}',
+    },
+    steps: [
+      {
+        name: 'Resolve the originating branch and commit',
+        id: 'context',
+        env: {
+          GH_TOKEN: '${{ github.token }}',
+          GH_REPO: '${{ github.repository }}',
+          EVENT_NAME: '${{ github.event_name }}',
+          TRIGGER_RUN_ID: '${{ github.event.workflow_run.id }}',
+          PREVIOUS_NAME: '${{ github.event.workflow_run.name }}',
+          ARTIFACT_NAME: PIPELINE_CONTEXT_ARTIFACT,
+          FALLBACK_BRANCH:
+            '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+          FALLBACK_SHA:
+            '${{ github.event.workflow_run.head_sha || github.sha }}',
+        },
+        run: shell.join('\n'),
+      },
+      {
+        // Republished rather than forwarded: the stage after this one reads it
+        // from THIS run, because that is the only run it can address.
+        name: 'Publish the context for the next stage',
+        uses: 'actions/upload-artifact@v4',
+        with: {
+          name: PIPELINE_CONTEXT_ARTIFACT,
+          path: 'pipeline-context.env',
+          'retention-days': 1,
+        },
+      },
+    ],
+  };
+}
 
 /**
  * Job ids the toolchain fragments depend on.
@@ -278,9 +409,20 @@ function resolveStagedNames(
  * The direct-trigger workflows do not need this - GitHub already shows their
  * real branch and commit, because they are triggered by the push itself.
  */
-const CHAINED_RUN_NAME =
+/*
+ * run-name is evaluated before any job runs, so it cannot read the context job,
+ * and the branch is only knowable at the FIRST chained stage - the one whose
+ * trigger was the push itself. Later stages inherit it for free: their
+ * display_title is the previous stage's run-name, which already carries the
+ * prefix. Repeating the event expression in them would print `main` on a dev
+ * run, which is exactly the misleading label this exists to remove.
+ */
+const FIRST_CHAINED_RUN_NAME =
   '${{ github.event.workflow_run.head_branch || github.ref_name }}' +
   ' · ' +
+  '${{ github.event.workflow_run.display_title || github.sha }}';
+
+const INHERITED_RUN_NAME =
   '${{ github.event.workflow_run.display_title || github.sha }}';
 
 function resolveStagedContext(
@@ -404,7 +546,7 @@ function buildQualityWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: qualityName,
-      'run-name': CHAINED_RUN_NAME,
+      'run-name': FIRST_CHAINED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [ctx.names.accessName],
@@ -420,7 +562,7 @@ function buildQualityWorkflowFile(
         ALPHACI_VALIDATE_URL,
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
-      jobs: {
+      jobs: withPipelineContext({
         [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         [VALIDATE_ACCESS_JOB_ID]: {
           needs: [UPSTREAM_WORK_JOB_ID],
@@ -476,7 +618,7 @@ function buildQualityWorkflowFile(
             workJobIds: toolchain.qualityJobIds,
           },
         ),
-      },
+      }),
     }),
   };
 }
@@ -698,7 +840,7 @@ function buildVerifyWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: verifyName,
-      'run-name': CHAINED_RUN_NAME,
+      'run-name': INHERITED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [packageName],
@@ -713,7 +855,7 @@ function buildVerifyWorkflowFile(
         ALPHACI_VALIDATE_URL,
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
-      jobs: {
+      jobs: withPipelineContext({
         [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         'validate-access': {
           needs: [UPSTREAM_WORK_JOB_ID],
@@ -734,7 +876,7 @@ function buildVerifyWorkflowFile(
             workJobIds,
           },
         ),
-      },
+      }),
     }),
   };
 }
@@ -752,7 +894,7 @@ function buildPackageWorkflowFile(
     gated: true,
     yaml: dumpWorkflow({
       name: packageName,
-      'run-name': CHAINED_RUN_NAME,
+      'run-name': INHERITED_RUN_NAME,
       on: {
         workflow_run: {
           workflows: [qualityName],
@@ -768,7 +910,7 @@ function buildPackageWorkflowFile(
         ALPHACI_VALIDATE_URL,
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
       },
-      jobs: {
+      jobs: withPipelineContext({
         [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
         'validate-access': {
           needs: [UPSTREAM_WORK_JOB_ID],
@@ -809,7 +951,7 @@ function buildPackageWorkflowFile(
             workJobIds: ['build'],
           },
         ),
-      },
+      }),
     }),
   };
 }
@@ -1129,7 +1271,51 @@ function upstreamWorkCheckJob() {
   };
 }
 
+/**
+ * Puts the context job in front of a chained stage and makes every other job
+ * wait for it.
+ *
+ * Applied to the whole job map rather than written out per job, because the
+ * cost of forgetting it on one job is silent: that job reads an empty branch,
+ * its `if` selects nothing, and the stage reports success having skipped the
+ * work. A job added later inherits the wiring for free.
+ */
+function withPipelineContext(
+  jobs: Record<string, unknown>,
+): Record<string, unknown> {
+  const wired = Object.fromEntries(
+    Object.entries(jobs).map(([jobId, job]) => {
+      const definition = job as { needs?: string[] | string };
+      const existing =
+        definition.needs === undefined
+          ? []
+          : Array.isArray(definition.needs)
+            ? definition.needs
+            : [definition.needs];
+
+      return [
+        jobId,
+        {
+          ...(definition as Record<string, unknown>),
+          needs: [PIPELINE_CONTEXT_JOB_ID, ...existing],
+        },
+      ];
+    }),
+  );
+
+  return { [PIPELINE_CONTEXT_JOB_ID]: pipelineContextJob(), ...wired };
+}
+
 function validationJob(stage: WorkflowStage) {
+  /*
+   * The commit reported to the platform must be the one that was pushed. On a
+   * chained stage the event's head_sha is the DEFAULT branch's commit, so
+   * reporting it filed every dev and uat run against main.
+   */
+  const shaExpr =
+    stage === 'access'
+      ? '${{ github.sha }}'
+      : `\${{ needs.${PIPELINE_CONTEXT_JOB_ID}.outputs.sha }}`;
   return {
     runs_on: 'ubuntu-latest',
     steps: [
@@ -1142,7 +1328,9 @@ function validationJob(stage: WorkflowStage) {
           '  -H "Content-Type: application/json" \\',
           '  -d "{\\"repo\\":\\"${{ github.repository }}\\",\\"stage\\":\\"' +
             stage +
-            '\\",\\"workflowRunId\\":\\"${{ github.run_id }}\\",\\"headSha\\":\\"${{ github.event.workflow_run.head_sha || github.sha }}\\"}" \\',
+            '\\",\\"workflowRunId\\":\\"${{ github.run_id }}\\",\\"headSha\\":\\"' +
+            shaExpr +
+            '\\"}" \\',
           '  "$ALPHACI_VALIDATE_URL") || true',
           'HTTP_CODE=$(printf \'%s\' "$RESPONSE" | tail -1)',
           'BODY=$(printf \'%s\' "$RESPONSE" | head -n -1)',
@@ -1403,6 +1591,8 @@ function reportingJob(
   needs: string[],
   opts?: { testJobId?: string; workJobIds?: string[] },
 ) {
+  // Only the chained stages have a context job to read from.
+  const chained = stage !== 'access';
   const isQuality = stage === 'quality';
   const testJobId = opts?.testJobId;
 
@@ -1429,8 +1619,8 @@ function reportingJob(
     ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
     ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
     GH_REPO: '${{ github.repository }}',
-    GH_BRANCH: `\${{ ${BRANCH_EXPR} }}`,
-    GH_SHA: HEAD_SHA_EXPR,
+    GH_BRANCH: `\${{ ${chained ? BRANCH_EXPR : DIRECT_BRANCH_EXPR} }}`,
+    GH_SHA: chained ? HEAD_SHA_EXPR : DIRECT_SHA_EXPR,
     GH_RUN_ID: '${{ github.run_id }}',
     GITHUB_TOKEN: '${{ github.token }}',
     STAGE_FAILED: "${{ contains(needs.*.result, 'failure') }}",

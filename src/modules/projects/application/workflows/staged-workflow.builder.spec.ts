@@ -154,6 +154,7 @@ describe('buildStagedWorkflowBundle', () => {
     // package: needs validate-access + build
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
     expect(pkg.jobs['report-results']?.needs).toEqual([
+      'pipeline-context',
       'validate-access',
       'build',
     ]);
@@ -348,7 +349,7 @@ describe('buildStagedWorkflowBundle', () => {
     const typecheck = quality.jobs['typecheck'];
     const qualityYaml = bundle.workflowFiles[1]!.yaml;
 
-    expect(typecheck?.needs).toEqual(['branch-policy']);
+    expect(typecheck?.needs).toEqual(['pipeline-context', 'branch-policy']);
     expect(qualityYaml).toContain('working-directory: ./frontend');
     expect(qualityYaml).toContain('npm run typecheck');
     expect(qualityYaml).toContain('npx tsc --noEmit');
@@ -382,7 +383,11 @@ describe('buildStagedWorkflowBundle', () => {
     expect(sonar?.if).toBe(
       "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
     );
-    expect(sonar?.needs).toEqual(['branch-policy', 'backend-tests']);
+    expect(sonar?.needs).toEqual([
+      'pipeline-context',
+      'branch-policy',
+      'backend-tests',
+    ]);
     expect(sonar?.with?.['coverage-artifact-name']).toBe('orders-api-coverage');
     expect(sonar?.secrets).toEqual({
       SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}',
@@ -409,7 +414,7 @@ describe('buildStagedWorkflowBundle', () => {
       'Alpha-Explora/alphaci-workflow/.github/workflows/production-gate.yml@v1',
     );
     expect(gate?.if).toBe(
-      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' }}",
+      "${{ (needs.pipeline-context.outputs.branch) == 'main' }}",
     );
     expect(gate?.with?.['app-type']).toBe('api');
     expect(gate?.with?.['require-approval']).toBe(true);
@@ -500,6 +505,7 @@ describe('buildStagedWorkflowBundle', () => {
       'Alpha-Explora/alphaci-workflow/.github/workflows/render-deploy.yml@v1',
     );
     expect(pkg.jobs['deploy-render-backend-uat']?.needs).toEqual([
+      'pipeline-context',
       'docker-backend-uat',
     ]);
   });
@@ -546,7 +552,7 @@ describe('buildStagedWorkflowBundle', () => {
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
     const toMain = pkg.jobs['promote-to-main'];
 
-    expect(toMain?.needs).toEqual(['build']);
+    expect(toMain?.needs).toEqual(['pipeline-context', 'build']);
     expect(toMain?.if).not.toContain('deploy-render');
   });
 
@@ -1340,4 +1346,99 @@ describe('generated workflows never put a secret in a reusable call input', () =
       expect(offenders).toEqual([]);
     },
   );
+});
+
+/*
+ * The branch a chained stage acts on must come from the context job, never the
+ * event.
+ *
+ * A `workflow_run` stage executes in the DEFAULT branch context, so two hops
+ * from the push every branch and sha field in the event says `main`. Reading
+ * them made a push to dev run the production gate, build the main image and
+ * attempt a PRODUCTION deploy - of main's code, not the pushed commit - while
+ * promote-to-uat could never fire because the branch never read `dev`.
+ *
+ * Asserted on the emitted YAML rather than on the builder's constants, because
+ * the deploy jobs come from provider fragments that construct their own
+ * conditions and had to be fixed separately. A future fragment that reaches for
+ * the event expression fails here.
+ */
+describe('chained stages read the branch from the context job', () => {
+  const registry = new WorkflowFragmentRegistry([
+    renderWorkflowFragment,
+    vercelWorkflowFragment,
+  ]);
+
+  const vercelTargets = (['dev', 'uat', 'main'] as const).map((branchName) => ({
+    slot: 'frontend',
+    provider: 'vercel',
+    branchName,
+    deploymentStrategy: 'vercel_cli',
+    secretNames: {
+      token: 'VERCEL_FRONTEND_TOKEN',
+      orgId: 'VERCEL_FRONTEND_ORG_ID',
+      projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+    },
+  }));
+
+  const chainedFiles = () =>
+    buildStagedWorkflowBundle(
+      makeTemplate('react'),
+      {
+        templateId: 'fe-react',
+        serviceName: 'orders-web',
+        deploymentTargets: vercelTargets,
+      } as never,
+      registry,
+    ).workflowFiles.filter((file) =>
+      ['quality', 'package', 'verify'].includes(file.stage),
+    );
+
+  it('never branch-scopes a job on the event', () => {
+    const offenders: string[] = [];
+
+    for (const file of chainedFiles()) {
+      const parsed = yaml.load(file.yaml) as {
+        jobs?: Record<string, { if?: string }>;
+      };
+      for (const [jobId, job] of Object.entries(parsed.jobs ?? {})) {
+        if (
+          typeof job?.if === 'string' &&
+          job.if.includes('github.event.workflow_run.head_branch')
+        ) {
+          offenders.push(`${file.path} → ${jobId}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('checks out the originating commit, not the default branch', () => {
+    const offenders: string[] = [];
+
+    for (const file of chainedFiles()) {
+      const parsed = yaml.load(file.yaml) as {
+        jobs?: Record<string, { with?: Record<string, unknown> }>;
+      };
+      for (const [jobId, job] of Object.entries(parsed.jobs ?? {})) {
+        const ref = job?.with?.['checkout-ref'];
+        if (
+          typeof ref === 'string' &&
+          ref.includes('github.event.workflow_run.head_sha')
+        ) {
+          offenders.push(`${file.path} → ${jobId}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('gives every chained stage a context job to read from', () => {
+    for (const file of chainedFiles()) {
+      const parsed = yaml.load(file.yaml) as { jobs?: Record<string, unknown> };
+      expect(Object.keys(parsed.jobs ?? {})).toContain('pipeline-context');
+    }
+  });
 });
