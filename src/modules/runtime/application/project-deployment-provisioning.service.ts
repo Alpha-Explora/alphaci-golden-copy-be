@@ -135,9 +135,32 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
           env,
         });
       } catch (error) {
+        const reason = this.sanitizeError(error);
         this.logger.warn(
           `Deployment provisioning failed for ${input.repoFullName}/${requestedTarget.slot}: ${String(error)}`,
         );
+        /*
+         * Recorded where the user can see it, not only in the server log.
+         *
+         * A failed target writes no row, so until this existed the only trace
+         * was a warn line - and the deploy jobs generated for that target
+         * shipped anyway. Awaited but never allowed to throw: losing the
+         * record of a failure must not also lose the results of the targets
+         * that succeeded.
+         */
+        await this.deploymentTargetsService
+          .recordTargetProvisioningFailure({
+            userId: input.userId,
+            projectId: input.projectId,
+            provider: requestedTarget.provider,
+            slot: requestedTarget.slot,
+            reason,
+          })
+          .catch((recordError: unknown) => {
+            this.logger.warn(
+              `Could not record the provisioning failure for ${input.repoFullName}: ${String(recordError)}`,
+            );
+          });
         targets.push({
           slot: requestedTarget.slot,
           provider: requestedTarget.provider,
@@ -148,7 +171,7 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
           providerProjectId: null,
           providerProjectName: null,
           providerMetadata: {},
-          errorSummary: this.sanitizeError(error),
+          errorSummary: reason,
           env: [],
         });
       }
