@@ -547,6 +547,7 @@ function buildQualityWorkflowFile(
     yaml: dumpWorkflow({
       name: qualityName,
       'run-name': FIRST_CHAINED_RUN_NAME,
+      concurrency: stageConcurrency('quality'),
       on: {
         workflow_run: {
           workflows: [ctx.names.accessName],
@@ -841,6 +842,7 @@ function buildVerifyWorkflowFile(
     yaml: dumpWorkflow({
       name: verifyName,
       'run-name': INHERITED_RUN_NAME,
+      concurrency: stageConcurrency('verify'),
       on: {
         workflow_run: {
           workflows: [packageName],
@@ -895,6 +897,7 @@ function buildPackageWorkflowFile(
     yaml: dumpWorkflow({
       name: packageName,
       'run-name': INHERITED_RUN_NAME,
+      concurrency: stageConcurrency('package'),
       on: {
         workflow_run: {
           workflows: [qualityName],
@@ -1304,6 +1307,39 @@ function withPipelineContext(
   );
 
   return { [PIPELINE_CONTEXT_JOB_ID]: pipelineContextJob(), ...wired };
+}
+
+/**
+ * Stops the same stage running twice at once on one repository.
+ *
+ * A branch with an open pull request fires every stage twice - once for the
+ * push, once for the pull_request - and the two chains race. Observed on a real
+ * repository: two package runs overlapping by a minute, 16:53:42-16:55:12 and
+ * 16:54:13-16:55:53. They build the same image with the same buildx cache
+ * scope (`repository-imagename`, with nothing to tell two runs apart), so the
+ * second failed to reserve the cache and the whole build died:
+ *
+ *   ERROR: failed to build: failed to solve: error writing layer blob:
+ *   failed to reserve cache
+ *
+ * The cache is the symptom. The reason to serialize is that two package runs
+ * mean two deploys racing to the same environment, and the loser is whichever
+ * finishes second.
+ *
+ * `cancel-in-progress: false` queues rather than cancels: a half-finished
+ * deploy must not be killed because a duplicate trigger arrived behind it.
+ *
+ * The key is coarse on purpose. `concurrency` is evaluated before any job runs,
+ * so it cannot read the context job, and a chained stage's own event carries
+ * the default branch - the same constraint that limits run-name. Serializing a
+ * stage per repository is the honest version of what is available here, and
+ * costs only queueing.
+ */
+function stageConcurrency(stage: WorkflowStage) {
+  return {
+    group: `alphaci-${stage}-\${{ github.repository }}`,
+    'cancel-in-progress': false,
+  };
 }
 
 function validationJob(stage: WorkflowStage) {
