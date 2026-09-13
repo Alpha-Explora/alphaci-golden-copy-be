@@ -1442,3 +1442,72 @@ describe('chained stages read the branch from the context job', () => {
     }
   });
 });
+
+/*
+ * Two runs of the same stage must never overlap on one repository.
+ *
+ * A branch with an open pull request fires every stage twice - once for the
+ * push, once for the pull_request - and the chains race. Measured on a real
+ * repository: two package runs overlapping by a minute, both building the same
+ * image with the same buildx cache scope, the second dying on
+ * "failed to reserve cache".
+ *
+ * The cache is only the symptom that surfaced. Two package runs mean two
+ * deploys racing to the same environment.
+ */
+describe('chained stages are serialized per repository', () => {
+  const bundle = () =>
+    buildStagedWorkflowBundle(
+      makeTemplate('dotnet'),
+      { templateId: 'be-dotnet', serviceName: 'orders-api' } as never,
+      new WorkflowFragmentRegistry([
+        renderWorkflowFragment,
+        vercelWorkflowFragment,
+      ]),
+    );
+
+  it('gives every chained stage its own concurrency group', () => {
+    const chained = bundle().workflowFiles.filter((file) =>
+      ['quality', 'package'].includes(file.stage),
+    );
+
+    expect(chained.length).toBeGreaterThan(0);
+    for (const file of chained) {
+      const parsed = yaml.load(file.yaml) as {
+        concurrency?: { group?: string; 'cancel-in-progress'?: boolean };
+      };
+      expect(parsed.concurrency?.group).toContain(file.stage);
+      // Queued, never cancelled: a half-finished deploy must not be killed
+      // because a duplicate trigger arrived behind it.
+      expect(parsed.concurrency?.['cancel-in-progress']).toBe(false);
+    }
+  });
+
+  it('does not let two stages share one group', () => {
+    // A shared group would serialize quality against package, so a pipeline
+    // would deadlock behind its own next stage.
+    const groups = bundle()
+      .workflowFiles.filter((file) =>
+        ['quality', 'package', 'verify'].includes(file.stage),
+      )
+      .map((file) => {
+        const parsed = yaml.load(file.yaml) as {
+          concurrency?: { group?: string };
+        };
+        return parsed.concurrency?.group;
+      });
+
+    expect(new Set(groups).size).toBe(groups.length);
+  });
+
+  it('leaves the push-triggered access stage alone', () => {
+    // Access is cheap, has no cache and no deploy, and serializing it would
+    // delay every later stage behind it for nothing.
+    const access = bundle().workflowFiles.find(
+      (file) => file.stage === 'access',
+    );
+    const parsed = yaml.load(access!.yaml) as { concurrency?: unknown };
+
+    expect(parsed.concurrency).toBeUndefined();
+  });
+});
