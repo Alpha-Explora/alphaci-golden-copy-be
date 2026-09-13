@@ -338,6 +338,18 @@ export class CiReportsService {
     // never share one. The value every stage of a single pipeline execution
     // does share is the commit SHA (threaded through via HEAD_SHA_EXPR in the
     // generated workflows), so that — not run_id — is the correlation key.
+    //
+    // BRANCH IS PART OF THAT KEY.
+    //
+    // A promoted commit keeps its SHA. The same commit is therefore built on
+    // dev, again on uat, and again on main, and each of those is a separate
+    // pipeline execution with its own results. Keyed on the SHA alone they
+    // collapsed into one group, the first branch seen won, and the other two
+    // runs disappeared from the product entirely — the stage-level guard below
+    // then discarded their reports as duplicates of a stage already filled.
+    //
+    // Measured on a real repository: commit d2d3dbe carried six reports across
+    // dev, uat and main and rendered as a single run on one branch.
     const groupOrder: string[] = [];
     const groupMap = new Map<
       string,
@@ -357,7 +369,7 @@ export class CiReportsService {
     for (const row of rows) {
       // pg returns bigint as string; parse to number (GitHub run IDs are safe integers)
       const runId = Number(row.run_id);
-      const groupKey = `${row.repo_full_name}::${row.commit_sha}`;
+      const groupKey = `${row.repo_full_name}::${row.branch}::${row.commit_sha}`;
 
       if (!groupMap.has(groupKey)) {
         groupOrder.push(groupKey);

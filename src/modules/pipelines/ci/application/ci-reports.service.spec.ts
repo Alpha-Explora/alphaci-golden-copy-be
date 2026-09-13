@@ -259,3 +259,110 @@ describe('CiReportsService.getRuns per-tool checks', () => {
     expect((await stageOf({ checks: null })).checks).toEqual([]);
   });
 });
+
+/*
+ * A promoted commit keeps its SHA, so the same commit runs a full pipeline on
+ * dev, again on uat, and again on main. Those are three separate executions
+ * with three separate results.
+ *
+ * Keyed on the SHA alone they collapsed into one group: the first branch seen
+ * won, the stage guard discarded the others as duplicates of a stage already
+ * filled, and two thirds of the work vanished from the product. Measured on a
+ * real repository, commit d2d3dbe carried six reports across dev, uat and main
+ * and rendered as one run on one branch.
+ */
+describe('CiReportsService.getRuns, one commit promoted across branches', () => {
+  let service: CiReportsService;
+  let runReportsRepository: CiRunReportsRepository;
+
+  beforeEach(() => {
+    runReportsRepository = makeRunReportsRepository();
+    service = new CiReportsService(makeDatabaseService(), runReportsRepository);
+  });
+
+  it('keeps one run per branch instead of collapsing them', async () => {
+    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
+      row({
+        branch: 'main',
+        stage: 'quality',
+        run_id: '600',
+        status: 'success',
+      }),
+      row({
+        branch: 'main',
+        stage: 'access',
+        run_id: '500',
+        status: 'success',
+      }),
+      row({
+        branch: 'uat',
+        stage: 'quality',
+        run_id: '400',
+        status: 'failure',
+      }),
+      row({ branch: 'uat', stage: 'access', run_id: '300', status: 'success' }),
+      row({
+        branch: 'dev',
+        stage: 'quality',
+        run_id: '200',
+        status: 'success',
+      }),
+      row({ branch: 'dev', stage: 'access', run_id: '100', status: 'success' }),
+    ]);
+
+    const { runs } = await service.getRuns('user-1');
+
+    expect(runs).toHaveLength(3);
+    expect(runs.map((run) => run.branch).sort()).toEqual([
+      'dev',
+      'main',
+      'uat',
+    ]);
+    // Every one of them is the same commit; that is the point.
+    expect(new Set(runs.map((run) => run.commitSha))).toEqual(
+      new Set(['sha-1']),
+    );
+  });
+
+  it('does not let one branch result mask another', async () => {
+    // The uat run failed while dev and main passed. Collapsed into one group,
+    // a reader saw a single status and could not tell which branch broke.
+    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
+      row({
+        branch: 'main',
+        stage: 'quality',
+        run_id: '600',
+        status: 'success',
+      }),
+      row({
+        branch: 'uat',
+        stage: 'quality',
+        run_id: '400',
+        status: 'failure',
+      }),
+      row({
+        branch: 'dev',
+        stage: 'quality',
+        run_id: '200',
+        status: 'success',
+      }),
+      row({ branch: 'main', stage: 'access', run_id: '550' }),
+      row({ branch: 'uat', stage: 'access', run_id: '350' }),
+      row({ branch: 'dev', stage: 'access', run_id: '150' }),
+    ]);
+
+    const { runs } = await service.getRuns('user-1');
+
+    // Asserted per branch on the stage that actually reported. Overall status
+    // also folds in stages that never reported, which is a separate rule; what
+    // matters here is that uat's failure stays on uat.
+    const qualityOf = (branch: string) =>
+      runs
+        .find((run) => run.branch === branch)
+        ?.stages.find((stage) => stage.stage === 'quality')?.status;
+
+    expect(qualityOf('uat')).toBe('failure');
+    expect(qualityOf('dev')).toBe('success');
+    expect(qualityOf('main')).toBe('success');
+  });
+});
