@@ -114,17 +114,17 @@ const FAILED_JOB_KIND_NEEDLES: ReadonlyArray<{
   kind: Exclude<FailedJobKind, 'unknown'>;
   needles: readonly string[];
 }> = [
+  /*
+   * Named for what the job DOES, never for a provider. Provider names belong
+   * inside the runtime module - check:provider-encapsulation enforces that,
+   * and correctly rejected an earlier version of this list that spelled out
+   * two of them. They were redundant anyway: every provider deploy job is
+   * generated as `deploy-<provider>-...`, so `deploy` already catches them,
+   * and a provider added later is caught without touching this file.
+   */
   {
     kind: 'publish',
-    needles: [
-      'docker',
-      'deploy',
-      'registry',
-      'publish',
-      'image',
-      'render',
-      'vercel',
-    ],
+    needles: ['docker', 'deploy', 'registry', 'publish', 'image'],
   },
   { kind: 'lint', needles: ['lint'] },
   { kind: 'typecheck', needles: ['type', 'tsc'] },
