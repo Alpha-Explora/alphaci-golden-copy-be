@@ -94,6 +94,7 @@ describe('HealthService, provider configuration', () => {
     expect(result.providers).toEqual({
       renderConfigured: true,
       vercelConfigured: false,
+      vercelManagedReady: false,
     });
   });
 
@@ -111,6 +112,7 @@ describe('HealthService, provider configuration', () => {
     expect(result.providers).toEqual({
       renderConfigured: false,
       vercelConfigured: false,
+      vercelManagedReady: false,
     });
   });
 
@@ -118,8 +120,51 @@ describe('HealthService, provider configuration', () => {
     const service = await serviceWith({});
 
     await expect(service.getStatus()).resolves.toMatchObject({
-      providers: { renderConfigured: false, vercelConfigured: false },
+      providers: {
+        renderConfigured: false,
+        vercelConfigured: false,
+        vercelManagedReady: false,
+      },
     });
+  });
+
+  /*
+   * The shape that produced the outage: a Vercel token was set, so every
+   * configuration signal read as healthy, but managed provisioning needs a
+   * team id too and rejected every create. "Configured" and "able to create a
+   * target" are different questions and the endpoint now answers both.
+   */
+  it('separates having a Vercel token from being able to use it', async () => {
+    const service = await serviceWith({
+      vercelToken: 'vercel_live_value',
+    });
+
+    const result = await service.getStatus();
+
+    expect(result.providers.vercelConfigured).toBe(true);
+    expect(result.providers.vercelManagedReady).toBe(false);
+  });
+
+  it('reports managed Vercel ready only when token and team id are both set', async () => {
+    const service = await serviceWith({
+      vercelToken: 'vercel_live_value',
+      vercelTeamId: 'team_abc123',
+    });
+
+    const result = await service.getStatus();
+
+    expect(result.providers.vercelManagedReady).toBe(true);
+  });
+
+  it('treats a whitespace team id as no team id', async () => {
+    const service = await serviceWith({
+      vercelToken: 'vercel_live_value',
+      vercelTeamId: '   ',
+    });
+
+    const result = await service.getStatus();
+
+    expect(result.providers.vercelManagedReady).toBe(false);
   });
 
   it('never puts a token in the response', async () => {

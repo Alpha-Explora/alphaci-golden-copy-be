@@ -29,6 +29,19 @@ import {
 
 const VERCEL_API_URL = 'https://api.vercel.com';
 
+/**
+ * The part of Vercel's error envelope the client reasons about. Vercel sends
+ * more than this; these are the fields that decide which remedy to name.
+ */
+interface VercelErrorBody {
+  action?: string;
+  code?: string;
+  link?: string;
+  message?: string;
+  repo?: string;
+  resource?: string;
+}
+
 @Injectable()
 export class VercelEnvClient implements DeploymentProvider {
   readonly provider = 'vercel' as const;
@@ -675,15 +688,7 @@ export class VercelEnvClient implements DeploymentProvider {
       return null;
     }
 
-    let payload: {
-      error?: {
-        action?: string;
-        code?: string;
-        link?: string;
-        message?: string;
-        repo?: string;
-      };
-    };
+    let payload: { error?: VercelErrorBody };
     try {
       payload = JSON.parse(body) as typeof payload;
     } catch {
@@ -691,8 +696,16 @@ export class VercelEnvClient implements DeploymentProvider {
     }
 
     const error = payload.error;
+    if (!error) {
+      return null;
+    }
+
+    return this.gitHubIntegrationMessage(error) ?? this.forbiddenMessage(error);
+  }
+
+  private gitHubIntegrationMessage(error: VercelErrorBody): string | null {
     if (
-      error?.action !== 'Install GitHub App' ||
+      error.action !== 'Install GitHub App' ||
       !error.message?.includes('install the GitHub integration')
     ) {
       return null;
@@ -702,6 +715,38 @@ export class VercelEnvClient implements DeploymentProvider {
     return (
       `Vercel GitHub integration is not installed or does not have access to ${repo}. ` +
       'Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.'
+    );
+  }
+
+  /**
+   * A 403 means the token authenticated and was then refused, so neither
+   * "check the token" nor Vercel's raw JSON is a useful thing to show.
+   *
+   * Exactly three things produce it for a write, and the response cannot tell
+   * them apart - so all three are named rather than guessed between. Billing
+   * leads because a restricted account keeps answering reads while refusing
+   * writes, which presents as a permissions bug and sends the reader to the
+   * wrong place.
+   *
+   * The message stays well inside the 500 characters the provisioning
+   * sanitizer keeps, so it reaches the UI whole rather than cut mid-sentence.
+   */
+  private forbiddenMessage(error: VercelErrorBody): string | null {
+    if (error.code !== 'forbidden') {
+      return null;
+    }
+
+    const operation =
+      error.action && error.resource
+        ? `${error.action} a ${error.resource}`
+        : 'complete that request';
+
+    return (
+      `Vercel refused to ${operation} (403). The token is valid but is not allowed to act ` +
+      'on the team ALPHACI_VERCEL_TEAM_ID names. Check, in this order: the Vercel account ' +
+      'has no overdue invoice, because billing restrictions block writes while reads keep ' +
+      "working; the token's owner is an Owner or Admin of that team; and the token's scope " +
+      'covers that team. Then retry.'
     );
   }
 }
