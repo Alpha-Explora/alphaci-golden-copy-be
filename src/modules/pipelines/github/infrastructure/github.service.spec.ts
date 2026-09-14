@@ -185,6 +185,51 @@ describe('GithubService', () => {
     jest.restoreAllMocks();
   });
 
+  /*
+   * The page size is pinned because shrinking it caused an outage rather than
+   * a slowdown. One push runs five workflows on each of three branches, so a
+   * page of 20 was filled by a single afternoon's work, and the runs past the
+   * edge did not degrade gracefully: two declared branches read "no runs"
+   * while GitHub plainly had runs for both.
+   */
+  describe('listWorkflowRuns paging', () => {
+    const okJson = (body: unknown) => ({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(body),
+      text: () => Promise.resolve(JSON.stringify(body)),
+      headers: new Headers({ 'content-type': 'application/json' }),
+    });
+
+    it("asks for GitHub's maximum page by default", async () => {
+      fetchMock.mockResolvedValueOnce(okJson({ workflow_runs: [] }));
+
+      await service.listWorkflowRuns('token', 'o/r');
+
+      const url = String(fetchMock.mock.calls[0]?.[0]);
+      expect(url).toContain('per_page=100');
+    });
+
+    it('never asks for more than GitHub will return', async () => {
+      fetchMock.mockResolvedValueOnce(okJson({ workflow_runs: [] }));
+
+      await service.listWorkflowRuns('token', 'o/r', null, 5000);
+
+      const url = String(fetchMock.mock.calls[0]?.[0]);
+      expect(url).toContain('per_page=100');
+    });
+
+    it('filters by branch only when one is asked for', async () => {
+      fetchMock.mockResolvedValueOnce(okJson({ workflow_runs: [] }));
+      await service.listWorkflowRuns('token', 'o/r');
+      expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('branch=');
+
+      fetchMock.mockResolvedValueOnce(okJson({ workflow_runs: [] }));
+      await service.listWorkflowRuns('token', 'o/r', 'dev');
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain('branch=dev');
+    });
+  });
+
   describe('GitHub App tokens', () => {
     it('builds the GitHub App install URL from config', () => {
       expect(service.getAppInstallUrl()).toBe(
