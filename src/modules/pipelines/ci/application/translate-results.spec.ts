@@ -781,3 +781,81 @@ describe('translateResults — SonarCloud blocked by a setting', () => {
     ).toBeDefined();
   });
 });
+
+/*
+ * Every job name below was read out of workflow.ci_run_reports for the
+ * stpetertest / stpetertestfe pipelines. The classifier is guessing a remedy
+ * from a string, so the strings it is tested against are real ones.
+ */
+describe('translateResults, classifying which job failed', () => {
+  const jobLine = (name: string) => `Failed GitHub Actions job: ${name}`;
+  const first = (
+    name: string,
+    stage: Parameters<typeof translateResults>[0] = 'package',
+  ) => translateResults(stage, 'failure', {}, jobLine(name))[0];
+
+  it('does not tell a reader to build locally when the push failed', () => {
+    // The real failure: the image built, then could not be pushed because the
+    // runner could not reserve an Actions Cache slot. "Run the project build
+    // locally" succeeds and teaches nothing.
+    const message = first(
+      'docker-backend-main / Docker Build & Push > Build and Push',
+    );
+
+    expect(message?.title).toBe('Image or deployment step failed');
+    expect(message?.hint).toContain('will not reproduce');
+    expect(message?.hint).not.toContain('Run the project build locally');
+  });
+
+  it.each([
+    'deploy-vercel-frontend-main / Deploy to Vercel (production)',
+    'deploy-render-backend-main',
+  ])('treats %s as a delivery failure, not an unknown one', (name) => {
+    expect(first(name)?.title).toBe('Image or deployment step failed');
+  });
+
+  /*
+   * The repository is called stpetertest. Matching needles against the whole
+   * reported name found `test` inside the REPOSITORY name and reported a
+   * failed production gate as a failed test suite.
+   */
+  it('does not read the repository name as the kind of failure', () => {
+    const message = first(
+      'production-gate / Production Readiness - stpetertest',
+    );
+
+    expect(message?.title).not.toBe('Tests failed');
+    expect(message?.hint).not.toContain('Run the failing test command');
+  });
+
+  it('still classifies a genuine test job from its id', () => {
+    expect(first('dotnet-tests / .NET Unit Tests', 'quality')?.title).toBe(
+      'Tests failed',
+    );
+  });
+
+  it.each([
+    ['lint / .NET Format Check', 'Lint check failed'],
+    ['typecheck / .NET Static Analysis', 'Type check failed'],
+    [
+      'sonar / SonarCloud .NET Analysis',
+      'Security or code-quality check failed',
+    ],
+    ['licenses / .NET License Scan', 'Security or code-quality check failed'],
+    ['secrets / Secret Scan', 'Security or code-quality check failed'],
+  ])('classifies %s from its id alone', (name, title) => {
+    expect(first(name, 'quality')?.title).toBe(title);
+  });
+
+  /*
+   * An unrecognised job gets the job name and the generic hint. That is the
+   * correct outcome, not a gap to fill: inventing a remedy for a job we do
+   * not recognise is how the misleading build hint happened.
+   */
+  it('names the job rather than guessing when the id is unfamiliar', () => {
+    const message = first('some-bespoke-gate / Whatever It Does');
+
+    expect(message?.title).toContain('some-bespoke-gate');
+    expect(message?.severity).toBe('error');
+  });
+});

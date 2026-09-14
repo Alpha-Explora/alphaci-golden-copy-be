@@ -90,6 +90,7 @@ type FailedJobKind =
   | 'typecheck'
   | 'test'
   | 'build'
+  | 'publish'
   | 'security'
   | 'unknown';
 
@@ -99,16 +100,40 @@ const ITEMS_CAP = 20;
 const DEFAULT_FAILED_JOB_HINT =
   'Open the workflow logs, fix the first failed job listed below, then re-run the workflow.';
 
-/** First matching kind wins — same precedence as the previous nested ternaries. */
+/**
+ * First matching kind wins.
+ *
+ * `publish` leads deliberately. A container job is called "Docker Build &
+ * Push", so matching `build` first classified a failed REGISTRY PUSH as a
+ * build error and told the reader to build locally - which succeeds, proves
+ * nothing, and sends them looking in their own code for a fault that was
+ * never there. Shipping an artifact and compiling one fail for unrelated
+ * reasons and cannot share a remedy.
+ */
 const FAILED_JOB_KIND_NEEDLES: ReadonlyArray<{
   kind: Exclude<FailedJobKind, 'unknown'>;
   needles: readonly string[];
 }> = [
+  {
+    kind: 'publish',
+    needles: [
+      'docker',
+      'deploy',
+      'registry',
+      'publish',
+      'image',
+      'render',
+      'vercel',
+    ],
+  },
   { kind: 'lint', needles: ['lint'] },
   { kind: 'typecheck', needles: ['type', 'tsc'] },
   { kind: 'test', needles: ['test'] },
   { kind: 'build', needles: ['build', 'package'] },
-  { kind: 'security', needles: ['sonar', 'security', 'audit'] },
+  {
+    kind: 'security',
+    needles: ['sonar', 'security', 'audit', 'licen', 'secret', 'sbom'],
+  },
 ];
 
 const FAILED_JOB_COPY: Record<
@@ -130,6 +155,18 @@ const FAILED_JOB_COPY: Record<
   build: {
     title: 'Build or package step failed',
     hint: 'Run the project build locally, fix the first build error, then re-run the workflow.',
+  },
+  /*
+   * No local reproduction step, because there usually is not one. These jobs
+   * fail on registry credentials, a cache the runner could not reserve, a
+   * provider quota or a provider outage - none of which a local build can
+   * show. Naming that is the useful part: it tells the reader the fault is
+   * probably not in their code, which is the opposite of what they were
+   * being told before.
+   */
+  publish: {
+    title: 'Image or deployment step failed',
+    hint: 'This step ships the artifact rather than compiling it, so a local build will not reproduce it. Open the stage in the project view for the error output.',
   },
   security: {
     title: 'Security or code-quality check failed',
@@ -164,8 +201,24 @@ function reportedFailedJobs(rawLogs?: string): string[] {
     .slice(0, 5);
 }
 
+/**
+ * The job id, which is the only part of the name we choose.
+ *
+ * A reported job reads `<id> / <Display Name> > <step>`, and the two halves
+ * after the id are not ours: the display name comes from the reusable
+ * workflow and ends with the repository's own name. That is not cosmetic.
+ * "production-gate / Production Readiness - stpetertest" was classified as a
+ * TEST failure, because the repository is called stpetertest and the needle
+ * `test` matched inside it - so a failed production gate told the reader to
+ * go and run their tests. Any project whose name contains `test`, `build` or
+ * `lint` inherited the same fault.
+ */
+function failedJobId(jobName: string): string {
+  return (jobName.split(' > ')[0] ?? jobName).split(' / ')[0]!.trim();
+}
+
 function classifyFailedJob(jobName: string): FailedJobKind {
-  const job = jobName.toLowerCase();
+  const job = failedJobId(jobName).toLowerCase();
   for (const rule of FAILED_JOB_KIND_NEEDLES) {
     if (rule.needles.some((needle) => job.includes(needle))) {
       return rule.kind;
