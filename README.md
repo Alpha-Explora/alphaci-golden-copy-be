@@ -33,3 +33,17 @@ npm run check:documentation
 ```
 
 The architecture gates are available through `npm run boundaries`, `npm run check:application-boundaries`, `npm run check:provider-encapsulation`, `npm run check:schema-ownership`, and `npm run check:capabilities`. See the [local verification runbook](docs/runbooks/runbook-local-verification.md) for the complete sequence and evidence expectations.
+
+Run a composition locally with a paired build profile and edition:
+
+```powershell
+npm run start:saas
+npm run start:edu
+npm run start:enterprise
+npm run start:enterprise-client
+```
+
+These development commands run `nest start --watch`. The first three select
+the SaaS, EDU, and full Enterprise compositions; `start:enterprise-client`
+also selects the declared `northwind` Enterprise client policy. Environment
+presets for deployment are in `deploy/env/`.
