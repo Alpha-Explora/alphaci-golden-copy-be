@@ -26,7 +26,7 @@ sources:
 
 `src/kernel/composition/catalog.source.json` is the authoring source for composition. One record carries the capability, its pack membership, and the surfaces that present it. `capability-registry.ts` and `manifests.ts` are generated from it by `npm run generate:composition` and remain checked in, because the type system reads them: `CapabilityKey` is derived from the literal keys in the registry, so an unknown key is still a compile error anywhere in the backend.
 
-Frontend surface data moves into that record. `apiField`, `viewFlag`, `domains`, `routes`, and `featureBarrels` describe how a capability appears, and the backend owns them alongside the key they describe.
+Frontend surface data moves into that record. `apiField`, `viewFlag`, `domains`, `routes`, and `featureBarrels` describe how a capability appears, while `artifactSymbols` identifies real implementation exports that profile checks must prove absent from excluded output. The backend owns them alongside the key they describe.
 
 `npm run capability:new` writes the record and derives the rest: the registry, the manifests, the three pack tables, the generated maps, and a ledger entry. What it cannot derive, it reports. A configuration flag named by a record is code, so the command says the flag still has to exist in `AppConfig` rather than implying the catalog created it.
 

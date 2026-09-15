@@ -1,9 +1,7 @@
 import type { AppConfig } from '#kernel/config/app.config.js';
-import {
-  NullClientPolicySource,
-  createClientPolicySource,
-} from './client-policy-source.js';
-import type { ClientPolicyRegistry } from './client-policy.types.js';
+import type { ClientPolicyRegistry } from '#kernel/composition/client-policy.types.js';
+import { createEnterpriseClientPolicySource } from './client-policy-pack.js';
+import { NullClientPolicySource } from './client-policy-source.js';
 
 const northwind = {
   clientId: 'northwind',
@@ -14,14 +12,26 @@ const northwind = {
 
 const declared: ClientPolicyRegistry = { northwind };
 
-const compositionFor = (
-  client: AppConfig['composition']['client'],
-  edition: AppConfig['composition']['edition'] = 'enterprise',
-): AppConfig['composition'] => ({ edition, profile: 'enterprise', client });
+type ClientSelection = Pick<
+  AppConfig['composition']['client'],
+  'id' | 'configPath'
+>;
 
-describe('createClientPolicySource', () => {
+const compositionFor = (
+  client: ClientSelection,
+  edition: AppConfig['composition']['edition'] = 'enterprise',
+): AppConfig['composition'] => ({
+  edition,
+  profile: 'enterprise',
+  client: {
+    ...client,
+    enabled: client.id !== null || client.configPath !== null,
+  },
+});
+
+describe('createEnterpriseClientPolicySource', () => {
   it('returns a null source when no client is selected', () => {
-    const source = createClientPolicySource(
+    const source = createEnterpriseClientPolicySource(
       compositionFor({ id: null, configPath: null }),
       { policies: declared },
     );
@@ -32,7 +42,7 @@ describe('createClientPolicySource', () => {
   });
 
   it('resolves a declared client policy', () => {
-    const source = createClientPolicySource(
+    const source = createEnterpriseClientPolicySource(
       compositionFor({ id: 'northwind', configPath: null }),
       { policies: declared },
     );
@@ -43,7 +53,7 @@ describe('createClientPolicySource', () => {
 
   it('fails closed on an unknown declared client', () => {
     expect(() =>
-      createClientPolicySource(
+      createEnterpriseClientPolicySource(
         compositionFor({ id: 'ghost', configPath: null }),
         { policies: declared },
       ),
@@ -51,7 +61,7 @@ describe('createClientPolicySource', () => {
   });
 
   it('reads a deployment-supplied policy document', () => {
-    const source = createClientPolicySource(
+    const source = createEnterpriseClientPolicySource(
       compositionFor({ id: null, configPath: '/etc/alphaci/client.json' }),
       {
         policies: {},
@@ -74,7 +84,7 @@ describe('createClientPolicySource', () => {
 
   it('rejects a mounted policy that names a different client', () => {
     expect(() =>
-      createClientPolicySource(
+      createEnterpriseClientPolicySource(
         compositionFor({
           id: 'northwind',
           configPath: '/etc/alphaci/client.json',
@@ -94,7 +104,7 @@ describe('createClientPolicySource', () => {
 
   it('reports an unreadable or malformed policy file', () => {
     expect(() =>
-      createClientPolicySource(
+      createEnterpriseClientPolicySource(
         compositionFor({ id: null, configPath: '/missing.json' }),
         {
           readFile: () => {
@@ -105,7 +115,7 @@ describe('createClientPolicySource', () => {
     ).toThrow(/Cannot read ALPHACI_CLIENT_CONFIG '\/missing.json': ENOENT/);
 
     expect(() =>
-      createClientPolicySource(
+      createEnterpriseClientPolicySource(
         compositionFor({ id: null, configPath: '/broken.json' }),
         { readFile: () => '{ not json' },
       ),
@@ -114,7 +124,7 @@ describe('createClientPolicySource', () => {
 
   it('rejects a mounted policy written for another edition', () => {
     expect(() =>
-      createClientPolicySource(
+      createEnterpriseClientPolicySource(
         compositionFor(
           { id: null, configPath: '/etc/alphaci/client.json' },
           'edu',
@@ -133,7 +143,7 @@ describe('createClientPolicySource', () => {
 
   it('rejects a policy that removes a capability outside the edition', () => {
     expect(() =>
-      createClientPolicySource(
+      createEnterpriseClientPolicySource(
         compositionFor({ id: null, configPath: '/etc/alphaci/client.json' }),
         {
           readFile: () =>

@@ -1,7 +1,11 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Inject, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
+import {
+  CLIENT_POLICY_SOURCE,
+  type ClientPolicySource,
+} from '#kernel/composition/client-policy.port';
 import {
   CAPABILITY_RESOLVER,
   type CapabilityResolverPort,
@@ -21,6 +25,9 @@ export class CapabilitiesController {
     private readonly capabilityResolver: CapabilityResolverPort,
     @Inject(DEPLOYMENT_PROVIDER_CATALOG)
     private readonly providerCatalog: DeploymentProviderCatalogPort,
+    @Optional()
+    @Inject(CLIENT_POLICY_SOURCE)
+    private readonly clientPolicySource: ClientPolicySource | null,
   ) {}
 
   @Get()
@@ -28,6 +35,9 @@ export class CapabilitiesController {
     const config = this.configService.getOrThrow<AppConfig>('app');
     const capabilityKeys = this.capabilityResolver.deployment();
     const has = (key: CapabilityKey): boolean => capabilityKeys.has(key);
+    const clientPolicy = this.clientPolicySource?.deployment() ?? null;
+    const clientCompositionEnabled =
+      has('runtime.client-composition') && clientPolicy !== null;
     const enabled = has('runtime.env-provisioning');
     const liveAdaptersImplemented = resolveLiveAdapterStatus().implemented;
     const registeredProviders = this.providerCatalog.list();
@@ -49,6 +59,21 @@ export class CapabilitiesController {
     return {
       edition: config.composition.edition,
       capabilityKeys: [...capabilityKeys],
+      clientComposition: {
+        enabled: clientCompositionEnabled,
+        clientId: clientCompositionEnabled
+          ? (clientPolicy?.clientId ?? null)
+          : null,
+        displayName: clientCompositionEnabled
+          ? (clientPolicy?.displayName ?? null)
+          : null,
+        edition: clientCompositionEnabled
+          ? (clientPolicy?.edition ?? null)
+          : null,
+        disabledCapabilities: clientCompositionEnabled
+          ? [...(clientPolicy?.disabledCapabilities ?? [])]
+          : [],
+      },
       envProvisioning: {
         enabled,
         providers: enabled ? providers : [],

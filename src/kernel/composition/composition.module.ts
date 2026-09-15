@@ -9,10 +9,22 @@ import {
 } from './capability-resolver.port.js';
 import { CapabilityResolverService } from './capability-resolver.service.js';
 import { CapabilityGuard } from './capability.guard.js';
-import { CLIENT_POLICY_SOURCE } from './client-policy.port.js';
-import { createClientPolicySource } from './client-policy-source.js';
+import {
+  CLIENT_POLICY_PACK_LOADER,
+  type ClientPolicyPackLoader,
+} from './client-policy-pack.port.js';
+import {
+  CLIENT_POLICY_SOURCE,
+  type ClientPolicySource,
+} from './client-policy.port.js';
+import { loadClientPolicyPack } from './client-policy-pack-loader.js';
 import { DeploymentCapabilityResolverService } from './deployment-capability-resolver.service.js';
 import { StaticCapabilityManifestSource } from './static-capability-manifest-source.js';
+
+const EMPTY_CLIENT_POLICY_SOURCE: ClientPolicySource = {
+  deployment: () => null,
+  for: () => null,
+};
 
 @Global()
 @Module({
@@ -23,11 +35,20 @@ import { StaticCapabilityManifestSource } from './static-capability-manifest-sou
     DeploymentCapabilityResolverService,
     {
       provide: CLIENT_POLICY_SOURCE,
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) =>
-        createClientPolicySource(
-          configService.getOrThrow<AppConfig>('app').composition,
-        ),
+      inject: [ConfigService, CLIENT_POLICY_PACK_LOADER],
+      useFactory: async (
+        configService: ConfigService,
+        loadPack: ClientPolicyPackLoader,
+      ) => {
+        const composition =
+          configService.getOrThrow<AppConfig>('app').composition;
+        const pack = await loadPack(composition.profile);
+        return pack?.createSource(composition) ?? EMPTY_CLIENT_POLICY_SOURCE;
+      },
+    },
+    {
+      provide: CLIENT_POLICY_PACK_LOADER,
+      useValue: loadClientPolicyPack,
     },
     {
       provide: CAPABILITY_MANIFEST_SOURCE,

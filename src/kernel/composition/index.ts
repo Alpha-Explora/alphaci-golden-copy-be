@@ -2,6 +2,11 @@ export { CAPABILITIES } from './capability-registry.js';
 export { CAPABILITY_MANIFEST_SOURCE } from './capability-manifest-source.port.js';
 export { CLIENT_POLICY_SOURCE } from './client-policy.port.js';
 export type { ClientPolicySource } from './client-policy.port.js';
+export {
+  CLIENT_POLICY_PACK_LOADER,
+  type ClientPolicyPack,
+  type ClientPolicyPackLoader,
+} from './client-policy-pack.port.js';
 export type {
   ClientCapabilityPolicy,
   ClientPolicyRegistry,
@@ -10,14 +15,11 @@ export {
   applyClientPolicy,
   assertPolicyAppliesTo,
   parseClientId,
-  parseClientPolicyDocument,
 } from './client-policy.js';
 export {
-  NullClientPolicySource,
-  SingleClientPolicySource,
-  createClientPolicySource,
-} from './client-policy-source.js';
-export { CLIENT_POLICIES } from './clients/index.js';
+  CLIENT_POLICY_PACK_MODULE_SPECIFIERS,
+  loadClientPolicyPack,
+} from './client-policy-pack-loader.js';
 export {
   CAPABILITY_RESOLVER,
   DEPLOYMENT_CAPABILITY_RESOLVER,

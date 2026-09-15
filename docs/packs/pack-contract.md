@@ -54,7 +54,7 @@ Pack applicability narrows in this order:
 build profile -> edition manifest -> client policy -> deployment configuration -> tenant override
 ```
 
-The profile is the artifact ceiling. The backend validates `ALPHACI_BUILD_PROFILE` at boot and the resolver rejects a manifest outside that ceiling. Each profile is compiled in isolation. The repository declares reserved pack-only roots and symbol markers, but none are present as implementation code yet; the fail-closed compiled-output scanner proves their absence and rejects a later present path or marker.
+The profile is the artifact ceiling. The backend validates `ALPHACI_BUILD_PROFILE` at boot and the resolver rejects a manifest outside that ceiling. Each profile is compiled in isolation. The Enterprise profile owns the real client-policy source under `src/packs/enterprise`; the hosted profile excludes that root and the unique `EnterpriseClientPolicyPack` symbol. The fail-closed compiled-output scanner proves the exclusion, while the profile-keyed loader keeps hosted runtime from importing the pack.
 
 ## Update rule
 

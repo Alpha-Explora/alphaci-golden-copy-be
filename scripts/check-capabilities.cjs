@@ -68,6 +68,7 @@ const NON_CAPABILITY_FLAGS = new Set([
   'deploymentHistory.liveProvidersEnabled', // optional live adapter mode
   'driftRepair.liveRepairEnabled', // optional live repair mode
   'driftLiveChecks.enabled', // optional live check mode
+  'envProvisioning.flowciManaged.renderAllowPaidManaged', // provider fleet policy, not base capability availability
 ]);
 
 function readCapabilityCatalog() {
@@ -85,26 +86,32 @@ function readCapabilityCatalog() {
   return catalog;
 }
 
-/** Boolean leaves of the AppConfig interface, as "group.flag" paths. */
+/** Boolean leaves of the AppConfig interface, as dotted paths. */
 function readConfigFlags() {
   const source = fs.readFileSync(APP_CONFIG, 'utf8');
   const iface = /export interface AppConfig \{[\s\S]*?\n\}/.exec(source);
   if (!iface) throw new Error('Could not locate the AppConfig interface');
 
   const flags = new Set();
-  let group = null;
+  const groups = [];
   for (const line of iface[0].split(/\r?\n/)) {
-    const groupMatch = /^ {2}([A-Za-z][A-Za-z0-9]*): \{/.exec(line);
-    if (groupMatch) {
-      group = groupMatch[1];
+    const opening = /^(\s*)([A-Za-z][A-Za-z0-9]*): \{/.exec(line);
+    if (opening) {
+      const indent = opening[1].length;
+      while (groups.at(-1)?.indent >= indent) groups.pop();
+      groups.push({ indent, name: opening[2] });
       continue;
     }
-    if (/^ {2}\}/.test(line)) {
-      group = null;
+    const closing = /^(\s*)\}/.exec(line);
+    if (closing) {
+      const indent = closing[1].length;
+      while (groups.at(-1)?.indent >= indent) groups.pop();
       continue;
     }
-    const leaf = /^ {4}([A-Za-z][A-Za-z0-9]*)(\?)?: boolean/.exec(line);
-    if (leaf && group) flags.add(`${group}.${leaf[1]}`);
+    const leaf = /^(\s+)([A-Za-z][A-Za-z0-9]*)(\?)?: boolean/.exec(line);
+    if (leaf && groups.length > 0) {
+      flags.add([...groups.map((group) => group.name), leaf[2]].join('.'));
+    }
   }
   return flags;
 }

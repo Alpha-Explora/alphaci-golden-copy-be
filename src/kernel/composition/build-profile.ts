@@ -11,7 +11,7 @@ export type { BuildProfile } from './capability-types.js';
 export interface PackArtifactInventory {
   /** Source roots reserved for pack-owned implementation code. */
   readonly sourceRoots: readonly string[];
-  /** Stable symbol markers reserved for pack-owned implementation code. */
+  /** Compiled artifact symbols emitted by pack-owned implementation code. */
   readonly symbols: readonly string[];
 }
 
@@ -20,10 +20,9 @@ export type PackArtifactInventoryMap = Readonly<
 >;
 
 /**
- * These are reservations for pack-only roots and symbol markers. No
- * pack-exclusive implementation source exists in this checkout yet, so the
- * conformance gate proves the exclusion mechanism and scanner behavior rather
- * than exclusion of real pack code.
+ * Pack-owned source roots and real implementation symbols used by the
+ * compiled-output conformance gate. Shared kernel policy ports and generic
+ * narrowing are intentionally outside this inventory.
  */
 export const PACK_ARTIFACT_INVENTORY = {
   saas: {
@@ -36,7 +35,7 @@ export const PACK_ARTIFACT_INVENTORY = {
   },
   enterprise: {
     sourceRoots: ['src/packs/enterprise'],
-    symbols: ['EnterpriseOnlyCapabilityMarker'],
+    symbols: ['EnterpriseClientPolicyPack'],
   },
 } as const satisfies PackArtifactInventoryMap;
 

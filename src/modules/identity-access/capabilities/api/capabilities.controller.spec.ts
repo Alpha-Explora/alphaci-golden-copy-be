@@ -152,6 +152,13 @@ describe('CapabilitiesController', () => {
         'projects.target-management',
         'pipelines.ci-run-tracking',
       ],
+      clientComposition: {
+        enabled: false,
+        clientId: null,
+        displayName: null,
+        edition: null,
+        disabledCapabilities: [],
+      },
       envProvisioning: {
         enabled: true,
         providers: ['render', 'vercel'],
@@ -285,6 +292,13 @@ describe('CapabilitiesController', () => {
     expect(controller.getCapabilities()).toEqual({
       edition: 'enterprise',
       capabilityKeys: [],
+      clientComposition: {
+        enabled: false,
+        clientId: null,
+        displayName: null,
+        edition: null,
+        disabledCapabilities: [],
+      },
       envProvisioning: {
         enabled: false,
         providers: [],

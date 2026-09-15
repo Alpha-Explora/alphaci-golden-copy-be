@@ -17,6 +17,8 @@ export interface AppConfig {
       id: string | null;
       /** Path to a deployment-supplied client policy document, if mounted. */
       configPath: string | null;
+      /** Whether either client-policy selection seam is configured. */
+      enabled: boolean;
     };
   };
   github: {

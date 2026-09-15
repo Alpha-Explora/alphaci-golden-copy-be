@@ -220,6 +220,17 @@ export const CAPABILITIES = [
     requires: [],
   },
   {
+    key: 'runtime.client-composition',
+    context: 'runtime',
+    description:
+      'Enterprise client composition through a declared or deployment-mounted deny-only policy.',
+    maturity: 'limited',
+    configuration:
+      'composition.client.enabled and an Enterprise client policy source',
+    configurationFlags: ['composition.client.enabled'],
+    requires: [],
+  },
+  {
     key: 'projects.sync-snapshots',
     context: 'projects',
     description: 'Project synchronization snapshot reads and findings.',

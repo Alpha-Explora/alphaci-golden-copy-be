@@ -1,70 +1,52 @@
 import { readFileSync } from 'node:fs';
 
-import type { AppConfig } from '#kernel/config/app.config.types.js';
-import type { CompositionSubject } from './capability-resolver.port.js';
-import type { ClientPolicySource } from './client-policy.port.js';
-import type {
-  ClientCapabilityPolicy,
-  ClientPolicyRegistry,
-} from './client-policy.types.js';
-import {
-  applyClientPolicy,
-  assertPolicyAppliesTo,
-  parseClientPolicyDocument,
-} from './client-policy.js';
+import type { AppConfig } from '#kernel/config/app.config.js';
+import { assertPolicyAppliesTo } from '#kernel/composition/client-policy.js';
+import type { ClientPolicyPack } from '#kernel/composition/client-policy-pack.port.js';
+import type { ClientPolicySource } from '#kernel/composition/client-policy.port.js';
+import type { ClientPolicyRegistry } from '#kernel/composition/client-policy.types.js';
+import { PACK_MANIFESTS } from '#kernel/composition/manifests.js';
 import { CLIENT_POLICIES } from './clients/index.js';
-import { PACK_MANIFESTS } from './manifests.js';
+import { parseClientPolicyDocument } from './client-policy.js';
+import {
+  NullClientPolicySource,
+  SingleClientPolicySource,
+} from './client-policy-source.js';
 
-export { applyClientPolicy };
-
-/** A deployment with no client selected. The edition manifest stands unnarrowed. */
-export class NullClientPolicySource implements ClientPolicySource {
-  deployment(): ClientCapabilityPolicy | null {
-    return null;
-  }
-
-  for(subject: CompositionSubject): ClientCapabilityPolicy | null {
-    void subject;
-    return null;
-  }
-}
-
-/**
- * A deployment dedicated to one client.
- *
- * The subject argument is accepted and ignored on purpose: a hosted source
- * that varies the policy per tenant replaces this class without touching the
- * resolver, the guard, or any controller.
- */
-export class SingleClientPolicySource implements ClientPolicySource {
-  constructor(private readonly policy: ClientCapabilityPolicy) {}
-
-  deployment(): ClientCapabilityPolicy {
-    return this.policy;
-  }
-
-  for(subject: CompositionSubject): ClientCapabilityPolicy {
-    void subject;
-    return this.policy;
-  }
-}
-
-export interface ClientPolicySourceDeps {
+export interface EnterpriseClientPolicyPackDeps {
   readonly policies?: ClientPolicyRegistry;
   readonly readFile?: (path: string) => string;
 }
 
+/** Create the real Enterprise policy pack, with injectable source seams for tests. */
+export function createEnterpriseClientPolicyPack(
+  deps: EnterpriseClientPolicyPackDeps = {},
+): ClientPolicyPack {
+  const policies = deps.policies ?? CLIENT_POLICIES;
+  const readFile = deps.readFile ?? defaultReadFile;
+
+  return {
+    edition: 'enterprise',
+    createSource(composition): ClientPolicySource {
+      return createEnterpriseClientPolicySource(composition, {
+        policies,
+        readFile,
+      });
+    },
+  };
+}
+
 /**
- * Select the client policy source for this deployment, failing closed.
+ * The public pack symbol loaded by the profile-keyed kernel seam.
  *
- * `ALPHACI_CLIENT_CONFIG` wins when both are set, because a deployment-supplied
- * file is the more specific statement, but the file must then name the same
- * client as `ALPHACI_CLIENT`. A mismatch means the operator mounted the wrong
- * policy, which is worth a failed boot rather than a silently wrong product.
+ * Its uppercase name is deliberate: build-profile artifact scans use this
+ * real implementation symbol, not a marker-only file, to prove exclusion.
  */
-export function createClientPolicySource(
+export const EnterpriseClientPolicyPack = createEnterpriseClientPolicyPack();
+
+export function createEnterpriseClientPolicySource(
   composition: AppConfig['composition'],
-  deps: ClientPolicySourceDeps = {},
+  deps: EnterpriseClientPolicyPackDeps = {},
 ): ClientPolicySource {
   const policies = deps.policies ?? CLIENT_POLICIES;
   const readFile = deps.readFile ?? defaultReadFile;
@@ -94,7 +76,7 @@ export function createClientPolicySource(
       throw new Error(
         `[composition] Unknown ALPHACI_CLIENT '${id}'. ` +
           `Declared clients: ${declared.length > 0 ? declared.join(', ') : 'none'}. ` +
-          'Declare the client in src/kernel/composition/clients or supply ' +
+          'Declare the client in the Enterprise client-policy pack or supply ' +
           'ALPHACI_CLIENT_CONFIG.',
       );
     }

@@ -112,7 +112,7 @@ describe('build profiles', () => {
       },
       enterprise: {
         sourceRoots: ['src/packs/enterprise'],
-        symbols: ['EnterpriseOnlyCapabilityMarker'],
+        symbols: ['EnterpriseClientPolicyPack'],
       },
     });
   });

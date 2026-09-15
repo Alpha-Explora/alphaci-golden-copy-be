@@ -16,6 +16,7 @@ interface SourceRecord {
     domains: string[];
     routes: string[];
     featureBarrels: string[];
+    artifactSymbols?: string[];
   };
 }
 
@@ -130,12 +131,16 @@ describe('composition authoring source', () => {
       domains: [],
       routes: [],
       featureBarrels: 'all' as unknown as string[],
+      artifactSymbols: 'marker' as unknown as string[],
     };
 
     const errors = compositionSource.validateSource(document).join(' ');
     expect(errors).toMatch(/surface.apiField must be a string or null/);
     expect(errors).toMatch(
       /surface.featureBarrels must be an array of strings/,
+    );
+    expect(errors).toMatch(
+      /surface.artifactSymbols must be an array of strings/,
     );
   });
 

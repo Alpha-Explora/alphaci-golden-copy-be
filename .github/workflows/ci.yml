@@ -67,6 +67,18 @@ jobs:
       - name: Capability registry
         run: npm run check:capabilities
 
+      - name: Capability package provenance
+        run: npm run check:capability-package
+
+      - name: Composition source
+        run: npm run check:composition-source
+
+      - name: Capability ledger
+        run: npm run check:capability-ledger
+
+      - name: Compiled build-profile conformance
+        run: npm run check:composition-profiles
+
       - name: Migration replay order
         run: npm run db:apply:all -- --dry-run
 

@@ -33,14 +33,15 @@ Each registry record contains:
 | `configuration`      | Current source of enablement or gating.                                                                                                                                                                                                                                                               |
 | `configurationFlags` | Boolean `AppConfig` leaves, as `group.flag` paths, that gate the base capability. Checked against `src/kernel/config/app.config.types.ts` in both directions. Optional adapter or provider-mode toggles are explicit `NON_CAPABILITY_FLAGS`; this list is empty when `maturity` is `not-implemented`. |
 | `requires`           | Capability keys this capability depends on. Edges must resolve and stay acyclic.                                                                                                                                                                                                                      |
+| `surface`             | Backend-owned API/view projection metadata, including routes, feature barrels, and optional `artifactSymbols` used by sibling profile-exclusion checks.                                                                                                                                                 |
 
 Edition applicability is owned by `src/kernel/composition/manifests.ts`, not by individual capability records. The [generated matrix](/capabilities/capability-matrix.generated.md) is derived from the application-owned registry at `src/kernel/composition/capability-registry.ts` and those manifests. The live `/api/v1/capabilities` response is a compatibility projection of the resolved deployment set: its existing nested fields remain available, with top-level `edition` and `capabilityKeys` identifying the active composition.
 
 The backend packages the public composition metadata as `@alphaci/capability-catalog`.
-The package contains stable keys, maturity, edition applicability, and
-dependency edges; backend-only context, configuration, and enablement details
-remain in the kernel registry. The frontend consumes the package artifact and
-does not read this repository's TypeScript source.
+The package contains stable keys, context, descriptions, maturity, edition
+applicability, dependency edges, configuration flags, and backend-owned
+surface metadata. The frontend consumes the package artifact and does not read
+this repository's TypeScript source.
 
 ### Package provenance and integrity
 
@@ -118,7 +119,7 @@ Use `npm run ledger:record` to append an entry; it computes the hash and refresh
 
 ## Authoring
 
-`src/kernel/composition/catalog.source.json` is the authoring source. One record carries the capability, its pack membership, and its frontend surface. `capability-registry.ts` and `manifests.ts` are generated from it and must not be edited by hand; `npm run generate:composition` rewrites them and `npm run check:composition-source` rejects drift.
+`src/kernel/composition/catalog.source.json` is the authoring source. One record carries the capability, its pack membership, configuration flags, and its frontend surface, including any unique implementation symbols that profile checks must exclude. `capability-registry.ts`, `manifests.ts`, and the public package are generated from it and must not be edited by hand; `npm run generate:composition` rewrites the registry/manifests and `npm run check:composition-source` rejects drift.
 
 `npm run capability:new` adds a capability in one command, deriving the registry, the manifests, the three pack rows, the generated maps, and the ledger entry. A configuration flag named by a record is code and still has to exist in `AppConfig`. See [ADR-0010](/architecture/decisions/adr-0010-single-authoring-source-for-composition.md).
 

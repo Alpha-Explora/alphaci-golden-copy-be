@@ -4,10 +4,12 @@
 
 ### Added
 
+- Added the limited Enterprise-only `runtime.client-composition` capability, including the profile-keyed `src/packs/enterprise` client-policy pack, backend-owned `clientComposition` projection, and frontend artifact-symbol exclusion contract.
+- Added focused pack-loader, static-import boundary, API projection, and profile artifact tests proving hosted compilation/runtime do not include the Enterprise implementation while Enterprise does.
 - Added deterministic `provenance.json` generation for `@alphaci/capability-catalog`, including the catalog source digest and canonical package artifact digest, with checker coverage for stale and tampered output.
 - Added `src/kernel/composition/catalog.source.json` as the single authoring source for composition, with `generate:composition`, the `check:composition-source` drift gate, and `capability:new`, which derives the registry, manifests, three pack rows, generated maps, and a ledger entry from one record.
 - Added the capability ledger: an append-only `docs/capabilities/ledger.json`, a generated ledger map, the `check:capability-ledger` gate, and `ledger:record`. The gate recomputes a composition hash over every capability key, maturity, dependency edge, configuration flag, and edition membership, and rejects a catalog that moved without an entry.
-- Added client capability policies. `ALPHACI_CLIENT` selects a policy declared in `src/kernel/composition/clients` and `ALPHACI_CLIENT_CONFIG` mounts a deployment-supplied document; a policy is deny-only, validated at boot, and narrows the edition manifest on both the deployment and subject paths.
+- Added client capability policies. `ALPHACI_CLIENT` selects a policy owned by the Enterprise pack and `ALPHACI_CLIENT_CONFIG` mounts a deployment-supplied document; a policy is deny-only, validated at boot, and narrows the edition manifest on both the deployment and subject paths.
 - Added ready-made composition environment files under `deploy/env` for hosted SaaS, hosted EDU, Enterprise, and Enterprise dedicated to a single client, plus an example client policy document.
 - Added the generated `@alphaci/capability-catalog` package artifact and `check:capability-package` parity gate for the cross-repository capability contract.
 - Added a deployment-scoped resolver binding for boot-time/background consumers while keeping the subject-scoped resolver request-scoped for HTTP composition checks.
@@ -27,7 +29,7 @@
 - Added ADR-0010, recording one authoring record per capability with the registry, manifests, and pack rows generated from it.
 - Made `capability-registry.ts` and `manifests.ts` generated files. They stay checked in so the literal key union keeps an unknown capability a compile error, and the drift gate rejects a hand edit.
 - Narrowed the documentation gate's edition-branch rule to comparisons against an edition literal, in either operand order. Comparing two edition values to each other stays allowed, which is how a client policy written for another edition is rejected.
-- Added typed hosted/Enterprise build profiles, boot-time profile ceiling validation, fail-closed profile-specific compiled-output exclusion scanning, and the isolated `check:composition-profiles` conformance command. The current pack-only exclusion inventory is empty because no such implementation roots or symbol markers exist yet.
+- Added typed hosted/Enterprise build profiles, boot-time profile ceiling validation, fail-closed profile-specific compiled-output exclusion scanning, and the isolated `check:composition-profiles` conformance command. The hosted profile now excludes the Enterprise client-policy implementation root and symbol.
 - Added a deployment-scoped resolver boundary for singleton application services, live guard-pipeline coverage for composition-before-Billing behavior, and fail-closed validation for unknown `ALPHACI_EDITION` values.
 
 ### Changed

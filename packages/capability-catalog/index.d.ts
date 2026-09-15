@@ -26,6 +26,7 @@ export type CapabilityKey =
   | "runtime.managed-secrets"
   | "runtime.air-gap-packaging"
   | "runtime.customer-isolation"
+  | "runtime.client-composition"
   | "projects.sync-snapshots"
   | "projects.workflow-settings-preview"
   | "projects.workflow-update-pr"
@@ -39,11 +40,16 @@ export interface CapabilitySurface {
   readonly domains: readonly string[];
   readonly routes: readonly string[];
   readonly featureBarrels: readonly string[];
+  readonly artifactSymbols: readonly string[];
 }
 
 export interface CapabilityCatalogRecord {
   readonly key: CapabilityKey;
+  readonly context: string;
+  readonly description: string;
   readonly maturity: CapabilityMaturity;
+  readonly configuration: string;
+  readonly configurationFlags: readonly string[];
   readonly editions: readonly Edition[];
   readonly requires: readonly CapabilityKey[];
   readonly surface: CapabilitySurface;

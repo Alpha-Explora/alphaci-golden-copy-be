@@ -32,7 +32,7 @@ const appConfig: AppConfig = {
   composition: {
     edition: 'enterprise',
     profile: 'enterprise',
-    client: { id: null, configPath: null },
+    client: { id: null, configPath: null, enabled: false },
   },
   github: {
     clientId: 'client-id',

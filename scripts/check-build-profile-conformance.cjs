@@ -5,10 +5,9 @@
  * Checks every declared build profile by compiling an isolated, profile-aware
  * TypeScript artifact and scanning that artifact. Tests and the composition
  * policy declaration are excluded because neither is pack-owned implementation
- * code. The inventory currently contains reservations only; no pack-exclusive
- * implementation source exists in this checkout. The generated profile config
- * still excludes every declared root for an absent pack so future pack source
- * cannot enter that profile artifact by default.
+ * code. The Enterprise inventory contains the real client-policy pack source;
+ * hosted profile builds exclude that root and the generated profile config
+ * prevents it from entering the hosted artifact by default.
  */
 
 const fs = require('node:fs');

@@ -32,6 +32,7 @@ const REGISTRY_KEYS = [
   'runtime.managed-secrets',
   'runtime.air-gap-packaging',
   'runtime.customer-isolation',
+  'runtime.client-composition',
   'projects.sync-snapshots',
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
@@ -106,6 +107,7 @@ const ENTERPRISE_KEYS = [
   'runtime.managed-secrets',
   'runtime.air-gap-packaging',
   'runtime.customer-isolation',
+  'runtime.client-composition',
   'projects.sync-snapshots',
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
@@ -134,6 +136,12 @@ const EXECUTABLE_KEYS = [
   'pipelines.ci-run-tracking',
 ] as const;
 
+const ENTERPRISE_EXECUTABLE_KEYS = [
+  ...EXECUTABLE_KEYS.slice(0, 12),
+  'runtime.client-composition',
+  ...EXECUTABLE_KEYS.slice(12),
+] as const;
+
 const allFlagsEnabled = {
   envProvisioning: { enabled: true },
   gcpDeployments: { enabled: true, dedicatedProjectsEnabled: true },
@@ -157,7 +165,11 @@ const allFlagsEnabled = {
   notifications: { enabled: true },
   hierarchy: { enabled: true },
   subscription: { gateEnabled: true },
-  composition: { edition: 'enterprise', profile: 'enterprise' },
+  composition: {
+    edition: 'enterprise',
+    profile: 'enterprise',
+    client: { id: null, configPath: null, enabled: true },
+  },
 } as unknown as AppConfig;
 
 const configForManifest = (
@@ -173,10 +185,15 @@ const configForManifest = (
     edu: 'hosted',
     enterprise: 'enterprise',
   };
+  const capabilities: readonly string[] = PACK_MANIFESTS[edition].capabilities;
   config.composition = {
     edition,
     profile: profileByEdition[edition],
-    client: { id: null, configPath: null },
+    client: {
+      id: null,
+      configPath: null,
+      enabled: capabilities.includes('runtime.client-composition'),
+    },
   };
   return config;
 };
@@ -198,8 +215,8 @@ const record = (
 });
 
 describe('declared composition catalog', () => {
-  it('keeps the 29 registry records in their existing order', () => {
-    expect(CAPABILITIES).toHaveLength(29);
+  it('keeps the 30 registry records in their existing order', () => {
+    expect(CAPABILITIES).toHaveLength(30);
     expect(CAPABILITIES.map(({ key }) => key)).toEqual(REGISTRY_KEYS);
   });
 
@@ -225,12 +242,16 @@ describe('declared composition catalog', () => {
 describe('resolveCapabilities', () => {
   it('resolves the same executable surface for every current manifest when all flags are true', () => {
     for (const currentManifest of Object.values(PACK_MANIFESTS)) {
+      const capabilities: readonly string[] = currentManifest.capabilities;
+      const expected = capabilities.includes('runtime.client-composition')
+        ? ENTERPRISE_EXECUTABLE_KEYS
+        : EXECUTABLE_KEYS;
       expect([
         ...resolveCapabilities({
           manifest: currentManifest,
           config: configForManifest(currentManifest.edition),
         }),
-      ]).toEqual(EXECUTABLE_KEYS);
+      ]).toEqual(expected);
     }
   });
 

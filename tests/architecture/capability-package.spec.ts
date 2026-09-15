@@ -24,7 +24,9 @@ const packageChecker = require(
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 function withPackageCopy(run: (packageDirectory: string) => void): void {
-  const packageDirectory = mkdtempSync(join(tmpdir(), 'alphaci-capability-package-'));
+  const packageDirectory = mkdtempSync(
+    join(tmpdir(), 'alphaci-capability-package-'),
+  );
   cpSync(packageScript.PACKAGE_DIR, packageDirectory, { recursive: true });
   try {
     run(packageDirectory);
@@ -42,7 +44,11 @@ describe('capability package provenance', () => {
 
   it('rejects a canonical package file edit', () => {
     withPackageCopy((packageDirectory) => {
-      appendFileSync(join(packageDirectory, 'index.js'), '\n// tampered\n', 'utf8');
+      appendFileSync(
+        join(packageDirectory, 'index.js'),
+        '\n// tampered\n',
+        'utf8',
+      );
 
       expect(packageChecker.collect(packageDirectory).join(' ')).toMatch(
         /canonical package artifact digest does not match provenance/,
@@ -57,7 +63,11 @@ describe('capability package provenance', () => {
         catalogSourceDigest: string;
       };
       provenance.catalogSourceDigest = `sha256:${'0'.repeat(64)}`;
-      writeFileSync(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`, 'utf8');
+      writeFileSync(
+        provenancePath,
+        `${JSON.stringify(provenance, null, 2)}\n`,
+        'utf8',
+      );
 
       expect(packageChecker.collect(packageDirectory).join(' ')).toMatch(
         /provenance\.json is stale or tampered/,
@@ -67,7 +77,11 @@ describe('capability package provenance', () => {
 
   it('derives a stable provenance digest from the generated source and files', () => {
     const generated = packageScript.buildPackage();
-    expect(generated.provenance.catalogSourceDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(generated.provenance.artifactDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(generated.provenance.catalogSourceDigest).toMatch(
+      /^sha256:[0-9a-f]{64}$/,
+    );
+    expect(generated.provenance.artifactDigest).toMatch(
+      /^sha256:[0-9a-f]{64}$/,
+    );
   });
 });

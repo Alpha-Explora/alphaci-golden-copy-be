@@ -32,7 +32,11 @@ function publicCatalog(capabilities, manifests) {
 
   return capabilities.map((capability) => ({
     key: capability.key,
+    context: capability.context,
+    description: capability.description,
     maturity: capability.maturity,
+    configuration: capability.configuration,
+    configurationFlags: [...capability.configurationFlags],
     editions: EDITIONS.filter((edition) => editionsByKey.get(edition).has(capability.key)),
     requires: [...capability.requires],
     surface: {
@@ -41,6 +45,7 @@ function publicCatalog(capabilities, manifests) {
       domains: [...capability.surface.domains],
       routes: [...capability.surface.routes],
       featureBarrels: [...capability.surface.featureBarrels],
+      artifactSymbols: [...(capability.surface.artifactSymbols || [])],
     },
   }));
 }
@@ -68,11 +73,16 @@ export interface CapabilitySurface {
   readonly domains: readonly string[];
   readonly routes: readonly string[];
   readonly featureBarrels: readonly string[];
+  readonly artifactSymbols: readonly string[];
 }
 
 export interface CapabilityCatalogRecord {
   readonly key: CapabilityKey;
+  readonly context: string;
+  readonly description: string;
   readonly maturity: CapabilityMaturity;
+  readonly configuration: string;
+  readonly configurationFlags: readonly string[];
   readonly editions: readonly Edition[];
   readonly requires: readonly CapabilityKey[];
   readonly surface: CapabilitySurface;

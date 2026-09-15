@@ -34,12 +34,13 @@ The profile is the ceiling of the narrowing order in ADR-0007. No later layer ca
 
 The backend implementation uses `ALPHACI_BUILD_PROFILE`, defaulting to
 `enterprise` and rejecting unknown values or an edition outside the selected
-ceiling at boot. The declared pack artifact inventory contains reserved
-pack-only roots and symbol markers, but this checkout has no corresponding
-implementation code. The scanner fails closed when a declared excluded path
-or marker appears, and the profile conformance command uses an isolated build
-plus a profile-specific compiled-output scan without mutating the normal `dist`
-directory.
+ceiling at boot. The Enterprise inventory now contains the real
+`src/packs/enterprise` client-policy implementation and its public
+`EnterpriseClientPolicyPack` symbol. The profile-keyed loader keeps that source
+out of hosted compilation and does not load it at hosted runtime. The scanner
+fails closed when a declared excluded path or marker appears, and the profile
+conformance command uses an isolated build plus a profile-specific
+compiled-output scan without mutating the normal `dist` directory.
 
 ## Rejected alternatives
 
@@ -65,5 +66,6 @@ compiled entries to the same scanner.
 
 The kernel also emits the public `@alphaci/capability-catalog` package from the
 same registry and manifests. The package is the cross-repository contract; it
-contains only stable capability metadata and is checked for drift before a
-frontend artifact consumes it.
+contains capability ownership, maturity, configuration, surface metadata, and
+artifact symbols, and is checked for drift before a frontend artifact consumes
+it.

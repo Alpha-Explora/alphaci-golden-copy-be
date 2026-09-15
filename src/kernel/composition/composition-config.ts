@@ -47,5 +47,6 @@ function parseClientConfig(
       ? rawPath.trim()
       : null;
 
-  return { id: parseClientId(env['ALPHACI_CLIENT']), configPath };
+  const id = parseClientId(env['ALPHACI_CLIENT']);
+  return { id, configPath, enabled: id !== null || configPath !== null };
 }

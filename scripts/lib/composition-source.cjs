@@ -149,6 +149,9 @@ function surfaceErrors(at, surface) {
       errors.push(at + ': surface.' + field + ' must be an array of strings');
     }
   }
+  if (surface.artifactSymbols !== undefined && !isStringArray(surface.artifactSymbols)) {
+    errors.push(at + ': surface.artifactSymbols must be an array of strings');
+  }
   return errors;
 }
 

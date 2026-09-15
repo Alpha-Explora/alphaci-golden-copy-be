@@ -128,6 +128,7 @@ const record = {
     domains: list('domains'),
     routes: list('routes'),
     featureBarrels: list('barrels'),
+    artifactSymbols: list('artifact-symbols'),
   },
 };
 

@@ -1,7 +1,13 @@
 [
   {
     "key": "identity.workspaces",
+    "context": "identity-access",
+    "description": "Workspace membership and access management.",
     "maturity": "stable",
+    "configuration": "workspaces.enabled",
+    "configurationFlags": [
+      "workspaces.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -19,12 +25,19 @@
       ],
       "featureBarrels": [
         "@/features/settings"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "identity.hierarchy",
+    "context": "identity-access",
+    "description": "Hierarchy groups, systems, repositories, and assignments.",
     "maturity": "stable",
+    "configuration": "hierarchy.enabled",
+    "configurationFlags": [
+      "hierarchy.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -45,12 +58,17 @@
       "featureBarrels": [
         "@/features/groups",
         "@/features/teams"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "identity.sso-scim",
+    "context": "identity-access",
+    "description": "Single sign-on and SCIM user provisioning.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "enterprise"
     ],
@@ -62,12 +80,17 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "identity.lms-lti",
+    "context": "identity-access",
+    "description": "LMS and LTI education-platform integrations.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "edu"
     ],
@@ -79,12 +102,17 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "identity.cohort-policy",
+    "context": "identity-access",
+    "description": "Cohort-specific access and policy rules.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "edu"
     ],
@@ -96,12 +124,17 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "identity.edu-provisioning",
+    "context": "identity-access",
+    "description": "Education-specific identity provisioning.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "edu"
     ],
@@ -113,12 +146,17 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "identity.ferpa-workflows",
+    "context": "identity-access",
+    "description": "FERPA-oriented education workflow automation.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "edu"
     ],
@@ -130,12 +168,17 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "identity.edition-entitlements",
+    "context": "identity-access",
+    "description": "Runtime edition and pack entitlement resolution.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "saas",
       "edu",
@@ -147,12 +190,19 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "platform.audit-events",
+    "context": "platform-ops",
+    "description": "Project audit event recording through the application outbox.",
     "maturity": "stable",
+    "configuration": "auditEvents.enabled",
+    "configurationFlags": [
+      "auditEvents.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -168,12 +218,19 @@
       "routes": [],
       "featureBarrels": [
         "@/features/capabilities"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "platform.notifications",
+    "context": "platform-ops",
+    "description": "In-app notification requests and persistence.",
     "maturity": "stable",
+    "configuration": "notifications.enabled",
+    "configurationFlags": [
+      "notifications.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -194,12 +251,17 @@
       "featureBarrels": [
         "@/features/notifications",
         "@/features/settings"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "platform.data-residency",
+    "context": "platform-ops",
+    "description": "Customer-specific data-location controls.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "enterprise"
     ],
@@ -209,12 +271,19 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "billing.subscription-gate",
+    "context": "billing",
+    "description": "Subscription entitlement gating for authenticated access and CI run validation.",
     "maturity": "stable",
+    "configuration": "subscription.gateEnabled",
+    "configurationFlags": [
+      "subscription.gateEnabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -226,12 +295,19 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "billing.usage-quotas",
+    "context": "billing",
+    "description": "Usage tracking and quota policy checks.",
     "maturity": "limited",
+    "configuration": "usageQuotas.enabled",
+    "configurationFlags": [
+      "usageQuotas.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -247,12 +323,17 @@
       "routes": [],
       "featureBarrels": [
         "@/features/capabilities"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "billing.checkout",
+    "context": "billing",
+    "description": "Self-serve payment checkout.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "saas"
     ],
@@ -262,12 +343,19 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.env-provisioning",
+    "context": "runtime",
+    "description": "Provider-backed deployment target and environment provisioning.",
     "maturity": "limited",
+    "configuration": "envProvisioning.enabled plus provider configuration",
+    "configurationFlags": [
+      "envProvisioning.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -288,12 +376,19 @@
       "featureBarrels": [
         "@/features/workflows",
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.gcp-deployments",
+    "context": "runtime",
+    "description": "Google Cloud deployment provider, including optional dedicated per-customer projects.",
     "maturity": "limited",
+    "configuration": "gcpDeployments.enabled plus GCP provider configuration",
+    "configurationFlags": [
+      "gcpDeployments.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -314,12 +409,19 @@
       "featureBarrels": [
         "@/features/workflows",
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.deployment-history",
+    "context": "runtime",
+    "description": "Deployment history read model exposed through the Runtime context.",
     "maturity": "limited",
+    "configuration": "deploymentHistory.enabled",
+    "configurationFlags": [
+      "deploymentHistory.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -337,12 +439,19 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.preview-deployments",
+    "context": "runtime",
+    "description": "Branch-scoped preview deployment grouping when the provider supports it.",
     "maturity": "limited",
+    "configuration": "previewDeployments.enabled and deploymentHistory.enabled",
+    "configurationFlags": [
+      "previewDeployments.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -362,12 +471,19 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.drift-detection",
+    "context": "runtime",
+    "description": "Configuration drift detection using the current local or provider snapshot mode.",
     "maturity": "limited",
+    "configuration": "driftDetection.enabled",
+    "configurationFlags": [
+      "driftDetection.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -385,12 +501,19 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.drift-repair",
+    "context": "runtime",
+    "description": "Safe drift repair using the current configured repair mode.",
     "maturity": "limited",
+    "configuration": "driftRepair.enabled",
+    "configurationFlags": [
+      "driftRepair.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -408,12 +531,17 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.managed-secrets",
+    "context": "runtime",
+    "description": "Managed secret storage, including Vault integration.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "enterprise"
     ],
@@ -423,12 +551,17 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.air-gap-packaging",
+    "context": "runtime",
+    "description": "Air-gap packaging of the application as a deployment target.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "enterprise"
     ],
@@ -438,12 +571,17 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   },
   {
     "key": "runtime.customer-isolation",
+    "context": "runtime",
+    "description": "Customer-managed operational isolation as a tenancy option.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "enterprise"
     ],
@@ -453,12 +591,49 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
+    }
+  },
+  {
+    "key": "runtime.client-composition",
+    "context": "runtime",
+    "description": "Enterprise client composition through a declared or deployment-mounted deny-only policy.",
+    "maturity": "limited",
+    "configuration": "composition.client.enabled and an Enterprise client policy source",
+    "configurationFlags": [
+      "composition.client.enabled"
+    ],
+    "editions": [
+      "enterprise"
+    ],
+    "requires": [],
+    "surface": {
+      "apiField": "clientComposition",
+      "viewFlag": "clientCompositionEnabled",
+      "domains": [
+        "settings"
+      ],
+      "routes": [
+        "/settings"
+      ],
+      "featureBarrels": [
+        "@/features/settings/client-composition"
+      ],
+      "artifactSymbols": [
+        "EnterpriseClientCompositionSettingsView"
+      ]
     }
   },
   {
     "key": "projects.sync-snapshots",
+    "context": "projects",
+    "description": "Project synchronization snapshot reads and findings.",
     "maturity": "limited",
+    "configuration": "projectSyncSnapshots.enabled",
+    "configurationFlags": [
+      "projectSyncSnapshots.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -476,12 +651,19 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "projects.workflow-settings-preview",
+    "context": "projects",
+    "description": "Workflow settings preview and validation.",
     "maturity": "stable",
+    "configuration": "workflowSettingsPreview.enabled",
+    "configurationFlags": [
+      "workflowSettingsPreview.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -499,12 +681,19 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "projects.workflow-update-pr",
+    "context": "projects",
+    "description": "Workflow update pull-request requests.",
     "maturity": "limited",
+    "configuration": "workflowUpdatePr.enabled",
+    "configurationFlags": [
+      "workflowUpdatePr.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -522,12 +711,19 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "projects.target-management",
+    "context": "projects",
+    "description": "Project target management composition with Runtime.",
     "maturity": "stable",
+    "configuration": "projectTargetManagement.enabled",
+    "configurationFlags": [
+      "projectTargetManagement.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -545,12 +741,19 @@
       ],
       "featureBarrels": [
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "pipelines.ci-run-tracking",
+    "context": "pipelines",
+    "description": "CI run report ingestion and tracking.",
     "maturity": "limited",
+    "configuration": "ciRunTracking.enabled",
+    "configurationFlags": [
+      "ciRunTracking.enabled"
+    ],
     "editions": [
       "saas",
       "edu",
@@ -571,12 +774,17 @@
       "featureBarrels": [
         "@/features/runs",
         "@/features/projects"
-      ]
+      ],
+      "artifactSymbols": []
     }
   },
   {
     "key": "pipelines.github-enterprise-server",
+    "context": "pipelines",
+    "description": "GitHub Enterprise Server repository and CI integration.",
     "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
     "editions": [
       "enterprise"
     ],
@@ -586,7 +794,8 @@
       "viewFlag": null,
       "domains": [],
       "routes": [],
-      "featureBarrels": []
+      "featureBarrels": [],
+      "artifactSymbols": []
     }
   }
 ]

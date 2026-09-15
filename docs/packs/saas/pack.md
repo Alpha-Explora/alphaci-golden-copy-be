@@ -55,6 +55,7 @@ This table lists every current registry capability in registry order. Status is 
 | `runtime.managed-secrets` | `not-applicable` | Not part of this pack composition. |
 | `runtime.air-gap-packaging` | `not-applicable` | Not part of this pack composition. |
 | `runtime.customer-isolation` | `not-applicable` | Not part of this pack composition. |
+| `runtime.client-composition` | `not-applicable` | Not part of this pack composition. |
 | `projects.sync-snapshots` | `configuration-gated` | Project synchronization snapshot reads and findings. Configuration: projectSyncSnapshots.enabled. |
 | `projects.workflow-settings-preview` | `available` | Workflow settings preview and validation. Configuration: workflowSettingsPreview.enabled. |
 | `projects.workflow-update-pr` | `configuration-gated` | Workflow update pull-request requests. Configuration: workflowUpdatePr.enabled. |

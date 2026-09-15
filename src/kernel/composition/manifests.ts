@@ -70,6 +70,7 @@ const ENTERPRISE_KEYS = [
   'runtime.managed-secrets',
   'runtime.air-gap-packaging',
   'runtime.customer-isolation',
+  'runtime.client-composition',
   'projects.sync-snapshots',
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
