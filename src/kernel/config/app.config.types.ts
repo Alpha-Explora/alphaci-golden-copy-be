@@ -12,6 +12,12 @@ export interface AppConfig {
   composition: {
     edition: Edition;
     profile: BuildProfile;
+    client: {
+      /** Selected client, or null when the deployment serves the whole edition. */
+      id: string | null;
+      /** Path to a deployment-supplied client policy document, if mounted. */
+      configPath: string | null;
+    };
   };
   github: {
     clientId: string;

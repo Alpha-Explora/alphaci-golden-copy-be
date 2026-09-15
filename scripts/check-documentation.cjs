@@ -129,9 +129,16 @@ function staleClaimErrors() {
 
 function sourceBranchErrors() {
   const errors = [];
+  // Comparing an edition to a literal is a product branch. Comparing two
+  // edition values to each other is validation, such as rejecting a client
+  // policy written for a different edition, and stays allowed.
+  const patterns = [
+    /\bedition\s*(===|!==)\s*['"`]/,
+    /['"`](saas|edu|enterprise)['"`]\s*(===|!==)/,
+  ];
   for (const file of filesUnder(path.join(ROOT, 'src')).filter((item) => item.endsWith('.ts'))) {
     const text = fs.readFileSync(file, 'utf8');
-    if (/\bedition\s*(===|!==)/.test(text)) {
+    if (patterns.some((pattern) => pattern.test(text))) {
       errors.push(`${relative(file)}: edition branches are not allowed; use composition data`);
     }
   }

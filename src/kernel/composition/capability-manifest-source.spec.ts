@@ -1,6 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config.js';
+import {
+  NullClientPolicySource,
+  SingleClientPolicySource,
+} from './client-policy-source.js';
 import { PACK_MANIFESTS } from './manifests.js';
 import { StaticCapabilityManifestSource } from './static-capability-manifest-source.js';
 
@@ -14,7 +18,10 @@ describe('StaticCapabilityManifestSource', () => {
     const configService = {
       getOrThrow: jest.fn().mockReturnValue(configFor('enterprise')),
     } as unknown as ConfigService;
-    const source = new StaticCapabilityManifestSource(configService);
+    const source = new StaticCapabilityManifestSource(
+      configService,
+      new NullClientPolicySource(),
+    );
 
     expect(source.deployment()).toBe(PACK_MANIFESTS.enterprise);
   });
@@ -23,9 +30,41 @@ describe('StaticCapabilityManifestSource', () => {
     const configService = {
       getOrThrow: jest.fn().mockReturnValue(configFor('edu')),
     } as unknown as ConfigService;
-    const source = new StaticCapabilityManifestSource(configService);
+    const source = new StaticCapabilityManifestSource(
+      configService,
+      new NullClientPolicySource(),
+    );
 
     expect(source.for({ tenantId: 'tenant-1' })).toBe(PACK_MANIFESTS.edu);
     expect(configService.getOrThrow).toHaveBeenCalledWith('app');
+  });
+
+  it('narrows the edition manifest by the client policy on both paths', () => {
+    const configService = {
+      getOrThrow: jest.fn().mockReturnValue(configFor('enterprise')),
+    } as unknown as ConfigService;
+    const source = new StaticCapabilityManifestSource(
+      configService,
+      new SingleClientPolicySource({
+        clientId: 'northwind',
+        displayName: 'Northwind',
+        edition: 'enterprise',
+        disabledCapabilities: ['runtime.preview-deployments'],
+      }),
+    );
+
+    for (const manifest of [
+      source.deployment(),
+      source.for({ tenantId: 'tenant-1' }),
+    ]) {
+      expect(manifest.edition).toBe('enterprise');
+      expect(manifest.capabilities).not.toContain(
+        'runtime.preview-deployments',
+      );
+      expect(manifest.capabilities).toContain('runtime.deployment-history');
+      expect(manifest.capabilities.length).toBe(
+        PACK_MANIFESTS.enterprise.capabilities.length - 1,
+      );
+    }
   });
 });

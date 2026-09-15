@@ -1,5 +1,12 @@
 # Directory Update Log
 
+## 2026-09-15
+
+- **Creation**: Recorded client capability policies (ADR-0009). A client is not an edition; it is a deny-only policy that narrows one edition manifest for one deployment, so the Enterprise manifest becomes the union of what any Enterprise client may run and each client removes the remainder. Allowing a policy to enable a capability was rejected because the build profile would stop being a ceiling the compiled-artifact scan can describe.
+- **Update**: Added the client policy port with a declared in-repository source and a deployment-supplied JSON source, selected by `ALPHACI_CLIENT` and `ALPHACI_CLIENT_CONFIG`. Selection fails closed on an unknown client, an unreadable or malformed document, an unknown field, an unknown capability key, a key outside the edition, or a policy declaring a different edition. A store-backed source can replace either without touching the resolver, the guard, or a controller.
+- **Update**: Documented the composition variables in the environment reference and added `deploy/env` combinations for hosted SaaS, hosted EDU, Enterprise, and Enterprise dedicated to one client.
+- **Update**: Narrowed the edition-branch rule in the documentation gate to comparisons against an edition literal in either operand order. Comparing two edition values remains allowed so a policy written for another edition can be rejected at boot; the rule still forbids the product branch it was written for.
+
 ## 2026-09-11
 
 - **Update**: Kept application services on the deployment-scoped resolver binding so Nest request scope stays at the HTTP boundary, and added a live guard-pipeline test for 404-before-Billing plus preserved Billing 402 behavior. Invalid `ALPHACI_EDITION` now fails closed while an unset value still defaults to Enterprise.

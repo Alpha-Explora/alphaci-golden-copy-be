@@ -33,6 +33,8 @@ export interface EnvironmentVariables {
   SUPABASE_SERVICE_ROLE_KEY?: string;
   SUPABASE_DB_CA_CERT?: string;
   ALLOWED_ORIGINS: string;
+  ALPHACI_CLIENT?: string;
+  ALPHACI_CLIENT_CONFIG?: string;
   ENV_PROVISIONING_ENABLED?: string;
   ENV_PROVISIONING_ENCRYPTION_KEY?: string;
   ALPHACI_RENDER_API_KEY?: string;

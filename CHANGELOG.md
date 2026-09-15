@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added client capability policies. `ALPHACI_CLIENT` selects a policy declared in `src/kernel/composition/clients` and `ALPHACI_CLIENT_CONFIG` mounts a deployment-supplied document; a policy is deny-only, validated at boot, and narrows the edition manifest on both the deployment and subject paths.
+- Added ready-made composition environment files under `deploy/env` for hosted SaaS, hosted EDU, Enterprise, and Enterprise dedicated to a single client, plus an example client policy document.
 - Added the generated `@alphaci/capability-catalog` package artifact and `check:capability-package` parity gate for the cross-repository capability contract.
 - Added a deployment-scoped resolver binding for boot-time/background consumers while keeping the subject-scoped resolver request-scoped for HTTP composition checks.
 - Added the request-scoped composition resolver, static manifest-source seam, and `CompositionModule`; `ALPHACI_EDITION` selects the deployment manifest and defaults to Enterprise.
@@ -18,6 +20,8 @@
 - Made the executive report context-independent and drop-in ready by including its complete explanation, status, priorities, and parallel delivery model.
 - Added ADR-0007, recording that capability composition resolves at runtime in the kernel, and that subscription entitlement stays a separate Billing decision applied after resolution.
 - Added ADR-0008, recording build profiles as declared pack sets whose artifacts exclude source for packs they do not contain.
+- Added ADR-0009, recording client capability policies as a deny-only layer between the edition manifest and deployment configuration.
+- Narrowed the documentation gate's edition-branch rule to comparisons against an edition literal, in either operand order. Comparing two edition values to each other stays allowed, which is how a client policy written for another edition is rejected.
 - Added typed hosted/Enterprise build profiles, boot-time profile ceiling validation, fail-closed profile-specific compiled-output exclusion scanning, and the isolated `check:composition-profiles` conformance command. The current pack-only exclusion inventory is empty because no such implementation roots or symbol markers exist yet.
 - Added a deployment-scoped resolver boundary for singleton application services, live guard-pipeline coverage for composition-before-Billing behavior, and fail-closed validation for unknown `ALPHACI_EDITION` values.
 

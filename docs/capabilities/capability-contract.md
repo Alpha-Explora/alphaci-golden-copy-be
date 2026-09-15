@@ -74,10 +74,12 @@ Pack profiles project registry records with a fourth status, `not-applicable`, w
 Applicable capability composition is evaluated in this order:
 
 ```text
-build profile -> edition manifest -> deployment configuration -> tenant override
+build profile -> edition manifest -> client policy -> deployment configuration -> tenant override
 ```
 
 Each layer can narrow the set. No layer can enable a capability that is not present in the preceding layer.
+
+A client policy is a deny-only declaration for one client, selected by `ALPHACI_CLIENT` or supplied as a document at `ALPHACI_CLIENT_CONFIG`. It removes capability keys from the edition manifest and cannot introduce one. See [ADR-0009](/architecture/decisions/adr-0009-client-capability-policies.md).
 
 ## Naming and ownership
 

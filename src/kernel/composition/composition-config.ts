@@ -4,6 +4,7 @@ import {
   parseBuildProfile,
 } from './build-profile.js';
 import type { Edition } from './capability-types.js';
+import { parseClientId } from './client-policy.js';
 import { PACK_MANIFESTS } from './manifests.js';
 
 const EDITION_BY_ENV_VALUE: Record<string, Edition> = {
@@ -34,5 +35,17 @@ export function parseCompositionConfig(
   const manifest = PACK_MANIFESTS[edition];
 
   assertManifestWithinBuildProfile(profile, manifest);
-  return { edition, profile };
+  return { edition, profile, client: parseClientConfig(env) };
+}
+
+function parseClientConfig(
+  env: NodeJS.ProcessEnv,
+): AppConfig['composition']['client'] {
+  const rawPath = env['ALPHACI_CLIENT_CONFIG'];
+  const configPath =
+    typeof rawPath === 'string' && rawPath.trim() !== ''
+      ? rawPath.trim()
+      : null;
+
+  return { id: parseClientId(env['ALPHACI_CLIENT']), configPath };
 }

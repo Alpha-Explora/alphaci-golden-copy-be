@@ -51,7 +51,7 @@ Every pack profile lists every capability key from the application registry in r
 Pack applicability narrows in this order:
 
 ```text
-build profile -> edition manifest -> deployment configuration -> tenant override
+build profile -> edition manifest -> client policy -> deployment configuration -> tenant override
 ```
 
 The profile is the artifact ceiling. The backend validates `ALPHACI_BUILD_PROFILE` at boot and the resolver rejects a manifest outside that ceiling. Each profile is compiled in isolation. The repository declares reserved pack-only roots and symbol markers, but none are present as implementation code yet; the fail-closed compiled-output scanner proves their absence and rejects a later present path or marker.

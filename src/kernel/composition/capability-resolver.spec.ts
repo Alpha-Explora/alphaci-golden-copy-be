@@ -176,6 +176,7 @@ const configForManifest = (
   config.composition = {
     edition,
     profile: profileByEdition[edition],
+    client: { id: null, configPath: null },
   };
   return config;
 };
