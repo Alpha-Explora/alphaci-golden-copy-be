@@ -90,6 +90,14 @@ A client policy is a deny-only declaration for one client, selected by `ALPHACI_
 
 A capability change that alters keys, maturity, or edition applicability must update every pack profile in the same change. Pack tables are a comparable projection of this registry; they are not a second catalog.
 
+## Ledger
+
+The generated matrix describes the catalog as it stands. The [capability ledger](capability-ledger.generated.md) records how it got there, with one entry per lifecycle change: `added`, `removed`, `renamed`, `maturity-changed`, or `membership-changed`.
+
+Entries live in `docs/capabilities/ledger.json` and are append-only. Each entry carries the composition hash of the catalog it describes, covering every key, maturity, dependency edge, configuration flag, and edition membership in registry order. `npm run check:capability-ledger` recomputes that hash and fails when the catalog moved without an entry, so the ledger cannot quietly fall behind the registry. Description and wording edits do not change the hash and do not require an entry.
+
+Use `npm run ledger:record` to append an entry; it computes the hash and refreshes the generated ledger. The summary and the reference are written by hand, because a record derived from history can say what changed but not why.
+
 ## Verification
 
-Run `npm run check:capability-package`, `npm run check:capabilities`, `npm run check:composition-profiles`, `npm run generate:architecture-maps -- --check`, and `npm run check:documentation`. Review any capability change against the [orthogonal axes decision](/architecture/decisions/adr-0002-orthogonal-product-axes.md) and [pack contract](/packs/pack-contract.md). The capability checks include package parity and pack catalog completeness.
+Run `npm run check:capability-package`, `npm run check:capabilities`, `npm run check:capability-ledger`, `npm run check:composition-profiles`, `npm run generate:architecture-maps -- --check`, and `npm run check:documentation`. Review any capability change against the [orthogonal axes decision](/architecture/decisions/adr-0002-orthogonal-product-axes.md) and [pack contract](/packs/pack-contract.md). The capability checks include package parity, pack catalog completeness, and ledger currency.

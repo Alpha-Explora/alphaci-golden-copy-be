@@ -178,6 +178,18 @@ function capabilityRegistryErrors() {
   ];
 }
 
+function capabilityLedgerErrors() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'check-capability-ledger.cjs')],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  if (result.status === 0) return [];
+  return [
+    `capability ledger check failed: ${(result.stderr || result.stdout).trim()}`,
+  ];
+}
+
 function main() {
   const errors = [
     ...requiredFileErrors(),
@@ -187,6 +199,7 @@ function main() {
     ...changelogErrors(),
     ...generatedMapErrors(),
     ...capabilityRegistryErrors(),
+    ...capabilityLedgerErrors(),
     ...validateBundle(DOCS),
   ];
 

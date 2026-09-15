@@ -12,6 +12,7 @@ const NODE_SCRIPTS = path.join(ROOT, 'scripts');
 const require = createRequire(import.meta.url);
 const { schemaOwnershipSnapshot } = require('./check-schema-ownership.cjs');
 const { loadCapabilityCatalog } = require('./load-capability-catalog.cjs');
+const capabilityLedger = require('./lib/capability-ledger.cjs');
 
 const CONTEXTS = [
   {
@@ -565,7 +566,17 @@ const OUTPUTS = [
   ['docs/architecture/schema-ownership.generated.md', generateSchemaMap],
   ['docs/architecture/architecture-checks.generated.md', generateArchitectureChecks],
   ['docs/capabilities/capability-matrix.generated.md', generateCapabilityMatrix],
+  ['docs/capabilities/capability-ledger.generated.md', generateCapabilityLedger],
 ];
+
+function generateCapabilityLedger() {
+  const state = capabilityLedger.compositionState();
+  return capabilityLedger.renderLedger(
+    capabilityLedger.readLedger(),
+    state,
+    capabilityLedger.compositionHash(state),
+  );
+}
 
 function writeOrCheck(relativePath, content, check) {
   const file = path.join(ROOT, relativePath);

@@ -51,6 +51,8 @@
     "db:apply:all": "node scripts/apply-all-migrations.mjs",
     "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
     "check:capabilities": "node ./scripts/check-capabilities.cjs",
+    "check:capability-ledger": "node ./scripts/check-capability-ledger.cjs",
+    "ledger:record": "node ./scripts/record-capability-ledger.cjs",
     "package:capability-catalog": "node ./scripts/package-capability-catalog.cjs",
     "check:capability-package": "node ./scripts/check-capability-package.cjs",
     "check:composition-profiles": "node ./scripts/check-build-profile-conformance.cjs",

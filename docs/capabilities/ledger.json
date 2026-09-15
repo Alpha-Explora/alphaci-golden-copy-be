@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "date": "2026-09-15",
+      "change": "baseline",
+      "keys": [],
+      "summary": "Baseline of the kernel-owned capability catalog: 29 keys across six contexts, with SaaS, EDU, and Enterprise manifests, dependency edges, and configuration-flag bindings as they stand after the catalog moved into src/kernel/composition.",
+      "reference": "adr-0007-runtime-composition-resolution.md",
+      "compositionHash": "sha256:2cced58dabe75a43b4d7b350fea1b4a14615bf011d3a7259d201bd81c2821575"
+    }
+  ]
+}

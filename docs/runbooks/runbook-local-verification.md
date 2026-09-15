@@ -29,6 +29,7 @@ Use this sequence before merging a change that affects source, schemas, provider
 npm run generate:architecture-maps
 npm run check:okf
 npm run check:capabilities
+npm run check:capability-ledger
 npm run check:documentation
 git diff --check
 ```

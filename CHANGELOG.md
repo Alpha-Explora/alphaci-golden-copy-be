@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added the capability ledger: an append-only `docs/capabilities/ledger.json`, a generated ledger map, the `check:capability-ledger` gate, and `ledger:record`. The gate recomputes a composition hash over every capability key, maturity, dependency edge, configuration flag, and edition membership, and rejects a catalog that moved without an entry.
 - Added client capability policies. `ALPHACI_CLIENT` selects a policy declared in `src/kernel/composition/clients` and `ALPHACI_CLIENT_CONFIG` mounts a deployment-supplied document; a policy is deny-only, validated at boot, and narrows the edition manifest on both the deployment and subject paths.
 - Added ready-made composition environment files under `deploy/env` for hosted SaaS, hosted EDU, Enterprise, and Enterprise dedicated to a single client, plus an example client policy document.
 - Added the generated `@alphaci/capability-catalog` package artifact and `check:capability-package` parity gate for the cross-repository capability contract.
