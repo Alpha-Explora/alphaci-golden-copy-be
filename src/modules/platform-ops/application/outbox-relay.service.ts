@@ -48,6 +48,28 @@ export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
     );
   }
 
+  /**
+   * Deliver audit and notification events, and nothing else.
+   *
+   * This is the pass that runs on a timer, so it is deliberately narrower than
+   * processPendingOnce. That one drains every topic the dispatcher knows,
+   * including hierarchy grant/revoke, whose handlers add and remove people from
+   * GitHub teams - which is why the manual script refuses to run until
+   * HIERARCHY_GITHUB_SYNC_MODE is set explicitly. Nothing here can change
+   * anyone's access: writing an audit row and a notification is all it does.
+   *
+   * Handled by this service directly rather than through the dispatcher, so a
+   * claim can only ever reach the two handlers it was filtered for.
+   */
+  async processPlatformEventsOnce(limit = 50): Promise<number> {
+    return this.outboxRepository.processPending(
+      (event) => this.handle(event),
+      limit,
+      this.topics,
+      this.processingOptions(),
+    );
+  }
+
   async handle(event: PendingOutboxEvent): Promise<void> {
     const decoded = decodePlatformEvent(event.topic, event.payload);
 
