@@ -70,6 +70,18 @@ session's optional `tenantId`; a missing capability is returned as a generic
 that runs after composition, and the capability guard does not inspect
 subscription state.
 
+### HTTP route coverage gate
+
+Every HTTP handler must carry an explicit capability decision: capability
+metadata from @RequiresCapability(...) at class or handler scope, together
+with CapabilityGuard in @UseGuards at class or handler scope. The architecture
+test in tests/architecture/capability-route-coverage.spec.ts enforces both
+conditions. An intentionally ungated handler belongs in that test's baseline
+under its normalized controller path, with one controller reason and an
+explicit handler-plus-HTTP-method entry. Adding a new handler to an existing
+baseline controller still requires adding that handler to the route list;
+remove entries when routes are deleted or become covered.
+
 The request-scoped resolver is used by HTTP controllers and guards. Background
 consumers without an HTTP subject use the deployment-scoped resolver token, so
 boot-time workers such as the platform outbox relay do not inherit request
