@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import {
+  ConflictException,
   BadRequestException,
   ForbiddenException,
   NotFoundException,
@@ -2795,7 +2796,15 @@ jobs:
       );
     });
 
-    it('lets the local disconnect proceed and reports a missing-scope error when GitHub delete fails with 403', async () => {
+    /*
+     * GitHub refused, so nothing changes.
+     *
+     * The old behaviour disconnected locally anyway and put the refusal in a
+     * 200 the page never read. Two real deletions went that way: the
+     * repositories stayed on GitHub, the projects vanished from ALPHACI, and
+     * with them the only screen that could have retried.
+     */
+    it('keeps the project and fails with 409 when GitHub refuses the delete', async () => {
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, projectsRepository } = buildService({
         workspaceAccessService: makeWorkspaceAccessService(),
@@ -2804,37 +2813,64 @@ jobs:
             .fn()
             .mockRejectedValue(
               new GithubRepoDeleteError(
-                'missing_scope',
-                'GitHub denied deleting tone/orders-api (403). Reconnect your GitHub account.',
+                'org_restricted',
+                'The tone organization restricts which apps can act on its repositories.',
               ),
             ),
         },
         auditEventsService,
       });
 
-      const result = await service.disconnectProject(
-        'project-1',
-        'user-1',
-        { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
-        'gh-token',
-      );
+      const error = await service
+        .disconnectProject(
+          'project-1',
+          'user-1',
+          { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+          'gh-token',
+        )
+        .catch((e: unknown) => e);
 
-      expect(result).toEqual({
-        ok: true,
-        githubRepoDeleted: false,
-        githubRepoDeleteError: {
-          code: 'missing_scope',
-          message:
-            'GitHub denied deleting tone/orders-api (403). Reconnect your GitHub account.',
-        },
-      });
-      // The local DB row must still be removed even though GitHub failed,
-      // and still scoped to the tightened role list.
-      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
-        'project-1',
-        'user-1',
-        ['admin', 'delegated_lead'],
+      expect(error).toBeInstanceOf(ConflictException);
+      const body = (error as ConflictException).getResponse() as {
+        code: string;
+        message: string;
+      };
+      expect(body.code).toBe('org_restricted');
+      expect(body.message).toContain('restricts which apps');
+      expect(body.message).toContain('The project was kept');
+      // The whole point: the project is not removed.
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
+      // And the refusal is still recorded, so it reaches audit and notifications.
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'project_github_repo_delete_failed',
+        }),
       );
+    });
+
+    it('records a verified missing scope under its own event', async () => {
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const { service, projectsRepository } = buildService({
+        workspaceAccessService: makeWorkspaceAccessService(),
+        githubServiceOverride: {
+          deleteRepoForUser: jest
+            .fn()
+            .mockRejectedValue(
+              new GithubRepoDeleteError('missing_scope', 'No delete_repo.'),
+            ),
+        },
+        auditEventsService,
+      });
+
+      await expect(
+        service.disconnectProject(
+          'project-1',
+          'user-1',
+          { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+          'gh-token',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           eventCode: 'project_github_repo_delete_missing_scope',
@@ -2842,29 +2878,41 @@ jobs:
       );
     });
 
-    it('reports missing_scope without calling GitHub when the session has no access token', async () => {
+    it('still disconnects when the user did not ask to delete on GitHub', async () => {
       const { service, githubServiceMock, projectsRepository } = buildService({
         workspaceAccessService: makeWorkspaceAccessService(),
       });
 
-      const result = await service.disconnectProject(
-        'project-1',
-        'user-1',
-        { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
-        null,
-      );
-
-      expect(result.githubRepoDeleted).toBe(false);
-      expect(result.githubRepoDeleteError?.code).toBe('missing_scope');
+      await expect(
+        service.disconnectProject('project-1', 'user-1', undefined, 'gh-token'),
+      ).resolves.toEqual({ ok: true, githubRepoDeleted: false });
       expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
-      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
-        'project-1',
-        'user-1',
-        ['admin', 'delegated_lead'],
-      );
+      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalled();
     });
 
-    it('reports an "other" error and audits it when repo_full_name has no owner/repo split', async () => {
+    it('keeps the project without calling GitHub when the session has no access token', async () => {
+      const { service, githubServiceMock, projectsRepository } = buildService({
+        workspaceAccessService: makeWorkspaceAccessService(),
+      });
+
+      const error = await service
+        .disconnectProject(
+          'project-1',
+          'user-1',
+          { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+          null,
+        )
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(
+        ((error as ConflictException).getResponse() as { code: string }).code,
+      ).toBe('token_rejected');
+      expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
+    });
+
+    it('keeps the project and audits an "other" error when repo_full_name has no owner/repo split', async () => {
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, githubServiceMock, projectsRepository } = buildService({
         workspaceAccessService: makeWorkspaceAccessService(),
@@ -2876,22 +2924,21 @@ jobs:
         auditEventsService,
       });
 
-      const result = await service.disconnectProject(
-        'project-1',
-        'user-1',
-        { deleteGithubRepo: true, confirmRepoName: 'no-slash' },
-        'gh-token',
-      );
+      const error = await service
+        .disconnectProject(
+          'project-1',
+          'user-1',
+          { deleteGithubRepo: true, confirmRepoName: 'no-slash' },
+          'gh-token',
+        )
+        .catch((e: unknown) => e);
 
-      expect(result.githubRepoDeleted).toBe(false);
-      expect(result.githubRepoDeleteError?.code).toBe('other');
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(
+        ((error as ConflictException).getResponse() as { code: string }).code,
+      ).toBe('other');
       expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
-      // Local disconnect still proceeds even for this failure mode.
-      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
-        'project-1',
-        'user-1',
-        ['admin', 'delegated_lead'],
-      );
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           eventCode: 'project_github_repo_delete_failed',

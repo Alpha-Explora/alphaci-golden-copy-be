@@ -1,7 +1,6 @@
 // Response shapes (match FE contracts exactly).
 // Shared with the application-layer view mappers; keep free of runtime imports.
 import type { WorkflowFileMetadata } from '../workflows/index';
-import type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
 import type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProvisionedProjectStatus } from '../../infrastructure/projects.repository';
@@ -101,13 +100,17 @@ export interface ReconcileDeletedReposResult {
   outOfScope: number;
 }
 
+/**
+ * A completed disconnect.
+ *
+ * Only ever a success. When the GitHub half fails the project is kept and the
+ * request fails with 409 carrying the reason, so a refusal can no longer arrive
+ * inside a 200 that a caller is free to ignore - which is how two refused
+ * deletions were reported to the user as done.
+ */
 export interface DisconnectProjectResponse {
   ok: true;
   githubRepoDeleted: boolean;
-  githubRepoDeleteError?: {
-    code: GithubRepoDeleteErrorCode;
-    message: string;
-  };
 }
 
 export interface ProvisionedProjectsResponse {
