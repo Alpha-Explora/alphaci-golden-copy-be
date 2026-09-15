@@ -106,6 +106,16 @@ export const CAPABILITIES = [
     requires: [],
   },
   {
+    key: 'platform.public-site',
+    context: 'platform-ops',
+    description:
+      'Public marketing site: landing, pricing, and guide pages served to unauthenticated visitors.',
+    maturity: 'not-implemented',
+    configuration: 'Not implemented in this backend. No AppConfig flag.',
+    configurationFlags: [],
+    requires: [],
+  },
+  {
     key: 'billing.subscription-gate',
     context: 'billing',
     description:

@@ -36,6 +36,7 @@ This matrix is generated from the application-owned capability registry and pack
 | `platform.audit-events` | `platform-ops` | Project audit event recording through the application outbox. | stable | saas, edu, enterprise | auditEvents.enabled |
 | `platform.notifications` | `platform-ops` | In-app notification requests and persistence. | stable | saas, edu, enterprise | notifications.enabled |
 | `platform.data-residency` | `platform-ops` | Customer-specific data-location controls. | not-implemented | enterprise | Not implemented in this backend. No AppConfig flag. |
+| `platform.public-site` | `platform-ops` | Public marketing site: landing, pricing, and guide pages served to unauthenticated visitors. | not-implemented | saas | Not implemented in this backend. No AppConfig flag. |
 | `billing.subscription-gate` | `billing` | Subscription entitlement gating for authenticated access and CI run validation. | stable | saas, edu, enterprise | subscription.gateEnabled |
 | `billing.usage-quotas` | `billing` | Usage tracking and quota policy checks. | limited | saas, edu, enterprise | usageQuotas.enabled |
 | `billing.checkout` | `billing` | Self-serve payment checkout. | not-implemented | saas | Not implemented in this backend. No AppConfig flag. |

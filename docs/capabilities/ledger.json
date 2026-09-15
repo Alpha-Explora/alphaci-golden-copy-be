@@ -17,6 +17,16 @@
       "summary": "Enterprise client composition is now a real pack-owned deny-only surface with backend-owned frontend surface metadata",
       "reference": "adr-0009-client-capability-policies.md",
       "compositionHash": "sha256:0276b9c0b5166b03dd0cfb371df828e2827f42e973a142e3457d34eb1ac8431d"
+    },
+    {
+      "date": "2026-09-15",
+      "change": "added",
+      "keys": [
+        "platform.public-site"
+      ],
+      "summary": "Declared the SaaS-only public marketing site; EDU and Enterprise deployments go straight to login.",
+      "reference": "CHANGELOG.md",
+      "compositionHash": "sha256:edcf6a33098219f39572b4c403cb7323a2891234ebcae6ab43b9b5535ebc89fc"
     }
   ]
 }

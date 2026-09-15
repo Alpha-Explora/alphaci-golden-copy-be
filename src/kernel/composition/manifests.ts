@@ -10,6 +10,7 @@ const SAAS_KEYS = [
   'identity.edition-entitlements',
   'platform.audit-events',
   'platform.notifications',
+  'platform.public-site',
   'billing.subscription-gate',
   'billing.usage-quotas',
   'billing.checkout',

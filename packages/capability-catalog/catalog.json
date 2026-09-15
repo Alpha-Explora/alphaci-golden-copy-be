@@ -276,6 +276,34 @@
     }
   },
   {
+    "key": "platform.public-site",
+    "context": "platform-ops",
+    "description": "Public marketing site: landing, pricing, and guide pages served to unauthenticated visitors.",
+    "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "editions": [
+      "saas"
+    ],
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": "publicSiteEnabled",
+      "domains": [
+        "public-site"
+      ],
+      "routes": [
+        "/",
+        "/pricing",
+        "/guide"
+      ],
+      "featureBarrels": [
+        "@/features/public-site"
+      ],
+      "artifactSymbols": []
+    }
+  },
+  {
     "key": "billing.subscription-gate",
     "context": "billing",
     "description": "Subscription entitlement gating for authenticated access and CI run validation.",

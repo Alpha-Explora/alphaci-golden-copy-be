@@ -43,6 +43,7 @@ This table lists every current registry capability in registry order. Status is 
 | `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
 | `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
 | `platform.data-residency` | `not-applicable` | Not part of this pack composition. |
+| `platform.public-site` | `not-implemented` | Public marketing site: landing, pricing, and guide pages served to unauthenticated visitors. Not implemented in this backend. |
 | `billing.subscription-gate` | `available` | Subscription entitlement gating for authenticated access and CI run validation. Configuration: subscription.gateEnabled. |
 | `billing.usage-quotas` | `configuration-gated` | Usage tracking and quota policy checks. Configuration: usageQuotas.enabled. |
 | `billing.checkout` | `not-implemented` | Self-serve payment checkout. Not implemented in this backend. |

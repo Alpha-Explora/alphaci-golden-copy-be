@@ -20,6 +20,7 @@ const REGISTRY_KEYS = [
   'platform.audit-events',
   'platform.notifications',
   'platform.data-residency',
+  'platform.public-site',
   'billing.subscription-gate',
   'billing.usage-quotas',
   'billing.checkout',
@@ -47,6 +48,7 @@ const SAAS_KEYS = [
   'identity.edition-entitlements',
   'platform.audit-events',
   'platform.notifications',
+  'platform.public-site',
   'billing.subscription-gate',
   'billing.usage-quotas',
   'billing.checkout',
@@ -215,8 +217,8 @@ const record = (
 });
 
 describe('declared composition catalog', () => {
-  it('keeps the 30 registry records in their existing order', () => {
-    expect(CAPABILITIES).toHaveLength(30);
+  it('keeps the 31 registry records in their existing order', () => {
+    expect(CAPABILITIES).toHaveLength(31);
     expect(CAPABILITIES.map(({ key }) => key)).toEqual(REGISTRY_KEYS);
   });
 

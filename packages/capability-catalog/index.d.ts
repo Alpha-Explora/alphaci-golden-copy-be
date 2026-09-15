@@ -14,6 +14,7 @@ export type CapabilityKey =
   | "platform.audit-events"
   | "platform.notifications"
   | "platform.data-residency"
+  | "platform.public-site"
   | "billing.subscription-gate"
   | "billing.usage-quotas"
   | "billing.checkout"
