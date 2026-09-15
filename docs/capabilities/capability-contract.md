@@ -42,6 +42,24 @@ dependency edges; backend-only context, configuration, and enablement details
 remain in the kernel registry. The frontend consumes the package artifact and
 does not read this repository's TypeScript source.
 
+### Package provenance and integrity
+
+The generated package also contains `provenance.json`. It records the package
+name and version, the stable source repository identifier
+`github.com/Alpha-Explora/alphaci-enterprise-be`, the authoritative source path
+`src/kernel/composition/catalog.source.json`, a catalog source digest, and a
+deterministic artifact digest. It contains no timestamps or checkout-specific
+paths.
+
+The catalog source digest is SHA-256 over canonical JSON: object keys are sorted
+recursively while array order is preserved. The artifact digest is SHA-256 over
+the JSON encoding of filename/content pairs for this ordered canonical set:
+`package.json`, `catalog.json`, `index.d.ts`, `index.js`, and `manifests.json`.
+Text content is normalized to LF before hashing. `provenance.json` is excluded
+from that set to avoid a self-referential digest. The package generator and
+`check-capability-package` implement this contract; the checker recomputes the
+digest and rejects stale or tampered output.
+
 The kernel `CapabilityGuard` enforces capabilities declared with
 `@RequiresCapability(...)` at the request boundary. No capability metadata means
 the guard allows the request. When metadata is present, it resolves through the

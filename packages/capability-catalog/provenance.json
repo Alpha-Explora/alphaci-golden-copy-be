@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@alphaci/capability-catalog",
+  "packageVersion": "0.2.0",
+  "sourceRepository": "github.com/Alpha-Explora/alphaci-enterprise-be",
+  "authoritativeSource": "src/kernel/composition/catalog.source.json",
+  "catalogSourceDigest": "sha256:5985fec3a60e22df024a782e74f644584cbacea28abe831702c11fbf3d218385",
+  "canonicalFiles": [
+    "package.json",
+    "catalog.json",
+    "index.d.ts",
+    "index.js",
+    "manifests.json"
+  ],
+  "artifactDigest": "sha256:d4deaa3e87f9275d733f10611be42ea90b96f6a52b43a828dd5a96f58c8e0fcf"
+}

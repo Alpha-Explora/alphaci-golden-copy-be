@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added deterministic `provenance.json` generation for `@alphaci/capability-catalog`, including the catalog source digest and canonical package artifact digest, with checker coverage for stale and tampered output.
 - Added `src/kernel/composition/catalog.source.json` as the single authoring source for composition, with `generate:composition`, the `check:composition-source` drift gate, and `capability:new`, which derives the registry, manifests, three pack rows, generated maps, and a ledger entry from one record.
 - Added the capability ledger: an append-only `docs/capabilities/ledger.json`, a generated ledger map, the `check:capability-ledger` gate, and `ledger:record`. The gate recomputes a composition hash over every capability key, maturity, dependency edge, configuration flag, and edition membership, and rejects a catalog that moved without an entry.
 - Added client capability policies. `ALPHACI_CLIENT` selects a policy declared in `src/kernel/composition/clients` and `ALPHACI_CLIENT_CONFIG` mounts a deployment-supplied document; a policy is deny-only, validated at boot, and narrows the edition manifest on both the deployment and subject paths.

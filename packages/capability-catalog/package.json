@@ -15,7 +15,8 @@
     "catalog.json",
     "manifests.json",
     "index.js",
-    "index.d.ts"
+    "index.d.ts",
+    "provenance.json"
   ],
   "license": "UNLICENSED"
 }
