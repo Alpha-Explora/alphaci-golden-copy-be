@@ -10,8 +10,8 @@ sources:
     resource: "/packs/pack-contract.md"
     title: "Current pack contract"
   - id: capability-registry
-    resource: "/capabilities/registry.ts"
-    title: "Documentation capability registry"
+    resource: "src/kernel/composition/capability-registry.ts"
+    title: "Application capability registry"
 ---
 # ADR-0003: Composition packs and entitlements
 
@@ -29,7 +29,7 @@ Entitlement evaluation is narrowing and follows this precedence:
 build -> edition manifest -> deployment configuration -> tenant override
 ```
 
-The pack contract uses the same headings and capability vocabulary for every pack so differences are explicit and reviewable. The registry under `docs/capabilities/` is a documentation source and does not implement runtime entitlement resolution.
+The pack contract uses the same headings and capability vocabulary for every pack so differences are explicit and reviewable. The application registry and manifests under `src/kernel/composition/` declare the catalog and pack applicability; the pure resolver is behavior-neutral and does not change the compatibility endpoint or tenant entitlement policy.
 
 ## Rejected alternatives
 

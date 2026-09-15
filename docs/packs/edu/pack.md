@@ -21,8 +21,9 @@ sources:
 
 ## Current composition
 
-- Documentation status: `documentation-only`
-- Runtime selection behavior: No pack-selection resolver is implemented in this backend.
+- Build profile: `hosted` (`saas`, `edu`)
+- Runtime selection behavior: `ALPHACI_EDITION=edu` selects the EDU manifest within the hosted build ceiling.
+- Artifact exclusion inventory: reserved EDU-only source root/marker declarations are absent from the current compiled profile artifact; no EDU-only implementation exists yet.
 - Current backend applicability: The same six-context backend exposes the shared capability catalog. An institution-hosted or shared deployment target remains a separate deployment value.
 
 ## Capability status
@@ -67,7 +68,7 @@ EDU is an edition composition reference. An institution-hosted or shared deploym
 
 ## Configuration and entitlements
 
-The narrowing order is `build -> edition manifest -> deployment configuration -> tenant override`. The current backend does not resolve EDU-specific entitlements at runtime; this profile records the applicable shared capability surface only.
+The narrowing order is `build profile -> edition manifest -> deployment configuration -> tenant override`. `ALPHACI_BUILD_PROFILE` defaults safely to `enterprise`; hosted builds must opt in explicitly. EDU-specific entitlements remain out of scope.
 
 ## Explicit non-support
 
@@ -76,5 +77,5 @@ No additional non-registry product areas. Catalog rows with status `not-implemen
 ## Ownership and verification
 
 - Context owners: `identity-access`, `projects`, `pipelines`, `runtime`, `billing`, and `platform-ops` as shown in the capability matrix.
-- Source: `docs/capabilities/registry.ts` and the owning context source paths.
-- Verification: `npm run check:documentation`.
+- Source: `src/kernel/composition/capability-registry.ts`, `src/kernel/composition/manifests.ts`, and the owning context source paths.
+- Verification: `npm run check:capabilities`, `npm run check:composition-profiles`.

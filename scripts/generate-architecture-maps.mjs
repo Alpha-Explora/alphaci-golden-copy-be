@@ -11,6 +11,7 @@ const DOCS = path.join(ROOT, 'docs');
 const NODE_SCRIPTS = path.join(ROOT, 'scripts');
 const require = createRequire(import.meta.url);
 const { schemaOwnershipSnapshot } = require('./check-schema-ownership.cjs');
+const { loadCapabilityCatalog } = require('./load-capability-catalog.cjs');
 
 const CONTEXTS = [
   {
@@ -512,20 +513,20 @@ Static gates do not prove a live database connection, deployed cron execution, p
   });
 }
 
-function readCapabilityRegistry() {
-  const file = path.join(DOCS, 'capabilities/registry.ts');
-  const source = fs.readFileSync(file, 'utf8');
-  const match = /export const CAPABILITIES = (\[[\s\S]*?\])\s+as const;\s*$/m.exec(
-    source,
-  );
-  if (!match) throw new Error('Capability registry must export a JSON-shaped CAPABILITIES array');
-  return JSON.parse(match[1]);
+function readCapabilityCatalog() {
+  return loadCapabilityCatalog();
+}
+
+function editionsForCapability(key, manifests) {
+  return Object.values(manifests)
+    .filter((manifest) => manifest.capabilities.includes(key))
+    .map((manifest) => manifest.edition);
 }
 
 function generateCapabilityMatrix() {
-  const capabilities = readCapabilityRegistry();
+  const { capabilities, manifests } = readCapabilityCatalog();
   const rows = capabilities.map(
-    (capability) => `| \`${capability.key}\` | \`${capability.context}\` | ${capability.description} | ${capability.maturity} | ${capability.editions.join(', ')} | ${capability.configuration} |`,
+    (capability) => `| \`${capability.key}\` | \`${capability.context}\` | ${capability.description} | ${capability.maturity} | ${editionsForCapability(capability.key, manifests).join(', ')} | ${capability.configuration} |`,
   );
   return concept({
     type: 'Capability Map',
@@ -533,13 +534,14 @@ function generateCapabilityMatrix() {
     description: 'Generated documentation inventory of current capability keys and their compatibility posture.',
     tags: ['capabilities', 'map', 'packs'],
     sources: [
-      { id: 'capability-registry', resource: 'docs/capabilities/registry.ts', title: 'Documentation capability registry' },
+      { id: 'capability-registry', resource: 'src/kernel/composition/capability-registry.ts', title: 'Application capability registry' },
+      { id: 'capability-manifests', resource: 'src/kernel/composition/manifests.ts', title: 'Application capability manifests' },
       { id: 'capability-gate', resource: 'scripts/check-capabilities.cjs', title: 'Capability registry gate' },
       { id: 'capability-endpoint', resource: 'src/modules/identity-access/capabilities/capabilities.controller.ts', title: 'Compatibility capability endpoint' },
     ],
     body: `# Capability matrix
 
-This matrix is generated from the documentation registry at \`docs/capabilities/registry.ts\`. It describes current compatibility keys and does not replace the existing \`/api/v1/capabilities\` response or implement entitlement resolution.
+This matrix is generated from the application-owned capability registry and pack manifests in \`src/kernel/composition\`. It describes current compatibility keys and does not replace the existing \`/api/v1/capabilities\` response or implement tenant entitlement resolution.
 
 | Capability key | Context | Description | Maturity | Editions with documented applicability | Configuration source |
 |---|---|---|---|---|---|

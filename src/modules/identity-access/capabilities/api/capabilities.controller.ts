@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import {
+  CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port';
+import type { CapabilityKey } from '#kernel/composition/capability-types';
+import {
   DEPLOYMENT_PROVIDER_CATALOG,
   type DeploymentProviderCatalogPort,
 } from '#kernel/ports/deployment-provider-catalog.port';
@@ -12,6 +17,8 @@ import { resolveLiveAdapterStatus } from './live-adapter-status';
 export class CapabilitiesController {
   constructor(
     private readonly configService: ConfigService,
+    @Inject(CAPABILITY_RESOLVER)
+    private readonly capabilityResolver: CapabilityResolverPort,
     @Inject(DEPLOYMENT_PROVIDER_CATALOG)
     private readonly providerCatalog: DeploymentProviderCatalogPort,
   ) {}
@@ -19,7 +26,9 @@ export class CapabilitiesController {
   @Get()
   getCapabilities() {
     const config = this.configService.getOrThrow<AppConfig>('app');
-    const enabled = config.envProvisioning.enabled;
+    const capabilityKeys = this.capabilityResolver.deployment();
+    const has = (key: CapabilityKey): boolean => capabilityKeys.has(key);
+    const enabled = has('runtime.env-provisioning');
     const liveAdaptersImplemented = resolveLiveAdapterStatus().implemented;
     const registeredProviders = this.providerCatalog.list();
     const registeredProviderIds = new Set(
@@ -38,6 +47,8 @@ export class CapabilitiesController {
       .map((provider) => provider.id);
 
     return {
+      edition: config.composition.edition,
+      capabilityKeys: [...capabilityKeys],
       envProvisioning: {
         enabled,
         providers: enabled ? providers : [],
@@ -48,33 +59,38 @@ export class CapabilitiesController {
         modes: enabled ? [config.envProvisioning.ownershipMode] : [],
       },
       projectSyncSnapshots: {
-        enabled: config.projectSyncSnapshots.enabled,
+        enabled: has('projects.sync-snapshots'),
         liveGithubEnabled:
           liveAdaptersImplemented &&
+          has('projects.sync-snapshots') &&
           config.projectSyncSnapshots.liveGithubEnabled,
         liveProvidersEnabled:
           liveAdaptersImplemented &&
+          has('projects.sync-snapshots') &&
           config.projectSyncSnapshots.liveProvidersEnabled,
         mode: 'local_snapshot' as const,
       },
       workflowSettingsPreview: {
-        enabled: config.workflowSettingsPreview.enabled,
+        enabled: has('projects.workflow-settings-preview'),
       },
       workflowUpdatePr: {
-        enabled: config.workflowUpdatePr.enabled,
+        enabled: has('projects.workflow-update-pr'),
       },
       projectTargetManagement: {
-        enabled: config.projectTargetManagement.enabled,
+        enabled: has('projects.target-management'),
       },
       ciRunTracking: {
-        enabled: config.ciRunTracking.enabled,
+        enabled: has('pipelines.ci-run-tracking'),
         liveGithubEnabled:
-          liveAdaptersImplemented && config.ciRunTracking.liveGithubEnabled,
+          has('pipelines.ci-run-tracking') &&
+          liveAdaptersImplemented &&
+          config.ciRunTracking.liveGithubEnabled,
         mode: 'local_mock' as const,
       },
       deploymentHistory: {
-        enabled: config.deploymentHistory.enabled,
+        enabled: has('runtime.deployment-history'),
         liveProvidersEnabled:
+          has('runtime.deployment-history') &&
           liveAdaptersImplemented &&
           config.deploymentHistory.liveProvidersEnabled,
         mode: 'local_mock' as const,
@@ -82,38 +98,41 @@ export class CapabilitiesController {
       previewDeployments: {
         // Previews read the provider history, so the flag alone is not enough
         // — without deployment history there is nothing to group by branch.
-        enabled:
-          config.previewDeployments.enabled && config.deploymentHistory.enabled,
+        enabled: has('runtime.preview-deployments'),
         // Per-branch previews come from the provider's own preview lane, which
         // only Vercel reports today.
         providers: previewProviders,
       },
       driftDetection: {
-        enabled: config.driftDetection.enabled,
+        enabled: has('runtime.drift-detection'),
         liveProviderChecksEnabled:
-          liveAdaptersImplemented && config.driftLiveChecks.enabled,
+          has('runtime.drift-detection') &&
+          liveAdaptersImplemented &&
+          config.driftLiveChecks.enabled,
         mode: 'local_snapshot' as const,
       },
       driftRepair: {
-        enabled: config.driftRepair.enabled,
+        enabled: has('runtime.drift-repair'),
         liveRepairEnabled:
-          liveAdaptersImplemented && config.driftRepair.liveRepairEnabled,
+          has('runtime.drift-repair') &&
+          liveAdaptersImplemented &&
+          config.driftRepair.liveRepairEnabled,
         mode: 'local_safe' as const,
       },
       usageQuotas: {
-        enabled: config.usageQuotas.enabled,
+        enabled: has('billing.usage-quotas'),
       },
       workspaces: {
-        enabled: config.workspaces.enabled,
+        enabled: has('identity.workspaces'),
       },
       auditEvents: {
-        enabled: config.auditEvents.enabled,
+        enabled: has('platform.audit-events'),
       },
       notifications: {
-        enabled: config.notifications.enabled,
+        enabled: has('platform.notifications'),
       },
       hierarchy: {
-        enabled: config.hierarchy.enabled,
+        enabled: has('identity.hierarchy'),
         githubSyncMode: config.hierarchy.githubSyncMode,
       },
     };

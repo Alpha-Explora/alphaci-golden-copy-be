@@ -32,7 +32,6 @@ const REQUIRED_FILES = [
   'docs/capabilities/index.md',
   'docs/capabilities/capability-contract.md',
   'docs/capabilities/capability-matrix.generated.md',
-  'docs/capabilities/registry.ts',
   'docs/packs/index.md',
   'docs/packs/pack-contract.md',
   'docs/packs/pack-template.md',

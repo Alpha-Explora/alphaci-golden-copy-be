@@ -21,6 +21,8 @@
  *     causing permissive CORS).
  */
 
+import { parseCompositionConfig } from '#kernel/composition/composition-config.js';
+
 export interface EnvironmentVariables {
   NODE_ENV: 'development' | 'test' | 'production';
   PORT: number;
@@ -65,6 +67,8 @@ export interface EnvironmentVariables {
   FLOWCI_VERCEL_TEAM_SLUG?: string;
   FLOWCI_SONAR_TOKEN?: string;
   FLOWCI_SONAR_ORGANIZATION?: string;
+  ALPHACI_EDITION?: string;
+  ALPHACI_BUILD_PROFILE?: string;
 }
 
 type RawEnv = Record<string, unknown>;
@@ -294,6 +298,11 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // all environments (not just production) so that developers are never
   // unknowingly running with an insecure secret.
   const SESSION_SECRET = requireSessionSecret(env);
+
+  // Composition is validated against the build ceiling before Nest creates
+  // the application graph. appConfig parses the same pure function later;
+  // keeping this check here makes an invalid artifact/profile fail at boot.
+  parseCompositionConfig(env as NodeJS.ProcessEnv);
 
   const SUPABASE_URL = getTrimmedString(env, ['SUPABASE_URL']);
   const SUPABASE_ANON_KEY = getTrimmedString(env, ['SUPABASE_ANON_KEY']);

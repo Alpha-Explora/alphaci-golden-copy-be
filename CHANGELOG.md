@@ -4,7 +4,11 @@
 
 ### Added
 
-- Added the `check:capabilities` gate, which binds `docs/capabilities/registry.ts` to the boolean leaves of `AppConfig` and validates capability dependency edges.
+- Added the generated `@alphaci/capability-catalog` package artifact and `check:capability-package` parity gate for the cross-repository capability contract.
+- Added a deployment-scoped resolver binding for boot-time/background consumers while keeping the subject-scoped resolver request-scoped for HTTP composition checks.
+- Added the request-scoped composition resolver, static manifest-source seam, and `CompositionModule`; `ALPHACI_EDITION` selects the deployment manifest and defaults to Enterprise.
+- Added the kernel-owned `@RequiresCapability(...)` decorator and `CapabilityGuard`, with focused tests for metadata, subject forwarding, generic 404 handling, and guard order.
+- Added the `check:capabilities` gate, which binds the application capability registry and manifests to the boolean leaves of `AppConfig` and validates capability dependency edges.
 - Added an OKF v0.2 current-state documentation bundle covering architecture, capabilities, composition packs, runbooks, and change history.
 - Added generated context, event, provider, route, schema, architecture-check, and capability maps.
 - Added repository checks for OKF structure, lower-kebab documentation names, stale plan-specific claims, edition branches, and generated-map drift.
@@ -14,9 +18,15 @@
 - Made the executive report context-independent and drop-in ready by including its complete explanation, status, priorities, and parallel delivery model.
 - Added ADR-0007, recording that capability composition resolves at runtime in the kernel, and that subscription entitlement stays a separate Billing decision applied after resolution.
 - Added ADR-0008, recording build profiles as declared pack sets whose artifacts exclude source for packs they do not contain.
+- Added typed hosted/Enterprise build profiles, boot-time profile ceiling validation, fail-closed profile-specific compiled-output exclusion scanning, and the isolated `check:composition-profiles` conformance command. The current pack-only exclusion inventory is empty because no such implementation roots or symbol markers exist yet.
+- Added a deployment-scoped resolver boundary for singleton application services, live guard-pipeline coverage for composition-before-Billing behavior, and fail-closed validation for unknown `ALPHACI_EDITION` values.
 
 ### Changed
 
+- Classified optional provider and live-adapter mode toggles as explicit non-capability flags so the resolver gates base capabilities only on their primary enablement flags.
+- Changed `/api/v1/capabilities` to project its resolved deployment set into the existing compatibility fields and expose top-level `edition` and `capabilityKeys`, preserving the legacy nested response for the default fixture.
+- Changed the deployment-targets, provider-connections, env-vars, and custom-domains controllers to enforce `runtime.env-provisioning` through `CapabilityGuard` before `SubscriptionGuard`; removed the obsolete `EnvFeatureGuard`.
+- Moved capability catalog authority into the application kernel and declared edition applicability through manifests; PR 1 adds a behavior-neutral pure resolver without changing a request endpoint or build artifact.
 - Made the SaaS, EDU, and Enterprise pack profiles list every shared capability in registry order, with status derived from the capability registry rather than sampled per pack.
 - Recorded that the frontend repository keeps a matching current-state Golden Copy bundle that snapshots this catalog.
 - Recorded SaaS, EDU, and Enterprise target gaps as `not-implemented` capability keys, and added pack status `not-applicable` for keys outside a pack.

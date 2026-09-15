@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -10,53 +9,42 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  CapabilityGuard,
+  RequiresCapability,
+} from '#kernel/composition/index.js';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { NotificationsService } from '../application/notifications.service';
 
 @Controller('notifications')
+@UseGuards(SessionAuthGuard, CapabilityGuard)
+@RequiresCapability('platform.notifications')
 export class NotificationsController {
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly notificationsService: NotificationsService,
-  ) {}
+  constructor(private readonly notificationsService: NotificationsService) {}
 
   @Get()
-  @UseGuards(SessionAuthGuard)
   list(@Req() req: Request) {
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    if (!config.notifications.enabled) {
-      return { enabled: false, items: [], unreadCount: 0 };
-    }
     return this.notificationsService.listForUser(userId);
   }
 
   @Post(':id/read')
-  @UseGuards(SessionAuthGuard)
   markRead(@Req() req: Request, @Param('id') id: string) {
     const userId = this.requireUserId(req);
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    if (!config.notifications.enabled) {
-      throw new BadRequestException('Notifications are disabled');
-    }
     return this.notificationsService.markRead(userId, id);
   }
 
   @Get('preferences')
-  @UseGuards(SessionAuthGuard)
   getPreferences(@Req() req: Request) {
     return this.notificationsService.getPreferences(this.requireUserId(req));
   }
 
   @Patch('preferences')
-  @UseGuards(SessionAuthGuard)
   updatePreferences(
     @Req() req: Request,
     @Body() body: { inAppEnabled?: boolean; emailEnabled?: boolean },

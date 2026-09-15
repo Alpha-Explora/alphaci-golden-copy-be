@@ -32,30 +32,29 @@ Each pack profile uses the same sections, capability vocabulary, and status valu
 - `configuration-gated`: the surface exists but requires configured flags or providers.
 - `not-implemented`: this pack includes the capability, and the backend does not provide it.
 - `not-applicable`: this pack does not include the capability.
-- `documentation-only`: a declaration exists for comparison and does not change runtime behavior.
 
-Pack status is derived from the capability registry, not invented per pack:
+Pack status is derived from the application capability registry and pack manifests, not invented per pack:
 
-- If the pack edition is absent from the capability `editions` list, status is `not-applicable`.
+- If the capability is absent from the pack manifest, status is `not-applicable`.
 - `stable` maps to `available`.
 - `limited` maps to `configuration-gated`.
 - `not-implemented` maps to `not-implemented`.
 
 ## Shared catalog rule
 
-Every pack profile lists every capability key from `docs/capabilities/registry.ts` in registry order. The three tables are comparable by row. Pack-specific product areas that are not registry keys belong only in Explicit non-support.
+Every pack profile lists every capability key from the application registry in registry order. Edition applicability comes from `src/kernel/composition/manifests.ts`, and the public `@alphaci/capability-catalog` package carries the key, maturity, applicability, and dependency contract to the frontend. The three tables are comparable by row. Pack-specific product areas that are not registry keys belong only in Explicit non-support.
 
-`npm run check:capabilities` rejects a pack table that samples, reorders, omits, or restates a capability status that the registry does not support.
+`npm run check:capability-package` verifies the generated public package. `npm run check:capabilities` rejects a pack table that samples, reorders, omits, or restates a capability status that the registry does not support.
 
 ## Entitlement rule
 
 Pack applicability narrows in this order:
 
 ```text
-build -> edition manifest -> deployment configuration -> tenant override
+build profile -> edition manifest -> deployment configuration -> tenant override
 ```
 
-The profile must never imply that a tenant override can enable a capability absent from the build or pack composition.
+The profile is the artifact ceiling. The backend validates `ALPHACI_BUILD_PROFILE` at boot and the resolver rejects a manifest outside that ceiling. Each profile is compiled in isolation. The repository declares reserved pack-only roots and symbol markers, but none are present as implementation code yet; the fail-closed compiled-output scanner proves their absence and rejects a later present path or marker.
 
 ## Update rule
 

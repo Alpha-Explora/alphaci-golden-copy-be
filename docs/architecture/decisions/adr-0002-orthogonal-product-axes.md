@@ -41,7 +41,7 @@ A lower layer may disable a capability but may not enable one that an upper laye
 
 - Shared domain logic stays in its owning context.
 - Composition data can describe different offerings without forking application behavior.
-- The current `/api/v1/capabilities` response remains the compatibility surface; the documentation registry does not replace it.
+- The current `/api/v1/capabilities` response remains the compatibility surface; the application capability registry and manifests do not replace it.
 - Pack and capability documents must distinguish applicable, configuration-gated, and not-implemented behavior.
 
 ## Verification

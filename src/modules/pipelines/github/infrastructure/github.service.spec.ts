@@ -29,6 +29,7 @@ const testPrivateKey = privateKey.export({
 
 const appConfig: AppConfig = {
   frontendUrl: 'http://localhost:3000',
+  composition: { edition: 'enterprise', profile: 'enterprise' },
   github: {
     clientId: 'client-id',
     clientSecret: 'client-secret',

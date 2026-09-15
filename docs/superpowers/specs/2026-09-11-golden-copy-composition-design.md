@@ -3,12 +3,12 @@ type: "Design Specification"
 title: "Golden Copy composition design"
 description: "Design for promoting SaaS, EDU, and Enterprise composition packs from documentation into build and runtime composition."
 tags: [design, composition, capabilities, packs]
-status: draft
+status: implemented
 ---
 # Golden Copy composition design
 
 **Date:** 2026-09-11
-**Status:** Draft, approved in discussion, not yet implemented
+**Status:** Implemented locally on `codex/golden-copy-trunk`; not pushed
 **Branch:** `codex/golden-copy-trunk` (backend and frontend)
 
 ## 1. Problem
@@ -17,10 +17,11 @@ The Golden Copy contract layer already exists: a 29-key capability registry, thr
 comparable pack profiles, six architecture decisions, generated maps, and CI gates
 that check capability records against `AppConfig` in both directions.
 
-What does not exist is execution. Every pack profile records
-`Documentation status: documentation-only` and states that no pack-selection resolver
-is implemented. `identity.edition-entitlements` is `not-implemented` for all three
-packs. Packs are therefore prose that nothing enforces.
+Before this implementation, execution did not exist. Every pack profile recorded
+`Documentation status: documentation-only` and stated that no pack-selection resolver
+was implemented. `identity.edition-entitlements` remains `not-implemented` for all three
+packs, while the declared composition boundary is now enforced by the kernel, guards,
+profile checks, and generated catalog contract.
 
 This design promotes the registry from a documentation artifact into the source the
 application builds and boots from, and makes pack membership a property that build
@@ -34,7 +35,7 @@ artifacts and running requests actually honour.
 | D2 | Edition resolution supports both per-deployment and per-tenant modes, exposed through a single request-scoped API so callers never branch on mode. |
 | D3 | EDU stays a declared pack. It must be expressible and provably empty; no LMS, LTI, cohort, or FERPA work is in scope. |
 | D4 | Composition resolution is kernel-owned. Subscription entitlement stays in billing. They compose as two guards, not one. |
-| D5 | A capability outside the pack returns 404. A capability inside the pack but not entitled returns 403. |
+| D5 | A capability outside the pack returns 404. A capability inside the pack but not entitled reaches Billing's existing 402 response. |
 | D6 | `/api/v1/capabilities` keeps its current wire shape and gains `edition` plus a capability key array. No v2 endpoint. |
 | D7 | Build artifacts physically exclude code for packs they do not contain. |
 | D8 | Manifest loading goes through one replaceable seam. No licence verification now; a signed source can drop in later without touching call sites. |
@@ -110,8 +111,9 @@ bounded context. It mirrors the existing `subscription.guard.ts` plus
 ```
 
 `CapabilityGuard` must precede `SubscriptionGuard`. If it does not, an unentitled
-user hitting an out-of-pack capability receives 403, which confirms the capability
-exists and defeats D5. This ordering must be pinned by a test.
+user hitting an out-of-pack capability reaches Billing before composition can hide
+the capability. This ordering is pinned by an integration test; an in-pack but
+unentitled request preserves Billing's existing 402 response.
 
 `SessionAuthGuard` comes first because subject-scoped resolution needs the tenant.
 

@@ -5,24 +5,20 @@ describe('AuditEventsService', () => {
     create: jest.fn(),
     listByProjectForUser: jest.fn(),
   };
-  const configService = {
-    getOrThrow: jest.fn(),
-  };
+  const capabilityResolver = { deployment: jest.fn() };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    configService.getOrThrow.mockReturnValue({
-      auditEvents: { enabled: true },
-    });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['platform.audit-events']),
+    );
   });
 
   it('does not write audit rows when audit is disabled', async () => {
-    configService.getOrThrow.mockReturnValueOnce({
-      auditEvents: { enabled: false },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
     const service = new AuditEventsService(
       repository as never,
-      configService as never,
+      capabilityResolver as never,
     );
 
     await service.record({
@@ -39,7 +35,7 @@ describe('AuditEventsService', () => {
   it('writes audit rows when audit is enabled', async () => {
     const service = new AuditEventsService(
       repository as never,
-      configService as never,
+      capabilityResolver as never,
     );
 
     await service.record({
@@ -63,7 +59,7 @@ describe('AuditEventsService', () => {
     repository.create.mockRejectedValueOnce(new Error('database down'));
     const service = new AuditEventsService(
       repository as never,
-      configService as never,
+      capabilityResolver as never,
     );
 
     await expect(
@@ -77,12 +73,10 @@ describe('AuditEventsService', () => {
   });
 
   it('returns disabled audit list when audit is disabled', async () => {
-    configService.getOrThrow.mockReturnValueOnce({
-      auditEvents: { enabled: false },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
     const service = new AuditEventsService(
       repository as never,
-      configService as never,
+      capabilityResolver as never,
     );
 
     await expect(

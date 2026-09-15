@@ -34,6 +34,9 @@ describe('DeploymentTargetsService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const capabilityResolver = {
+    deployment: jest.fn(),
+  };
   const usageQuotaService = {
     assertWithinLimit: jest.fn(),
     assertManagedFleetCapacity: jest.fn(),
@@ -162,6 +165,9 @@ describe('DeploymentTargetsService', () => {
         enabled: true,
       },
     });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['projects.target-management']),
+    );
     renderPolicy = new RenderDeploymentPolicy(
       new RenderCostPolicyService(configService as never),
     );
@@ -181,6 +187,7 @@ describe('DeploymentTargetsService', () => {
       auditEventsService as never,
       notificationEventsService as never,
       providerRegistry as never,
+      capabilityResolver as never,
     );
   });
 

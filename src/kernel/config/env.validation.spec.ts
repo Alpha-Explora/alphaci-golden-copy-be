@@ -119,6 +119,25 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('composition profile validation', () => {
+    it('rejects an invalid build profile during environment validation', () => {
+      expect(() =>
+        validateEnv(validEnv({ ALPHACI_BUILD_PROFILE: 'saas' })),
+      ).toThrow(/ALPHACI_BUILD_PROFILE/);
+    });
+
+    it('rejects an edition outside the selected build profile during boot validation', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            ALPHACI_BUILD_PROFILE: 'hosted',
+            ALPHACI_EDITION: 'enterprise',
+          }),
+        ),
+      ).toThrow(/not allowed by build profile 'hosted'/);
+    });
+  });
+
   describe('PORT validation', () => {
     it('defaults PORT to 4000 when missing', () => {
       const env = validEnv();

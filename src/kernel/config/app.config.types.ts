@@ -1,10 +1,18 @@
 import type { SubscriptionPlan } from '#kernel/auth/session-user.interface';
+import type {
+  BuildProfile,
+  Edition,
+} from '#kernel/composition/capability-types';
 
 /** See AppConfig['github']['teamRoleSync']. */
 export type GithubTeamRoleSyncMode = 'off' | 'seed' | 'enforce';
 
 export interface AppConfig {
   frontendUrl: string;
+  composition: {
+    edition: Edition;
+    profile: BuildProfile;
+  };
   github: {
     clientId: string;
     clientSecret: string;

@@ -32,6 +32,15 @@ An artifact excludes source for packs its profile does not contain. Exclusion is
 
 The profile is the ceiling of the narrowing order in ADR-0007. No later layer can enable a capability whose pack was not compiled in.
 
+The backend implementation uses `ALPHACI_BUILD_PROFILE`, defaulting to
+`enterprise` and rejecting unknown values or an edition outside the selected
+ceiling at boot. The declared pack artifact inventory contains reserved
+pack-only roots and symbol markers, but this checkout has no corresponding
+implementation code. The scanner fails closed when a declared excluded path
+or marker appears, and the profile conformance command uses an isolated build
+plus a profile-specific compiled-output scan without mutating the normal `dist`
+directory.
+
 ## Rejected alternatives
 
 - One artifact for every profile was rejected. Code for a pack a customer did not buy would ship to that customer.
@@ -48,4 +57,13 @@ The profile is the ceiling of the narrowing order in ADR-0007. No later layer ca
 
 ## Verification
 
-Each profile is built, started, and checked so that its resolved capability set equals its documented pack table. Build output is scanned for symbols belonging to excluded packs; that scan is the enforcement of this decision.
+Run `npm run check:composition-profiles`. It builds the composition code in a
+temporary output directory, checks hosted/SaaS, hosted/EDU, and
+Enterprise/Enterprise resolved sets, and scans each profile's isolated compiled
+artifact for declared exclusions. A future profile build can pass its isolated
+compiled entries to the same scanner.
+
+The kernel also emits the public `@alphaci/capability-catalog` package from the
+same registry and manifests. The package is the cross-repository contract; it
+contains only stable capability metadata and is checked for drift before a
+frontend artifact consumes it.

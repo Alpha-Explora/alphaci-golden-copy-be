@@ -8,6 +8,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import type { AppConfig } from '#kernel/config/app.config';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
@@ -98,6 +102,9 @@ export class DeploymentTargetsService {
     private readonly notificationEventsService?: NotificationEventPublisher,
     @Optional()
     private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async listDeploymentTargets(projectId: string, userId: string) {
@@ -698,8 +705,10 @@ export class DeploymentTargetsService {
   }
 
   private projectTargetManagementEnabled(): boolean {
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    return config.projectTargetManagement?.enabled ?? false;
+    return (
+      this.capabilityResolver?.deployment().has('projects.target-management') ??
+      false
+    );
   }
 
   private normalizeMetadataUpdate(

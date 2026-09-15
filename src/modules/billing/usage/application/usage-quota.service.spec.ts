@@ -42,6 +42,7 @@ describe('UsageQuotaService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const capabilityResolver = { deployment: jest.fn() };
   let query: jest.Mock;
   let service: UsageQuotaService;
 
@@ -50,9 +51,13 @@ describe('UsageQuotaService', () => {
     configService.getOrThrow.mockReturnValue({
       usageQuotas: { enabled: true },
     });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['billing.usage-quotas']),
+    );
     service = new UsageQuotaService(
       makeDatabaseService(query),
       configService as never,
+      capabilityResolver as never,
     );
     registerManagedQuotas(service);
   });
@@ -188,9 +193,7 @@ describe('UsageQuotaService', () => {
   });
 
   it('does not block actions when quotas are disabled', async () => {
-    configService.getOrThrow.mockReturnValueOnce({
-      usageQuotas: { enabled: false },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
 
     await expect(
       service.assertWithinLimit('user-1', 'projects'),
@@ -256,6 +259,7 @@ describe('UsageQuotaService', () => {
       service = new UsageQuotaService(
         makeDatabaseService(query, false),
         configService as never,
+        capabilityResolver as never,
       );
       registerManagedQuotas(service);
 

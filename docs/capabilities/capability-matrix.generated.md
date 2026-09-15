@@ -6,8 +6,11 @@ tags: [capabilities, map, packs]
 status: stable
 sources:
   - id: "capability-registry"
-    resource: "docs/capabilities/registry.ts"
-    title: "Documentation capability registry"
+    resource: "src/kernel/composition/capability-registry.ts"
+    title: "Application capability registry"
+  - id: "capability-manifests"
+    resource: "src/kernel/composition/manifests.ts"
+    title: "Application capability manifests"
   - id: "capability-gate"
     resource: "scripts/check-capabilities.cjs"
     title: "Capability registry gate"
@@ -18,7 +21,7 @@ sources:
 
 # Capability matrix
 
-This matrix is generated from the documentation registry at `docs/capabilities/registry.ts`. It describes current compatibility keys and does not replace the existing `/api/v1/capabilities` response or implement entitlement resolution.
+This matrix is generated from the application-owned capability registry and pack manifests in `src/kernel/composition`. It describes current compatibility keys and does not replace the existing `/api/v1/capabilities` response or implement tenant entitlement resolution.
 
 | Capability key | Context | Description | Maturity | Editions with documented applicability | Configuration source |
 |---|---|---|---|---|---|

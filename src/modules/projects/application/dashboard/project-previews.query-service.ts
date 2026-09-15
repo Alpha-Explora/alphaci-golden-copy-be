@@ -1,7 +1,9 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import {
   DEPLOYMENT_HISTORY_QUERY,
   type DeploymentHistoryItem,
@@ -21,7 +23,8 @@ export class ProjectPreviewsService {
     private readonly deploymentsService: DeploymentHistoryQuery,
     private readonly embeddabilityProbe: UrlEmbeddabilityProbe,
     @Optional()
-    private readonly configService?: ConfigService,
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   /**
@@ -120,8 +123,11 @@ export class ProjectPreviewsService {
   }
 
   private enabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.previewDeployments?.enabled ?? false;
+    return (
+      this.capabilityResolver
+        ?.deployment()
+        .has('runtime.preview-deployments') ?? false
+    );
   }
 }
 
