@@ -31,11 +31,20 @@ export type CapabilityKey =
   | "pipelines.ci-run-tracking"
   | "pipelines.github-enterprise-server";
 
+export interface CapabilitySurface {
+  readonly apiField: string | null;
+  readonly viewFlag: string | null;
+  readonly domains: readonly string[];
+  readonly routes: readonly string[];
+  readonly featureBarrels: readonly string[];
+}
+
 export interface CapabilityCatalogRecord {
   readonly key: CapabilityKey;
   readonly maturity: CapabilityMaturity;
   readonly editions: readonly Edition[];
   readonly requires: readonly CapabilityKey[];
+  readonly surface: CapabilitySurface;
 }
 
 export type CapabilityManifest = readonly CapabilityKey[];

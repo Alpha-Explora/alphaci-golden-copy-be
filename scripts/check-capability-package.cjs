@@ -18,8 +18,9 @@ function collect() {
   const errors = [];
   const packageJsonPath = path.join(PACKAGE_DIR, 'package.json');
   const indexPath = path.join(PACKAGE_DIR, 'index.js');
+  const declarationPath = path.join(PACKAGE_DIR, 'index.d.ts');
 
-  if (!fs.existsSync(packageJsonPath) || !fs.existsSync(indexPath)) {
+  if (!fs.existsSync(packageJsonPath) || !fs.existsSync(indexPath) || !fs.existsSync(declarationPath)) {
     return [`${PACKAGE_NAME}: generated package output is missing; run npm run package:capability-catalog`];
   }
 
@@ -34,10 +35,13 @@ function collect() {
   delete require.cache[require.resolve(indexPath)];
   const actual = require(indexPath);
   if (JSON.stringify(actual.catalog) !== JSON.stringify(expected.catalog)) {
-    errors.push(`${PACKAGE_NAME}: catalog.json is stale or differs from the kernel registry`);
+    errors.push(`${PACKAGE_NAME}: catalog.json is stale or differs from catalog.source.json`);
   }
   if (JSON.stringify(actual.manifests) !== JSON.stringify(expected.manifests)) {
-    errors.push(`${PACKAGE_NAME}: manifests.json is stale or differs from the kernel manifests`);
+    errors.push(`${PACKAGE_NAME}: manifests.json is stale or differs from catalog.source.json`);
+  }
+  if (fs.readFileSync(declarationPath, 'utf8') !== expected.indexDts) {
+    errors.push(`${PACKAGE_NAME}: index.d.ts is stale or does not describe the published catalog`);
   }
   if (typeof actual.version !== 'string' || actual.version !== expected.version) {
     errors.push(`${PACKAGE_NAME}: index.js does not expose its package version`);
@@ -53,7 +57,7 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `Capability package OK (${PACKAGE_NAME}@${buildPackage().version}, generated from kernel composition).`,
+    `Capability package OK (${PACKAGE_NAME}@${buildPackage().version}, generated from catalog.source.json).`,
   );
 }
 

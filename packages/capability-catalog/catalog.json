@@ -7,7 +7,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "workspaces",
+      "viewFlag": "workspacesEnabled",
+      "domains": [
+        "settings"
+      ],
+      "routes": [
+        "/settings"
+      ],
+      "featureBarrels": [
+        "@/features/settings"
+      ]
+    }
   },
   {
     "key": "identity.hierarchy",
@@ -17,7 +30,23 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "hierarchy",
+      "viewFlag": "hierarchyEnabled",
+      "domains": [
+        "groups",
+        "teams"
+      ],
+      "routes": [
+        "/teams",
+        "/groups/[groupId]"
+      ],
+      "featureBarrels": [
+        "@/features/groups",
+        "@/features/teams"
+      ]
+    }
   },
   {
     "key": "identity.sso-scim",
@@ -27,7 +56,14 @@
     ],
     "requires": [
       "identity.workspaces"
-    ]
+    ],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "identity.lms-lti",
@@ -37,7 +73,14 @@
     ],
     "requires": [
       "identity.workspaces"
-    ]
+    ],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "identity.cohort-policy",
@@ -47,7 +90,14 @@
     ],
     "requires": [
       "identity.hierarchy"
-    ]
+    ],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "identity.edu-provisioning",
@@ -57,7 +107,14 @@
     ],
     "requires": [
       "identity.workspaces"
-    ]
+    ],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "identity.ferpa-workflows",
@@ -67,7 +124,14 @@
     ],
     "requires": [
       "identity.workspaces"
-    ]
+    ],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "identity.edition-entitlements",
@@ -77,7 +141,14 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "platform.audit-events",
@@ -87,7 +158,18 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "auditEvents",
+      "viewFlag": "auditEventsEnabled",
+      "domains": [
+        "capabilities"
+      ],
+      "routes": [],
+      "featureBarrels": [
+        "@/features/capabilities"
+      ]
+    }
   },
   {
     "key": "platform.notifications",
@@ -97,7 +179,23 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "notifications",
+      "viewFlag": "notificationsEnabled",
+      "domains": [
+        "notifications",
+        "settings"
+      ],
+      "routes": [
+        "/inbox",
+        "/settings"
+      ],
+      "featureBarrels": [
+        "@/features/notifications",
+        "@/features/settings"
+      ]
+    }
   },
   {
     "key": "platform.data-residency",
@@ -105,7 +203,14 @@
     "editions": [
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "billing.subscription-gate",
@@ -115,7 +220,14 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "billing.usage-quotas",
@@ -125,7 +237,18 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "usageQuotas",
+      "viewFlag": "usageQuotasEnabled",
+      "domains": [
+        "capabilities"
+      ],
+      "routes": [],
+      "featureBarrels": [
+        "@/features/capabilities"
+      ]
+    }
   },
   {
     "key": "billing.checkout",
@@ -133,7 +256,14 @@
     "editions": [
       "saas"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "runtime.env-provisioning",
@@ -143,7 +273,23 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "envProvisioning",
+      "viewFlag": "envProvisioningEnabled",
+      "domains": [
+        "workflows",
+        "projects"
+      ],
+      "routes": [
+        "/workflows",
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/workflows",
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "runtime.gcp-deployments",
@@ -153,7 +299,23 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [
+        "workflows",
+        "projects"
+      ],
+      "routes": [
+        "/workflows",
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/workflows",
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "runtime.deployment-history",
@@ -163,7 +325,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "deploymentHistory",
+      "viewFlag": "deploymentHistoryEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "runtime.preview-deployments",
@@ -175,7 +350,20 @@
     ],
     "requires": [
       "runtime.deployment-history"
-    ]
+    ],
+    "surface": {
+      "apiField": "previewDeployments",
+      "viewFlag": "previewDeploymentsEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "runtime.drift-detection",
@@ -185,7 +373,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "driftDetection",
+      "viewFlag": "driftDetectionEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "runtime.drift-repair",
@@ -195,7 +396,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "driftRepair",
+      "viewFlag": "driftRepairEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "runtime.managed-secrets",
@@ -203,7 +417,14 @@
     "editions": [
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "runtime.air-gap-packaging",
@@ -211,7 +432,14 @@
     "editions": [
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "runtime.customer-isolation",
@@ -219,7 +447,14 @@
     "editions": [
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   },
   {
     "key": "projects.sync-snapshots",
@@ -229,7 +464,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "projectSyncSnapshots",
+      "viewFlag": "projectSyncSnapshotsEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "projects.workflow-settings-preview",
@@ -239,7 +487,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "workflowSettingsPreview",
+      "viewFlag": "workflowSettingsPreviewEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "projects.workflow-update-pr",
@@ -249,7 +510,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "workflowUpdatePr",
+      "viewFlag": "workflowUpdatePrEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "projects.target-management",
@@ -259,7 +533,20 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "projectTargetManagement",
+      "viewFlag": "projectTargetManagementEnabled",
+      "domains": [
+        "projects"
+      ],
+      "routes": [
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "pipelines.ci-run-tracking",
@@ -269,7 +556,23 @@
       "edu",
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": "ciRunTracking",
+      "viewFlag": "ciRunTrackingEnabled",
+      "domains": [
+        "runs",
+        "projects"
+      ],
+      "routes": [
+        "/runs",
+        "/projects/[projectId]"
+      ],
+      "featureBarrels": [
+        "@/features/runs",
+        "@/features/projects"
+      ]
+    }
   },
   {
     "key": "pipelines.github-enterprise-server",
@@ -277,6 +580,13 @@
     "editions": [
       "enterprise"
     ],
-    "requires": []
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": null,
+      "domains": [],
+      "routes": [],
+      "featureBarrels": []
+    }
   }
 ]

@@ -3,12 +3,12 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadCapabilityCatalog } = require('./load-capability-catalog.cjs');
+const { loadSource, validateSource } = require('./lib/composition-source.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const PACKAGE_DIR = path.join(ROOT, 'packages', 'capability-catalog');
 const PACKAGE_NAME = '@alphaci/capability-catalog';
-const DEFAULT_VERSION = '0.1.0';
+const DEFAULT_VERSION = '0.2.0';
 const EDITIONS = ['saas', 'edu', 'enterprise'];
 
 function packageVersion() {
@@ -30,6 +30,13 @@ function publicCatalog(capabilities, manifests) {
     maturity: capability.maturity,
     editions: EDITIONS.filter((edition) => editionsByKey.get(edition).has(capability.key)),
     requires: [...capability.requires],
+    surface: {
+      apiField: capability.surface.apiField,
+      viewFlag: capability.surface.viewFlag,
+      domains: [...capability.surface.domains],
+      routes: [...capability.surface.routes],
+      featureBarrels: [...capability.surface.featureBarrels],
+    },
   }));
 }
 
@@ -48,11 +55,20 @@ export type CapabilityMaturity = "stable" | "limited" | "not-implemented";
 export type CapabilityKey =
 ${keyUnion};
 
+export interface CapabilitySurface {
+  readonly apiField: string | null;
+  readonly viewFlag: string | null;
+  readonly domains: readonly string[];
+  readonly routes: readonly string[];
+  readonly featureBarrels: readonly string[];
+}
+
 export interface CapabilityCatalogRecord {
   readonly key: CapabilityKey;
   readonly maturity: CapabilityMaturity;
   readonly editions: readonly Edition[];
   readonly requires: readonly CapabilityKey[];
+  readonly surface: CapabilitySurface;
 }
 
 export type CapabilityManifest = readonly CapabilityKey[];
@@ -70,7 +86,23 @@ export const manifests: Readonly<Record<Edition, CapabilityManifest>>;
 }
 
 function buildPackage() {
-  const { capabilities, manifests } = loadCapabilityCatalog();
+  const source = loadSource();
+  const sourceErrors = validateSource(source);
+  if (sourceErrors.length > 0) {
+    throw new Error(`Composition source is invalid: ${sourceErrors.join('; ')}`);
+  }
+  const capabilities = source.capabilities;
+  const manifests = Object.fromEntries(
+    EDITIONS.map((edition) => [
+      edition,
+      {
+        edition,
+        capabilities: capabilities
+          .filter((capability) => capability.editions.includes(edition))
+          .map((capability) => capability.key),
+      },
+    ]),
+  );
   const catalog = publicCatalog(capabilities, manifests);
   const publicManifestMap = publicManifests(manifests);
   const version = packageVersion();

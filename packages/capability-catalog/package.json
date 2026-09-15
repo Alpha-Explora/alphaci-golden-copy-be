@@ -1,6 +1,6 @@
 {
   "name": "@alphaci/capability-catalog",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Public AlphaCI capability keys, maturity, pack applicability, and dependencies.",
   "main": "index.js",
   "types": "index.d.ts",
