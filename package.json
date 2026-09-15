@@ -63,6 +63,7 @@
     "package:capability-catalog": "node ./scripts/package-capability-catalog.cjs",
     "check:capability-package": "node ./scripts/check-capability-package.cjs",
     "check:composition-profiles": "node ./scripts/check-build-profile-conformance.cjs",
+    "check:nest-watch": "node scripts/check-nest-watch.mjs",
     "generate:architecture-maps": "node scripts/generate-architecture-maps.mjs",
     "check:okf": "node scripts/check-okf-bundle.cjs docs",
     "check:documentation": "node scripts/check-documentation.cjs",
