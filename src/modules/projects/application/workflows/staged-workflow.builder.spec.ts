@@ -652,6 +652,7 @@ describe('failure capture in the reporting job', () => {
     expect(parsed.jobs['report-results']!.permissions).toEqual({
       contents: 'read',
       actions: 'read',
+      statuses: 'write',
       checks: 'read',
     });
   });
@@ -952,13 +953,123 @@ describe('a stage that never ran reports nothing', () => {
     const run = stageStep('20-alphaci-package').run;
 
     const guard = run.indexOf('"$STAGE_WORK_RAN" != "true"');
-    const exit = run.indexOf('exit 0');
-    const firstRequest = run.indexOf('curl');
+    const exit = run.indexOf('exit 0', guard);
 
     expect(guard).toBeGreaterThan(-1);
     expect(exit).toBeGreaterThan(guard);
-    // Nothing reaches the network between the guard and its exit.
-    expect(firstRequest).toBeGreaterThan(exit);
+
+    /*
+     * Nothing reaches the network between the guard and its exit.
+     *
+     * Checked over the branch itself rather than by asking where the first
+     * `curl` in the script appears. The status helper is a function DEFINITION
+     * containing a curl, and it has to be defined up front so every path that
+     * reaches a verdict can call it — a definition is not a request, and the
+     * cruder test read it as one.
+     */
+    const branch = run.slice(guard, exit);
+
+    expect(branch).not.toContain('curl');
+    expect(branch).not.toContain('post_commit_status ');
+  });
+
+  /*
+   * A stage that did no work must not put a green status on the commit.
+   *
+   * It would claim the commit cleared a stage that never examined it — the
+   * same false claim as a package row recording a build of nothing as a
+   * successful deploy, moved to the one place that decides whether code
+   * reaches uat and main.
+   */
+  /*
+   * A chained stage runs via `workflow_run`, and GitHub does not attach those
+   * runs to a pull request as checks. So the stage that runs the tests was
+   * invisible to branch protection, which could only require `env-guard` - five
+   * seconds, environment variables - and a pull request into uat could be
+   * merged with every test failing. A commit status is the one verdict from a
+   * workflow_run chain that protection can see.
+   */
+  describe('the commit status a stage puts on its commit', () => {
+    const reportRun = (file: string) => stageStep(file).run;
+
+    it('posts to the statuses API for the sha pipeline-context resolved', () => {
+      const run = reportRun('10-alphaci-quality');
+
+      expect(run).toContain(
+        'https://api.github.com/repos/${GH_REPO}/statuses/${GH_SHA}',
+      );
+    });
+
+    it('names a context per stage, so each can be required separately', () => {
+      const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+        templateId: 'be-nestjs',
+        serviceName: 'orders-api',
+      });
+
+      const contextFor = (path: string) => {
+        const parsed = yaml.load(
+          bundle.workflowFiles.find((f) => f.path.includes(path))!.yaml,
+        ) as {
+          jobs: Record<string, { steps?: { env?: Record<string, string> }[] }>;
+        };
+        return parsed.jobs['report-results']!.steps!.map(
+          (step) => step.env?.['STATUS_CONTEXT'],
+        ).find(Boolean);
+      };
+
+      expect(contextFor('10-alphaci-quality')).toBe('alphaci/quality');
+      expect(contextFor('20-alphaci-package')).toBe('alphaci/package');
+      expect(contextFor('00-alphaci-access')).toBe('alphaci/access');
+    });
+
+    it('reports a verdict on every path that reaches one', () => {
+      const run = reportRun('10-alphaci-quality');
+
+      expect(run).toContain('post_commit_status "failure"');
+      expect(run).toContain('post_commit_status "error"');
+      expect(run).toContain('post_commit_status "success"');
+    });
+
+    /*
+     * Defined before the branch that exits, because a REQUIRED status that
+     * never arrives leaves a pull request pending for ever. Blocking every
+     * merge would be a worse failure than the one this prevents.
+     */
+    it('defines the helper before anything can exit', () => {
+      const run = reportRun('10-alphaci-quality');
+
+      expect(run.indexOf('post_commit_status() {')).toBeLessThan(
+        run.indexOf('exit 0'),
+      );
+    });
+
+    /*
+     * A green pipeline must not turn red because GitHub would not take a
+     * status - but a silently broken status path is how a gate stops gating
+     * without anyone noticing, so it warns rather than passing in silence.
+     */
+    it('never fails the stage, and never fails it quietly', () => {
+      const run = reportRun('10-alphaci-quality');
+
+      expect(run).toContain('|| echo "::warning::Could not post the');
+      expect(run).toContain('Branch protection requiring it');
+    });
+
+    it('says so rather than posting against an empty sha', () => {
+      const run = reportRun('10-alphaci-quality');
+
+      expect(run).toContain('if [ -z "${GH_SHA}" ]; then');
+      expect(run).toContain('No commit sha resolved');
+    });
+  });
+
+  it('posts no commit status for a stage that did no work', () => {
+    const run = stageStep('20-alphaci-package').run;
+
+    const guard = run.indexOf('"$STAGE_WORK_RAN" != "true"');
+    const exit = run.indexOf('exit 0', guard);
+
+    expect(run.slice(guard, exit)).not.toContain('post_commit_status');
   });
 });
 
