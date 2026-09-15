@@ -1555,18 +1555,21 @@ describe('chained stages read the branch from the context job', () => {
 });
 
 /*
- * Two runs of the same stage must never overlap on one repository.
+ * A concurrency group that spans branches DROPS pipelines.
  *
- * A branch with an open pull request fires every stage twice - once for the
- * push, once for the pull_request - and the chains race. Measured on a real
- * repository: two package runs overlapping by a minute, both building the same
- * image with the same buildx cache scope, the second dying on
- * "failed to reserve cache".
+ * These stages had one. It keyed on the repository alone - the only thing
+ * available, since `concurrency` is evaluated before any job runs and cannot
+ * read `pipeline-context` - which put dev, uat and main in one group. GitHub
+ * keeps a single pending run per group and cancels the one queued behind it,
+ * so on testsandbox-fe, with every other fix in place, dev and uat recorded an
+ * access report and nothing else: their quality runs were cancelled, five of
+ * seven, while main's went through.
  *
- * The cache is only the symptom that surfaced. Two package runs mean two
- * deploys racing to the same environment.
+ * A cancelled pipeline reports nothing at all. That is strictly worse than the
+ * cache collision the group was guarding, which fails one run loudly with the
+ * reason in the log.
  */
-describe('chained stages are serialized per repository', () => {
+describe('no chained stage can cancel another branch', () => {
   const bundle = () =>
     buildStagedWorkflowBundle(
       makeTemplate('dotnet'),
@@ -1577,48 +1580,40 @@ describe('chained stages are serialized per repository', () => {
       ]),
     );
 
-  it('gives every chained stage its own concurrency group', () => {
+  it('gives no chained stage a concurrency group at all', () => {
     const chained = bundle().workflowFiles.filter((file) =>
-      ['quality', 'package'].includes(file.stage),
+      ['quality', 'package', 'verify'].includes(file.stage),
     );
 
     expect(chained.length).toBeGreaterThan(0);
     for (const file of chained) {
-      const parsed = yaml.load(file.yaml) as {
-        concurrency?: { group?: string; 'cancel-in-progress'?: boolean };
-      };
-      expect(parsed.concurrency?.group).toContain(file.stage);
-      // Queued, never cancelled: a half-finished deploy must not be killed
-      // because a duplicate trigger arrived behind it.
-      expect(parsed.concurrency?.['cancel-in-progress']).toBe(false);
+      const parsed = yaml.load(file.yaml) as { concurrency?: unknown };
+      expect(parsed.concurrency).toBeUndefined();
     }
   });
 
-  it('does not let two stages share one group', () => {
-    // A shared group would serialize quality against package, so a pipeline
-    // would deadlock behind its own next stage.
-    const groups = bundle()
-      .workflowFiles.filter((file) =>
-        ['quality', 'package', 'verify'].includes(file.stage),
-      )
-      .map((file) => {
-        const parsed = yaml.load(file.yaml) as {
-          concurrency?: { group?: string };
-        };
-        return parsed.concurrency?.group;
-      });
-
-    expect(new Set(groups).size).toBe(groups.length);
-  });
-
   it('leaves the push-triggered access stage alone', () => {
-    // Access is cheap, has no cache and no deploy, and serializing it would
-    // delay every later stage behind it for nothing.
+    // Access is cheap, has no cache and no deploy, and never had one.
     const access = bundle().workflowFiles.find(
       (file) => file.stage === 'access',
     );
     const parsed = yaml.load(access!.yaml) as { concurrency?: unknown };
 
     expect(parsed.concurrency).toBeUndefined();
+  });
+
+  /*
+   * The env guard keeps its group, and should: it is push-triggered, so
+   * `github.ref` is the real branch and the key separates them. It is the
+   * counter-example that shows the problem was the KEY, not the mechanism.
+   */
+  it('keeps the env guard serialized per ref, where the branch is knowable', () => {
+    const guard = bundle().workflowFiles.find((file) => file.stage === 'guard');
+    const parsed = yaml.load(guard!.yaml) as {
+      concurrency?: { group?: string; 'cancel-in-progress'?: boolean };
+    };
+
+    expect(parsed.concurrency?.group).toContain('github.ref');
+    expect(parsed.concurrency?.['cancel-in-progress']).toBe(false);
   });
 });
