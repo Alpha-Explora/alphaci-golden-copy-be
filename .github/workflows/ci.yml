@@ -2,13 +2,14 @@ name: CI
 
 # Full quality gate for the current backend.
 #
-# GitHub Actions minutes are constrained on this account (the sibling
-# alphaci-be repo ships the same posture). Dispatch this workflow when you
-# have minutes to spend. The everyday gate is local:
+# Run this gate on every push and pull request, while keeping manual dispatch
+# available. The same checks are available locally for fast feedback:
 #   npm run typecheck && npm run lint && npm test && npm run boundaries && npm run check:documentation && npm run check:capabilities
 
 on:
-  workflow_dispatch:
+  push: {}
+  pull_request: {}
+  workflow_dispatch: {}
 
 permissions:
   contents: read

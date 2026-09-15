@@ -26,6 +26,20 @@ const compositionFor = (
 });
 
 describe('EnterpriseClientPolicyPack', () => {
+  it('resolves the declared Northwind preset as a deny-only policy', () => {
+    const pack = createEnterpriseClientPolicyPack();
+    const source = pack.createSource(
+      compositionFor({ id: 'northwind', configPath: null }),
+    );
+    const policy = source.deployment();
+
+    expect(policy).toEqual(northwind);
+    expect(policy).not.toHaveProperty('enabledCapabilities');
+    expect(policy?.disabledCapabilities).toEqual([
+      'runtime.preview-deployments',
+    ]);
+  });
+
   it('preserves declared policy lookup and mounted-config precedence', () => {
     const pack = createEnterpriseClientPolicyPack({
       policies: { northwind },
