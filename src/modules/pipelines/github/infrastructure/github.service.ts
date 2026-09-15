@@ -1063,19 +1063,19 @@ export class GithubService
     if (response.status === 404) {
       throw new GithubRepoDeleteError(
         'not_found',
-        `GitHub repository ${owner}/${repo} was not found (it may already be deleted, or this token no longer has access to it).`,
+        `GitHub could not find ${owner}/${repo}. If it is already deleted, untick "also delete on GitHub" to disconnect the project on its own.`,
       );
     }
 
-    if (response.status === 403 || response.status === 401) {
-      // Curated, canned message only — never mix the raw GitHub response
-      // body into a message that flows into the API response
-      // (githubRepoDeleteError.message). Mirrors
-      // RenderEnvironmentClient.assertOk's per-status canned messages.
+    if (response.status === 401) {
       throw new GithubRepoDeleteError(
-        'missing_scope',
-        `GitHub denied deleting ${owner}/${repo} (${String(response.status)}). This usually means the session's GitHub token was issued before the delete_repo scope was granted — reconnect your GitHub account to grant repository-deletion permission.`,
+        'token_rejected',
+        `GitHub rejected this session's token, so ${owner}/${repo} was not deleted. Sign out and sign back in, then try again.`,
       );
+    }
+
+    if (response.status === 403) {
+      throw await this.explainRepoDeleteRefusal(response, owner, repo);
     }
 
     const body = await response.text().catch(() => '');
@@ -1083,6 +1083,62 @@ export class GithubService
     throw new GithubRepoDeleteError(
       'other',
       `GitHub repo deletion failed (${String(response.status)}):${summary}`,
+    );
+  }
+
+  /**
+   * Why GitHub answered 403 to a repository delete, as far as it said.
+   *
+   * This used to be one canned sentence blaming a missing `delete_repo` scope.
+   * Two real deletions got it while the login requested that scope and the
+   * user was an organisation admin, so the advice - reconnect your account -
+   * could not have helped. The response carries better evidence, and it is
+   * read in order of how directly it answers:
+   *
+   *   1. GitHub's own words. An organisation with OAuth app access
+   *      restrictions names them in the body. It is matched, never echoed:
+   *      the message that reaches the user is still written here.
+   *   2. The token's granted scopes. GitHub returns X-OAuth-Scopes for OAuth
+   *      tokens, so a missing `delete_repo` is a fact, not an inference.
+   *   3. Neither. Then the cause is not established, and the message lists
+   *      what it usually is instead of choosing one.
+   */
+  private async explainRepoDeleteRefusal(
+    response: Response,
+    owner: string,
+    repo: string,
+  ): Promise<GithubRepoDeleteError> {
+    const body = await response.text().catch(() => '');
+    if (/OAuth App access restrictions/i.test(body)) {
+      return new GithubRepoDeleteError(
+        'org_restricted',
+        `The ${owner} organization restricts which apps can act on its repositories, and ALPHACI is not approved, so ${owner}/${repo} was not deleted. An organization owner can approve it under Settings → Third-party application access policy.`,
+      );
+    }
+
+    // Absent for GitHub App and fine-grained tokens, and in some test doubles,
+    // so a missing header means "unknown", never "no delete_repo".
+    const grantedScopes = response.headers?.get('x-oauth-scopes') ?? null;
+    if (grantedScopes !== null) {
+      const scopes = grantedScopes
+        .split(',')
+        .map((scope) => scope.trim())
+        .filter(Boolean);
+      if (!scopes.includes('delete_repo')) {
+        return new GithubRepoDeleteError(
+          'missing_scope',
+          `This session's GitHub token does not include permission to delete repositories, so ${owner}/${repo} was not deleted. Sign out and sign back in to grant it.`,
+        );
+      }
+    }
+
+    const scopeNote =
+      grantedScopes === null
+        ? ''
+        : ' even though the token can delete repositories';
+    return new GithubRepoDeleteError(
+      'forbidden',
+      `GitHub refused to delete ${owner}/${repo}${scopeNote}. Deleting a repository needs admin rights on it, and the organization must allow its members to delete repositories.`,
     );
   }
 

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -138,6 +139,31 @@ export class ProjectLifecycleService {
         destructiveRoles,
       );
 
+    /*
+     * GitHub refused, so the project stays.
+     *
+     * This used to disconnect locally anyway and tuck the refusal into the
+     * response, which the page never read. Two deletions went that way: the
+     * repositories are still on GitHub, the projects were gone from ALPHACI,
+     * and with them the only screen that could have retried. The user had
+     * asked for both to go and got half, told neither.
+     *
+     * Keeping the project keeps the retry. Someone who only wants to
+     * disconnect - including when the repository was already deleted by hand
+     * - unticks "also delete on GitHub" and the local delete goes through.
+     *
+     * 409 rather than a 200 carrying an error: nothing was changed, and a
+     * success status is what let the old failure pass as a success.
+     */
+    if (githubRepoDeleteError) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: githubRepoDeleteError.code,
+        message: `${githubRepoDeleteError.message} The project was kept so you can try again.`,
+      });
+    }
+
     const deleted = await this.projectsRepository.deleteByIdAndUser(
       projectId,
       userId,
@@ -149,11 +175,7 @@ export class ProjectLifecycleService {
       );
     }
 
-    return {
-      ok: true,
-      githubRepoDeleted,
-      ...(githubRepoDeleteError ? { githubRepoDeleteError } : {}),
-    };
+    return { ok: true, githubRepoDeleted };
   }
 
   /** Checks tracked projects without treating inconclusive GitHub failures as missing repos. */
@@ -319,17 +341,17 @@ export class ProjectLifecycleService {
   }> {
     if (!githubAccessToken) {
       const githubRepoDeleteError = {
-        code: 'missing_scope' as const,
+        code: 'token_rejected' as const,
         message:
-          'No GitHub access token on this session — reconnect your GitHub account to grant repository-deletion permission.',
+          'This session has no GitHub access token, so the repository was not deleted. Sign out and sign back in, then try again.',
       };
       await this.recordProductEvent({
         userId,
         projectId,
-        eventCode: 'project_github_repo_delete_missing_scope',
-        title: 'GitHub repository deletion needs reconnect',
+        eventCode: 'project_github_repo_delete_failed',
+        title: 'GitHub repository deletion needs you to sign in again',
         body: `Could not delete ${repoFullName} on GitHub: no GitHub access token on this session.`,
-        metadata: { repoFullName, code: 'missing_scope' },
+        metadata: { repoFullName, code: 'token_rejected' },
       });
       return { githubRepoDeleted: false, githubRepoDeleteError };
     }

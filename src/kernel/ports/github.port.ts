@@ -24,7 +24,30 @@ export interface GithubCreateRepoInput {
   private: boolean;
 }
 
-export type GithubRepoDeleteErrorCode = 'missing_scope' | 'not_found' | 'other';
+/**
+ * Why GitHub did not delete a repository, as far as the response establishes.
+ *
+ * Every 401 and 403 used to be reported as `missing_scope`, and the response
+ * body was thrown away, so the one explanation GitHub gave was lost and a
+ * guess took its place. Two real deletions were refused that way while the
+ * login requested `delete_repo` and the user was an organisation admin -
+ * "reconnect your account" was not the fix. Each code now means something the
+ * response actually showed:
+ *
+ *   missing_scope   the token's own X-OAuth-Scopes header lacks delete_repo
+ *   org_restricted  GitHub said the organisation restricts OAuth app access
+ *   token_rejected  401, or no token on the session at all
+ *   forbidden       403 for a reason the response does not name
+ *   not_found       404 - already deleted, or no longer visible to this token
+ *   other           any other status
+ */
+export type GithubRepoDeleteErrorCode =
+  | 'missing_scope'
+  | 'org_restricted'
+  | 'token_rejected'
+  | 'forbidden'
+  | 'not_found'
+  | 'other';
 
 export class GithubRepoDeleteError extends Error {
   constructor(
