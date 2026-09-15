@@ -190,6 +190,18 @@ function capabilityLedgerErrors() {
   ];
 }
 
+function compositionSourceErrors() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'generate-composition-source.mjs'), '--check'],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  if (result.status === 0) return [];
+  return [
+    `composition source check failed: ${(result.stderr || result.stdout).trim()}`,
+  ];
+}
+
 function main() {
   const errors = [
     ...requiredFileErrors(),
@@ -200,6 +212,7 @@ function main() {
     ...generatedMapErrors(),
     ...capabilityRegistryErrors(),
     ...capabilityLedgerErrors(),
+    ...compositionSourceErrors(),
     ...validateBundle(DOCS),
   ];
 

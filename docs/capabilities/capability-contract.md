@@ -98,6 +98,12 @@ Entries live in `docs/capabilities/ledger.json` and are append-only. Each entry 
 
 Use `npm run ledger:record` to append an entry; it computes the hash and refreshes the generated ledger. The summary and the reference are written by hand, because a record derived from history can say what changed but not why.
 
+## Authoring
+
+`src/kernel/composition/catalog.source.json` is the authoring source. One record carries the capability, its pack membership, and its frontend surface. `capability-registry.ts` and `manifests.ts` are generated from it and must not be edited by hand; `npm run generate:composition` rewrites them and `npm run check:composition-source` rejects drift.
+
+`npm run capability:new` adds a capability in one command, deriving the registry, the manifests, the three pack rows, the generated maps, and the ledger entry. A configuration flag named by a record is code and still has to exist in `AppConfig`. See [ADR-0010](/architecture/decisions/adr-0010-single-authoring-source-for-composition.md).
+
 ## Verification
 
 Run `npm run check:capability-package`, `npm run check:capabilities`, `npm run check:capability-ledger`, `npm run check:composition-profiles`, `npm run generate:architecture-maps -- --check`, and `npm run check:documentation`. Review any capability change against the [orthogonal axes decision](/architecture/decisions/adr-0002-orthogonal-product-axes.md) and [pack contract](/packs/pack-contract.md). The capability checks include package parity, pack catalog completeness, and ledger currency.
