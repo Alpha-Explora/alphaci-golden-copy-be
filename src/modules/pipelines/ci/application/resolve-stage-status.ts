@@ -88,12 +88,30 @@ const BLOCKED_MESSAGE = (blockedBy: StageId): FriendlyMessage => ({
   hint: `Fix the ${blockedBy} stage and the rest of the pipeline will run.`,
 });
 
+/*
+ * What we know is that nothing arrived. Why is a separate question.
+ *
+ * This used to answer it anyway - "the workflow was rejected before any job
+ * ran" - and that was wrong the first time it was checked against a real
+ * stalled stage. The package stage on stpetertestfe ran NINE jobs, failed on
+ * the Vercel deploy, and reported in full; the report was simply filed under
+ * `main`, because workflow_run reads the workflow FILE from the default
+ * branch and main's copy still resolved the branch the old way. A reader
+ * following this text went looking for a startup rejection that had never
+ * happened, while the real failure sat one branch away with its own per-tool
+ * detail.
+ *
+ * So the title says what is true - no report - and the causes are listed as
+ * candidates rather than announced as the answer. The same mistake in the
+ * failed-job hints cost the same kind of time, and the fix is the same one:
+ * a product that cannot tell three causes apart should name three.
+ */
 const STALLED_MESSAGE: FriendlyMessage = {
   severity: 'error',
-  title: 'Stage never started',
+  title: 'Stage reported nothing',
   detail:
-    'The stage before this one succeeded, but this stage never reported. That means the workflow was rejected before any job ran, so it could not report anything itself.',
-  hint: 'Open the run on GitHub — a workflow rejected at startup names the reason there. The usual causes are a referenced workflow that cannot be resolved, or a secret the called workflow does not declare.',
+    'The stage before this one succeeded, but no report arrived from this stage. Either it never ran, or it ran and its report was recorded somewhere this view is not looking.',
+  hint: 'Check the run on GitHub first: if jobs ran, the stage executed and the report went astray — most often to another branch, when the workflow on the default branch is older than the one that was pushed. If no jobs ran, the workflow was rejected at startup, usually a referenced workflow that cannot be resolved or a secret the called workflow does not declare.',
 };
 
 /**
