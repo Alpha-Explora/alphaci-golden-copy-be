@@ -6,8 +6,11 @@ tags: [capabilities, map, packs]
 status: stable
 sources:
   - id: "capability-registry"
-    resource: "docs/capabilities/registry.ts"
-    title: "Documentation capability registry"
+    resource: "src/kernel/composition/capability-registry.ts"
+    title: "Application capability registry"
+  - id: "capability-manifests"
+    resource: "src/kernel/composition/manifests.ts"
+    title: "Application capability manifests"
   - id: "capability-gate"
     resource: "scripts/check-capabilities.cjs"
     title: "Capability registry gate"
@@ -18,7 +21,7 @@ sources:
 
 # Capability matrix
 
-This matrix is generated from the documentation registry at `docs/capabilities/registry.ts`. It describes current compatibility keys and does not replace the existing `/api/v1/capabilities` response or implement entitlement resolution.
+This matrix is generated from the application-owned capability registry and pack manifests in `src/kernel/composition`. It describes current compatibility keys and does not replace the existing `/api/v1/capabilities` response or implement tenant entitlement resolution.
 
 | Capability key | Context | Description | Maturity | Editions with documented applicability | Configuration source |
 |---|---|---|---|---|---|
@@ -45,6 +48,7 @@ This matrix is generated from the documentation registry at `docs/capabilities/r
 | `runtime.managed-secrets` | `runtime` | Managed secret storage, including Vault integration. | not-implemented | enterprise | Not implemented in this backend. No AppConfig flag. |
 | `runtime.air-gap-packaging` | `runtime` | Air-gap packaging of the application as a deployment target. | not-implemented | enterprise | Not implemented in this backend. No AppConfig flag. |
 | `runtime.customer-isolation` | `runtime` | Customer-managed operational isolation as a tenancy option. | not-implemented | enterprise | Not implemented in this backend. No AppConfig flag. |
+| `runtime.client-composition` | `runtime` | Enterprise client composition through a declared or deployment-mounted deny-only policy. | limited | enterprise | composition.client.enabled and an Enterprise client policy source |
 | `projects.sync-snapshots` | `projects` | Project synchronization snapshot reads and findings. | limited | saas, edu, enterprise | projectSyncSnapshots.enabled |
 | `projects.workflow-settings-preview` | `projects` | Workflow settings preview and validation. | stable | saas, edu, enterprise | workflowSettingsPreview.enabled |
 | `projects.workflow-update-pr` | `projects` | Workflow update pull-request requests. | limited | saas, edu, enterprise | workflowUpdatePr.enabled |

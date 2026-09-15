@@ -7,6 +7,7 @@ import {
 } from './app.config-slices';
 import type { AppConfig } from './app.config.types';
 import { resolveCentralWorkflowRepo } from './central-workflow';
+import { parseCompositionConfig } from '#kernel/composition/composition-config.js';
 
 export { githubConfig, provisioningConfig, subscriptionConfig };
 export type { AppConfig, GithubTeamRoleSyncMode } from './app.config.types';
@@ -177,6 +178,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
 
   return {
     frontendUrl: env['FRONTEND_URL'] ?? 'http://localhost:3000',
+    composition: parseCompositionConfig(env),
     github: githubConfig(env),
     templates: templatesConfig(env),
     subscription: subscriptionConfig(env),

@@ -37,13 +37,13 @@ function deployment(
 describe('ProjectPreviewsService', () => {
   const deploymentsService = { listDeployments: jest.fn() };
   const embeddabilityProbe = { check: jest.fn() };
-  const configService = { getOrThrow: jest.fn() };
+  const capabilityResolver = { deployment: jest.fn() };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    configService.getOrThrow.mockReturnValue({
-      previewDeployments: { enabled: true },
-    });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['runtime.preview-deployments', 'runtime.deployment-history']),
+    );
     embeddabilityProbe.check.mockResolvedValue({
       embeddable: true,
       reason: null,
@@ -60,14 +60,12 @@ describe('ProjectPreviewsService', () => {
     return new ProjectPreviewsService(
       deploymentsService,
       embeddabilityProbe as never,
-      configService as never,
+      capabilityResolver as never,
     );
   }
 
   it('returns a disabled response and asks the provider for nothing when the flag is off', async () => {
-    configService.getOrThrow.mockReturnValue({
-      previewDeployments: { enabled: false },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
 
     await expect(
       createService().listPreviews(projectReference),

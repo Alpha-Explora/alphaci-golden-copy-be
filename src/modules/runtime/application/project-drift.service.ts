@@ -1,7 +1,9 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import {
   CI_TOKEN_STATUS_LOOKUP,
   type CiTokenStatusLookup,
@@ -140,7 +142,8 @@ export class ProjectDriftService implements DeploymentDriftQuery {
     @Inject(CI_TOKEN_STATUS_LOOKUP)
     private readonly ciTokensRepository?: CiTokenStatusLookup,
     @Optional()
-    private readonly configService?: ConfigService,
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async listFindings(
@@ -237,7 +240,9 @@ export class ProjectDriftService implements DeploymentDriftQuery {
   }
 
   private enabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.driftDetection?.enabled ?? false;
+    return (
+      this.capabilityResolver?.deployment().has('runtime.drift-detection') ??
+      false
+    );
   }
 }

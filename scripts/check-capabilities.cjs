@@ -2,10 +2,10 @@
 'use strict';
 
 /**
- * Binds the documentation capability registry to real application configuration.
+ * Binds the application capability catalog to real application configuration.
  *
  * The registry used to name its enablement source in prose, so a flag could be
- * renamed in AppConfig while the registry and the generated matrix stayed
+ * renamed in AppConfig while the catalog and the generated matrix stayed
  * green. Every record now carries `configurationFlags`, which are checked
  * against the boolean leaves of AppConfig (`src/kernel/config/app.config.types.ts`)
  * in both directions.
@@ -13,8 +13,7 @@
  * Checks:
  *   1. every configurationFlags entry exists as a boolean leaf in AppConfig
  *   2. every AppConfig boolean leaf is claimed by a record or explicitly exempt
- *   3. requires edges resolve to known capability keys, are acyclic, and
- *      never point at a capability with a narrower edition set
+ *   3. requires edges resolve to known capability keys and are acyclic
  *   4. records are structurally valid (key/context/maturity vocabulary)
  *   5. not-implemented records do not claim AppConfig flags
  *   6. each pack profile lists every registry key in registry order with
@@ -27,9 +26,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadCapabilityCatalog } = require('./load-capability-catalog.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const REGISTRY = path.join(ROOT, 'docs/capabilities/registry.ts');
 const APP_CONFIG = path.join(ROOT, 'src/kernel/config/app.config.types.ts');
 
 const CONTEXTS = new Set([
@@ -62,43 +61,64 @@ const PACK_PROFILES = [
 const NON_CAPABILITY_FLAGS = new Set([
   'session.secure',            // transport hardening, not a product surface
   'subscription.mockEnabled',  // local development seam
+  'gcpDeployments.dedicatedProjectsEnabled', // optional provider mode, not base GCP availability
+  'projectSyncSnapshots.liveGithubEnabled', // optional live adapter mode
+  'projectSyncSnapshots.liveProvidersEnabled', // optional live adapter mode
+  'ciRunTracking.liveGithubEnabled', // optional live adapter mode
+  'deploymentHistory.liveProvidersEnabled', // optional live adapter mode
+  'driftRepair.liveRepairEnabled', // optional live repair mode
+  'driftLiveChecks.enabled', // optional live check mode
+  'envProvisioning.flowciManaged.renderAllowPaidManaged', // provider fleet policy, not base capability availability
 ]);
 
-function readRegistry() {
-  const source = fs.readFileSync(REGISTRY, 'utf8');
-  const match = /export const CAPABILITIES = (\[[\s\S]*?\])\s+as const;\s*$/m.exec(source);
-  if (!match) {
-    throw new Error('registry.ts must export a JSON-shaped CAPABILITIES array');
+function readCapabilityCatalog() {
+  const catalog = loadCapabilityCatalog();
+  if (!catalog || !Array.isArray(catalog.capabilities)) {
+    throw new Error(
+      'Capability catalog loader must expose the application CAPABILITIES array',
+    );
   }
-  return JSON.parse(match[1]);
+  if (!catalog.manifests || typeof catalog.manifests !== 'object') {
+    throw new Error(
+      'Capability catalog loader must expose the application PACK_MANIFESTS object',
+    );
+  }
+  return catalog;
 }
 
-/** Boolean leaves of the AppConfig interface, as "group.flag" paths. */
+/** Boolean leaves of the AppConfig interface, as dotted paths. */
 function readConfigFlags() {
   const source = fs.readFileSync(APP_CONFIG, 'utf8');
   const iface = /export interface AppConfig \{[\s\S]*?\n\}/.exec(source);
   if (!iface) throw new Error('Could not locate the AppConfig interface');
 
   const flags = new Set();
-  let group = null;
+  const groups = [];
   for (const line of iface[0].split(/\r?\n/)) {
-    const groupMatch = /^ {2}([A-Za-z][A-Za-z0-9]*): \{/.exec(line);
-    if (groupMatch) {
-      group = groupMatch[1];
+    const opening = /^(\s*)([A-Za-z][A-Za-z0-9]*): \{/.exec(line);
+    if (opening) {
+      const indent = opening[1].length;
+      while (groups.at(-1)?.indent >= indent) groups.pop();
+      groups.push({ indent, name: opening[2] });
       continue;
     }
-    if (/^ {2}\}/.test(line)) {
-      group = null;
+    const closing = /^(\s*)\}/.exec(line);
+    if (closing) {
+      const indent = closing[1].length;
+      while (groups.at(-1)?.indent >= indent) groups.pop();
       continue;
     }
-    const leaf = /^ {4}([A-Za-z][A-Za-z0-9]*)(\?)?: boolean/.exec(line);
-    if (leaf && group) flags.add(`${group}.${leaf[1]}`);
+    const leaf = /^(\s+)([A-Za-z][A-Za-z0-9]*)(\?)?: boolean/.exec(line);
+    if (leaf && groups.length > 0) {
+      flags.add([...groups.map((group) => group.name), leaf[2]].join('.'));
+    }
   }
   return flags;
 }
 
-function expectedPackStatus(capability, edition) {
-  if (!(capability.editions ?? []).includes(edition)) return 'not-applicable';
+function expectedPackStatus(capability, edition, manifests) {
+  const manifest = manifests?.[edition];
+  if (!manifest?.capabilities?.includes(capability.key)) return 'not-applicable';
   if (capability.maturity === 'stable') return 'available';
   if (capability.maturity === 'limited') return 'configuration-gated';
   return 'not-implemented';
@@ -118,7 +138,55 @@ function parsePackCapabilityRows(markdown) {
   return { rows };
 }
 
-function packCatalogErrors(capabilities) {
+function manifestCatalogErrors(capabilities, manifests) {
+  const errors = [];
+  const entries = Object.entries(manifests ?? {});
+  const registryIndexes = new Map(
+    capabilities.map((capability, index) => [capability.key, index]),
+  );
+
+  for (const edition of EDITIONS) {
+    const matches = entries.filter(([, manifest]) => manifest?.edition === edition);
+    if (matches.length !== 1) {
+      errors.push(`manifest edition ${edition} must exist exactly once`);
+    }
+  }
+
+  for (const [name, manifest] of entries) {
+    const at = `manifest ${name}`;
+    if (!EDITIONS.has(manifest?.edition)) {
+      errors.push(`${at} has unknown edition: ${manifest?.edition}`);
+    }
+    if (!Array.isArray(manifest?.capabilities)) {
+      errors.push(`${at} capabilities must be an array`);
+      continue;
+    }
+
+    const seen = new Set();
+    let previousIndex = -1;
+    for (const key of manifest.capabilities) {
+      if (seen.has(key)) {
+        errors.push(`${at} contains duplicate capability key: ${key}`);
+        continue;
+      }
+      seen.add(key);
+
+      const index = registryIndexes.get(key);
+      if (index === undefined) {
+        errors.push(`${at} contains unknown capability key: ${key}`);
+        continue;
+      }
+      if (index <= previousIndex) {
+        errors.push(`${at} capabilities must follow registry order at ${key}`);
+      }
+      previousIndex = index;
+    }
+  }
+
+  return errors;
+}
+
+function packCatalogErrors(capabilities, manifests) {
   const errors = [];
   for (const pack of PACK_PROFILES) {
     const file = path.join(ROOT, pack.file);
@@ -156,7 +224,7 @@ function packCatalogErrors(capabilities) {
         errors.push(`${at}: unknown pack status ${actual.status}`);
         continue;
       }
-      const expectedStatus = expectedPackStatus(expected, pack.edition);
+      const expectedStatus = expectedPackStatus(expected, pack.edition, manifests);
       if (actual.status !== expectedStatus) {
         errors.push(
           `${at}: ${expected.key} must be ${expectedStatus} for ${pack.edition} (maturity ${expected.maturity})`,
@@ -191,7 +259,7 @@ function detectCycle(byKey) {
 }
 
 function collect() {
-  const capabilities = readRegistry();
+  const { capabilities, manifests } = readCapabilityCatalog();
   const configFlags = readConfigFlags();
   const errors = [];
   const byKey = new Map();
@@ -212,14 +280,6 @@ function collect() {
     if (!MATURITIES.has(capability.maturity)) {
       errors.push(`${at} unknown maturity: ${capability.maturity}`);
     }
-    if (!Array.isArray(capability.editions) || capability.editions.length === 0) {
-      errors.push(`${at} must declare at least one edition`);
-    }
-    for (const edition of capability.editions ?? []) {
-      if (!EDITIONS.has(edition)) {
-        errors.push(`${at} unknown edition: ${edition}`);
-      }
-    }
     if (!Array.isArray(capability.configurationFlags)) {
       errors.push(`${at} configurationFlags must be an array`);
     } else if (capability.maturity === 'not-implemented') {
@@ -239,20 +299,11 @@ function collect() {
       }
     }
 
-    // 3. requires edges resolve, and cannot widen an edition set
+    // 3. requires edges resolve
     for (const dependency of capability.requires ?? []) {
       const target = byKey.get(dependency);
       if (!target) {
         errors.push(`${at} requires unknown capability: ${dependency}`);
-        continue;
-      }
-      const missing = (capability.editions ?? []).filter(
-        (edition) => !(target.editions ?? []).includes(edition),
-      );
-      if (missing.length > 0) {
-        errors.push(
-          `${at} is applicable in [${missing.join(', ')}] but its dependency ${dependency} is not; a capability cannot outlive what it requires`,
-        );
       }
     }
   }
@@ -280,7 +331,8 @@ function collect() {
   const cycle = detectCycle(byKey);
   if (cycle) errors.push(`requires cycle: ${cycle.join(' -> ')}`);
 
-  errors.push(...packCatalogErrors(capabilities));
+  errors.push(...manifestCatalogErrors(capabilities, manifests));
+  errors.push(...packCatalogErrors(capabilities, manifests));
 
   return {
     capabilityCount: capabilities.length,

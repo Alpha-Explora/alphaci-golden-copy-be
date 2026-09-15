@@ -5,9 +5,11 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
   CI_PROJECT_PORT,
@@ -49,11 +51,12 @@ export class ProjectDriftRepairService {
     @Optional()
     private readonly projectWorkflowsService?: ProjectWorkflowsService,
     @Optional()
-    private readonly configService?: ConfigService,
-    @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventsService?: NotificationEventPublisher,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async repair(
@@ -298,13 +301,17 @@ export class ProjectDriftRepairService {
   }
 
   private enabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.driftRepair?.enabled ?? false;
+    return (
+      this.capabilityResolver?.deployment().has('runtime.drift-repair') ?? false
+    );
   }
 
   private workflowUpdatePrEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.workflowUpdatePr?.enabled ?? false;
+    return (
+      this.capabilityResolver
+        ?.deployment()
+        .has('projects.workflow-update-pr') ?? false
+    );
   }
 
   private requiresLiveProvider(finding: ProjectDriftFinding): boolean {

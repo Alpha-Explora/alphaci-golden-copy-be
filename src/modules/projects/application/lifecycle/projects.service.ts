@@ -2,6 +2,10 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
+import {
   AuditEventPublisher,
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
@@ -94,13 +98,13 @@ export class ProjectsService {
       this.projectsRepository,
       this.githubService,
       this.catalogService,
-      this.configService,
       this.workflowSettingsRepository,
       this.workflowUpdateRequestsRepository,
       this.usageQuotaService,
       this.auditEventPublisher ?? this.auditEventsService,
       this.notificationEventPublisher,
       this.workflowFragmentRegistry,
+      this.capabilityResolver,
     ));
   }
 
@@ -189,11 +193,11 @@ export class ProjectsService {
       this.workflowHistoryRepository,
       this.dashboardSnapshotsRepository,
       this.hierarchyProjectLinkService,
-      this.configService,
       this.auditQueryPort ??
         (this.auditEventsService as unknown as AuditQueryPort),
       this.auditEventPublisher ?? this.auditEventsService,
       this.notificationEventPublisher,
+      this.capabilityResolver,
     ));
   }
 
@@ -320,6 +324,9 @@ export class ProjectsService {
     @Optional()
     @Inject(DEPLOYMENT_PROVISIONING_DEFAULTS)
     private readonly deploymentProvisioningDefaults?: DeploymentProvisioningDefaultsPort,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {
     // GithubModule cannot import ProjectsModule (that would create a
     // Projects → Github → Projects cycle), so GithubService can't inject

@@ -2,6 +2,6 @@
 
 * [Capability contract](capability-contract.md) - vocabulary and narrowing rules.
 * [Capability matrix](capability-matrix.generated.md) - generated current capability inventory.
-* [Capability registry](registry.ts) - documentation source used to generate the matrix.
+* [Capability ledger](capability-ledger.generated.md) - generated history of capability lifecycle changes.
 
-The registry documents the current compatibility surface. Pack profiles project the same keys; they are not a second catalog. The registry is not imported by the application and does not implement runtime capability resolution.
+Capabilities are authored in `src/kernel/composition/catalog.source.json`. `src/kernel/composition/capability-registry.ts` and `src/kernel/composition/manifests.ts` are generated from it and are not edited by hand. `npm run package:capability-catalog` emits the public `@alphaci/capability-catalog` artifact and its deterministic `provenance.json` consumed by the frontend. Pack profiles project the same keys; they are not a second catalog. The generated matrix is documentation, while the live compatibility endpoint projects the request's resolved deployment composition.

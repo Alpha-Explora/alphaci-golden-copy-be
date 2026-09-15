@@ -41,9 +41,13 @@ A lower layer may disable a capability but may not enable one that an upper laye
 
 - Shared domain logic stays in its owning context.
 - Composition data can describe different offerings without forking application behavior.
-- The current `/api/v1/capabilities` response remains the compatibility surface; the documentation registry does not replace it.
+- The current `/api/v1/capabilities` response remains the compatibility surface; the application capability registry and manifests do not replace it.
 - Pack and capability documents must distinguish applicable, configuration-gated, and not-implemented behavior.
 
 ## Verification
 
 The documentation check scans `src/` for edition comparison branches. Capability and pack references are reviewed against the [capability contract](/capabilities/capability-contract.md) and [pack contract](/packs/pack-contract.md).
+
+## Later decisions
+
+[ADR-0007](adr-0007-runtime-composition-resolution.md) makes composition resolution a runtime behaviour and states the narrowing layers in force. [ADR-0008](adr-0008-build-profiles-and-artifact-exclusion.md) makes the build layer an explicit set of packs. The orthogonality rule in this record is unchanged.

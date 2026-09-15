@@ -1,10 +1,26 @@
 import type { SubscriptionPlan } from '#kernel/auth/session-user.interface';
+import type {
+  BuildProfile,
+  Edition,
+} from '#kernel/composition/capability-types';
 
 /** See AppConfig['github']['teamRoleSync']. */
 export type GithubTeamRoleSyncMode = 'off' | 'seed' | 'enforce';
 
 export interface AppConfig {
   frontendUrl: string;
+  composition: {
+    edition: Edition;
+    profile: BuildProfile;
+    client: {
+      /** Selected client, or null when the deployment serves the whole edition. */
+      id: string | null;
+      /** Path to a deployment-supplied client policy document, if mounted. */
+      configPath: string | null;
+      /** Whether either client-policy selection seam is configured. */
+      enabled: boolean;
+    };
+  };
   github: {
     clientId: string;
     clientSecret: string;

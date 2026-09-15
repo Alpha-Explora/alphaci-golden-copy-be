@@ -20,8 +20,8 @@ describe('ProjectDriftRepairService', () => {
     previewWorkflowSettings: jest.fn(),
     createWorkflowUpdatePullRequest: jest.fn(),
   };
-  const configService = {
-    getOrThrow: jest.fn(),
+  const capabilityResolver = {
+    deployment: jest.fn(),
   };
   const auditEventsService = {
     recordProjectEvent: jest.fn(),
@@ -64,10 +64,9 @@ describe('ProjectDriftRepairService', () => {
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
     });
-    configService.getOrThrow.mockReturnValue({
-      driftRepair: { enabled: true },
-      workflowUpdatePr: { enabled: true },
-    });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['runtime.drift-repair', 'projects.workflow-update-pr']),
+    );
   });
 
   function createService() {
@@ -77,9 +76,9 @@ describe('ProjectDriftRepairService', () => {
       ciService,
       deploymentTargetsRepository,
       projectWorkflowsService as never,
-      configService as never,
       auditEventsService as never,
       notificationEventsService as never,
+      capabilityResolver as never,
     );
   }
 
@@ -228,10 +227,7 @@ describe('ProjectDriftRepairService', () => {
   });
 
   it('returns disabled state when drift repair is disabled', async () => {
-    configService.getOrThrow.mockReturnValueOnce({
-      driftRepair: { enabled: false },
-      workflowUpdatePr: { enabled: true },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
 
     await expect(
       createService().repair(
@@ -365,9 +361,9 @@ describe('ProjectDriftRepairService', () => {
       detectedAt: '2026-06-13T00:00:00.000Z',
       resolvedAt: null,
     });
-    configService.getOrThrow
-      .mockReturnValueOnce({ driftRepair: { enabled: true } })
-      .mockReturnValueOnce({ workflowUpdatePr: { enabled: false } });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['runtime.drift-repair']),
+    );
 
     await expect(
       createService().repair(

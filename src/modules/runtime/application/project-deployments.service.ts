@@ -1,6 +1,10 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import type { AppConfig } from '#kernel/config/app.config';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import type { DeploymentTargetSummary } from '../core/deployments.types';
@@ -47,6 +51,9 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     private readonly encryptionService?: EnvTokenEncryptionService,
     @Optional()
     private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async listDeployments(
@@ -307,8 +314,10 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
   }
 
   private enabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.deploymentHistory?.enabled ?? false;
+    return (
+      this.capabilityResolver?.deployment().has('runtime.deployment-history') ??
+      false
+    );
   }
 
   private liveProvidersEnabled(): boolean {

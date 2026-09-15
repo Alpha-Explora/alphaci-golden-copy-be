@@ -21,8 +21,9 @@ sources:
 
 ## Current composition
 
-- Documentation status: `documentation-only`
-- Runtime selection behavior: No pack-selection resolver is implemented in this backend.
+- Build profile: `enterprise` (`enterprise`)
+- Runtime selection behavior: `ALPHACI_EDITION=enterprise` selects the Enterprise manifest within the Enterprise build ceiling.
+- Artifact exclusion inventory: reserved hosted source roots/markers are absent from the Enterprise compiled profile artifact. The Enterprise client-policy implementation is real source under `src/packs/enterprise` and is loaded through the profile-keyed pack seam.
 - Current backend applicability: The same six-context backend exposes the shared capability catalog. A customer-managed deployment target remains separate from edition identity.
 
 ## Capability status
@@ -54,6 +55,7 @@ This table lists every current registry capability in registry order. Status is 
 | `runtime.managed-secrets` | `not-implemented` | Managed secret storage, including Vault integration. Not implemented in this backend. |
 | `runtime.air-gap-packaging` | `not-implemented` | Air-gap packaging of the application as a deployment target. Not implemented in this backend. |
 | `runtime.customer-isolation` | `not-implemented` | Customer-managed operational isolation as a tenancy option. Not implemented in this backend. |
+| `runtime.client-composition` | `configuration-gated` | Enterprise client composition through a declared or deployment-mounted deny-only policy. Configuration: `ALPHACI_CLIENT` or `ALPHACI_CLIENT_CONFIG`; read-only projection at `/settings`. |
 | `projects.sync-snapshots` | `configuration-gated` | Project synchronization snapshot reads and findings. Configuration: projectSyncSnapshots.enabled. |
 | `projects.workflow-settings-preview` | `available` | Workflow settings preview and validation. Configuration: workflowSettingsPreview.enabled. |
 | `projects.workflow-update-pr` | `configuration-gated` | Workflow update pull-request requests. Configuration: workflowUpdatePr.enabled. |
@@ -63,11 +65,11 @@ This table lists every current registry capability in registry order. Status is 
 
 ## Deployment scope
 
-Enterprise is an edition composition reference. A customer-managed deployment target remains separate from edition identity. `runtime.air-gap-packaging` is a deployment-target capability composed into this pack; `runtime.customer-isolation` is a tenancy capability composed into this pack. Neither value replaces the Enterprise edition identity. The current Runtime provider and GCP operational scope are described in the [provider map](/architecture/provider-map.generated.md) and [provisioning runbook](/runbooks/runbook-deployment-provisioning.md).
+Enterprise is an edition composition reference. A customer-managed deployment target remains separate from edition identity. `runtime.client-composition` narrows the Enterprise manifest with a deny-only client policy selected at startup; it does not provide air-gap packaging or customer isolation. `runtime.air-gap-packaging` is a deployment-target capability composed into this pack; `runtime.customer-isolation` is a tenancy capability composed into this pack. Neither value replaces the Enterprise edition identity. The current Runtime provider and GCP operational scope are described in the [provider map](/architecture/provider-map.generated.md) and [provisioning runbook](/runbooks/runbook-deployment-provisioning.md).
 
 ## Configuration and entitlements
 
-The narrowing order is `build -> edition manifest -> deployment configuration -> tenant override`. The current backend does not resolve Enterprise-specific entitlements at runtime; this profile records shared current capabilities and their limits.
+The narrowing order is `build profile -> edition manifest -> client policy -> deployment configuration -> tenant override`. `ALPHACI_BUILD_PROFILE` defaults to `enterprise`, preserving the existing Enterprise-first startup behavior. Enterprise-specific entitlements remain out of scope.
 
 ## Explicit non-support
 
@@ -76,5 +78,5 @@ No additional non-registry product areas. Catalog rows with status `not-implemen
 ## Ownership and verification
 
 - Context owners: `identity-access`, `projects`, `pipelines`, `runtime`, `billing`, and `platform-ops` as shown in the capability matrix.
-- Source: `docs/capabilities/registry.ts` and the owning context source paths.
-- Verification: `npm run check:documentation`.
+- Source: `src/kernel/composition/capability-registry.ts`, `src/kernel/composition/manifests.ts`, and the owning context source paths.
+- Verification: `npm run check:capabilities`, `npm run check:composition-profiles`.

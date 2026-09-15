@@ -6,15 +6,13 @@ describe('NotificationEventsService', () => {
     getPreferences: jest.fn(),
     createForUser: jest.fn(),
   } as unknown as jest.Mocked<NotificationsRepository>;
-  const configService = {
-    getOrThrow: jest.fn(),
-  };
+  const capabilityResolver = { deployment: jest.fn() };
 
   beforeEach(() => {
     jest.resetAllMocks();
-    configService.getOrThrow.mockReturnValue({
-      notifications: { enabled: true },
-    });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['platform.notifications']),
+    );
     repository.getPreferences.mockResolvedValue({
       userId: 'user-1',
       inAppEnabled: true,
@@ -24,12 +22,10 @@ describe('NotificationEventsService', () => {
   });
 
   it('does not create notifications when disabled', async () => {
-    configService.getOrThrow.mockReturnValue({
-      notifications: { enabled: false },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
     const service = new NotificationEventsService(
       repository,
-      configService as never,
+      capabilityResolver as never,
     );
 
     await service.record({
@@ -52,7 +48,7 @@ describe('NotificationEventsService', () => {
     });
     const service = new NotificationEventsService(
       repository,
-      configService as never,
+      capabilityResolver as never,
     );
 
     await service.record({
@@ -68,7 +64,7 @@ describe('NotificationEventsService', () => {
   it('creates notifications when enabled', async () => {
     const service = new NotificationEventsService(
       repository,
-      configService as never,
+      capabilityResolver as never,
     );
 
     await service.record({

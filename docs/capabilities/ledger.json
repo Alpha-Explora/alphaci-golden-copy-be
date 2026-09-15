@@ -1,0 +1,22 @@
+{
+  "entries": [
+    {
+      "date": "2026-09-15",
+      "change": "baseline",
+      "keys": [],
+      "summary": "Baseline of the kernel-owned capability catalog: 29 keys across six contexts, with SaaS, EDU, and Enterprise manifests, dependency edges, and configuration-flag bindings as they stand after the catalog moved into src/kernel/composition.",
+      "reference": "adr-0007-runtime-composition-resolution.md",
+      "compositionHash": "sha256:2cced58dabe75a43b4d7b350fea1b4a14615bf011d3a7259d201bd81c2821575"
+    },
+    {
+      "date": "2026-09-15",
+      "change": "added",
+      "keys": [
+        "runtime.client-composition"
+      ],
+      "summary": "Enterprise client composition is now a real pack-owned deny-only surface with backend-owned frontend surface metadata",
+      "reference": "adr-0009-client-capability-policies.md",
+      "compositionHash": "sha256:0276b9c0b5166b03dd0cfb371df828e2827f42e973a142e3457d34eb1ac8431d"
+    }
+  ]
+}

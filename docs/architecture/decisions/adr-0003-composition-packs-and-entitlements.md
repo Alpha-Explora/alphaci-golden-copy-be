@@ -10,8 +10,8 @@ sources:
     resource: "/packs/pack-contract.md"
     title: "Current pack contract"
   - id: capability-registry
-    resource: "/capabilities/registry.ts"
-    title: "Documentation capability registry"
+    resource: "src/kernel/composition/capability-registry.ts"
+    title: "Application capability registry"
 ---
 # ADR-0003: Composition packs and entitlements
 
@@ -29,7 +29,7 @@ Entitlement evaluation is narrowing and follows this precedence:
 build -> edition manifest -> deployment configuration -> tenant override
 ```
 
-The pack contract uses the same headings and capability vocabulary for every pack so differences are explicit and reviewable. The registry under `docs/capabilities/` is a documentation source and does not implement runtime entitlement resolution.
+The pack contract uses the same headings and capability vocabulary for every pack so differences are explicit and reviewable. The application registry and manifests under `src/kernel/composition/` declare the catalog and pack applicability; the pure resolver is behavior-neutral and does not change the compatibility endpoint or tenant entitlement policy.
 
 ## Rejected alternatives
 
@@ -48,3 +48,7 @@ The pack contract uses the same headings and capability vocabulary for every pac
 ## Verification
 
 Review pack files against the [pack contract](/packs/pack-contract.md), the generated [capability matrix](/capabilities/capability-matrix.generated.md), and the [constitution](/constitution.md). The documentation check rejects edition branches in source code.
+
+## Later decisions
+
+This record required any runtime pack-selection feature to be a separate decision. That decision is [ADR-0007](adr-0007-runtime-composition-resolution.md), which supersedes the consequence that the registry does not implement runtime entitlement resolution. [ADR-0008](adr-0008-build-profiles-and-artifact-exclusion.md) adds artifact exclusion. Pack ownership rules in this record are unchanged.

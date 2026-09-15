@@ -24,11 +24,12 @@ import {
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
+import { CapabilityGuard } from '#kernel/composition/capability.guard';
+import { RequiresCapability } from '#kernel/composition/requires-capability.decorator';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
 import { DeploymentTargetsService } from '../application/deployment-targets.service';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
-import { EnvFeatureGuard } from './env-feature.guard';
 
 const LOG_STREAM_POLL_INTERVAL_MS = 5_000;
 
@@ -45,7 +46,8 @@ function logFilters(
 }
 
 @Controller('projects/:projectId/deployment-targets')
-@UseGuards(SessionAuthGuard, SubscriptionGuard, EnvFeatureGuard)
+@RequiresCapability('runtime.env-provisioning')
+@UseGuards(SessionAuthGuard, CapabilityGuard, SubscriptionGuard)
 export class DeploymentTargetsController {
   constructor(private readonly service: DeploymentTargetsService) {}
 
