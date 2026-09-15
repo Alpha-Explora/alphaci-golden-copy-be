@@ -42,6 +42,20 @@ export interface HealthDeployInfo {
 export interface HealthProviderInfo {
   renderConfigured: boolean;
   vercelConfigured: boolean;
+  /**
+   * Whether managed Vercel provisioning can actually run.
+   *
+   * Managed Vercel needs a team id as well as a token - resolveConnectionScope
+   * rejects the request without one - so vercelConfigured being true does not
+   * mean a managed target can be created. Reading it as though it did is the
+   * mistake this field exists to prevent. Render needs only its API key, so
+   * renderConfigured already answers both questions there.
+   *
+   * Configuration only. Whether that team accepts that token is Vercel's
+   * answer to give, and this endpoint is unauthenticated and polled, so it
+   * does not ask.
+   */
+  vercelManagedReady: boolean;
 }
 
 export interface HealthResponse {
@@ -83,6 +97,9 @@ export class HealthService {
       providers: {
         renderConfigured: Boolean(managed?.renderToken?.trim()),
         vercelConfigured: Boolean(managed?.vercelToken?.trim()),
+        vercelManagedReady: Boolean(
+          managed?.vercelToken?.trim() && managed?.vercelTeamId?.trim(),
+        ),
       },
     };
   }

@@ -21,7 +21,11 @@ function makeServiceMock(
         githubAppId: '4114943',
         githubAppSlug: 'alphaci-test',
       },
-      providers: { renderConfigured: true, vercelConfigured: false },
+      providers: {
+        renderConfigured: true,
+        vercelConfigured: false,
+        vercelManagedReady: false,
+      },
     } satisfies HealthResponse),
   };
 }

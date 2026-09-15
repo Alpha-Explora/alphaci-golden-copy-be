@@ -999,4 +999,97 @@ describe('VercelEnvClient', () => {
       'Vercel GitHub integration is not installed or does not have access to cicd-external-project/test123. Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.',
     );
   });
+
+  /*
+   * A 403 used to reach the user as Vercel's raw JSON, which says the request
+   * was refused and nothing about what to do. The token is valid in every one
+   * of these cases, so "check the token" is the wrong instruction; the three
+   * real causes are named instead.
+   */
+  it('explains a forbidden project creation instead of dumping the response', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            error: {
+              code: 'forbidden',
+              message: "You don't have permission to create the project.",
+              action: 'create',
+              resource: 'project',
+            },
+          }),
+        ),
+    });
+
+    const client = new VercelEnvClient();
+
+    const attempt = client.createTarget({
+      token: 'vercel-secret',
+      repoFullName: 'Alphaexplora-Sandbox/stpetertestfe',
+      projectName: 'stpetertestfe-frontend',
+      branchName: 'uat',
+    });
+
+    await expect(attempt).rejects.toThrow(/Vercel refused to create a project/);
+    await expect(attempt).rejects.toThrow(/ALPHACI_VERCEL_TEAM_ID/);
+    await expect(attempt).rejects.toThrow(/overdue invoice/);
+    await expect(attempt).rejects.toThrow(/Owner or Admin/);
+  });
+
+  /*
+   * The provisioning sanitizer keeps 500 characters. A message that explains
+   * three causes and then gets cut mid-cause is worse than a short one, so the
+   * budget is asserted rather than assumed.
+   */
+  it('keeps the forbidden message inside the 500 characters provisioning stores', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            error: {
+              code: 'forbidden',
+              message: "You don't have permission to create the project.",
+              action: 'create',
+              resource: 'project',
+            },
+          }),
+        ),
+    });
+
+    await new VercelEnvClient()
+      .createTarget({
+        token: 'vercel-secret',
+        repoFullName: 'Alphaexplora-Sandbox/stpetertestfe',
+        projectName: 'stpetertestfe-frontend',
+        branchName: 'uat',
+      })
+      .catch((error: unknown) => {
+        const message = (error as Error).message;
+        expect(message.length).toBeLessThanOrEqual(500);
+        expect(message.endsWith('Then retry.')).toBe(true);
+      });
+  });
+
+  it('still dumps the response for a status it has no remedy for', async () => {
+    // The fallback has to stay: an unrecognised failure showing nothing would
+    // be worse than showing raw JSON.
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('{"error":{"code":"internal_server_error"}}'),
+    });
+
+    await expect(
+      new VercelEnvClient().createTarget({
+        token: 'vercel-secret',
+        repoFullName: 'Alphaexplora-Sandbox/stpetertestfe',
+        projectName: 'stpetertestfe-frontend',
+        branchName: 'uat',
+      }),
+    ).rejects.toThrow('Vercel project could not be created: 500');
+  });
 });
