@@ -1371,15 +1371,28 @@ export class GithubService
    * Workflow runs for a repository, newest first.
    *
    * THIS is the only workspace read a screen may poll.
+   *
+   * A page of 20 was too small to show a history. One push runs five
+   * workflows - access, env guard, quality, package, verify - on each of three
+   * branches, so a single logical change can produce fifteen runs, and a
+   * repository scaffolded with several commits in a row filled the whole page
+   * with one afternoon's work. The runs that fell off the end did not degrade
+   * gracefully: `dev` and `uat` read "no runs" while GitHub plainly had runs
+   * for both, because the four that were honestly labelled sat at positions 22
+   * to 25.
+   *
+   * 100 is GitHub's own maximum for this endpoint. Page SIZE is free against
+   * the rate limit - the cost is one request either way, and this read is
+   * polled, so the request count is what matters and it does not change.
    */
   async listWorkflowRuns(
     accessToken: string,
     repoFullName: string,
     branch?: string | null,
-    limit = 20,
+    limit = 100,
   ): Promise<GitHubWorkflowRunSummary[]> {
     const params = new URLSearchParams({
-      per_page: String(Math.min(limit, 50)),
+      per_page: String(Math.min(limit, 100)),
     });
     if (branch) params.set('branch', branch);
 
