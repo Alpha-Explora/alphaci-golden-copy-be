@@ -5,8 +5,10 @@
  * Checks every declared build profile by compiling an isolated, profile-aware
  * TypeScript artifact and scanning that artifact. Tests and the composition
  * policy declaration are excluded because neither is pack-owned implementation
- * code. A future pack implementation root therefore has to be excluded by the
- * profile compiler before the output scan can pass.
+ * code. The inventory currently contains reservations only; no pack-exclusive
+ * implementation source exists in this checkout. The generated profile config
+ * still excludes every declared root for an absent pack so future pack source
+ * cannot enter that profile artifact by default.
  */
 
 const fs = require('node:fs');
@@ -15,6 +17,26 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const BASE_PROFILE_EXCLUDES = [
+  'node_modules',
+  'test',
+  'tests',
+  'dist',
+  '**/*.spec.ts',
+  '**/*.e2e-spec.ts',
+];
+
+function createProfileTsConfig(outputDirectory, excludedSourceRoots = []) {
+  return {
+    extends: './tsconfig.build.json',
+    compilerOptions: {
+      outDir: outputDirectory,
+      incremental: false,
+    },
+    include: ['src'],
+    exclude: [...BASE_PROFILE_EXCLUDES, ...excludedSourceRoots],
+  };
+}
 
 function loadCompiledComposition(excludedSourceRoots = []) {
   const outputDirectory = fs.mkdtempSync(
@@ -27,23 +49,7 @@ function loadCompiledComposition(excludedSourceRoots = []) {
   fs.writeFileSync(
     profileConfig,
     `${JSON.stringify(
-      {
-        extends: './tsconfig.build.json',
-        compilerOptions: {
-          outDir: outputDirectory,
-          incremental: false,
-        },
-        include: ['src'],
-        exclude: [
-          'node_modules',
-          'test',
-          'tests',
-          'dist',
-          '**/*.spec.ts',
-          '**/*.e2e-spec.ts',
-          ...excludedSourceRoots,
-        ],
-      },
+      createProfileTsConfig(outputDirectory, excludedSourceRoots),
       null,
       2,
     )}\n`,
@@ -157,42 +163,53 @@ function checkProfile(profile, entries, composition) {
   return results;
 }
 
-const baseline = loadCompiledComposition();
-const profileBuilds = [];
-let result;
-try {
-  result = Object.fromEntries(
-    Object.keys(baseline.composition.profiles.BUILD_PROFILES).map((profile) => {
-      const exclusions = baseline.composition.profiles.artifactExclusionsFor(profile);
-      const profileBuild = loadCompiledComposition(exclusions.sourceRoots);
-      profileBuilds.push(profileBuild);
-      return [
-        profile,
-        checkProfile(
+function runConformance() {
+  const baseline = loadCompiledComposition();
+  const profileBuilds = [];
+  try {
+    return Object.fromEntries(
+      Object.keys(baseline.composition.profiles.BUILD_PROFILES).map((profile) => {
+        const exclusions = baseline.composition.profiles.artifactExclusionsFor(profile);
+        const profileBuild = loadCompiledComposition(exclusions.sourceRoots);
+        profileBuilds.push(profileBuild);
+        return [
           profile,
-          compiledArtifactEntries(profileBuild.outputDirectory),
-          profileBuild.composition,
-        ),
-      ];
-    }),
-  );
-} finally {
-  for (const profileBuild of profileBuilds) {
-    fs.rmSync(profileBuild.outputDirectory, { recursive: true, force: true });
+          checkProfile(
+            profile,
+            compiledArtifactEntries(profileBuild.outputDirectory),
+            profileBuild.composition,
+          ),
+        ];
+      }),
+    );
+  } finally {
+    for (const profileBuild of profileBuilds) {
+      fs.rmSync(profileBuild.outputDirectory, { recursive: true, force: true });
+    }
+    fs.rmSync(baseline.outputDirectory, { recursive: true, force: true });
   }
-  fs.rmSync(baseline.outputDirectory, { recursive: true, force: true });
 }
 
-if (process.argv.includes('--json')) {
-  console.log(JSON.stringify(result, null, 2));
-} else {
-  for (const [profile, editions] of Object.entries(result)) {
-    for (const item of editions) {
-      console.log(
-        `Profile ${profile}/${item.edition} OK (${item.capabilityCount} resolved capabilities; compiled-output artifact scan; ${item.excludedSourceRoots} declared excluded roots, ${item.excludedSymbols} declared excluded symbols absent).`,
-      );
+if (require.main === module) {
+  const result = runConformance();
+  if (process.argv.includes('--json')) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    for (const [profile, editions] of Object.entries(result)) {
+      for (const item of editions) {
+        console.log(
+          `Profile ${profile}/${item.edition} OK (${item.capabilityCount} resolved capabilities; compiled-output artifact scan; ${item.excludedSourceRoots} declared excluded roots, ${item.excludedSymbols} declared excluded symbols absent).`,
+        );
+      }
     }
   }
 }
 
-module.exports = { allEnabledConfig, expectedResolvedKeys, checkProfile };
+module.exports = {
+  allEnabledConfig,
+  checkProfile,
+  compiledArtifactEntries,
+  createProfileTsConfig,
+  expectedResolvedKeys,
+  runConformance,
+};

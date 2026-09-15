@@ -20,9 +20,10 @@ export type PackArtifactInventoryMap = Readonly<
 >;
 
 /**
- * These are reserved pack-only roots and symbol markers, not implementation
- * code. They make the current absence check explicit: future pack code must
- * use one of these declarations before it can be composed safely.
+ * These are reservations for pack-only roots and symbol markers. No
+ * pack-exclusive implementation source exists in this checkout yet, so the
+ * conformance gate proves the exclusion mechanism and scanner behavior rather
+ * than exclusion of real pack code.
  */
 export const PACK_ARTIFACT_INVENTORY = {
   saas: {
