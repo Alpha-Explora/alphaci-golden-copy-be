@@ -16,7 +16,7 @@ const timeoutMs = 60_000;
 await rm(outputDir, { recursive: true, force: true });
 
 const output = [];
-const child = spawn(process.execPath, [nestCli, 'build', '--watch'], {
+const child = spawn(process.execPath, [nestCli, 'start', '--watch'], {
   cwd: root,
   env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],
