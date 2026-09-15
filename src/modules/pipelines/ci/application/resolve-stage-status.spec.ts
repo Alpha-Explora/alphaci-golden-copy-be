@@ -58,6 +58,44 @@ describe('resolveStages', () => {
     expect(result.quality.friendlyMessages[0]?.hint).toContain('GitHub');
   });
 
+  /*
+   * The message must not pick a cause.
+   *
+   * It used to state that the workflow "was rejected before any job ran", and
+   * the first real stalled stage checked against it had run nine jobs and
+   * reported in full - the report was filed under another branch, because
+   * workflow_run reads the workflow file from the default branch. A reader
+   * following that text hunted a startup rejection that never happened.
+   */
+  it('does not announce a cause it cannot have established', () => {
+    const result = resolveStages(
+      reported({ access: { status: 'success', updatedAt: minutesAgo(60) } }),
+      NOW,
+    );
+
+    const message = result.quality.friendlyMessages[0];
+
+    expect(message?.detail).not.toContain('That means');
+    expect(`${message?.detail ?? ''} ${message?.hint ?? ''}`).not.toMatch(
+      /was rejected before any job ran/,
+    );
+  });
+
+  it('names both a stage that never ran and one that reported elsewhere', () => {
+    const result = resolveStages(
+      reported({ access: { status: 'success', updatedAt: minutesAgo(60) } }),
+      NOW,
+    );
+
+    const message = result.quality.friendlyMessages[0];
+    const text = `${message?.detail ?? ''} ${message?.hint ?? ''}`;
+
+    expect(text).toMatch(/never ran/i);
+    expect(text).toMatch(/another branch/i);
+    // And it still tells the reader how to tell the two apart.
+    expect(text).toMatch(/if jobs ran/i);
+  });
+
   it('still says pending inside the grace window', () => {
     // A queued run on a busy runner is legitimately pending. Calling that
     // broken would replace one wrong answer with another.
