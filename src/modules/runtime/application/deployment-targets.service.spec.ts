@@ -1,4 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
 import { DeploymentTargetsService } from './deployment-targets.service';
@@ -182,6 +185,48 @@ describe('DeploymentTargetsService', () => {
       notificationEventsService as never,
       providerRegistry as never,
     );
+  });
+
+  /*
+   * The resolver used to reach no policy at all - it was built without its
+   * registry - and every managed target was created as `provider_native`.
+   * The secrets installers ignore that strategy, so the targets existed and
+   * their pipelines could never deploy. A provider with a policy never
+   * answers `provider_native`, so seeing it means the wiring broke, and the
+   * target must not be created.
+   */
+  it('refuses to create a target when the strategy fell back to provider_native', async () => {
+    const unwired = new DeploymentTargetsService(
+      projectReferenceLookup,
+      deploymentTargetsRepository as never,
+      providerConnectionsRepository as never,
+      encryptionService as never,
+      clientRegistry,
+      configService as never,
+      new DeploymentStrategyResolver(),
+      undefined,
+      usageQuotaService,
+      workspaceAccessService as never,
+      auditEventsService as never,
+      notificationEventsService as never,
+      providerRegistry as never,
+    );
+
+    const attempt = unwired.createDeploymentTarget('project-1', 'user-1', {
+      action: 'create',
+      slot: 'frontend',
+      ownershipMode: 'byo',
+      provider: 'vercel',
+      providerConnectionId: 'connection-1',
+      projectName: 'demo-frontend',
+    });
+
+    await expect(attempt).rejects.toThrow(InternalServerErrorException);
+    await expect(attempt).rejects.toThrow('could not be resolved');
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
   });
 
   it('rejects BYO Vercel targets when connection org metadata is missing', async () => {
