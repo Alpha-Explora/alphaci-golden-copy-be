@@ -13,6 +13,10 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import {
+  DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
+  type DeploymentProviderResourcesTeardown,
+} from '#kernel/ports/deployment-runtime.port';
+import {
   GITHUB_PROJECT_PORT,
   GithubRepoDeleteError,
   type GithubProjectPort,
@@ -33,6 +37,7 @@ import type {
   SetupProjectResponse,
   SyncProjectsResponse,
 } from './projects.service.types';
+import { SonarCloudSetupService } from './sonar-cloud-setup.service';
 
 /**
  * Narrow compatibility port for the provisioning use cases that are still
@@ -82,6 +87,11 @@ export class ProjectLifecycleService {
     private readonly notificationEventPublisher?: NotificationEventPublisher,
     @Optional()
     private readonly auditEventPublisher?: AuditEventPublisher,
+    @Optional()
+    @Inject(DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN)
+    private readonly providerResourcesTeardown?: DeploymentProviderResourcesTeardown,
+    @Optional()
+    private readonly sonarCloud?: SonarCloudSetupService,
   ) {}
 
   createProject(
@@ -113,6 +123,10 @@ export class ProjectLifecycleService {
     githubAccessToken?: string | null,
   ): Promise<DisconnectProjectResponse> {
     const deleteGithubRepo = options?.deleteGithubRepo === true;
+    const deleteProviderResources = options?.deleteProviderResources === true;
+    const deleteSonarProject = options?.deleteSonarProject === true;
+    const destructive =
+      deleteGithubRepo || deleteProviderResources || deleteSonarProject;
     // Use the same role set for the application fast-fail and SQL predicate.
     // The repository check remains the fail-closed enforcement point when
     // optional application wiring is absent.
@@ -122,7 +136,7 @@ export class ProjectLifecycleService {
       await this.assertProjectMutationAccess(
         projectId,
         userId,
-        deleteGithubRepo ? destructiveRoles : undefined,
+        destructive ? destructiveRoles : undefined,
       );
     } catch (error) {
       await this.maybeRejectGithubDelete(deleteGithubRepo, userId, projectId);
@@ -154,6 +168,10 @@ export class ProjectLifecycleService {
      *
      * 409 rather than a 200 carrying an error: nothing was changed, and a
      * success status is what let the old failure pass as a success.
+     *
+     * GitHub goes first, before Render/Vercel/SonarCloud: it is the half most
+     * often refused, and it is where confirmRepoName is checked, so a refusal
+     * or a mistyped name leaves every other resource untouched.
      */
     if (githubRepoDeleteError) {
       throw new ConflictException({
@@ -164,10 +182,55 @@ export class ProjectLifecycleService {
       });
     }
 
+    /*
+     * Render/Vercel and SonarCloud follow the same rule: a failure keeps the
+     * project. That matters most for deployments - the project row's FK
+     * cascade removes the deployment targets, and with them the only record
+     * of the provider ids, so a local delete after a failed provider delete
+     * would leave live services nobody can find again. Retrying is safe: both
+     * providers answer an already-deleted resource as deleted, and SonarCloud
+     * reports a missing project as not found.
+     */
+    const project =
+      deleteProviderResources || deleteSonarProject
+        ? await this.projectsRepository.findByIdAndUser(
+            projectId,
+            userId,
+            destructiveRoles,
+          )
+        : null;
+    if ((deleteProviderResources || deleteSonarProject) && !project) {
+      throw new NotFoundException(
+        `Project '${projectId}' not found or does not belong to the current user.`,
+      );
+    }
+
+    const alreadyDone = githubRepoDeleted
+      ? ' The GitHub repository was already deleted - untick "also delete on GitHub" before trying again.'
+      : '';
+
+    const providerResourcesDeleted = deleteProviderResources
+      ? await this.deleteProviderResourcesOrThrow(
+          projectId,
+          userId,
+          alreadyDone,
+        )
+      : undefined;
+
+    const sonarProjectDeleted =
+      deleteSonarProject && project
+        ? await this.deleteSonarProjectOrThrow(
+            projectId,
+            userId,
+            project.repo_full_name,
+            alreadyDone,
+          )
+        : undefined;
+
     const deleted = await this.projectsRepository.deleteByIdAndUser(
       projectId,
       userId,
-      deleteGithubRepo ? destructiveRoles : undefined,
+      destructive ? destructiveRoles : undefined,
     );
     if (!deleted) {
       throw new NotFoundException(
@@ -175,7 +238,101 @@ export class ProjectLifecycleService {
       );
     }
 
-    return { ok: true, githubRepoDeleted };
+    return {
+      ok: true,
+      githubRepoDeleted,
+      ...(providerResourcesDeleted !== undefined
+        ? { providerResourcesDeleted }
+        : {}),
+      ...(sonarProjectDeleted !== undefined ? { sonarProjectDeleted } : {}),
+    };
+  }
+
+  /** Deletes the live Render/Vercel resources; 409 if any is left. */
+  private async deleteProviderResourcesOrThrow(
+    projectId: string,
+    userId: string,
+    alreadyDone: string,
+  ): Promise<number> {
+    if (!this.providerResourcesTeardown) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'provider_delete_failed',
+        message: `Deployment deletion is not available on this server, so nothing was deleted from Render or Vercel.${alreadyDone} Untick "also delete the deployments" to disconnect without them. The project was kept.`,
+      });
+    }
+
+    const result =
+      await this.providerResourcesTeardown.deleteProviderResourcesForProject(
+        projectId,
+        userId,
+      );
+    if (result.failed.length > 0) {
+      const failures = result.failed
+        .map(
+          (failure) =>
+            `${failure.provider} ${failure.providerProjectName}: ${failure.message}`,
+        )
+        .join('; ');
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'provider_delete_failed',
+        message: `Some deployments could not be deleted (${failures}).${alreadyDone} The project was kept so you can try again.`,
+      });
+    }
+    return result.deleted.length;
+  }
+
+  /** Deletes the SonarCloud project; true if one existed. 409 on failure. */
+  private async deleteSonarProjectOrThrow(
+    projectId: string,
+    userId: string,
+    repoFullName: string,
+    alreadyDone: string,
+  ): Promise<boolean> {
+    const [owner, repo] = repoFullName.split('/');
+    const result =
+      owner && repo && this.sonarCloud
+        ? await this.sonarCloud.deleteProject(owner, repo)
+        : {
+            status: 'failed' as const,
+            sonarProjectKey: '',
+            message: this.sonarCloud
+              ? `Could not derive an owner/repo from '${repoFullName}'.`
+              : 'SonarCloud deletion is not available on this server.',
+          };
+
+    await this.recordProductEvent({
+      userId,
+      projectId,
+      eventCode:
+        result.status === 'failed'
+          ? 'project_sonar_project_delete_failed'
+          : 'project_sonar_project_deleted',
+      title:
+        result.status === 'failed'
+          ? 'SonarCloud project deletion failed'
+          : 'SonarCloud project deleted',
+      body:
+        result.status === 'failed'
+          ? `Could not delete SonarCloud project ${result.sonarProjectKey}: ${result.message}`
+          : result.status === 'deleted'
+            ? `SonarCloud project ${result.sonarProjectKey} was deleted.`
+            : `No SonarCloud project ${result.sonarProjectKey} existed in the managed organization.`,
+      metadata: { repoFullName, ...result },
+    });
+
+    if (result.status === 'failed') {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'sonar_delete_failed',
+        message: `The SonarCloud project could not be deleted: ${result.message}${alreadyDone} Untick "also delete the SonarCloud project" to disconnect without it. The project was kept.`,
+      });
+    }
+    return result.status === 'deleted';
   }
 
   /** Checks tracked projects without treating inconclusive GitHub failures as missing repos. */

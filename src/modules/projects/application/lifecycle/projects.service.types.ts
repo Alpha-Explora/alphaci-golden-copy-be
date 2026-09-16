@@ -111,6 +111,13 @@ export interface ReconcileDeletedReposResult {
 export interface DisconnectProjectResponse {
   ok: true;
   githubRepoDeleted: boolean;
+  /** Live Render/Vercel resources deleted; present only when requested. */
+  providerResourcesDeleted?: number;
+  /**
+   * Present only when requested: true if a SonarCloud project was deleted,
+   * false if there was none in the managed organization.
+   */
+  sonarProjectDeleted?: boolean;
 }
 
 export interface ProvisionedProjectsResponse {

@@ -306,6 +306,42 @@ export interface DeploymentTargetDeletion {
 
 export const DEPLOYMENT_TARGET_DELETION = Symbol('DEPLOYMENT_TARGET_DELETION');
 
+export interface ProviderResourceDeleteFailure {
+  targetId: string;
+  provider: DeploymentProvider;
+  providerProjectName: string;
+  message: string;
+}
+
+export interface ProviderResourcesTeardownResult {
+  deleted: Array<{
+    targetId: string;
+    provider: DeploymentProvider;
+    providerProjectName: string;
+  }>;
+  failed: ProviderResourceDeleteFailure[];
+}
+
+/**
+ * Deletes the live provider resources (Render services, Vercel projects, …)
+ * behind every deployment target of a project. Used by project deletion,
+ * which must run it BEFORE the project row is removed: the FK cascade drops
+ * the target rows, and with them the only record of the provider ids.
+ *
+ * Never throws for a provider-side failure — failures are reported so the
+ * local delete can still go ahead.
+ */
+export interface DeploymentProviderResourcesTeardown {
+  deleteProviderResourcesForProject(
+    projectId: string,
+    userId: string,
+  ): Promise<ProviderResourcesTeardownResult>;
+}
+
+export const DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN = Symbol(
+  'DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN',
+);
+
 export type DeploymentProvisioningResult = {
   status: 'skipped' | 'completed' | 'partial' | 'failed';
   targets: Array<{

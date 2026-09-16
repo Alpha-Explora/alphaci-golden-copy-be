@@ -20,6 +20,15 @@ import {
  * ProjectsService.disconnectProject and is NOT trusted from the client
  * alone. A mismatch throws BadRequestException before any GitHub call is
  * made.
+ *
+ * Opt-in (deleteProviderResources: true): also deletes the live Render /
+ * Vercel resources behind the project's deployment targets.
+ *
+ * Opt-in (deleteSonarProject: true): also deletes the project's SonarCloud
+ * project in the managed organization.
+ *
+ * Both are owner/admin-only, like deleteGithubRepo, and follow its rule: if
+ * the deletion fails, the project is kept and the request fails with 409.
  */
 export class DisconnectProjectDto {
   @IsOptional()
@@ -31,4 +40,12 @@ export class DisconnectProjectDto {
   @MinLength(1)
   @MaxLength(200)
   confirmRepoName?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  deleteProviderResources?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  deleteSonarProject?: boolean;
 }
