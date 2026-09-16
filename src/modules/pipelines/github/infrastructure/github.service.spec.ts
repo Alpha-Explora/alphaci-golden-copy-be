@@ -841,25 +841,88 @@ describe('GithubService', () => {
       expect((error as GithubRepoDeleteError).code).toBe('not_found');
     });
 
-    it.each([403, 401])(
-      'throws a missing_scope GithubRepoDeleteError on %s',
-      async (status) => {
-        fetchMock.mockResolvedValueOnce({
-          status,
-          text: async () => 'Resource not accessible by integration',
-        });
+    /*
+     * Every 401 and 403 used to become `missing_scope`, with GitHub's body
+     * thrown away. Two real deletions were refused that way while the login
+     * requested delete_repo and the user was an organisation admin, so the
+     * advice to reconnect could not have helped. Each code now has to be
+     * earned by something in the response.
+     */
+    const refused = (
+      status: number,
+      body = '',
+      scopes: string | null = null,
+    ) => ({
+      status,
+      text: async () => body,
+      headers: new Headers(scopes === null ? {} : { 'x-oauth-scopes': scopes }),
+    });
 
-        const error = await service
-          .deleteRepoForUser('gh-token', 'tone', 'orders-api')
-          .catch((e: unknown) => e);
+    const deleteError = async () =>
+      (await service
+        .deleteRepoForUser('gh-token', 'tone', 'orders-api')
+        .catch((e: unknown) => e)) as GithubRepoDeleteError;
 
-        expect(error).toBeInstanceOf(GithubRepoDeleteError);
-        expect((error as GithubRepoDeleteError).code).toBe('missing_scope');
-        expect((error as GithubRepoDeleteError).message).toContain(
-          'reconnect your GitHub account',
-        );
-      },
-    );
+    it('calls a 401 a rejected token, not a missing scope', async () => {
+      fetchMock.mockResolvedValueOnce(refused(401));
+
+      const error = await deleteError();
+      expect(error).toBeInstanceOf(GithubRepoDeleteError);
+      expect(error.code).toBe('token_rejected');
+    });
+
+    it('recognises an organisation that restricts OAuth apps from the words GitHub uses', async () => {
+      fetchMock.mockResolvedValueOnce(
+        refused(
+          403,
+          JSON.stringify({
+            message:
+              'Although you appear to have the correct authorization credentials, the `tone` organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited.',
+          }),
+          'repo, workflow, read:org, delete_repo',
+        ),
+      );
+
+      const error = await deleteError();
+      expect(error.code).toBe('org_restricted');
+      expect(error.message).toContain('Third-party application access policy');
+    });
+
+    it('reports a missing scope only when the scopes on the token show it', async () => {
+      fetchMock.mockResolvedValueOnce(
+        refused(403, '', 'repo, workflow, read:org'),
+      );
+
+      const error = await deleteError();
+      expect(error.code).toBe('missing_scope');
+    });
+
+    it('does not blame the scope when the token has delete_repo', async () => {
+      fetchMock.mockResolvedValueOnce(
+        refused(403, '', 'repo, workflow, read:org, delete_repo'),
+      );
+
+      const error = await deleteError();
+      expect(error.code).toBe('forbidden');
+      expect(error.message).toContain('even though the token can delete');
+    });
+
+    it('says the cause is unknown rather than guessing when there is no scopes header', async () => {
+      fetchMock.mockResolvedValueOnce(refused(403));
+
+      const error = await deleteError();
+      expect(error.code).toBe('forbidden');
+      expect(error.message).not.toContain('even though');
+    });
+
+    it('never puts the GitHub response body into the message', async () => {
+      fetchMock.mockResolvedValueOnce(
+        refused(403, 'SECRET-LOOKING-BODY-TEXT', 'repo'),
+      );
+
+      const error = await deleteError();
+      expect(error.message).not.toContain('SECRET-LOOKING-BODY-TEXT');
+    });
 
     it('throws an other GithubRepoDeleteError on unexpected statuses', async () => {
       fetchMock.mockResolvedValueOnce({

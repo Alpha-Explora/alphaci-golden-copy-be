@@ -1,7 +1,6 @@
 // Response shapes (match FE contracts exactly).
 // Shared with the application-layer view mappers; keep free of runtime imports.
 import type { WorkflowFileMetadata } from '../workflows/index';
-import type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
 import type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProvisionedProjectStatus } from '../../infrastructure/projects.repository';
@@ -101,13 +100,24 @@ export interface ReconcileDeletedReposResult {
   outOfScope: number;
 }
 
+/**
+ * A completed disconnect.
+ *
+ * Only ever a success. When the GitHub half fails the project is kept and the
+ * request fails with 409 carrying the reason, so a refusal can no longer arrive
+ * inside a 200 that a caller is free to ignore - which is how two refused
+ * deletions were reported to the user as done.
+ */
 export interface DisconnectProjectResponse {
   ok: true;
   githubRepoDeleted: boolean;
-  githubRepoDeleteError?: {
-    code: GithubRepoDeleteErrorCode;
-    message: string;
-  };
+  /** Live Render/Vercel resources deleted; present only when requested. */
+  providerResourcesDeleted?: number;
+  /**
+   * Present only when requested: true if a SonarCloud project was deleted,
+   * false if there was none in the managed organization.
+   */
+  sonarProjectDeleted?: boolean;
 }
 
 export interface ProvisionedProjectsResponse {

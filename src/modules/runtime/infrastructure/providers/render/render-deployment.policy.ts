@@ -12,6 +12,11 @@ import type {
 import type { DeploymentProvisioningTarget } from '../../../core/deployment-provisioning.contract';
 import type { DeploymentStrategy } from '../../../core/deployments.types';
 import { RenderCostPolicyService } from './render-cost-policy.service';
+import {
+  RENDER_SERVICE_BRANCHES,
+  renderImageUrl,
+  type RenderServiceBranch,
+} from './render-conventions';
 
 /** Render owns all Render-shaped strategy and target compatibility decisions. */
 @Injectable()
@@ -75,7 +80,7 @@ export class RenderDeploymentPolicy implements DeploymentProviderPolicy {
     },
     expandTargets: ({ target, allTargets }) => {
       if (!shouldFanOutRenderTarget(target, allTargets)) return [target];
-      return (['uat', 'main'] as const).map((branchName) => {
+      return RENDER_SERVICE_BRANCHES.map((branchName) => {
         const projectName = renderProjectNameForBranch(target, branchName);
         return {
           ...target,
@@ -94,19 +99,12 @@ export class RenderDeploymentPolicy implements DeploymentProviderPolicy {
       ) {
         return null;
       }
-      const [owner] = repoFullName.split('/');
-      if (!owner) return null;
-      const branchName =
-        target.branchName === 'uat' || target.branchName === 'main'
-          ? target.branchName
-          : 'uat';
-      const imageName = `alphaci-${target.slot}-${branchName}-${
-        target.projectName ?? target.slot
-      }`
-        .toLowerCase()
-        .replaceAll(/[^a-z0-9._-]+/g, '-')
-        .replaceAll(/^-+|-+$/g, '');
-      return `ghcr.io/${owner.toLowerCase()}/${imageName}:${branchName}`;
+      return renderImageUrl({
+        repoFullName,
+        slot: target.slot,
+        branchName: renderBranchOf(target),
+        projectName: target.projectName,
+      });
     },
   };
 
@@ -273,9 +271,15 @@ export class RenderDeploymentPolicy implements DeploymentProviderPolicy {
   }
 }
 
+function renderBranchOf(
+  target: DeploymentProvisioningTarget,
+): RenderServiceBranch {
+  return target.branchName === 'main' ? 'main' : RENDER_SERVICE_BRANCHES[0];
+}
+
 function renderProjectNameForBranch(
   target: DeploymentProvisioningTarget,
-  branchName: 'uat' | 'main',
+  branchName: RenderServiceBranch,
 ): string | undefined {
   const raw = target.projectName?.trim();
   if (!raw) return undefined;

@@ -547,7 +547,6 @@ function buildQualityWorkflowFile(
     yaml: dumpWorkflow({
       name: qualityName,
       'run-name': FIRST_CHAINED_RUN_NAME,
-      concurrency: stageConcurrency('quality'),
       on: {
         workflow_run: {
           workflows: [ctx.names.accessName],
@@ -842,7 +841,6 @@ function buildVerifyWorkflowFile(
     yaml: dumpWorkflow({
       name: verifyName,
       'run-name': INHERITED_RUN_NAME,
-      concurrency: stageConcurrency('verify'),
       on: {
         workflow_run: {
           workflows: [packageName],
@@ -897,7 +895,6 @@ function buildPackageWorkflowFile(
     yaml: dumpWorkflow({
       name: packageName,
       'run-name': INHERITED_RUN_NAME,
-      concurrency: stageConcurrency('package'),
       on: {
         workflow_run: {
           workflows: [qualityName],
@@ -1309,38 +1306,32 @@ function withPipelineContext(
   return { [PIPELINE_CONTEXT_JOB_ID]: pipelineContextJob(), ...wired };
 }
 
-/**
- * Stops the same stage running twice at once on one repository.
+/*
+ * The chained stages carry NO `concurrency` block, and that is the fix rather
+ * than an omission.
  *
- * A branch with an open pull request fires every stage twice - once for the
- * push, once for the pull_request - and the two chains race. Observed on a real
- * repository: two package runs overlapping by a minute, 16:53:42-16:55:12 and
- * 16:54:13-16:55:53. They build the same image with the same buildx cache
- * scope (`repository-imagename`, with nothing to tell two runs apart), so the
- * second failed to reserve the cache and the whole build died:
+ * They had one. It was added to stop two package runs racing on the buildx
+ * cache, and it keyed the group on the repository alone - the only thing
+ * available, because `concurrency` is evaluated before any job runs and so
+ * cannot read `pipeline-context`. That put dev, uat and main in ONE group, and
+ * GitHub keeps a single pending run per group: every new arrival cancels the
+ * one queued behind it. On testsandbox-fe, with every other fix in place, dev
+ * and uat recorded an access report and nothing else - their quality runs were
+ * cancelled, five of seven, while main's went through.
  *
- *   ERROR: failed to build: failed to solve: error writing layer blob:
- *   failed to reserve cache
+ * A cancelled pipeline reports nothing at all, which is strictly worse than
+ * the cache collision it was guarding: that fails one run, loudly, with the
+ * reason in the log.
  *
- * The cache is the symptom. The reason to serialize is that two package runs
- * mean two deploys racing to the same environment, and the loser is whichever
- * finishes second.
- *
- * `cancel-in-progress: false` queues rather than cancels: a half-finished
- * deploy must not be killed because a duplicate trigger arrived behind it.
- *
- * The key is coarse on purpose. `concurrency` is evaluated before any job runs,
- * so it cannot read the context job, and a chained stage's own event carries
- * the default branch - the same constraint that limits run-name. Serializing a
- * stage per repository is the honest version of what is available here, and
- * costs only queueing.
+ * The collision is also mostly gone on its own. The cache scope is derived
+ * from the image name, which carries the branch - `alphaci-backend-main-…`
+ * against `alphaci-backend-dev-…` - so once a stage resolves its branch
+ * correctly the scopes differ and cross-branch runs cannot contend. What
+ * remains is two runs of the SAME branch, which happens because a push and a
+ * pull_request both fire the chain; that is a duplicate-trigger problem and
+ * belongs where the triggers are, not in a group key that cannot see the
+ * branch.
  */
-function stageConcurrency(stage: WorkflowStage) {
-  return {
-    group: `alphaci-${stage}-\${{ github.repository }}`,
-    'cancel-in-progress': false,
-  };
-}
 
 function validationJob(stage: WorkflowStage) {
   /*
@@ -1659,6 +1650,17 @@ function reportingJob(
     GH_SHA: chained ? HEAD_SHA_EXPR : DIRECT_SHA_EXPR,
     GH_RUN_ID: '${{ github.run_id }}',
     GITHUB_TOKEN: '${{ github.token }}',
+    /*
+     * The commit-status context this stage posts under.
+     *
+     * A chained stage runs via `workflow_run`, and GitHub does not attach those
+     * runs to a pull request as checks — so the stage that runs the tests was
+     * invisible to branch protection, which could only require the 5-second
+     * `env-guard`. A commit status is the one verdict from a workflow_run chain
+     * that protection can see, and it lands on the sha `pipeline-context`
+     * resolved, not the branch head GitHub would have guessed.
+     */
+    STATUS_CONTEXT: `alphaci/${stage}`,
     STAGE_FAILED: "${{ contains(needs.*.result, 'failure') }}",
     STAGE_CANCELLED: "${{ contains(needs.*.result, 'cancelled') }}",
     /*
@@ -1773,11 +1775,43 @@ function reportingJob(
   }
 
   const scriptLines = [
+    "# Put this stage's verdict on the commit, where branch protection can",
+    '# require it.',
+    '#',
+    '# Defined before anything that can exit, and called on every path that',
+    '# reaches a verdict, because a REQUIRED status that never arrives leaves a',
+    '# pull request pending for ever. Blocking every merge is a worse failure',
+    '# than the one this is here to prevent, so the ordering is deliberate.',
+    '#',
+    '# Never fails the stage. A green pipeline must not turn red because GitHub',
+    '# would not take a status, but a silently broken status path is how a gate',
+    '# stops gating without anyone noticing - so it warns, loudly, in the log.',
+    'post_commit_status() {',
+    '  if [ -z "${GH_SHA}" ]; then',
+    '    echo "::warning::No commit sha resolved, so no ${STATUS_CONTEXT} status was posted."',
+    '    return 0',
+    '  fi',
+    '  STATUS_PAYLOAD=$(jq -n \\',
+    '    --arg state "$1" \\',
+    '    --arg description "$2" \\',
+    '    --arg context "$STATUS_CONTEXT" \\',
+    '    --arg url "https://github.com/${GH_REPO}/actions/runs/${GH_RUN_ID}" \\',
+    "    '{state:$state,description:$description,context:$context,target_url:$url}')",
+    '  curl -sf --max-time 5 \\',
+    '    -X POST "https://api.github.com/repos/${GH_REPO}/statuses/${GH_SHA}" \\',
+    '    -H "Authorization: Bearer ${GITHUB_TOKEN}" \\',
+    '    -H "Accept: application/vnd.github+json" \\',
+    '    -d "$STATUS_PAYLOAD" >/dev/null \\',
+    '    || echo "::warning::Could not post the ${STATUS_CONTEXT} status. Branch protection requiring it will hold this commit as pending."',
+    '}',
+    '',
     '# Derive stage conclusion from upstream needs results',
     'if [ "$STAGE_FAILED" = "true" ]; then',
     '  CONCLUSION="failure"',
+    '  post_commit_status "failure" "The ${STATUS_CONTEXT#alphaci/} stage failed."',
     'elif [ "$STAGE_CANCELLED" = "true" ]; then',
     '  CONCLUSION="cancelled"',
+    '  post_commit_status "error" "The ${STATUS_CONTEXT#alphaci/} stage was cancelled."',
     'elif [ "$STAGE_WORK_RAN" != "true" ]; then',
     '  # THE WORK OF THIS STAGE NEVER RAN.',
     '  #',
@@ -1798,9 +1832,22 @@ function reportingJob(
     '  echo "This stage did no work, so there is nothing to report."',
     '  echo "Either the stage before it did not pass, or this branch is not one"',
     '  echo "this stage builds."',
+    '  # NO STATUS EITHER, deliberately.',
+    '  #',
+    '  # A green status here would say this commit cleared a stage that never',
+    '  # examined it - the same claim as the package rows that recorded a build',
+    '  # of nothing as a successful deploy, moved to the one place that decides',
+    '  # whether code reaches uat and main.',
+    '  #',
+    '  # The cost is that only a stage which ALWAYS does work can safely be a',
+    '  # required check: require one that skips on some branches and those pull',
+    '  # requests wait for a status that is never coming. `quality` runs on',
+    '  # every branch and is the one meant to be required; package and verify',
+    '  # are branch-scoped and are published for reading, not for gating.',
     '  exit 0',
     'else',
     '  CONCLUSION="success"',
+    '  post_commit_status "success" "The ${STATUS_CONTEXT#alphaci/} stage passed."',
     'fi',
     '',
     '# Capture WHY the stage failed: the job, the step inside it that failed,',
@@ -2018,11 +2065,18 @@ function reportingJob(
      *
      * `checks: read` is for the annotations, which carry the file, line and
      * message of each individual error.
+     *
+     * `statuses: write` is what lets this job put the stage's verdict on the
+     * commit. A chained stage runs via `workflow_run` and never appears as a
+     * pull-request check, so without this the only thing branch protection
+     * could require was a five-second environment check - and a pull request
+     * into uat could be merged with every test failing.
      */
     permissions: {
       contents: 'read',
       actions: 'read',
       checks: 'read',
+      statuses: 'write',
     },
     env: {
       ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',

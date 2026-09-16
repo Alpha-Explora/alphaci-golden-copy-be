@@ -476,9 +476,15 @@ export class ProjectsController {
    * to also delete the GitHub repository. confirmRepoName must exactly match
    * the project's repo_full_name (e.g. "my-org/my-repo") — this is
    * re-validated server-side and requires the owner/admin workspace role.
-   * A GitHub-side failure (including a missing delete_repo OAuth scope)
-   * never blocks the local disconnect; see the response's
-   * githubRepoDeleted / githubRepoDeleteError fields.
+   * If GitHub refuses the deletion, nothing changes: the project is kept and
+   * the request fails with 409 and the reason, so the user can retry, or untick
+   * the GitHub option to disconnect on its own.
+   *
+   * Further opt-ins (same owner/admin role): `deleteProviderResources` deletes
+   * the live Render/Vercel resources behind the project's deployment targets,
+   * and `deleteSonarProject` deletes its SonarCloud project. They run after
+   * the GitHub half and follow the same rule: a failure keeps the project and
+   * fails the request with 409.
    *
    * Throttled tighter than the app default (60/60s) and auth (10/60s):
    * this is a user-triggered, potentially irreversible deletion.

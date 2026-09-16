@@ -1,4 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
 import { DeploymentTargetsService } from './deployment-targets.service';
@@ -189,6 +192,48 @@ describe('DeploymentTargetsService', () => {
       providerRegistry as never,
       capabilityResolver as never,
     );
+  });
+
+  /*
+   * The resolver used to reach no policy at all - it was built without its
+   * registry - and every managed target was created as `provider_native`.
+   * The secrets installers ignore that strategy, so the targets existed and
+   * their pipelines could never deploy. A provider with a policy never
+   * answers `provider_native`, so seeing it means the wiring broke, and the
+   * target must not be created.
+   */
+  it('refuses to create a target when the strategy fell back to provider_native', async () => {
+    const unwired = new DeploymentTargetsService(
+      projectReferenceLookup,
+      deploymentTargetsRepository as never,
+      providerConnectionsRepository as never,
+      encryptionService as never,
+      clientRegistry,
+      configService as never,
+      new DeploymentStrategyResolver(),
+      undefined,
+      usageQuotaService,
+      workspaceAccessService as never,
+      auditEventsService as never,
+      notificationEventsService as never,
+      providerRegistry as never,
+    );
+
+    const attempt = unwired.createDeploymentTarget('project-1', 'user-1', {
+      action: 'create',
+      slot: 'frontend',
+      ownershipMode: 'byo',
+      provider: 'vercel',
+      providerConnectionId: 'connection-1',
+      projectName: 'demo-frontend',
+    });
+
+    await expect(attempt).rejects.toThrow(InternalServerErrorException);
+    await expect(attempt).rejects.toThrow('could not be resolved');
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
   });
 
   it('rejects BYO Vercel targets when connection org metadata is missing', async () => {
@@ -627,6 +672,84 @@ describe('DeploymentTargetsService', () => {
           deleteProviderResourceRequested: true,
           providerResourceDeleted: true,
         }),
+      }),
+    );
+  });
+
+  it('deletes every tracked provider resource for a project and reports failures without throwing', async () => {
+    const renderClient = {
+      deleteTarget: jest.fn().mockResolvedValue({ deleted: true }),
+    };
+    const failingVercelClient = {
+      deleteTarget: jest
+        .fn()
+        .mockRejectedValue(new Error('Vercel API is down')),
+    };
+    clientRegistry.getClient.mockImplementation((provider: string) =>
+      provider === 'render' ? renderClient : failingVercelClient,
+    );
+    deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([
+      {
+        id: 'target-1',
+        provider: 'render',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+      {
+        id: 'target-2',
+        provider: 'vercel',
+        providerProjectId: 'prj-1',
+        providerProjectName: 'orders-web',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+      {
+        id: 'target-3',
+        provider: 'render',
+        providerProjectId: '  ',
+        providerProjectName: 'never-created',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+    ]);
+
+    await expect(
+      service.deleteProviderResourcesForProject('project-1', 'user-1'),
+    ).resolves.toEqual({
+      deleted: [
+        {
+          targetId: 'target-1',
+          provider: 'render',
+          providerProjectName: 'orders-api',
+        },
+      ],
+      failed: [
+        {
+          targetId: 'target-2',
+          provider: 'vercel',
+          providerProjectName: 'orders-web',
+          message: 'Vercel API is down',
+        },
+      ],
+    });
+
+    expect(renderClient.deleteTarget).toHaveBeenCalledTimes(1);
+    expect(renderClient.deleteTarget).toHaveBeenCalledWith({
+      token: 'render-token',
+      targetId: 'srv-1',
+    });
+    expect(failingVercelClient.deleteTarget).toHaveBeenCalledWith({
+      token: 'flowci-vercel-token',
+      targetId: 'prj-1',
+    });
+    expect(
+      deploymentTargetsRepository.deleteDeploymentTargetForUser,
+    ).not.toHaveBeenCalled();
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCode: 'deployment_provider_resources_deleted',
       }),
     );
   });

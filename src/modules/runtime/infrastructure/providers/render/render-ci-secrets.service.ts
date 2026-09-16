@@ -22,6 +22,7 @@ import {
   type GithubActionsSecretsPort,
 } from '../../../application/ports/github-actions-secrets.port';
 import { Inject } from '@nestjs/common';
+import { RENDER_SERVICE_BRANCHES, renderBranchFor } from './render-conventions';
 
 export interface RenderCiSecretNames {
   [key: string]: string;
@@ -136,9 +137,12 @@ export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
 
   renderSecretNames(
     slot: EnvTargetSlot,
-    branchName: string | null | undefined = 'uat',
+    branchName: string | null | undefined = RENDER_SERVICE_BRANCHES[0],
   ): RenderCiSecretNames {
-    const branch = branchName === 'main' ? branchName : 'uat';
+    // Shared with the workflow generator: the names written here and the names
+    // the generated jobs read are the same function, so a branch cannot be
+    // installed under one spelling and read under another.
+    const branch = renderBranchFor(branchName);
     const prefix = `RENDER_${slot.toUpperCase()}_${branch.toUpperCase()}`;
     const branchSuffix = branch.toUpperCase();
     return {

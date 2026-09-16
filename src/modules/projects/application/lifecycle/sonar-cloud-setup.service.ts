@@ -7,6 +7,10 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 
+export type SonarProjectDeleteResult =
+  | { status: 'deleted' | 'not_found'; sonarProjectKey: string }
+  | { status: 'failed'; sonarProjectKey: string; message: string };
+
 /**
  * Installs the SonarCloud secrets this product's Quality stage reads.
  *
@@ -94,6 +98,87 @@ export class SonarCloudSetupService {
       'SONAR_PROJECT_KEY',
       sonarProjectKey,
     );
+  }
+
+  /**
+   * Deletes the SonarCloud project this product created for a repository.
+   *
+   * Scoped to the managed organization: the key is looked up there first, so
+   * a repository that brought its own SonarCloud project (same key convention,
+   * different organization) is reported as absent rather than touched.
+   */
+  async deleteProject(
+    owner: string,
+    repo: string,
+  ): Promise<SonarProjectDeleteResult> {
+    const managed =
+      this.configService?.getOrThrow<AppConfig>('app')?.envProvisioning
+        ?.flowciManaged;
+    const sonarToken = managed?.sonarToken?.trim();
+    const sonarOrganization = managed?.sonarOrganization?.trim();
+    const sonarProjectKey = sonarProjectKeyFor(owner, repo);
+    if (!sonarToken || !sonarOrganization) {
+      return {
+        status: 'failed',
+        sonarProjectKey,
+        message:
+          'ALPHACI_SONAR_TOKEN / ALPHACI_SONAR_ORGANIZATION are not configured.',
+      };
+    }
+
+    const headers = {
+      Authorization: `Basic ${Buffer.from(`${sonarToken}:`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    };
+
+    try {
+      const search = await fetch(
+        `https://sonarcloud.io/api/projects/search?${new URLSearchParams({
+          organization: sonarOrganization,
+          projects: sonarProjectKey,
+        }).toString()}`,
+        { headers },
+      );
+      if (!search.ok) {
+        return {
+          status: 'failed',
+          sonarProjectKey,
+          message: `SonarCloud project lookup failed (${String(search.status)}): ${(await search.text()).slice(0, 300)}`,
+        };
+      }
+      const found = (await search.json()) as {
+        components?: Array<{ key?: string }>;
+      };
+      if (!found.components?.some((c) => c.key === sonarProjectKey)) {
+        return { status: 'not_found', sonarProjectKey };
+      }
+
+      const response = await fetch(
+        'https://sonarcloud.io/api/projects/delete',
+        {
+          method: 'POST',
+          headers,
+          body: new URLSearchParams({ project: sonarProjectKey }),
+        },
+      );
+      if (response.ok || response.status === 404) {
+        this.logger.log(
+          `SonarCloud project deleted for ${owner}/${repo} (${sonarProjectKey})`,
+        );
+        return { status: 'deleted', sonarProjectKey };
+      }
+      return {
+        status: 'failed',
+        sonarProjectKey,
+        message: `SonarCloud project delete failed (${String(response.status)}): ${(await response.text()).slice(0, 300)}`,
+      };
+    } catch (error) {
+      return {
+        status: 'failed',
+        sonarProjectKey,
+        message: `SonarCloud project delete failed: ${String(error)}`,
+      };
+    }
   }
 
   private async ensureSonarCloudProject(input: {

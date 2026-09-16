@@ -23,6 +23,7 @@ import {
   DEPLOYMENT_PROVISIONING_FACADE,
   DEPLOYMENT_TARGETS_QUERY,
   DEPLOYMENT_TARGET_DELETION,
+  DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
 } from './core/deployment-provisioning.contract';
 import { DeploymentStrategyResolver } from './domain/deployment-strategy.resolver';
 import { EnvTokenEncryptionService } from './application/encryption.service';
@@ -55,6 +56,7 @@ import { ProjectDriftService } from './application/project-drift.service';
 import { ProjectSyncFindingsRepository } from './infrastructure/repositories/project-sync-findings.repository';
 import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-registry.port';
 import { RuntimeCoreModule } from './core/runtime-core.module';
+import { DeploymentProviderRegistry } from './core/deployment-provider.registry';
 import { DEPLOYMENT_TARGET_DEFAULTS } from './core/deployment-provider.contract';
 import { DEPLOYMENT_PROVISIONING_DEFAULTS } from './core/deployment-provisioning.defaults';
 import { DeploymentProviderPolicyRegistry } from './domain/deployment-provider.policy';
@@ -127,7 +129,21 @@ import {
     },
     ProviderConnectionsService,
     DeploymentTargetsService,
-    DeploymentStrategyResolver,
+    {
+      provide: DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
+      useExisting: DeploymentTargetsService,
+    },
+    {
+      // A factory, not a plain provider: the resolver is undecorated domain
+      // code, so Nest cannot see its constructor and would build it with no
+      // registry - which resolves every target to provider_native and silently
+      // skips installing its CI secrets. See tests/architecture/http-boot.spec.ts.
+      provide: DeploymentStrategyResolver,
+      useFactory: (
+        providerRegistry: DeploymentProviderRegistry<DeploymentProvider>,
+      ) => new DeploymentStrategyResolver(providerRegistry),
+      inject: [DeploymentProviderRegistry],
+    },
     {
       provide: RUNTIME_PROVIDER_PACKS,
       useFactory: (
@@ -291,6 +307,7 @@ import {
     DEPLOYMENT_TARGETS_QUERY,
     DEPLOYMENT_ENV_METADATA_QUERY,
     DEPLOYMENT_TARGET_DELETION,
+    DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
     PROVIDER_CLIENT_REGISTRY,
     PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
     WorkflowFragmentRegistry,

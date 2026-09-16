@@ -13,6 +13,11 @@ import {
   CENTRAL_WORKFLOW_BASE,
   deploymentNeeds,
 } from '../core/workflow-fragment.helpers';
+import {
+  RENDER_SERVICE_BRANCHES,
+  renderImageName,
+  type RenderServiceBranch,
+} from './render-conventions';
 
 function buildDockerJob(
   target: WorkflowFragmentTarget,
@@ -133,7 +138,7 @@ function resolveRenderDeploymentStrategy(
 
 function renderSecretNames(
   slot: string,
-  branchName: 'uat' | 'main',
+  branchName: RenderServiceBranch,
 ): Record<string, string> {
   const prefix = `RENDER_${slot.toUpperCase()}_${branchName.toUpperCase()}`;
   const branchSuffix = branchName.toUpperCase();
@@ -147,26 +152,21 @@ function renderSecretNames(
   };
 }
 
-function renderImageName(
-  target: WorkflowTargetExpansionInput,
-  branchName: string,
-): string {
-  const raw = `alphaci-${target.slot}-${branchName}-${target.projectName ?? target.slot}`;
-  return raw
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9._-]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '');
-}
-
 function expandRenderTargets(
   target: WorkflowTargetExpansionInput,
   context: WorkflowTargetExpansionContext,
 ): readonly WorkflowFragmentTarget[] {
+  /*
+   * Deliberately no instance-type or service-type check.
+   *
+   * RenderCostPolicyService already refuses anything but a free web service
+   * when it creates the target, and it does so from configuration. Repeating
+   * the rule here made the workflow generator a second, silent gate: a
+   * deployment that allowed a paid plan got its services created and no deploy
+   * jobs at all, with nothing said. One rule, in the half that owns it.
+   */
   if (
     target.slot !== 'backend' ||
-    (providerDataString(target, 'renderInstanceType') || 'free') !== 'free' ||
-    (providerDataString(target, 'renderServiceType') || 'web_service') !==
-      'web_service' ||
     resolveRenderDeploymentStrategy(target) !== 'render_image_pushed'
   ) {
     return [];
@@ -176,7 +176,7 @@ function expandRenderTargets(
     target.rootDirectory?.trim() ||
     context.fallbackRootDirectory?.trim() ||
     undefined;
-  return (['uat', 'main'] as const).map((branchName) => ({
+  return RENDER_SERVICE_BRANCHES.map((branchName) => ({
     slot: target.slot,
     provider: 'render',
     branchName,
@@ -184,7 +184,11 @@ function expandRenderTargets(
     secretNames: renderSecretNames(target.slot, branchName),
     dockerContext: target.dockerContext?.trim() || rootDirectory || '.',
     dockerfilePath: target.dockerfilePath?.trim() || 'Dockerfile',
-    imageName: renderImageName(target, branchName),
+    imageName: renderImageName({
+      slot: target.slot,
+      branchName,
+      projectName: target.projectName,
+    }),
     ...(rootDirectory ? { rootDirectory } : {}),
   }));
 }
