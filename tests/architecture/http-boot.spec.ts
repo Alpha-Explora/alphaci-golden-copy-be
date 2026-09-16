@@ -21,6 +21,9 @@ Object.assign(process.env, {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createHttpApplication } =
   require('../../src/main.js') as typeof import('../../src/main.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DeploymentStrategyResolver } =
+  require('../../src/modules/runtime/domain/deployment-strategy.resolver.js') as typeof import('../../src/modules/runtime/domain/deployment-strategy.resolver.js');
 
 describe('HTTP application boot', () => {
   it('initializes the real Express middleware and serves health without a DB', async () => {
@@ -57,6 +60,41 @@ describe('HTTP application boot', () => {
           }),
         );
       }
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  /*
+   * Proven against the booted application, not a hand-built instance.
+   *
+   * The resolver's unit tests pass a registry to its constructor directly, so
+   * they passed the whole time Nest was building it with none: the resolver is
+   * undecorated domain code, so as a plain provider it got no constructor
+   * arguments. Every managed Render and Vercel target resolved to
+   * `provider_native`, and no repository ever received a pipeline secret.
+   * RuntimeModule now builds it with a factory; only the real composition root
+   * can show that the wiring holds.
+   */
+  it('resolves managed hosting to the strategies the secrets installers act on', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const resolver = app.get(DeploymentStrategyResolver, { strict: false });
+
+      expect(
+        resolver.resolve({
+          provider: 'vercel',
+          ownershipMode: 'flowci_managed',
+        }),
+      ).toBe('vercel_ci_pushed');
+      expect(
+        resolver.resolve({
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+        }),
+      ).toBe('render_image_pushed');
     } finally {
       await app.close();
     }

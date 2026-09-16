@@ -57,6 +57,7 @@ import { ProjectDriftService } from './application/project-drift.service';
 import { ProjectSyncFindingsRepository } from './infrastructure/repositories/project-sync-findings.repository';
 import { PROVIDER_CLIENT_REGISTRY } from './application/ports/provider-client-registry.port';
 import { RuntimeCoreModule } from './core/runtime-core.module';
+import { DeploymentProviderRegistry } from './core/deployment-provider.registry';
 import { DEPLOYMENT_TARGET_DEFAULTS } from './core/deployment-provider.contract';
 import { DEPLOYMENT_PROVISIONING_DEFAULTS } from './core/deployment-provisioning.defaults';
 import { DeploymentProviderPolicyRegistry } from './domain/deployment-provider.policy';
@@ -133,7 +134,17 @@ import {
       provide: DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
       useExisting: DeploymentTargetsService,
     },
-    DeploymentStrategyResolver,
+    {
+      // A factory, not a plain provider: the resolver is undecorated domain
+      // code, so Nest cannot see its constructor and would build it with no
+      // registry - which resolves every target to provider_native and silently
+      // skips installing its CI secrets. See tests/architecture/http-boot.spec.ts.
+      provide: DeploymentStrategyResolver,
+      useFactory: (
+        providerRegistry: DeploymentProviderRegistry<DeploymentProvider>,
+      ) => new DeploymentStrategyResolver(providerRegistry),
+      inject: [DeploymentProviderRegistry],
+    },
     {
       provide: RUNTIME_PROVIDER_PACKS,
       useFactory: (

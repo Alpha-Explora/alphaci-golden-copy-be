@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   Optional,
@@ -168,6 +169,23 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       action: dto.action,
       renderDeployMethod: dto.renderDeployMethod,
     });
+    /*
+     * A provider with a policy never answers `provider_native`; the resolver
+     * only falls back to it when the policy was not reached. That fallback
+     * used to be accepted, and it cost every managed target its pipeline
+     * secrets: the installers act only on the provider's own strategies, so
+     * all 13 Render and Vercel targets were created, reported as provisioned,
+     * and left with deploy jobs reading secrets nothing ever wrote.
+     *
+     * Checked here, before anything is created at the provider, so a wiring
+     * fault stops the target outright instead of leaving a live service with
+     * no way to deploy to it.
+     */
+    if (providerPolicy && deploymentStrategy === 'provider_native') {
+      throw new InternalServerErrorException(
+        `The deployment strategy for ${dto.provider} could not be resolved, so no target was created. This is a server configuration fault, not a problem with the project.`,
+      );
+    }
     const providerTargetPolicy =
       providerPolicy?.resolveTarget(
         buildProviderTargetRequest({
