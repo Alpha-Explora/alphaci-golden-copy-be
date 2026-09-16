@@ -23,6 +23,7 @@ import {
   DEPLOYMENT_PROVISIONING_FACADE,
   DEPLOYMENT_TARGETS_QUERY,
   DEPLOYMENT_TARGET_DELETION,
+  DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
 } from './core/deployment-provisioning.contract';
 import { DeploymentStrategyResolver } from './domain/deployment-strategy.resolver';
 import { EnvTokenEncryptionService } from './application/encryption.service';
@@ -128,6 +129,10 @@ import {
     },
     ProviderConnectionsService,
     DeploymentTargetsService,
+    {
+      provide: DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
+      useExisting: DeploymentTargetsService,
+    },
     DeploymentStrategyResolver,
     {
       provide: RUNTIME_PROVIDER_PACKS,
@@ -293,6 +298,7 @@ import {
     DEPLOYMENT_TARGETS_QUERY,
     DEPLOYMENT_ENV_METADATA_QUERY,
     DEPLOYMENT_TARGET_DELETION,
+    DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
     PROVIDER_CLIENT_REGISTRY,
     PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
     WorkflowFragmentRegistry,

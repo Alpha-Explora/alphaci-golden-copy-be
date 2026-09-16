@@ -40,6 +40,7 @@ import { ProjectsRepository } from './infrastructure/projects.repository';
 import { ProjectWorkspaceController } from './api/project-workspace.controller';
 import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
 import { ProjectsService } from './application/lifecycle/projects.service';
+import { SonarCloudSetupService } from './application/lifecycle/sonar-cloud-setup.service';
 import { ProjectReferenceModule } from './project-reference.module';
 
 @Module({
@@ -68,6 +69,7 @@ import { ProjectReferenceModule } from './project-reference.module';
       useExisting: ProjectProvisioningApplicationService,
     },
     ProjectLifecycleService,
+    SonarCloudSetupService,
     ProjectDashboardService,
     ProjectWorkflowsService,
     ProjectPreviewsApplicationService,

@@ -624,6 +624,84 @@ describe('DeploymentTargetsService', () => {
     );
   });
 
+  it('deletes every tracked provider resource for a project and reports failures without throwing', async () => {
+    const renderClient = {
+      deleteTarget: jest.fn().mockResolvedValue({ deleted: true }),
+    };
+    const failingVercelClient = {
+      deleteTarget: jest
+        .fn()
+        .mockRejectedValue(new Error('Vercel API is down')),
+    };
+    clientRegistry.getClient.mockImplementation((provider: string) =>
+      provider === 'render' ? renderClient : failingVercelClient,
+    );
+    deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([
+      {
+        id: 'target-1',
+        provider: 'render',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+      {
+        id: 'target-2',
+        provider: 'vercel',
+        providerProjectId: 'prj-1',
+        providerProjectName: 'orders-web',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+      {
+        id: 'target-3',
+        provider: 'render',
+        providerProjectId: '  ',
+        providerProjectName: 'never-created',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+    ]);
+
+    await expect(
+      service.deleteProviderResourcesForProject('project-1', 'user-1'),
+    ).resolves.toEqual({
+      deleted: [
+        {
+          targetId: 'target-1',
+          provider: 'render',
+          providerProjectName: 'orders-api',
+        },
+      ],
+      failed: [
+        {
+          targetId: 'target-2',
+          provider: 'vercel',
+          providerProjectName: 'orders-web',
+          message: 'Vercel API is down',
+        },
+      ],
+    });
+
+    expect(renderClient.deleteTarget).toHaveBeenCalledTimes(1);
+    expect(renderClient.deleteTarget).toHaveBeenCalledWith({
+      token: 'render-token',
+      targetId: 'srv-1',
+    });
+    expect(failingVercelClient.deleteTarget).toHaveBeenCalledWith({
+      token: 'flowci-vercel-token',
+      targetId: 'prj-1',
+    });
+    expect(
+      deploymentTargetsRepository.deleteDeploymentTargetForUser,
+    ).not.toHaveBeenCalled();
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCode: 'deployment_provider_resources_deleted',
+      }),
+    );
+  });
+
   it('still detaches locally and reports a providerDeleteError when the live provider delete fails', async () => {
     const renderClient = {
       deleteTarget: jest

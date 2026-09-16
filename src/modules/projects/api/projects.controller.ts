@@ -480,6 +480,12 @@ export class ProjectsController {
    * the request fails with 409 and the reason, so the user can retry, or untick
    * the GitHub option to disconnect on its own.
    *
+   * Further opt-ins (same owner/admin role): `deleteProviderResources` deletes
+   * the live Render/Vercel resources behind the project's deployment targets,
+   * and `deleteSonarProject` deletes its SonarCloud project. They run after
+   * the GitHub half and follow the same rule: a failure keeps the project and
+   * fails the request with 409.
+   *
    * Throttled tighter than the app default (60/60s) and auth (10/60s):
    * this is a user-triggered, potentially irreversible deletion.
    */

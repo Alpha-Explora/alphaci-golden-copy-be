@@ -51,6 +51,8 @@ import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
+  type DeploymentProviderResourcesTeardown,
+  type ProviderResourcesTeardownResult,
 } from '../core/deployment-provisioning.contract';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
@@ -69,7 +71,7 @@ const EMPTY_PROVIDER_TARGET_POLICY: DeploymentProviderTargetPolicyResult = {
 } as const;
 
 @Injectable()
-export class DeploymentTargetsService {
+export class DeploymentTargetsService implements DeploymentProviderResourcesTeardown {
   private readonly logger = new Logger(DeploymentTargetsService.name);
 
   constructor(
@@ -498,6 +500,71 @@ export class DeploymentTargetsService {
       providerResourceDeleted,
       ...(providerDeleteError ? { providerDeleteError } : {}),
     };
+  }
+
+  /**
+   * Deletes the live provider resource of every target on the project, for
+   * project deletion. Leaves the target rows alone — the caller's project
+   * delete cascades them — and never throws for a provider failure.
+   */
+  async deleteProviderResourcesForProject(
+    projectId: string,
+    userId: string,
+  ): Promise<ProviderResourcesTeardownResult> {
+    await this.getProjectOrThrow(projectId, userId);
+    const targets =
+      await this.deploymentTargetsRepository.listDeploymentTargets(projectId);
+
+    const result: ProviderResourcesTeardownResult = { deleted: [], failed: [] };
+    for (const target of targets) {
+      if (!target.providerProjectId?.trim()) {
+        continue;
+      }
+      const ref = {
+        targetId: target.id,
+        provider: target.provider,
+        providerProjectName: target.providerProjectName,
+      };
+      try {
+        const { token } = await this.resolveProviderToken(
+          target.provider,
+          userId,
+          this.tokenResolutionInputFor(target),
+        );
+        const deleted = await this.clientRegistry
+          .getClient(target.provider)
+          .deleteTarget({ token, targetId: target.providerProjectId });
+        if (deleted.deleted) {
+          result.deleted.push(ref);
+        } else {
+          result.failed.push({
+            ...ref,
+            message: `${target.provider} reported the resource was not deleted.`,
+          });
+        }
+      } catch (error) {
+        result.failed.push({
+          ...ref,
+          message: this.truncateErrorMessage(error),
+        });
+      }
+    }
+
+    if (result.deleted.length > 0 || result.failed.length > 0) {
+      await this.recordTargetEvent({
+        userId,
+        projectId,
+        eventCode: 'deployment_provider_resources_deleted',
+        title: 'Deployment provider resources deleted',
+        body:
+          result.failed.length === 0
+            ? `Deleted ${result.deleted.length} live provider resource(s) as part of project deletion.`
+            : `Deleted ${result.deleted.length} live provider resource(s); ${result.failed.length} could not be deleted and must be removed manually.`,
+        metadata: { deleted: result.deleted, failed: result.failed },
+      });
+    }
+
+    return result;
   }
 
   async getDeploymentTargetActions(
