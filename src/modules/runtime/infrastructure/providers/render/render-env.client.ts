@@ -460,7 +460,7 @@ export class RenderEnvClient implements DeploymentProvider {
 
   private environmentFromBranch(
     branchName: string | undefined,
-  ): 'test' | 'uat' | 'production' {
+  ): 'dev' | 'uat' | 'production' {
     if (branchName === 'main') {
       return 'production';
     }
@@ -468,7 +468,7 @@ export class RenderEnvClient implements DeploymentProvider {
       return branchName;
     }
 
-    return 'test';
+    return 'dev';
   }
 
   private async getOrCreateEnvironmentId(

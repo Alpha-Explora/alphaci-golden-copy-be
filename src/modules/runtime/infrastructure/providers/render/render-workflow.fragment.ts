@@ -1,4 +1,3 @@
-import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
 import type {
   WorkflowFragment,
   WorkflowFragmentBranch,
@@ -12,6 +11,7 @@ import {
   branchCondition,
   CENTRAL_WORKFLOW_BASE,
   deploymentNeeds,
+  HEAD_SHA_EXPR,
 } from '../core/workflow-fragment.helpers';
 import {
   RENDER_SERVICE_BRANCHES,
@@ -43,57 +43,53 @@ function buildDockerJob(
       'push-image': true,
       'scan-vulnerabilities': true,
       'fail-on-vulnerabilities': true,
+      /*
+       * Both from the context job, never from the event. This stage runs on a
+       * workflow_run, where the git context is the DEFAULT branch: without
+       * these, a uat run built main's code and tagged the image `main` and
+       * `latest`, so no tag ever named the uat build.
+       */
+      'checkout-ref': HEAD_SHA_EXPR,
+      'pipeline-branch': branch,
     },
   };
 }
 
-function buildRenderJob(
+function buildReleaseJob(
   target: WorkflowFragmentTarget,
   branch: WorkflowFragmentBranch,
   context: WorkflowFragmentContext,
   dockerJobId: string,
 ): Record<string, unknown> {
-  const secretNames = target.secretNames ?? {};
   return {
     needs: [dockerJobId],
     if: branchCondition(branch),
-    uses: `${CENTRAL_WORKFLOW_BASE}/render-deploy.yml@${context.centralWorkflowRef}`,
+    uses: `${CENTRAL_WORKFLOW_BASE}/release.yml@${context.centralWorkflowRef}`,
     with: {
       'system-name': context.serviceName,
-      environment: branch === 'main' ? 'production' : branch,
+      slot: target.slot,
       branch,
-      'deploy-mode': 'auto',
-      'healthcheck-path': '/api/v1/health',
-      'require-api-center-check': true,
+      'commit-sha': HEAD_SHA_EXPR,
+      /*
+       * The exact build, not the branch tag. Both are pushed, but a second run
+       * on the same branch moves the branch tag - so a deploy that asked for
+       * `:uat` could ship a build that had not passed this run's gates.
+       */
+      artifact: `\${{ needs.${dockerJobId}.outputs.image-repo }}:sha-${HEAD_SHA_EXPR}`,
+      'healthcheck-path': '/health',
     },
-    // render-deploy.yml declares one secret per branch in the flow and picks the
-    // right one from its `branch` input, so every slot is handed the same
-    // branch-scoped value. The keys are derived from the branch model rather
-    // than listed: they were listed, the flow moved from `test` to `dev`, and
-    // the generator kept sending RENDER_*_TEST. Actions rejects a secret the
-    // called workflow does not declare, so the whole package stage failed to
-    // start — for every Render deploy, on every stack.
-    secrets: renderDeploySecrets(secretNames),
+    /*
+     * The only credentials a deploy job now carries: the project's own AlphaCI
+     * token and the address to send it to. The hosting credential stays with
+     * the platform, which is the point of releasing through it - a Render API
+     * key is account-wide, so one in every customer repository would give
+     * anyone who can push a workflow the run of the whole Render account.
+     */
+    secrets: {
+      ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+      ALPHACI_API_URL: '${{ secrets.ALPHACI_API_URL }}',
+    },
   };
-}
-
-function renderDeploySecrets(
-  secretNames: Record<string, string>,
-): Record<string, string> {
-  return Object.fromEntries(
-    PIPELINE_BRANCHES.flatMap((pipelineBranch) => {
-      const suffix = pipelineBranch.toUpperCase();
-      const deployHook =
-        secretNames['deployHookUrl'] ?? `RENDER_DEPLOY_HOOK_URL_${suffix}`;
-      const healthcheck =
-        secretNames['healthcheckUrl'] ?? `RENDER_HEALTHCHECK_URL_${suffix}`;
-
-      return [
-        [`RENDER_DEPLOY_HOOK_URL_${suffix}`, `\${{ secrets.${deployHook} }}`],
-        [`RENDER_HEALTHCHECK_URL_${suffix}`, `\${{ secrets.${healthcheck} }}`],
-      ];
-    }),
-  );
 }
 
 function buildRenderFragment(
@@ -110,7 +106,7 @@ function buildRenderFragment(
   return {
     jobs: {
       [dockerJobId]: buildDockerJob(target, branch, context),
-      [jobId]: buildRenderJob(target, branch, context, dockerJobId),
+      [jobId]: buildReleaseJob(target, branch, context, dockerJobId),
     },
     jobIds: [dockerJobId, jobId],
     // Every branch that promotes onward, not just uat. Listing only uat meant

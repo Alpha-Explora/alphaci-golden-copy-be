@@ -1,6 +1,6 @@
 import { Logger, UnprocessableEntityException } from '@nestjs/common';
 
-import { ALPHACI_REPORT_URL } from '../workflows/index';
+import { ALPHACI_API_URL, ALPHACI_REPORT_URL } from '../workflows/index';
 import { resolveDeploymentWorkflowTargets } from '../workflows/deployment-workflow-targets';
 import { workflowFileMetadata } from '../dashboard/project-overview.view';
 import {
@@ -161,6 +161,13 @@ export class SingleRepositoryProjectProvisioner {
         repoName,
         'ALPHACI_REPORT_URL',
         ALPHACI_REPORT_URL,
+      );
+      await this.support.githubService.setActionsSecretStrict(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        'ALPHACI_API_URL',
+        ALPHACI_API_URL,
       );
       await this.support.sonar.installSecrets(
         provisioningToken,

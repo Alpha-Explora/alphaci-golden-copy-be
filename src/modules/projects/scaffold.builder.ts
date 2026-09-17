@@ -429,8 +429,48 @@ function buildNestAppModule(): string {
   return [
     "import { Module } from '@nestjs/common';",
     '',
-    '@Module({ imports: [], controllers: [], providers: [] })',
+    "import { HealthController } from './health.controller.js';",
+    '',
+    '@Module({ imports: [], controllers: [HealthController], providers: [] })',
     'export class AppModule {}',
+  ].join('\n');
+}
+
+/**
+ * A health endpoint, because the deployment asks for one.
+ *
+ * ALPHACI health-checks a service after releasing it, and this starter had no
+ * routes at all - so every check answered 404 and a service that had started
+ * perfectly well reported as a failed deployment, on a repository whose owner
+ * had not written any code yet. The path is the one the generated pipeline
+ * probes.
+ */
+function buildNestHealthController(): string {
+  return [
+    "import { Controller, Get } from '@nestjs/common';",
+    '',
+    "@Controller('health')",
+    'export class HealthController {',
+    '  @Get()',
+    '  check(): { status: string; uptimeSeconds: number } {',
+    "    return { status: 'ok', uptimeSeconds: Math.floor(process.uptime()) };",
+    '  }',
+    '}',
+  ].join('\n');
+}
+
+function buildNestHealthControllerSpec(): string {
+  return [
+    "import { HealthController } from '../../src/health.controller';",
+    '',
+    "describe('HealthController', () => {",
+    "  it('reports the service is up', () => {",
+    '    const body = new HealthController().check();',
+    '',
+    "    expect(body.status).toBe('ok');",
+    '    expect(body.uptimeSeconds).toBeGreaterThanOrEqual(0);',
+    '  });',
+    '});',
   ].join('\n');
 }
 
@@ -800,6 +840,14 @@ function buildServiceSubdirFiles(
   if (stack === 'nestjs') {
     files.push(
       { path: `${dir}/src/app.module.ts`, content: buildNestAppModule() },
+      {
+        path: `${dir}/src/health.controller.ts`,
+        content: buildNestHealthController(),
+      },
+      {
+        path: `${dir}/tests/unit/health.controller.spec.ts`,
+        content: buildNestHealthControllerSpec(),
+      },
       { path: `${dir}/src/main.ts`, content: buildNestMain() },
       {
         path: `${dir}/Dockerfile`,
@@ -900,6 +948,14 @@ function buildStandaloneScaffold(
   if (stack === 'nestjs') {
     stackFiles = [
       { path: 'src/app.module.ts', content: buildNestAppModule() },
+      {
+        path: 'src/health.controller.ts',
+        content: buildNestHealthController(),
+      },
+      {
+        path: 'tests/unit/health.controller.spec.ts',
+        content: buildNestHealthControllerSpec(),
+      },
       { path: 'src/main.ts', content: buildNestMain() },
     ];
   } else if (stack === 'nextjs') {

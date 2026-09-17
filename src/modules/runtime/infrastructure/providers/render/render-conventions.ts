@@ -28,11 +28,12 @@ const IMAGE_REGISTRY = 'ghcr.io';
  * PIPELINE_BRANCHES stops compiling here rather than silently generating jobs
  * for a branch Render has no service for.
  *
- * `dev` is deliberately absent. It arrives with the release path, which is what
- * makes a Render deploy actually deploy; adding it sooner would generate a dev
- * deploy job that verifies the uat service and reports success.
+ * Every branch in the flow has its own service, so a developer can see their
+ * own change running. That costs three free services per backend project;
+ * RenderCostPolicyService owns whether those may be paid ones.
  */
 export const RENDER_SERVICE_BRANCHES = [
+  'dev',
   'uat',
   'main',
 ] as const satisfies readonly PipelineBranch[];
@@ -50,9 +51,9 @@ export function isRenderServiceBranch(
 /**
  * The branch a target's Render resources are named after.
  *
- * Anything Render has no service for falls back to the first non-production
- * branch rather than to production: a wrong guess should not point a deploy at
- * the customer's live environment.
+ * Anything Render has no service for falls back to the first branch in the
+ * flow rather than to production: a wrong guess must not point a deploy at the
+ * customer's live environment.
  */
 export function renderBranchFor(
   branchName: string | null | undefined,

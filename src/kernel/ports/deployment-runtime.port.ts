@@ -125,7 +125,7 @@ export interface DeploymentProvisioningTarget {
     | 'docker';
   renderInstanceType?: string;
   renderRegion?: string;
-  renderEnvironmentName?: 'test' | 'uat' | 'production';
+  renderEnvironmentName?: 'dev' | 'test' | 'uat' | 'production';
   dockerContext?: string;
   dockerfilePath?: string;
   imageUrl?: string;
@@ -358,7 +358,7 @@ export type DeploymentProvisioningResult = {
     renderRuntime?: string | null;
     renderInstanceType?: string | null;
     renderRegion?: string | null;
-    renderEnvironmentName?: 'test' | 'uat' | 'production' | null;
+    renderEnvironmentName?: 'dev' | 'test' | 'uat' | 'production' | null;
     dockerContext?: string | null;
     dockerfilePath?: string | null;
     imageUrl?: string | null;

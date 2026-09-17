@@ -1,6 +1,6 @@
 import { UnprocessableEntityException, type Logger } from '@nestjs/common';
 
-import { ALPHACI_REPORT_URL } from '../workflows/index';
+import { ALPHACI_API_URL, ALPHACI_REPORT_URL } from '../workflows/index';
 import type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
 import { resolveDeploymentWorkflowTargets } from '../workflows/deployment-workflow-targets';
 import { workflowFileMetadata } from '../dashboard/project-overview.view';
@@ -253,6 +253,13 @@ export async function installMultiRepoCiSecrets(input: {
     input.repoName,
     'ALPHACI_REPORT_URL',
     ALPHACI_REPORT_URL,
+  );
+  await input.support.githubService.setActionsSecretStrict(
+    input.provisioningToken,
+    input.ownerLogin,
+    input.repoName,
+    'ALPHACI_API_URL',
+    ALPHACI_API_URL,
   );
   await input.support.sonar.installSecrets(
     input.provisioningToken,

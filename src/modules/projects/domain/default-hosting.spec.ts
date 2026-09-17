@@ -95,7 +95,11 @@ describe('default hosting when none was configured', () => {
     // Render services are per-branch, so its expansion pins uat and main.
     const { targets } = hostingFor('dotnet');
 
-    expect(targets.map((target) => target.branchName)).toEqual(['uat', 'main']);
+    expect(targets.map((target) => target.branchName)).toEqual([
+      'dev',
+      'uat',
+      'main',
+    ]);
     expect(targets.every((target) => target.provider === 'render')).toBe(true);
   });
 

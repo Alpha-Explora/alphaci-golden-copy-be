@@ -486,10 +486,6 @@ describe('buildStagedWorkflowBundle', () => {
             dockerContext: 'backend',
             dockerfilePath: 'Dockerfile',
             imageName: 'alphaci-backend-uat-orders-api',
-            secretNames: {
-              deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
-              healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
-            },
           },
         ],
       },
@@ -501,9 +497,14 @@ describe('buildStagedWorkflowBundle', () => {
     expect(pkg.jobs['docker-backend-uat']?.uses).toBe(
       'Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1',
     );
+    // Host-neutral: the pipeline asks the platform to release what it built,
+    // so the job names no host and carries no hosting credential.
     expect(pkg.jobs['deploy-render-backend-uat']?.uses).toBe(
-      'Alpha-Explora/alphaci-workflow/.github/workflows/render-deploy.yml@v1',
+      'Alpha-Explora/alphaci-workflow/.github/workflows/release.yml@v1',
     );
+    expect(
+      Object.keys(pkg.jobs['deploy-render-backend-uat']?.secrets ?? {}),
+    ).toEqual(['ALPHACI_TOKEN', 'ALPHACI_API_URL']);
     expect(pkg.jobs['deploy-render-backend-uat']?.needs).toEqual([
       'pipeline-context',
       'docker-backend-uat',
