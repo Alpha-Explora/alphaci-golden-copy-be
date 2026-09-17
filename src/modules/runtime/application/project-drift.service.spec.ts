@@ -28,8 +28,8 @@ describe('ProjectDriftService', () => {
   const ciTokensRepository = {
     findProjectTokenStatus: jest.fn(),
   };
-  const configService = {
-    getOrThrow: jest.fn(),
+  const capabilityResolver = {
+    deployment: jest.fn(),
   };
 
   beforeEach(() => {
@@ -52,9 +52,9 @@ describe('ProjectDriftService', () => {
       status: 'active',
       tokenPrefix: 'aci_test',
     });
-    configService.getOrThrow.mockReturnValue({
-      driftDetection: { enabled: true },
-    });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['runtime.drift-detection']),
+    );
   });
 
   function createService() {
@@ -63,7 +63,7 @@ describe('ProjectDriftService', () => {
       deploymentTargetsRepository as never,
       envVarsRepository as never,
       ciTokensRepository,
-      configService as never,
+      capabilityResolver as never,
     );
   }
 
@@ -83,9 +83,7 @@ describe('ProjectDriftService', () => {
   });
 
   it('returns disabled local state without calling adapters when drift detection is off', async () => {
-    configService.getOrThrow.mockReturnValueOnce({
-      driftDetection: { enabled: false },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
 
     await expect(
       createService().runDetection(projectReference),

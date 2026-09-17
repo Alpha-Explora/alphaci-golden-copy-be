@@ -32,7 +32,6 @@ const REQUIRED_FILES = [
   'docs/capabilities/index.md',
   'docs/capabilities/capability-contract.md',
   'docs/capabilities/capability-matrix.generated.md',
-  'docs/capabilities/registry.ts',
   'docs/packs/index.md',
   'docs/packs/pack-contract.md',
   'docs/packs/pack-template.md',
@@ -130,9 +129,16 @@ function staleClaimErrors() {
 
 function sourceBranchErrors() {
   const errors = [];
+  // Comparing an edition to a literal is a product branch. Comparing two
+  // edition values to each other is validation, such as rejecting a client
+  // policy written for a different edition, and stays allowed.
+  const patterns = [
+    /\bedition\s*(===|!==)\s*['"`]/,
+    /['"`](saas|edu|enterprise)['"`]\s*(===|!==)/,
+  ];
   for (const file of filesUnder(path.join(ROOT, 'src')).filter((item) => item.endsWith('.ts'))) {
     const text = fs.readFileSync(file, 'utf8');
-    if (/\bedition\s*(===|!==)/.test(text)) {
+    if (patterns.some((pattern) => pattern.test(text))) {
       errors.push(`${relative(file)}: edition branches are not allowed; use composition data`);
     }
   }
@@ -172,6 +178,30 @@ function capabilityRegistryErrors() {
   ];
 }
 
+function capabilityLedgerErrors() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'check-capability-ledger.cjs')],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  if (result.status === 0) return [];
+  return [
+    `capability ledger check failed: ${(result.stderr || result.stdout).trim()}`,
+  ];
+}
+
+function compositionSourceErrors() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'generate-composition-source.mjs'), '--check'],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  if (result.status === 0) return [];
+  return [
+    `composition source check failed: ${(result.stderr || result.stdout).trim()}`,
+  ];
+}
+
 function main() {
   const errors = [
     ...requiredFileErrors(),
@@ -181,6 +211,8 @@ function main() {
     ...changelogErrors(),
     ...generatedMapErrors(),
     ...capabilityRegistryErrors(),
+    ...capabilityLedgerErrors(),
+    ...compositionSourceErrors(),
     ...validateBundle(DOCS),
   ];
 

@@ -27,7 +27,6 @@ import {
 } from './core/deployment-provisioning.contract';
 import { DeploymentStrategyResolver } from './domain/deployment-strategy.resolver';
 import { EnvTokenEncryptionService } from './application/encryption.service';
-import { EnvFeatureGuard } from './api/env-feature.guard';
 import { EnvVarsController } from './api/env-vars.controller';
 import { EnvVarsRepository } from './infrastructure/repositories/env-vars.repository';
 import { EnvVarsService } from './application/env-vars.service';
@@ -297,7 +296,6 @@ import {
       inject: [RuntimeProviderPackRegistry],
     },
     VercelCiSecretsService,
-    EnvFeatureGuard,
     SessionAuthGuard,
     SubscriptionGuard,
   ],

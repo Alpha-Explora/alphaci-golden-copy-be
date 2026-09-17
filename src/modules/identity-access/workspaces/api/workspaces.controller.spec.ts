@@ -4,12 +4,6 @@ import { WorkspacesController } from './workspaces.controller';
 import { WorkspacesService } from '../application/workspaces.service';
 
 describe('WorkspacesController', () => {
-  const makeConfigService = (enabled = true) =>
-    ({
-      getOrThrow: jest.fn().mockReturnValue({
-        workspaces: { enabled },
-      }),
-    }) as never;
   const makeService = () =>
     ({
       getMyWorkspaces: jest.fn().mockResolvedValue({
@@ -59,7 +53,7 @@ describe('WorkspacesController', () => {
 
   it('returns persisted workspaces for the current user', async () => {
     const service = makeService();
-    const controller = new WorkspacesController(makeConfigService(), service);
+    const controller = new WorkspacesController(service);
 
     await expect(
       controller.getMyWorkspaces({
@@ -80,34 +74,16 @@ describe('WorkspacesController', () => {
   });
 
   it('rejects unauthenticated workspace requests', () => {
-    const controller = new WorkspacesController(
-      makeConfigService(),
-      makeService(),
-    );
+    const controller = new WorkspacesController(makeService());
 
     expect(() => controller.getMyWorkspaces({ session: {} } as never)).toThrow(
       UnauthorizedException,
     );
   });
 
-  it('returns disabled workspace contract when workspaces are disabled', () => {
-    const service = makeService();
-    const controller = new WorkspacesController(
-      makeConfigService(false),
-      service,
-    );
-
-    expect(
-      controller.getMyWorkspaces({
-        session: { userId: 'user-1' },
-      } as never),
-    ).toEqual({ enabled: false, items: [] });
-    expect(service.getMyWorkspaces).not.toHaveBeenCalled();
-  });
-
   it('lists members for the current workspace', async () => {
     const service = makeService();
-    const controller = new WorkspacesController(makeConfigService(), service);
+    const controller = new WorkspacesController(service);
 
     await expect(
       controller.listMembers(
@@ -122,7 +98,7 @@ describe('WorkspacesController', () => {
 
   it('adds a workspace member by login or email', async () => {
     const service = makeService();
-    const controller = new WorkspacesController(makeConfigService(), service);
+    const controller = new WorkspacesController(service);
 
     await expect(
       controller.addMember(
@@ -142,7 +118,7 @@ describe('WorkspacesController', () => {
 
   it('updates a workspace member role', async () => {
     const service = makeService();
-    const controller = new WorkspacesController(makeConfigService(), service);
+    const controller = new WorkspacesController(service);
 
     await expect(
       controller.updateMemberRole(
@@ -165,7 +141,7 @@ describe('WorkspacesController', () => {
     service.updateMemberRole.mockRejectedValueOnce(
       new BadRequestException('Workspace must keep at least one owner'),
     );
-    const controller = new WorkspacesController(makeConfigService(), service);
+    const controller = new WorkspacesController(service);
 
     await expect(
       controller.updateMemberRole(
@@ -179,7 +155,7 @@ describe('WorkspacesController', () => {
 
   it('removes a workspace member', async () => {
     const service = makeService();
-    const controller = new WorkspacesController(makeConfigService(), service);
+    const controller = new WorkspacesController(service);
 
     await expect(
       controller.removeMember(

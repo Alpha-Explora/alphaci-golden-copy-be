@@ -6,9 +6,11 @@ import {
   Optional,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
   GITHUB_PROJECT_PORT,
@@ -119,8 +121,6 @@ export class ProjectWorkflowsService {
     private readonly githubService: GithubProjectPort,
     private readonly catalogService: CatalogService,
     @Optional()
-    private readonly configService?: ConfigService,
-    @Optional()
     private readonly workflowSettingsRepository?: ProjectWorkflowSettingsRepository,
     @Optional()
     private readonly workflowUpdateRequestsRepository?: ProjectWorkflowUpdateRequestsRepository,
@@ -133,6 +133,9 @@ export class ProjectWorkflowsService {
     private readonly notificationEventsService?: NotificationEventSink,
     @Optional()
     private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async getWorkflowSettings(
@@ -650,12 +653,18 @@ export class ProjectWorkflowsService {
   }
 
   private workflowSettingsPreviewEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.workflowSettingsPreview?.enabled ?? false;
+    return (
+      this.capabilityResolver
+        ?.deployment()
+        .has('projects.workflow-settings-preview') ?? false
+    );
   }
 
   private workflowUpdatePrEnabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.workflowUpdatePr?.enabled ?? false;
+    return (
+      this.capabilityResolver
+        ?.deployment()
+        .has('projects.workflow-update-pr') ?? false
+    );
   }
 }

@@ -13,6 +13,7 @@ import { validateEnv } from '#kernel/config/env.validation.js';
 import { CorrelationIdMiddleware } from '#kernel/http/middleware/correlation-id.middleware.js';
 import { HealthModule } from './health/health.module.js';
 import { SupabaseModule } from '#kernel/db/supabase/supabase.module.js';
+import { CompositionModule } from '#kernel/composition/composition.module.js';
 
 // Bounded-context composition roots. Feature modules are wired behind these
 // six roots so adding or extracting a context does not require editing the
@@ -38,6 +39,7 @@ import { PlatformOpsModule } from '#modules/platform-ops/platform-ops.module.js'
     }),
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 60 }]),
     SupabaseModule,
+    CompositionModule,
     HealthModule,
 
     // Bounded contexts

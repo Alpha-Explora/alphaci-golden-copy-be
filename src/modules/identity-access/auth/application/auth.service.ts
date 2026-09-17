@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -27,6 +28,7 @@ import {
   type SubscriptionBootstrapPort,
 } from '#kernel/ports/subscription-bootstrap.port';
 import { UsersRepository } from '../infrastructure/users.repository';
+import { DEV_QUICK_LOGIN_FIXTURE } from './dev-quick-login.fixture';
 
 interface GitHubTokenResponse {
   access_token?: string;
@@ -161,6 +163,41 @@ export class AuthService {
     state?: string,
   ): Promise<string> {
     return this.handleOAuthProviderCallback(request, code, state);
+  }
+
+  /**
+   * Establish a normal authenticated session for local development.
+   *
+   * The HTTP guard owns the request-origin boundary; this application-level
+   * check is defense in depth so a future caller cannot turn this into an
+   * authentication bypass by invoking the service without that guard.
+   */
+  async devQuickLogin(request: Request): Promise<void> {
+    this.assertDevQuickLoginEnabled();
+
+    const existing =
+      await this.usersRepository.findByGithubUserIdIncludingArchived(
+        DEV_QUICK_LOGIN_FIXTURE.githubUserId,
+      );
+
+    // A local developer may have archived the fixture while exercising the
+    // account lifecycle. Restore only this fixed fixture identity; arbitrary
+    // account restoration is not part of this endpoint.
+    const user =
+      existing !== null && existing.archivedAt !== null
+        ? await this.usersRepository.restoreByGithubUserId(
+            DEV_QUICK_LOGIN_FIXTURE.githubUserId,
+            false,
+          )
+        : await this.usersRepository.upsertGitHubUser({
+            ...DEV_QUICK_LOGIN_FIXTURE,
+            isInternal: false,
+            seedAppRole: 'member',
+          });
+
+    await this.subscriptionsRepository.ensureDefaultFreeSubscription(user.id);
+    await this.establishSession(request, user);
+    await this.saveSession(request);
   }
 
   /**
@@ -974,5 +1011,14 @@ export class AuthService {
     return Boolean(
       this.config.github.clientId && this.config.github.clientSecret,
     );
+  }
+
+  private assertDevQuickLoginEnabled(): void {
+    if (
+      this.configService.get<string>('NODE_ENV') !== 'development' ||
+      this.config.auth.devQuickLoginEnabled !== true
+    ) {
+      throw new NotFoundException();
+    }
   }
 }

@@ -13,16 +13,16 @@ import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
+import { CapabilityGuard } from '#kernel/composition/capability.guard';
+import { RequiresCapability } from '#kernel/composition/requires-capability.decorator';
 import {
   CustomDomainsService,
   type AddCustomDomainInput,
 } from '../application/custom-domains.service';
-import { EnvFeatureGuard } from './env-feature.guard';
 
 @Controller('projects/:projectId/domains')
-// EnvFeatureGuard alongside the others: a domain attaches to a deployment
-// target, so it is meaningless on a deployment where hosting is switched off.
-@UseGuards(SessionAuthGuard, SubscriptionGuard, EnvFeatureGuard)
+@RequiresCapability('runtime.env-provisioning')
+@UseGuards(SessionAuthGuard, CapabilityGuard, SubscriptionGuard)
 export class CustomDomainsController {
   constructor(private readonly service: CustomDomainsService) {}
 

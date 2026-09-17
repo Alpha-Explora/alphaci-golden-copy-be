@@ -101,6 +101,23 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('development Quick login flag', () => {
+    it('accepts an explicit boolean value', () => {
+      expect(
+        validateEnv(validEnv({ DEV_QUICK_LOGIN: 'true' })).DEV_QUICK_LOGIN,
+      ).toBe('true');
+      expect(
+        validateEnv(validEnv({ DEV_QUICK_LOGIN: 'false' })).DEV_QUICK_LOGIN,
+      ).toBe('false');
+    });
+
+    it('rejects unrecognized values', () => {
+      expect(() => validateEnv(validEnv({ DEV_QUICK_LOGIN: 'yes' }))).toThrow(
+        /DEV_QUICK_LOGIN/,
+      );
+    });
+  });
+
   describe('NODE_ENV validation', () => {
     it('throws for an invalid NODE_ENV value', () => {
       expect(() => validateEnv(validEnv({ NODE_ENV: 'staging' }))).toThrow(
@@ -116,6 +133,25 @@ describe('validateEnv', () => {
 
     it('throws when NODE_ENV is an empty string', () => {
       expect(() => validateEnv(validEnv({ NODE_ENV: '' }))).toThrow(/NODE_ENV/);
+    });
+  });
+
+  describe('composition profile validation', () => {
+    it('rejects an invalid build profile during environment validation', () => {
+      expect(() =>
+        validateEnv(validEnv({ ALPHACI_BUILD_PROFILE: 'saas' })),
+      ).toThrow(/ALPHACI_BUILD_PROFILE/);
+    });
+
+    it('rejects an edition outside the selected build profile during boot validation', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            ALPHACI_BUILD_PROFILE: 'hosted',
+            ALPHACI_EDITION: 'enterprise',
+          }),
+        ),
+      ).toThrow(/not allowed by build profile 'hosted'/);
     });
   });
 

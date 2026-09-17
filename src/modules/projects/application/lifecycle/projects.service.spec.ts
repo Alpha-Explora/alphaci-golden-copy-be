@@ -338,6 +338,39 @@ const makeProjectsService = (...args: unknown[]): ProjectsService => {
   while (padded.length < 26) padded.push(undefined);
   padded[23] ??= workflowFragmentRegistry;
   padded[25] ??= deploymentProvisioningDefaults;
+  padded[26] ??= {
+    deployment: jest.fn(() => {
+      const config = (
+        padded[10] as {
+          getOrThrow?: (key: string) => Record<string, Record<string, unknown>>;
+        }
+      )?.getOrThrow?.('app');
+      const enabled = (path: string) => {
+        const segments = path.split('.');
+        const section = segments[0];
+        const key = segments[1];
+        return (
+          section !== undefined &&
+          key !== undefined &&
+          config?.[section]?.[key] === true
+        );
+      };
+      const capabilityFlags: readonly [string, string][] = [
+        ['projects.sync-snapshots', 'projectSyncSnapshots.enabled'],
+        [
+          'projects.workflow-settings-preview',
+          'workflowSettingsPreview.enabled',
+        ],
+        ['projects.workflow-update-pr', 'workflowUpdatePr.enabled'],
+        ['pipelines.ci-run-tracking', 'ciRunTracking.enabled'],
+        ['runtime.deployment-history', 'deploymentHistory.enabled'],
+        ['runtime.drift-detection', 'driftDetection.enabled'],
+      ];
+      return new Set(
+        capabilityFlags.filter(([, path]) => enabled(path)).map(([key]) => key),
+      );
+    }),
+  };
   return new (ProjectsService as unknown as new (
     ...constructorArgs: unknown[]
   ) => ProjectsService)(...padded);

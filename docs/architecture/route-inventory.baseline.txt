@@ -99,6 +99,7 @@ POST /api/v1/admin/users/{id}/app-role/reset
 POST /api/v1/admin/users/{id}/role
 POST /api/v1/auth/account/restore
 POST /api/v1/auth/account/start-fresh
+POST /api/v1/auth/dev/quick-login
 POST /api/v1/auth/logout
 POST /api/v1/auth/onboarding/complete
 POST /api/v1/ci/report

@@ -21,8 +21,9 @@ sources:
 
 ## Current composition
 
-- Documentation status: `documentation-only`
-- Runtime selection behavior: No pack-selection resolver is implemented in this backend.
+- Build profile: `hosted` (`saas`, `edu`)
+- Runtime selection behavior: `ALPHACI_EDITION=saas` selects the SaaS manifest within the hosted build ceiling.
+- Artifact exclusion inventory: reserved SaaS-only source root/marker declarations are absent from the current compiled profile artifact; no SaaS-only implementation exists yet.
 - Current backend applicability: The same six-context backend exposes the shared capability catalog. Hosted deployment is a deployment-target and configuration concern, not a separate capability set.
 
 ## Capability status
@@ -42,6 +43,7 @@ This table lists every current registry capability in registry order. Status is 
 | `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
 | `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
 | `platform.data-residency` | `not-applicable` | Not part of this pack composition. |
+| `platform.public-site` | `not-implemented` | Public marketing site: landing, pricing, and guide pages served to unauthenticated visitors. Not implemented in this backend. |
 | `billing.subscription-gate` | `available` | Subscription entitlement gating for authenticated access and CI run validation. Configuration: subscription.gateEnabled. |
 | `billing.usage-quotas` | `configuration-gated` | Usage tracking and quota policy checks. Configuration: usageQuotas.enabled. |
 | `billing.checkout` | `not-implemented` | Self-serve payment checkout. Not implemented in this backend. |
@@ -54,6 +56,7 @@ This table lists every current registry capability in registry order. Status is 
 | `runtime.managed-secrets` | `not-applicable` | Not part of this pack composition. |
 | `runtime.air-gap-packaging` | `not-applicable` | Not part of this pack composition. |
 | `runtime.customer-isolation` | `not-applicable` | Not part of this pack composition. |
+| `runtime.client-composition` | `not-applicable` | Not part of this pack composition. |
 | `projects.sync-snapshots` | `configuration-gated` | Project synchronization snapshot reads and findings. Configuration: projectSyncSnapshots.enabled. |
 | `projects.workflow-settings-preview` | `available` | Workflow settings preview and validation. Configuration: workflowSettingsPreview.enabled. |
 | `projects.workflow-update-pr` | `configuration-gated` | Workflow update pull-request requests. Configuration: workflowUpdatePr.enabled. |
@@ -67,7 +70,7 @@ Hosted deployment is a deployment target, not a replacement for the pack identit
 
 ## Configuration and entitlements
 
-Configuration narrows the capability set. The documented order is `build -> edition manifest -> deployment configuration -> tenant override`. The current backend capability endpoint remains the compatibility surface.
+Configuration narrows the capability set. The documented order is `build profile -> edition manifest -> deployment configuration -> tenant override`. `ALPHACI_BUILD_PROFILE` defaults safely to `enterprise`; hosted builds must opt in explicitly. The current backend capability endpoint remains the compatibility surface.
 
 ## Explicit non-support
 
@@ -76,5 +79,5 @@ Marketing-site behavior is not a backend capability and is not a registry key. C
 ## Ownership and verification
 
 - Context owners: `identity-access`, `projects`, `pipelines`, `runtime`, `billing`, and `platform-ops` as shown in the capability matrix.
-- Source: `docs/capabilities/registry.ts` and the owning context source paths.
-- Verification: `npm run check:documentation`.
+- Source: `src/kernel/composition/capability-registry.ts`, `src/kernel/composition/manifests.ts`, and the owning context source paths.
+- Verification: `npm run check:capabilities`, `npm run check:composition-profiles`.

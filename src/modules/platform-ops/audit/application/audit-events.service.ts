@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import {
   AuditEventsRepository,
   type AuditEventRecord,
@@ -14,7 +16,9 @@ export class AuditEventsService {
 
   constructor(
     private readonly repository: AuditEventsRepository,
-    private readonly configService: ConfigService,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async record(input: CreateAuditEventInput): Promise<void> {
@@ -53,7 +57,9 @@ export class AuditEventsService {
   }
 
   private enabled(): boolean {
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    return config.auditEvents?.enabled ?? false;
+    return (
+      this.capabilityResolver?.deployment().has('platform.audit-events') ??
+      false
+    );
   }
 }

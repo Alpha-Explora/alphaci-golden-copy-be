@@ -1,11 +1,16 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import type { AppConfig } from '#kernel/config/app.config';
 import type { WorkflowFileMetadata } from '../workflows/index';
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
@@ -33,6 +38,9 @@ export class ProjectCiRunsService {
     private readonly provider: LocalCiRunsProvider = new LocalCiRunsProvider(),
     @Optional()
     private readonly configService?: ConfigService,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async listRuns(
@@ -134,8 +142,10 @@ export class ProjectCiRunsService {
   }
 
   private enabled(): boolean {
-    const config = this.configService?.getOrThrow<AppConfig>('app');
-    return config?.ciRunTracking.enabled ?? false;
+    return (
+      this.capabilityResolver?.deployment().has('pipelines.ci-run-tracking') ??
+      false
+    );
   }
 
   private liveGithubEnabled(): boolean {

@@ -59,6 +59,7 @@ const makeAuthService = () =>
     handleGitHubCallback: jest
       .fn()
       .mockResolvedValue('http://localhost:3000?auth=success'),
+    devQuickLogin: jest.fn().mockResolvedValue(undefined),
     getSessionUser: jest.fn().mockResolvedValue(fakeUser),
     logout: jest.fn().mockResolvedValue(undefined),
     deleteAccount: jest.fn().mockResolvedValue(undefined),
@@ -118,6 +119,14 @@ describe('AuthController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('delegates development Quick login to the auth service', async () => {
+    const req = makeRequest();
+
+    await controller.devQuickLogin(req);
+
+    expect(authService.devQuickLogin).toHaveBeenCalledWith(req);
   });
 
   describe('githubStart', () => {

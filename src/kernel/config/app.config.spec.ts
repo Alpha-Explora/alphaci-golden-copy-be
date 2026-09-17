@@ -35,10 +35,13 @@ describe('appConfig factory', () => {
     delete process.env['AUDIT_EVENTS_ENABLED'];
     delete process.env['NOTIFICATIONS_ENABLED'];
     delete process.env['SESSION_STORE_DRIVER'];
+    delete process.env['ALPHACI_EDITION'];
+    delete process.env['ALPHACI_BUILD_PROFILE'];
 
     const config = appConfig();
 
     expect(config.frontendUrl).toBe('http://localhost:3000');
+    expect(config.auth.devQuickLoginEnabled).toBe(false);
     expect(config.github.clientId).toBe('');
     expect(config.session.secret).toBe(validSessionSecret);
     expect(config.subscription.mockEnabled).toBe(false);
@@ -64,6 +67,68 @@ describe('appConfig factory', () => {
     expect(config.auditEvents.enabled).toBe(false);
     expect(config.notifications.enabled).toBe(false);
     expect(config.session.storeDriver).toBe('memory');
+    expect(config.composition.edition).toBe('enterprise');
+    expect(config.composition.profile).toBe('enterprise');
+  });
+
+  it('enables Quick login only for development with an explicit flag', () => {
+    process.env['NODE_ENV'] = 'development';
+    process.env['DEV_QUICK_LOGIN'] = 'true';
+
+    expect(appConfig().auth.devQuickLoginEnabled).toBe(true);
+  });
+
+  it('forces Quick login off outside development', () => {
+    process.env['NODE_ENV'] = 'production';
+    process.env['DEV_QUICK_LOGIN'] = 'true';
+
+    expect(appConfig().auth.devQuickLoginEnabled).toBe(false);
+  });
+
+  it.each([
+    ['saas', 'saas'],
+    ['edu', 'edu'],
+    ['enterprise', 'enterprise'],
+  ] as const)('selects the %s composition edition', (raw, expected) => {
+    process.env['ALPHACI_EDITION'] = raw;
+    process.env['ALPHACI_BUILD_PROFILE'] =
+      raw === 'enterprise' ? 'enterprise' : 'hosted';
+
+    expect(appConfig().composition.edition).toBe(expected);
+  });
+
+  it('rejects an unknown composition edition instead of hiding misconfiguration', () => {
+    process.env['ALPHACI_EDITION'] = 'unknown';
+
+    expect(() => appConfig()).toThrow(/ALPHACI_EDITION/);
+  });
+
+  it.each([
+    ['hosted', 'hosted'],
+    ['enterprise', 'enterprise'],
+  ] as const)('selects the %s build profile', (raw, expected) => {
+    process.env['ALPHACI_BUILD_PROFILE'] = raw;
+    process.env['ALPHACI_EDITION'] = raw === 'hosted' ? 'saas' : 'enterprise';
+
+    expect(appConfig().composition.profile).toBe(expected);
+  });
+
+  it('defaults the build profile to enterprise', () => {
+    delete process.env['ALPHACI_BUILD_PROFILE'];
+    expect(appConfig().composition.profile).toBe('enterprise');
+  });
+
+  it('rejects an invalid build profile', () => {
+    process.env['ALPHACI_BUILD_PROFILE'] = 'unknown';
+
+    expect(() => appConfig()).toThrow(/ALPHACI_BUILD_PROFILE/);
+  });
+
+  it('rejects an Enterprise edition in the hosted build profile', () => {
+    process.env['ALPHACI_BUILD_PROFILE'] = 'hosted';
+    process.env['ALPHACI_EDITION'] = 'enterprise';
+
+    expect(() => appConfig()).toThrow(/not allowed by build profile 'hosted'/);
   });
 
   it('reads environment variables when set', () => {

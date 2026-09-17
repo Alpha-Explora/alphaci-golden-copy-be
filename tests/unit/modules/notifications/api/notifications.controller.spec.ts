@@ -1,15 +1,9 @@
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException } from '@nestjs/common';
 
 import { NotificationsController } from '#modules/platform-ops/notifications/api/notifications.controller';
 import { NotificationsService } from '#modules/platform-ops/notifications/application/notifications.service';
 
 describe('NotificationsController', () => {
-  const makeConfigService = (enabled = true) =>
-    ({
-      getOrThrow: jest.fn().mockReturnValue({
-        notifications: { enabled },
-      }),
-    }) as never;
   const makeService = () =>
     ({
       listForUser: jest.fn().mockResolvedValue({
@@ -45,10 +39,7 @@ describe('NotificationsController', () => {
 
   it('returns persisted notifications for the current user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(
-      makeConfigService(),
-      service,
-    );
+    const controller = new NotificationsController(service);
 
     await expect(
       controller.list({ session: { user: { id: 'user-1' } } } as never),
@@ -71,10 +62,7 @@ describe('NotificationsController', () => {
 
   it('marks a notification read for an authenticated user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(
-      makeConfigService(),
-      service,
-    );
+    const controller = new NotificationsController(service);
 
     await expect(
       controller.markRead(
@@ -86,53 +74,16 @@ describe('NotificationsController', () => {
   });
 
   it('rejects unauthenticated notification requests', () => {
-    const controller = new NotificationsController(
-      makeConfigService(),
-      makeService(),
-    );
+    const controller = new NotificationsController(makeService());
 
     expect(() => controller.list({ session: {} } as never)).toThrow(
       UnauthorizedException,
     );
   });
 
-  it('returns disabled notification contract when notifications are disabled', () => {
-    const service = makeService();
-    const controller = new NotificationsController(
-      makeConfigService(false),
-      service,
-    );
-
-    expect(
-      controller.list({
-        session: { userId: 'user-1' },
-      } as never),
-    ).toEqual({ enabled: false, items: [], unreadCount: 0 });
-    expect(service.listForUser).not.toHaveBeenCalled();
-  });
-
-  it('rejects marking notifications read when notifications are disabled', () => {
-    const service = makeService();
-    const controller = new NotificationsController(
-      makeConfigService(false),
-      service,
-    );
-
-    expect(() =>
-      controller.markRead(
-        { session: { userId: 'user-1' } } as never,
-        'notification-1',
-      ),
-    ).toThrow(BadRequestException);
-    expect(service.markRead).not.toHaveBeenCalled();
-  });
-
   it('returns notification preferences for the current user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(
-      makeConfigService(),
-      service,
-    );
+    const controller = new NotificationsController(service);
 
     await expect(
       controller.getPreferences({ session: { userId: 'user-1' } } as never),
@@ -145,10 +96,7 @@ describe('NotificationsController', () => {
 
   it('updates notification preferences for the current user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(
-      makeConfigService(),
-      service,
-    );
+    const controller = new NotificationsController(service);
 
     await expect(
       controller.updatePreferences({ session: { userId: 'user-1' } } as never, {

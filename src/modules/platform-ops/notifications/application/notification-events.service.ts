@@ -1,7 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import { NotificationsRepository } from '../infrastructure/notifications.repository';
 
 export interface NotificationEventInput {
@@ -16,12 +18,13 @@ export interface NotificationEventInput {
 export class NotificationEventsService {
   constructor(
     private readonly repository: NotificationsRepository,
-    private readonly configService: ConfigService,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   async record(input: NotificationEventInput): Promise<void> {
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    if (!config.notifications.enabled) {
+    if (!this.capabilityResolver?.deployment().has('platform.notifications')) {
       return;
     }
 

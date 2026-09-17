@@ -20,6 +20,9 @@ describe('ProjectDeploymentsService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const capabilityResolver = {
+    deployment: jest.fn(),
+  };
   const providerRegistry = {
     find: jest.fn((provider: string) =>
       provider === 'render'
@@ -46,6 +49,9 @@ describe('ProjectDeploymentsService', () => {
         liveProvidersEnabled: false,
       },
     });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['runtime.deployment-history']),
+    );
   });
 
   function createService() {
@@ -53,6 +59,11 @@ describe('ProjectDeploymentsService', () => {
       deploymentTargetsRepository as never,
       provider as never,
       configService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      capabilityResolver as never,
     );
   }
 
@@ -117,12 +128,7 @@ describe('ProjectDeploymentsService', () => {
   });
 
   it('returns disabled local state when deployment history is off', async () => {
-    configService.getOrThrow.mockReturnValueOnce({
-      deploymentHistory: {
-        enabled: false,
-        liveProvidersEnabled: false,
-      },
-    });
+    capabilityResolver.deployment.mockReturnValueOnce(new Set());
 
     await expect(
       createService().listDeployments(projectReference),
@@ -193,6 +199,7 @@ describe('ProjectDeploymentsService', () => {
         undefined,
         undefined,
         providerRegistry as never,
+        capabilityResolver as never,
       );
     }
 

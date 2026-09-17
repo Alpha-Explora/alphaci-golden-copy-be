@@ -16,6 +16,7 @@ import type { Request, Response } from 'express';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { DevOnlyGuard } from '#kernel/auth/dev-only.guard';
+import { DevQuickLoginGuard } from '#kernel/auth/dev-quick-login.guard';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import {
   SUBSCRIPTION_ACCESS,
@@ -64,6 +65,13 @@ export class AuthController {
       state,
     );
     return res.redirect(redirectUrl);
+  }
+
+  @UseGuards(DevQuickLoginGuard)
+  @Post('dev/quick-login')
+  async devQuickLogin(@Req() req: Request) {
+    await this.authService.devQuickLogin(req);
+    return { ok: true };
   }
 
   /** GET /auth/config-check — non-sensitive config diagnostic (no secrets exposed) */

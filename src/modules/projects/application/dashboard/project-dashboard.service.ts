@@ -6,9 +6,12 @@ import {
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from '#kernel/config/app.config';
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityKey,
+  type CapabilityResolverPort,
+} from '#kernel/composition/index.js';
 import {
   AuditEventPublisher,
   NotificationEventPublisher,
@@ -82,14 +85,15 @@ export class ProjectDashboardService {
     @Inject(PROJECT_LINK_PORT)
     private readonly hierarchyProjectLinkService?: ProjectLinkPort,
     @Optional()
-    private readonly configService?: ConfigService,
-    @Optional()
     @Inject(AUDIT_QUERY_PORT)
     private readonly auditQueryPort?: AuditQueryPort,
     @Optional()
     private readonly auditEventPublisher?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventPublisher?: NotificationEventPublisher,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   listProjects(
@@ -146,6 +150,8 @@ export class ProjectDashboardService {
     const failedEnvCount = envMetadata.filter(
       (metadata) => metadata.status === 'failed',
     ).length;
+    const capabilities =
+      this.capabilityResolver?.deployment() ?? new Set<CapabilityKey>();
 
     return {
       project: {
@@ -177,17 +183,19 @@ export class ProjectDashboardService {
         envMetadata,
       }),
       syncSnapshot: {
-        enabled: this.projectSyncSnapshotsEnabled(),
+        enabled: capabilities.has('projects.sync-snapshots'),
         mode: 'local_snapshot',
         latest: latestSnapshot,
       },
       capabilities: {
         envProvisioning: true,
-        workflowSettings: this.workflowSettingsPreviewEnabled(),
-        syncSnapshots: this.projectSyncSnapshotsEnabled(),
-        ciRunTracking: this.ciRunTrackingEnabled(),
-        deploymentHistory: this.deploymentHistoryEnabled(),
-        driftDetection: this.driftDetectionEnabled(),
+        workflowSettings: capabilities.has(
+          'projects.workflow-settings-preview',
+        ),
+        syncSnapshots: capabilities.has('projects.sync-snapshots'),
+        ciRunTracking: capabilities.has('pipelines.ci-run-tracking'),
+        deploymentHistory: capabilities.has('runtime.deployment-history'),
+        driftDetection: capabilities.has('runtime.drift-detection'),
       },
       hierarchyRepositoryId,
     };
@@ -197,7 +205,7 @@ export class ProjectDashboardService {
     projectId: string,
     userId: string,
   ): Promise<ProjectSyncSnapshotResponse> {
-    if (!this.projectSyncSnapshotsEnabled()) {
+    if (!this.capabilityEnabled('projects.sync-snapshots')) {
       throw new BadRequestException('Project sync snapshots are disabled');
     }
 
@@ -270,7 +278,7 @@ export class ProjectDashboardService {
 
     return (
       (await this.auditQueryPort?.listProjectEvents(projectId, userId)) ?? {
-        enabled: this.auditEventsEnabled(),
+        enabled: this.capabilityEnabled('platform.audit-events'),
         items: [],
       }
     );
@@ -304,41 +312,8 @@ export class ProjectDashboardService {
     return this.ciTokensRepository?.findProjectTokenStatus(projectId) ?? null;
   }
 
-  private projectSyncSnapshotsEnabled(): boolean {
-    return this.readConfig()?.projectSyncSnapshots.enabled ?? false;
-  }
-
-  private workflowSettingsPreviewEnabled(): boolean {
-    return this.readConfig()?.workflowSettingsPreview.enabled ?? false;
-  }
-
-  private ciRunTrackingEnabled(): boolean {
-    return this.readConfig()?.ciRunTracking?.enabled ?? false;
-  }
-
-  private deploymentHistoryEnabled(): boolean {
-    return this.readConfig()?.deploymentHistory?.enabled ?? false;
-  }
-
-  private driftDetectionEnabled(): boolean {
-    return this.readConfig()?.driftDetection?.enabled ?? false;
-  }
-
-  private auditEventsEnabled(): boolean {
-    return this.readConfig()?.auditEvents?.enabled ?? false;
-  }
-
-  private readConfig(): AppConfig | undefined {
-    if (!this.configService) {
-      return undefined;
-    }
-
-    const service = this.configService as ConfigService & {
-      get?: <T = unknown>(propertyPath: string) => T | undefined;
-    };
-    return (
-      service.get?.<AppConfig>('app') ?? service.getOrThrow<AppConfig>('app')
-    );
+  private capabilityEnabled(key: CapabilityKey): boolean {
+    return this.capabilityResolver?.deployment().has(key) ?? false;
   }
 
   private async recordProductEvent(input: {

@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 
 import type { DeploymentProviderCatalogEntry } from '#kernel/ports/deployment-provider-catalog.port';
 import { DEPLOYMENT_PROVIDER_CATALOG } from '#kernel/ports/deployment-provider-catalog.port';
+import { CAPABILITY_RESOLVER } from '#kernel/composition/capability-resolver.port';
 import { CapabilitiesController } from './capabilities.controller';
 
 const makeConfig = (
@@ -67,6 +68,9 @@ const makeConfig = (
         enabled,
         githubSyncMode: 'stub',
       },
+      composition: {
+        edition: 'enterprise',
+      },
     }),
   }) as unknown as ConfigService;
 
@@ -99,6 +103,29 @@ describe('CapabilitiesController', () => {
       providers: [
         { provide: ConfigService, useValue: makeConfig(true) },
         {
+          provide: CAPABILITY_RESOLVER,
+          useValue: {
+            deployment: () =>
+              new Set([
+                'identity.workspaces',
+                'identity.hierarchy',
+                'platform.audit-events',
+                'platform.notifications',
+                'billing.usage-quotas',
+                'runtime.env-provisioning',
+                'runtime.deployment-history',
+                'runtime.preview-deployments',
+                'runtime.drift-detection',
+                'runtime.drift-repair',
+                'projects.sync-snapshots',
+                'projects.workflow-settings-preview',
+                'projects.workflow-update-pr',
+                'projects.target-management',
+                'pipelines.ci-run-tracking',
+              ]),
+          },
+        },
+        {
           ...providerCatalog(),
         },
       ],
@@ -107,6 +134,31 @@ describe('CapabilitiesController', () => {
     const controller = module.get(CapabilitiesController);
 
     expect(controller.getCapabilities()).toEqual({
+      edition: 'enterprise',
+      capabilityKeys: [
+        'identity.workspaces',
+        'identity.hierarchy',
+        'platform.audit-events',
+        'platform.notifications',
+        'billing.usage-quotas',
+        'runtime.env-provisioning',
+        'runtime.deployment-history',
+        'runtime.preview-deployments',
+        'runtime.drift-detection',
+        'runtime.drift-repair',
+        'projects.sync-snapshots',
+        'projects.workflow-settings-preview',
+        'projects.workflow-update-pr',
+        'projects.target-management',
+        'pipelines.ci-run-tracking',
+      ],
+      clientComposition: {
+        enabled: false,
+        clientId: null,
+        displayName: null,
+        edition: null,
+        disabledCapabilities: [],
+      },
       envProvisioning: {
         enabled: true,
         providers: ['render', 'vercel'],
@@ -171,6 +223,28 @@ describe('CapabilitiesController', () => {
     });
   });
 
+  it('uses resolved capability membership instead of enabled config flags', async () => {
+    const module = await Test.createTestingModule({
+      controllers: [CapabilitiesController],
+      providers: [
+        { provide: ConfigService, useValue: makeConfig(true) },
+        {
+          provide: CAPABILITY_RESOLVER,
+          useValue: { deployment: () => new Set() },
+        },
+        {
+          ...providerCatalog(),
+        },
+      ],
+    }).compile();
+
+    const controller = module.get(CapabilitiesController);
+
+    expect(controller.getCapabilities().envProvisioning.enabled).toBe(false);
+    expect(controller.getCapabilities().workspaces.enabled).toBe(false);
+    expect(controller.getCapabilities().previewDeployments.enabled).toBe(false);
+  });
+
   it('advertises the flowci_managed ownership mode when centralized', async () => {
     const module = await Test.createTestingModule({
       controllers: [CapabilitiesController],
@@ -181,6 +255,12 @@ describe('CapabilitiesController', () => {
         },
         {
           ...providerCatalog(),
+        },
+        {
+          provide: CAPABILITY_RESOLVER,
+          useValue: {
+            deployment: () => new Set(['runtime.env-provisioning']),
+          },
         },
       ],
     }).compile();
@@ -200,12 +280,25 @@ describe('CapabilitiesController', () => {
         {
           ...providerCatalog(),
         },
+        {
+          provide: CAPABILITY_RESOLVER,
+          useValue: { deployment: () => new Set() },
+        },
       ],
     }).compile();
 
     const controller = module.get(CapabilitiesController);
 
     expect(controller.getCapabilities()).toEqual({
+      edition: 'enterprise',
+      capabilityKeys: [],
+      clientComposition: {
+        enabled: false,
+        clientId: null,
+        displayName: null,
+        edition: null,
+        disabledCapabilities: [],
+      },
       envProvisioning: {
         enabled: false,
         providers: [],
@@ -293,6 +386,7 @@ describe('CapabilitiesController', () => {
         auditEvents: { enabled: true },
         notifications: { enabled: true },
         hierarchy: { enabled: true, githubSyncMode: 'stub' },
+        composition: { edition: 'enterprise', profile: 'enterprise' },
       }),
     };
     const module = await Test.createTestingModule({
@@ -301,6 +395,10 @@ describe('CapabilitiesController', () => {
         { provide: ConfigService, useValue: configService },
         {
           ...providerCatalog(),
+        },
+        {
+          provide: CAPABILITY_RESOLVER,
+          useValue: { deployment: () => new Set() },
         },
       ],
     }).compile();

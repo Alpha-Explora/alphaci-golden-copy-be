@@ -87,7 +87,7 @@ describe('HTTP route inventory', () => {
       expect(manifest.baselineFile).toBe('route-inventory.baseline.txt');
       expect(sha256(baselineText)).toBe(manifest.baselineSha256);
       expect(manifest.baselineSourceCommit).toBe(
-        '95b734c64d521797a7bb58541be2a9389bdc19e4',
+        'e3751eb857ca8f8172da26f8ae61c26f333af19b',
       );
       expect(sha256(baselineText)).toBe(manifest.referenceSha256);
     } finally {

@@ -28,6 +28,9 @@ describe('ProjectCiRunsService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const capabilityResolver = {
+    deployment: jest.fn(),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -40,6 +43,9 @@ describe('ProjectCiRunsService', () => {
         liveGithubEnabled: false,
       },
     });
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['pipelines.ci-run-tracking']),
+    );
   });
 
   function createService() {
@@ -47,6 +53,7 @@ describe('ProjectCiRunsService', () => {
       projectsRepository as never,
       provider as never,
       configService as never,
+      capabilityResolver as never,
     );
   }
 

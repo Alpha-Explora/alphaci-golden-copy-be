@@ -1,0 +1,6 @@
+{
+  "clientId": "northwind",
+  "displayName": "Northwind Industries",
+  "edition": "enterprise",
+  "disabledCapabilities": ["runtime.preview-deployments"]
+}

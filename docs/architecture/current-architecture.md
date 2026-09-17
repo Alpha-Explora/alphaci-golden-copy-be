@@ -40,6 +40,8 @@ src/
 │   ├── events/                           # outbox persistence and dispatch
 │   ├── http/                             # middleware and exception filters
 │   └── ports/                             # focused dependency-inversion ports
+├── packs/                                 # profile-owned Enterprise implementation packs
+│   └── enterprise/                        # client-policy parser, registry, and factory
 └── modules/
     ├── identity-access/                  # auth, admin, capabilities, hierarchy
     ├── projects/                         # projects, catalog, workflows, repos
@@ -57,7 +59,7 @@ Each context has a `<context>.module.ts` composition root and an `index.ts` publ
 
 ## Technical kernel
 
-The kernel owns technical concerns shared by contexts: environment/configuration, database clients, session/auth infrastructure, HTTP cross-cutting behavior, outbox persistence, topic dispatch, and focused ports. It does not own business aggregates, provider policy, or context persistence.
+The kernel owns technical concerns shared by contexts: environment/configuration, database clients, session/auth infrastructure, HTTP cross-cutting behavior, outbox persistence, topic dispatch, and focused ports. Composition ports and generic policy application remain shared here, while profile-owned policy parsing, registries, and factories live under `src/packs/<profile>` and are loaded through a profile-keyed seam. The kernel does not own business aggregates, provider policy, or context persistence.
 
 ## Runtime providers
 

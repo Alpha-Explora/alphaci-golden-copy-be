@@ -1,10 +1,16 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import {
+  DEPLOYMENT_CAPABILITY_RESOLVER,
+  type CapabilityResolverPort,
+} from '#kernel/composition/capability-resolver.port.js';
 import type { AppConfig } from '#kernel/config/app.config';
 import { DatabaseService } from '#kernel/db/database.service';
 import type {
@@ -39,6 +45,9 @@ export class UsageQuotaService implements UsageQuotaPort {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
+    @Optional()
+    @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
+    private readonly capabilityResolver?: CapabilityResolverPort,
   ) {}
 
   /**
@@ -179,8 +188,9 @@ export class UsageQuotaService implements UsageQuotaPort {
   }
 
   private enabled(): boolean {
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    return config.usageQuotas?.enabled ?? false;
+    return (
+      this.capabilityResolver?.deployment().has('billing.usage-quotas') ?? false
+    );
   }
 
   /**
