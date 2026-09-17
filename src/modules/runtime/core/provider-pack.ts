@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import type { ProviderCiSecretsInstaller } from '../application/ports/provider-ci-secrets-installer.port';
+import type { ProviderReleaser } from '../application/ports/provider-releaser.port';
 import type { RuntimeEnvProviderClient } from '../application/ports/runtime-env-provider.client';
 import type { DeploymentProvider } from './deployment-provider.contract';
 import type { DeploymentProviderPolicy } from '../domain/deployment-provider.policy';
@@ -21,6 +22,11 @@ export interface RuntimeProviderPack {
   readonly client?: RuntimeEnvProviderClient;
   readonly workflowFragment?: WorkflowFragment;
   readonly ciSecretsInstaller?: ProviderCiSecretsInstaller;
+  /**
+   * Performs the release of an artifact the pipeline built. Absent for a
+   * provider whose pipeline deploys directly, such as Vercel.
+   */
+  readonly releaser?: ProviderReleaser;
 }
 
 /** Nest token used by Runtime's provider composition root. */
@@ -73,6 +79,11 @@ export class RuntimeProviderPackRegistry {
     if (pack.ciSecretsInstaller && pack.ciSecretsInstaller.provider !== id) {
       throw new Error(
         `Provider pack '${id}' contains CI installer '${pack.ciSecretsInstaller.provider}'`,
+      );
+    }
+    if (pack.releaser && pack.releaser.provider !== id) {
+      throw new Error(
+        `Provider pack '${id}' contains releaser '${pack.releaser.provider}'`,
       );
     }
     if (pack.provider.capabilities.envProvisioning !== false && !pack.client) {

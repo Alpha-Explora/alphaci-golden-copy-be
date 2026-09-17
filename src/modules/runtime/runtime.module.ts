@@ -35,6 +35,14 @@ import {
   PROVIDER_CI_SECRETS_INSTALLERS,
   PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
 } from './application/ports/provider-ci-secrets-installer.port';
+import {
+  PROVIDER_RELEASERS,
+  PROVIDER_RELEASER_REGISTRY,
+} from './application/ports/provider-releaser.port';
+import { ProviderReleaserRegistry } from './infrastructure/providers/core/provider-releaser.registry';
+import { ReleasesController } from './api/releases.controller';
+import { ReleasesService } from './application/releases.service';
+import { RenderReleaseService } from './infrastructure/providers/render/render-release.service';
 import { ProviderCiSecretsInstallerRegistry } from './infrastructure/providers/core/provider-ci-secrets.registry';
 import { ProjectDeploymentProvisioningService } from './application/project-deployment-provisioning.service';
 import { DeploymentProvisioningDefaultsService } from './application/deployment-provisioning-defaults.service';
@@ -104,6 +112,7 @@ import {
     GcpDeploymentModule,
   ],
   controllers: [
+    ReleasesController,
     ProviderConnectionsController,
     DeploymentTargetsController,
     EnvVarsController,
@@ -151,6 +160,7 @@ import {
         renderPolicy: RenderDeploymentPolicy,
         renderClient: RenderEnvClient,
         renderCiSecretsInstaller: RenderCiSecretsService,
+        renderReleaser: RenderReleaseService,
         vercelProvider: DeploymentProvider,
         vercelPolicy: VercelDeploymentPolicy,
         vercelClient: VercelEnvClient,
@@ -166,6 +176,7 @@ import {
             (fragment) => fragment.provider === 'render',
           ),
           ciSecretsInstaller: renderCiSecretsInstaller,
+          releaser: renderReleaser,
         }),
         createVercelProviderPack({
           provider: vercelProvider,
@@ -183,6 +194,7 @@ import {
         RenderDeploymentPolicy,
         RenderEnvClient,
         RenderCiSecretsService,
+        RenderReleaseService,
         VERCEL_DEPLOYMENT_PROVIDER,
         VercelDeploymentPolicy,
         VercelEnvClient,
@@ -248,6 +260,21 @@ import {
       inject: [RuntimeProviderPackRegistry],
     },
     ProviderCiSecretsInstallerRegistry,
+    RenderReleaseService,
+    ReleasesService,
+    {
+      provide: PROVIDER_RELEASERS,
+      useFactory: (providerPacks: RuntimeProviderPackRegistry) =>
+        providerPacks
+          .list()
+          .flatMap((pack) => (pack.releaser ? [pack.releaser] : [])),
+      inject: [RuntimeProviderPackRegistry],
+    },
+    ProviderReleaserRegistry,
+    {
+      provide: PROVIDER_RELEASER_REGISTRY,
+      useExisting: ProviderReleaserRegistry,
+    },
     {
       provide: PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
       useExisting: ProviderCiSecretsInstallerRegistry,

@@ -24,6 +24,9 @@ const { createHttpApplication } =
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { DeploymentStrategyResolver } =
   require('../../src/modules/runtime/domain/deployment-strategy.resolver.js') as typeof import('../../src/modules/runtime/domain/deployment-strategy.resolver.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { PROVIDER_RELEASER_REGISTRY } =
+  require('../../src/modules/runtime/application/ports/provider-releaser.port.js') as typeof import('../../src/modules/runtime/application/ports/provider-releaser.port.js');
 
 describe('HTTP application boot', () => {
   it('initializes the real Express middleware and serves health without a DB', async () => {
@@ -95,6 +98,27 @@ describe('HTTP application boot', () => {
           ownershipMode: 'flowci_managed',
         }),
       ).toBe('render_image_pushed');
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  /*
+   * A provider pack that forgets its releaser is invisible until a deploy
+   * silently never happens - the same shape as the resolver above, whose
+   * missing registry cost every managed target its secrets. The registry is
+   * built from the packs, so this asserts the composition, not a constant.
+   */
+  it('composes a releaser for the provider that needs one', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const releasers = app.get(PROVIDER_RELEASER_REGISTRY, { strict: false });
+
+      expect(releasers.get('render')).toBeDefined();
+      // Vercel deploys from the pipeline itself, so it contributes none.
+      expect(releasers.get('vercel')).toBeUndefined();
     } finally {
       await app.close();
     }
