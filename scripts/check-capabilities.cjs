@@ -61,6 +61,7 @@ const PACK_PROFILES = [
 const NON_CAPABILITY_FLAGS = new Set([
   'session.secure',            // transport hardening, not a product surface
   'subscription.mockEnabled',  // local development seam
+  'auth.devQuickLoginEnabled', // local development fixture endpoint, not a product surface
   'gcpDeployments.dedicatedProjectsEnabled', // optional provider mode, not base GCP availability
   'projectSyncSnapshots.liveGithubEnabled', // optional live adapter mode
   'projectSyncSnapshots.liveProvidersEnabled', // optional live adapter mode

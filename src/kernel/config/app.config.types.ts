@@ -9,6 +9,14 @@ export type GithubTeamRoleSyncMode = 'off' | 'seed' | 'enforce';
 
 export interface AppConfig {
   frontendUrl: string;
+  auth: {
+    /**
+     * Enables the local-only development fixture session endpoint. This is
+     * derived from DEV_QUICK_LOGIN and NODE_ENV; it is never true in a
+     * production or test process.
+     */
+    devQuickLoginEnabled: boolean;
+  };
   composition: {
     edition: Edition;
     profile: BuildProfile;

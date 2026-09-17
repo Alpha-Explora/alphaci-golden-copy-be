@@ -101,6 +101,23 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('development Quick login flag', () => {
+    it('accepts an explicit boolean value', () => {
+      expect(
+        validateEnv(validEnv({ DEV_QUICK_LOGIN: 'true' })).DEV_QUICK_LOGIN,
+      ).toBe('true');
+      expect(
+        validateEnv(validEnv({ DEV_QUICK_LOGIN: 'false' })).DEV_QUICK_LOGIN,
+      ).toBe('false');
+    });
+
+    it('rejects unrecognized values', () => {
+      expect(() => validateEnv(validEnv({ DEV_QUICK_LOGIN: 'yes' }))).toThrow(
+        /DEV_QUICK_LOGIN/,
+      );
+    });
+  });
+
   describe('NODE_ENV validation', () => {
     it('throws for an invalid NODE_ENV value', () => {
       expect(() => validateEnv(validEnv({ NODE_ENV: 'staging' }))).toThrow(

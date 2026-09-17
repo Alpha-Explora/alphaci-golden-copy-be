@@ -29,6 +29,9 @@ const testPrivateKey = privateKey.export({
 
 const appConfig: AppConfig = {
   frontendUrl: 'http://localhost:3000',
+  auth: {
+    devQuickLoginEnabled: false,
+  },
   composition: {
     edition: 'enterprise',
     profile: 'enterprise',

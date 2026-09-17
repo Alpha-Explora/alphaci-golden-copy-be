@@ -99,6 +99,9 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       routes: [
         { handler: 'githubStart', method: 'GET' },
         { handler: 'githubCallback', method: 'GET' },
+        // Local-only development fixture session; guarded by explicit config
+        // and loopback checks rather than a product capability.
+        { handler: 'devQuickLogin', method: 'POST' },
         { handler: 'configCheck', method: 'GET' },
         { handler: 'me', method: 'GET' },
         { handler: 'completeOnboarding', method: 'POST' },

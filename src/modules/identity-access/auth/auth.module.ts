@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { DevOnlyGuard } from '#kernel/auth/dev-only.guard';
+import { DevQuickLoginGuard } from '#kernel/auth/dev-quick-login.guard';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { EventsModule } from '#kernel/events/events.module';
 import { SubscriptionModule } from '#modules/billing/subscription/subscription.module.js';
@@ -20,7 +21,7 @@ import { AuthIdentityModule } from './auth-identity.module';
     GithubModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, DevOnlyGuard, SessionAuthGuard],
+  providers: [AuthService, DevOnlyGuard, DevQuickLoginGuard, SessionAuthGuard],
   exports: [AuthService],
 })
 export class AuthModule {}

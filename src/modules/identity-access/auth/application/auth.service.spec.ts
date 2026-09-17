@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { UnauthorizedException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { UsersRepository } from '../infrastructure/users.repository.js';
 import { SubscriptionsRepository } from '#modules/billing/subscription/infrastructure/subscriptions.repository.js';
@@ -15,6 +15,7 @@ import type {
   SubscriptionState,
 } from '#kernel/auth/session-user.interface.js';
 import type { ArchivedUserLookup } from '../infrastructure/users.repository.js';
+import { DEV_QUICK_LOGIN_FIXTURE } from './dev-quick-login.fixture.js';
 
 const fakeUser: SessionUser = {
   id: 'user-1',
@@ -31,9 +32,16 @@ const fakeFreeSub: SubscriptionState = {
   updatedAt: '2026-01-01T00:00:00Z',
 };
 
-const makeConfig = (withGitHub = true, internalOrg = '') =>
+const makeConfig = (
+  withGitHub = true,
+  internalOrg = '',
+  devQuickLoginEnabled = false,
+) =>
   ({
     get: jest.fn((key: string) => {
+      if (key === 'NODE_ENV') {
+        return 'development';
+      }
       if (key === 'ALLOWED_ORIGINS') {
         return 'http://localhost:3000,https://cicd-workflow-hioomva9i-api-center-t.vercel.app';
       }
@@ -44,6 +52,7 @@ const makeConfig = (withGitHub = true, internalOrg = '') =>
     }),
     getOrThrow: jest.fn().mockReturnValue({
       frontendUrl: 'http://localhost:3000',
+      auth: { devQuickLoginEnabled },
       archivedAccountRetentionDays: 30,
       github: {
         clientId: withGitHub ? 'gh-client-id' : '',
@@ -120,6 +129,7 @@ async function createService(
   usersRepoOverrides?: Partial<UsersRepository>,
   _unusedAuthTestArg?: unknown,
   internalOrg = '',
+  devQuickLoginEnabled = false,
 ) {
   const usersRepo = makeUsersRepo(usersRepoOverrides);
   const subsRepo = makeSubsRepo();
@@ -128,7 +138,10 @@ async function createService(
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       AuthService,
-      { provide: ConfigService, useValue: makeConfig(withGitHub, internalOrg) },
+      {
+        provide: ConfigService,
+        useValue: makeConfig(withGitHub, internalOrg, devQuickLoginEnabled),
+      },
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: SUBSCRIPTION_BOOTSTRAP, useValue: subsRepo },
@@ -184,6 +197,70 @@ interface GitHubProfilePayload {
 }
 
 describe('AuthService', () => {
+  describe('devQuickLogin', () => {
+    it('is unavailable unless explicitly enabled', async () => {
+      const { service } = await createService();
+
+      await expect(service.devQuickLogin(makeRequest())).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('creates the fixed fixture and establishes a normal session', async () => {
+      const { service, usersRepo, subsRepo } = await createService(
+        true,
+        undefined,
+        undefined,
+        undefined,
+        '',
+        true,
+      );
+      const request = makeRequest();
+
+      await service.devQuickLogin(request);
+
+      expect(usersRepo.upsertGitHubUser).toHaveBeenCalledWith({
+        ...DEV_QUICK_LOGIN_FIXTURE,
+        isInternal: false,
+        seedAppRole: 'member',
+      });
+      expect(subsRepo.ensureDefaultFreeSubscription).toHaveBeenCalledWith(
+        fakeUser.id,
+      );
+      expect(request.session.regenerate).toHaveBeenCalledTimes(1);
+      expect(request.session.userId).toBe(fakeUser.id);
+      expect(request.session.user).toEqual(fakeUser);
+      expect(request.session.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('restores only the fixed fixture when it was archived', async () => {
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue({
+            id: fakeUser.id,
+            login: DEV_QUICK_LOGIN_FIXTURE.login,
+            archivedAt: '2026-09-01T00:00:00Z',
+            githubUserId: DEV_QUICK_LOGIN_FIXTURE.githubUserId,
+          }),
+        },
+        undefined,
+        '',
+        true,
+      );
+      const request = makeRequest();
+
+      await service.devQuickLogin(request);
+
+      expect(usersRepo.restoreByGithubUserId).toHaveBeenCalledWith(
+        DEV_QUICK_LOGIN_FIXTURE.githubUserId,
+        false,
+      );
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+  });
+
   describe('startGitHubAuth', () => {
     it('saves state to DB and returns GitHub authorization URL', async () => {
       const { service, oauthStateRepo } = await createService();

@@ -1,11 +1,11 @@
 {
-  "routeCount": 148,
+  "routeCount": 149,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "32e47758bf21762c6018684d30280ca37b04d08d02545f9c89c9ccb04224800b",
+  "referenceSha256": "82a75c9900004ac770169e85ea1c25e0144f3b7061fc9445ec4ac03eee9d4c22",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "32e47758bf21762c6018684d30280ca37b04d08d02545f9c89c9ccb04224800b",
-  "baselineSourceCommit": "95b734c64d521797a7bb58541be2a9389bdc19e4",
-  "capturedAtCheckpoint": "071f56222f0c8d3170c1a407494e504f6f6afe6b"
+  "baselineSha256": "82a75c9900004ac770169e85ea1c25e0144f3b7061fc9445ec4ac03eee9d4c22",
+  "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
+  "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b"
 }

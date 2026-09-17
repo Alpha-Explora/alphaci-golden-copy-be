@@ -41,6 +41,7 @@ describe('appConfig factory', () => {
     const config = appConfig();
 
     expect(config.frontendUrl).toBe('http://localhost:3000');
+    expect(config.auth.devQuickLoginEnabled).toBe(false);
     expect(config.github.clientId).toBe('');
     expect(config.session.secret).toBe(validSessionSecret);
     expect(config.subscription.mockEnabled).toBe(false);
@@ -68,6 +69,20 @@ describe('appConfig factory', () => {
     expect(config.session.storeDriver).toBe('memory');
     expect(config.composition.edition).toBe('enterprise');
     expect(config.composition.profile).toBe('enterprise');
+  });
+
+  it('enables Quick login only for development with an explicit flag', () => {
+    process.env['NODE_ENV'] = 'development';
+    process.env['DEV_QUICK_LOGIN'] = 'true';
+
+    expect(appConfig().auth.devQuickLoginEnabled).toBe(true);
+  });
+
+  it('forces Quick login off outside development', () => {
+    process.env['NODE_ENV'] = 'production';
+    process.env['DEV_QUICK_LOGIN'] = 'true';
+
+    expect(appConfig().auth.devQuickLoginEnabled).toBe(false);
   });
 
   it.each([

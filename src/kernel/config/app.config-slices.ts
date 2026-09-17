@@ -4,6 +4,16 @@ import type { AppConfig, GithubTeamRoleSyncMode } from './app.config.types';
 
 type Env = NodeJS.ProcessEnv;
 
+export function authConfig(env: Env): AppConfig['auth'] {
+  return {
+    // This is intentionally a conjunctive gate. A deployment cannot enable
+    // the fixture endpoint by setting the flag alone, and production/test
+    // processes remain disabled even if a copied local .env contains it.
+    devQuickLoginEnabled:
+      env['NODE_ENV'] === 'development' && env['DEV_QUICK_LOGIN'] === 'true',
+  };
+}
+
 /**
  * Any unrecognized value resolves to 'off' — an environment must name the mode
  * exactly to turn GitHub team reads on, matching how HIERARCHY_GITHUB_SYNC_MODE

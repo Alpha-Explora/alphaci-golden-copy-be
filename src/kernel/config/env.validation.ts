@@ -28,6 +28,7 @@ export interface EnvironmentVariables {
   PORT: number;
   ENABLE_SWAGGER: string;
   SESSION_SECRET: string;
+  DEV_QUICK_LOGIN?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -240,6 +241,15 @@ function validateEnvProvisioningConfig(env: RawEnv): void {
   }
 }
 
+function validateDevQuickLoginFlag(env: RawEnv): void {
+  const raw = env['DEV_QUICK_LOGIN'];
+  if (raw === undefined || raw === 'true' || raw === 'false') {
+    return;
+  }
+
+  throw new Error('[env] DEV_QUICK_LOGIN must be either "true" or "false".');
+}
+
 function validateProductionGithubAppConfig(env: RawEnv): void {
   if (env['NODE_ENV'] !== 'production') return;
 
@@ -300,6 +310,7 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // all environments (not just production) so that developers are never
   // unknowingly running with an insecure secret.
   const SESSION_SECRET = requireSessionSecret(env);
+  validateDevQuickLoginFlag(env);
 
   // Composition is validated against the build ceiling before Nest creates
   // the application graph. appConfig parses the same pure function later;
