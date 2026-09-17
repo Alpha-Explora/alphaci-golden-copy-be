@@ -201,6 +201,16 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'getRuns', method: 'GET' },
       ],
     },
+    'src/modules/runtime/api/releases.controller.ts': {
+      // Same surface, same credential: a generated pipeline calling with the
+      // project's ALPHACI_TOKEN. It is not a capability-gated product feature
+      // and has no signed-in subject to resolve a capability set from.
+      reason: 'CI integration surface',
+      routes: [
+        { handler: 'startRelease', method: 'POST' },
+        { handler: 'getRelease', method: 'GET' },
+      ],
+    },
     'src/modules/pipelines/github/api/github-webhook.controller.ts': {
       reason: 'inbound webhook',
       routes: [{ handler: 'handleWebhook', method: 'POST' }],

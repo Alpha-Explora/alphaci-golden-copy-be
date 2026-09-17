@@ -1,11 +1,20 @@
 {
-  "routeCount": 149,
+  "routeCount": 151,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "82a75c9900004ac770169e85ea1c25e0144f3b7061fc9445ec4ac03eee9d4c22",
+  "referenceSha256": "4422c7ca631f77388871859f92b860ec481f0c514d64c4d5df8f507864efa6f6",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "82a75c9900004ac770169e85ea1c25e0144f3b7061fc9445ec4ac03eee9d4c22",
+  "baselineSha256": "4422c7ca631f77388871859f92b860ec481f0c514d64c4d5df8f507864efa6f6",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
-  "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b"
+  "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
+  "amendments": [
+    {
+      "reason": "Release surface: a generated pipeline asks the platform to release what it built, so the hosting credential stays here instead of in every customer repository.",
+      "routes": [
+        "GET /api/v1/ci/releases/{releaseId}",
+        "POST /api/v1/ci/releases"
+      ]
+    }
+  ]
 }
