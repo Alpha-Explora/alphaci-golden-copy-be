@@ -1,5 +1,9 @@
 import request from 'supertest';
 
+// Type-only: erased at compile time, so it cannot be hoisted above the
+// environment fixture the way a value import would be.
+import type { ProviderReleaserRegistryPort } from '../../src/modules/runtime/application/ports/provider-releaser.port';
+
 Object.assign(process.env, {
   NODE_ENV: 'test',
   SESSION_SECRET: 'test-only-session-secret-that-is-at-least-32-bytes',
@@ -114,7 +118,10 @@ describe('HTTP application boot', () => {
     await app.init();
 
     try {
-      const releasers = app.get(PROVIDER_RELEASER_REGISTRY, { strict: false });
+      const releasers = app.get<ProviderReleaserRegistryPort>(
+        PROVIDER_RELEASER_REGISTRY,
+        { strict: false },
+      );
 
       expect(releasers.get('render')).toBeDefined();
       // Vercel deploys from the pipeline itself, so it contributes none.
