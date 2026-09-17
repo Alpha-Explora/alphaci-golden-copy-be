@@ -14,6 +14,7 @@ import type { DeploymentStrategy } from '../../../core/deployments.types';
 import { RenderCostPolicyService } from './render-cost-policy.service';
 import {
   RENDER_SERVICE_BRANCHES,
+  renderBranchFor,
   renderImageUrl,
   type RenderServiceBranch,
 } from './render-conventions';
@@ -261,20 +262,28 @@ export class RenderDeploymentPolicy implements DeploymentProviderPolicy {
 
   private environmentFromBranch(
     branchName: string,
-  ): 'test' | 'uat' | 'production' {
+  ): 'dev' | 'uat' | 'production' {
     const branch = branchName.trim();
     if (branch === 'main') return 'production';
     if (branch === 'uat' || branch === 'production') {
       return branch;
     }
-    return 'test';
+    return 'dev';
   }
 }
 
+/*
+ * The branch this target's Render resources are named after.
+ *
+ * Delegates rather than testing for 'main': an earlier version returned the
+ * first branch in the set for everything else, which was correct only while
+ * that set was ['uat', 'main']. Adding 'dev' silently pointed every uat target
+ * at the dev image.
+ */
 function renderBranchOf(
   target: DeploymentProvisioningTarget,
 ): RenderServiceBranch {
-  return target.branchName === 'main' ? 'main' : RENDER_SERVICE_BRANCHES[0];
+  return renderBranchFor(target.branchName);
 }
 
 function renderProjectNameForBranch(

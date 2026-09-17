@@ -41,7 +41,7 @@ const EXPECTED_CENTRAL_WORKFLOWS = [
   'playwright-e2e.yml',
   'production-gate.yml',
   'promotion.yml',
-  'render-deploy.yml',
+  'release.yml',
   'schemathesis-scan.yml',
   'security-scan.yml',
   'sonarcloud-dotnet-scan.yml',
@@ -118,7 +118,6 @@ describe('staged workflow generator: central workflow contract', () => {
           dockerfilePath: 'Dockerfile',
           imageName: 'alphaci-backend',
           secretNames: {
-            deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
             healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
           },
         },

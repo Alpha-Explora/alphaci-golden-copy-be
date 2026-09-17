@@ -2,6 +2,7 @@ export { WorkflowsModule } from './workflows.module';
 export { WorkflowsService } from './workflows.service';
 export {
   ALPHACI_REPORT_URL,
+  ALPHACI_API_URL,
   buildStagedWorkflowBundle,
   resolveDefaultCentralWorkflowRef,
   type StagedWorkflowFile,

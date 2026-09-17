@@ -7,15 +7,6 @@ describe('RenderCiSecretsService', () => {
   const githubService = {
     setActionsSecretStrict: jest.fn(),
   };
-  const providerConnectionsRepository = {
-    findActiveProviderConnection: jest.fn(),
-  };
-  const encryptionService = {
-    decrypt: jest.fn(),
-  };
-  const configService = {
-    getOrThrow: jest.fn(),
-  };
 
   const baseTarget: DeploymentTargetSummary = {
     id: 'target-1',
@@ -43,6 +34,7 @@ describe('RenderCiSecretsService', () => {
     providerMetadata: {
       renderOwnerId: 'tea-flowci',
       renderRegistryCredentialId: 'crd-flowci',
+      renderServiceUrl: 'https://orders-api-uat.onrender.com',
     },
     status: 'active',
   };
@@ -52,156 +44,98 @@ describe('RenderCiSecretsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     githubService.setActionsSecretStrict.mockResolvedValue(undefined);
-    providerConnectionsRepository.findActiveProviderConnection.mockResolvedValue(
-      {
-        id: 'conn-1',
-        provider: 'render',
-        encryptedToken: 'encrypted-render-token',
-        metadata: {
-          ownerId: 'usr-render-owner',
-        },
-      },
-    );
-    encryptionService.decrypt.mockReturnValue('byo-render-token');
-    configService.getOrThrow.mockReturnValue({
-      envProvisioning: {
-        flowciManaged: {
-          renderToken: 'managed-render-token',
-          renderOwnerId: 'tea-flowci',
-        },
-      },
-    });
-
-    service = new RenderCiSecretsService(
-      githubService,
-      providerConnectionsRepository as never,
-      encryptionService as never,
-      configService as never,
-    );
+    service = new RenderCiSecretsService(githubService);
   });
 
-  it('installs Render API deployment secrets for managed image targets', async () => {
-    const result = await service.installForTarget({
+  function install(target: DeploymentTargetSummary = baseTarget) {
+    return service.installForTarget({
       githubAccessToken: 'gh-token',
       repoFullName: 'tone/orders-api',
       userId: 'user-1',
       providerConnectionId: null,
-      target: baseTarget,
+      target,
     });
+  }
 
+  it('installs the service address so a run can reach the deployment', async () => {
+    const result = await install();
+
+    expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
+      'gh-token',
+      'tone',
+      'orders-api',
+      'RENDER_HEALTHCHECK_URL_UAT',
+      'https://orders-api-uat.onrender.com',
+    );
     expect(result.githubSecrets).toEqual({
-      apiKey: 'RENDER_BACKEND_UAT_API_KEY',
-      serviceId: 'RENDER_BACKEND_UAT_SERVICE_ID',
-      ownerId: 'RENDER_BACKEND_UAT_OWNER_ID',
-      registryCredentialId: 'RENDER_BACKEND_UAT_REGISTRY_CREDENTIAL_ID',
-      deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
       healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
     });
-    expect(githubService.setActionsSecretStrict).toHaveBeenCalledTimes(4);
-    expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
-      1,
-      'gh-token',
-      'tone',
-      'orders-api',
-      'RENDER_BACKEND_UAT_API_KEY',
-      'managed-render-token',
-    );
-    expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
-      2,
-      'gh-token',
-      'tone',
-      'orders-api',
-      'RENDER_BACKEND_UAT_SERVICE_ID',
-      'srv-1',
-    );
-    expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
-      3,
-      'gh-token',
-      'tone',
-      'orders-api',
-      'RENDER_BACKEND_UAT_OWNER_ID',
-      'tea-flowci',
-    );
-    expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
-      4,
-      'gh-token',
-      'tone',
-      'orders-api',
-      'RENDER_BACKEND_UAT_REGISTRY_CREDENTIAL_ID',
-      'crd-flowci',
-    );
   });
 
-  it('uses BYO Render connection token and owner metadata for existing services', async () => {
-    configService.getOrThrow.mockReturnValue({
-      envProvisioning: {
-        flowciManaged: {
-          renderToken: 'managed-render-token',
-          renderOwnerId: '',
-        },
-      },
-    });
+  /*
+   * The regression this class exists to prevent now.
+   *
+   * It used to write the platform's Render API key, owner id and service id
+   * into every customer repository. Render issues a key on an account and
+   * offers no way to scope it to one service, so anyone able to push a workflow
+   * to any generated repository could manage every service on the account -
+   * including the platform's own. The release runs on the platform instead, so
+   * no credential belongs in the repository at all.
+   */
+  it('never writes a Render credential into a customer repository', async () => {
+    await install();
 
-    await service.installForTarget({
-      githubAccessToken: 'gh-token',
-      repoFullName: 'tone/orders-api',
-      userId: 'user-1',
-      providerConnectionId: 'conn-1',
-      target: {
-        ...baseTarget,
-        ownershipMode: 'byo',
-        providerConnectionId: 'conn-1',
-        deploymentStrategy: 'render_existing_service',
-        providerMetadata: {},
-      },
-    });
-
-    expect(encryptionService.decrypt).toHaveBeenCalledWith(
-      'encrypted-render-token',
+    const names = githubService.setActionsSecretStrict.mock.calls.map((call) =>
+      String(call[3]),
     );
+    const values = githubService.setActionsSecretStrict.mock.calls.map((call) =>
+      String(call[4]),
+    );
+
+    expect(names).not.toContain(expect.stringContaining('API_KEY'));
+    expect(names.join(',')).not.toMatch(/API_KEY|OWNER_ID|SERVICE_ID/);
+    expect(values.join(',')).not.toMatch(/^rnd_/m);
+  });
+
+  it('names the secret after the branch the target deploys', async () => {
+    await install({ ...baseTarget, branchName: 'dev' });
+
     expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_BACKEND_UAT_API_KEY',
-      'byo-render-token',
-    );
-    expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
-      'gh-token',
-      'tone',
-      'orders-api',
-      'RENDER_BACKEND_UAT_OWNER_ID',
-      'usr-render-owner',
+      'RENDER_HEALTHCHECK_URL_DEV',
+      expect.any(String),
     );
   });
 
-  it('does not install secrets for native Render Git targets', async () => {
-    const result = await service.installForTarget({
-      githubAccessToken: 'gh-token',
-      repoFullName: 'tone/orders-api',
-      userId: 'user-1',
-      providerConnectionId: null,
-      target: {
-        ...baseTarget,
-        deploymentStrategy: 'render_git_connected',
-      },
+  it('writes nothing for a target it does not handle', async () => {
+    const result = await install({
+      ...baseTarget,
+      deploymentStrategy: 'render_git_connected',
     });
 
-    expect(result.githubSecrets.apiKey).toBe('RENDER_BACKEND_UAT_API_KEY');
+    expect(githubService.setActionsSecretStrict).not.toHaveBeenCalled();
+    expect(result.githubSecrets).toEqual({
+      healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
+    });
+  });
+
+  it('writes nothing when the service has no address yet', async () => {
+    await install({ ...baseTarget, providerMetadata: {} });
+
     expect(githubService.setActionsSecretStrict).not.toHaveBeenCalled();
   });
 
-  it('rejects invalid repository names before writing secrets', async () => {
+  it('rejects a malformed repository name', async () => {
     await expect(
       service.installForTarget({
         githubAccessToken: 'gh-token',
-        repoFullName: 'invalid-repo',
+        repoFullName: 'not-a-repo',
         userId: 'user-1',
         providerConnectionId: null,
         target: baseTarget,
       }),
     ).rejects.toThrow(BadRequestException);
-
-    expect(githubService.setActionsSecretStrict).not.toHaveBeenCalled();
   });
 });

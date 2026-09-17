@@ -140,8 +140,8 @@ export class DeploymentProvisioningTargetDto {
   renderRegion?: string;
 
   @IsOptional()
-  @IsIn(['test', 'uat', 'production'])
-  renderEnvironmentName?: 'test' | 'uat' | 'production';
+  @IsIn(['dev', 'test', 'uat', 'production'])
+  renderEnvironmentName?: 'dev' | 'test' | 'uat' | 'production';
 
   @IsOptional()
   @IsString()

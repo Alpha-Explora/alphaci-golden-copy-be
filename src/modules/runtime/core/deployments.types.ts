@@ -65,7 +65,7 @@ export type RenderDeployMethod =
  * (project_deployment_targets_render_environment_check). It used to alias the
  * env-var environment enum, which made two unrelated ideas move together.
  */
-export type RenderEnvironmentName = 'test' | 'uat' | 'production';
+export type RenderEnvironmentName = 'dev' | 'test' | 'uat' | 'production';
 export type ProviderConnectionStatus = 'active' | 'revoked' | 'failed';
 export type DeploymentTargetStatus = 'active' | 'missing' | 'failed';
 export type EnvVarProvisionStatus = 'provisioned' | 'failed';

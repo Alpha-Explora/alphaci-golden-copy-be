@@ -163,13 +163,13 @@ describe('RenderEnvClient', () => {
         jsonResponse([{ project: { id: 'prj-1', name: 'api-service' } }]),
       )
       .mockResolvedValueOnce(
-        jsonResponse([{ environment: { id: 'env-1', name: 'test' } }]),
+        jsonResponse([{ environment: { id: 'env-1', name: 'dev' } }]),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           service: {
             id: 'srv-1',
-            name: 'api-service-test',
+            name: 'api-service-dev',
           },
         }),
       );
@@ -178,8 +178,8 @@ describe('RenderEnvClient', () => {
     const target = await client.createTarget({
       token: 'rnd',
       repoFullName: 'owner/api-service',
-      projectName: 'api-service-test',
-      branchName: 'test',
+      projectName: 'api-service-dev',
+      branchName: 'dev',
       rootDirectory: '.',
       buildCommand: 'npm ci && npm run build',
       startCommand: 'npm run start:prod',
@@ -187,13 +187,13 @@ describe('RenderEnvClient', () => {
 
     expect(target).toMatchObject({
       id: 'srv-1',
-      name: 'api-service-test',
+      name: 'api-service-dev',
       provider: 'render',
       metadata: {
         deploymentStrategy: 'render_git_connected',
         renderServiceId: 'srv-1',
         renderServiceType: 'web_service',
-        renderEnvironmentName: 'test',
+        renderEnvironmentName: 'dev',
         renderEnvironmentId: 'env-1',
         renderProjectName: 'api-service',
         dockerContext: '.',
@@ -207,11 +207,11 @@ describe('RenderEnvClient', () => {
     expect(request.method).toBe('POST');
     expect(JSON.parse(request.body)).toEqual({
       type: 'web_service',
-      name: 'api-service-test',
+      name: 'api-service-dev',
       ownerId: 'tea-1',
       environmentId: 'env-1',
       repo: 'https://github.com/owner/api-service',
-      branch: 'test',
+      branch: 'dev',
       rootDir: '.',
       buildCommand: 'npm ci && npm run build',
       startCommand: 'npm run start:prod',
@@ -240,7 +240,7 @@ describe('RenderEnvClient', () => {
         jsonResponse([{ project: { id: 'prj-2', name: 'worker' } }]),
       )
       .mockResolvedValueOnce(
-        jsonResponse([{ environment: { id: 'env-2', name: 'test' } }]),
+        jsonResponse([{ environment: { id: 'env-2', name: 'dev' } }]),
       )
       .mockResolvedValueOnce(
         jsonResponse({
@@ -256,7 +256,7 @@ describe('RenderEnvClient', () => {
       token: 'rnd',
       repoFullName: 'owner/worker',
       projectName: 'worker-test',
-      branchName: 'test',
+      branchName: 'dev',
       rootDirectory: '.',
       buildCommand: 'pip install -r requirements.txt',
       startCommand: 'python app.py',
@@ -299,7 +299,7 @@ describe('RenderEnvClient', () => {
         jsonResponse([{ project: { id: 'prj-3', name: 'api' } }]),
       )
       .mockResolvedValueOnce(
-        jsonResponse([{ environment: { id: 'env-3', name: 'test' } }]),
+        jsonResponse([{ environment: { id: 'env-3', name: 'dev' } }]),
       )
       .mockResolvedValueOnce(
         jsonResponse({
@@ -314,7 +314,7 @@ describe('RenderEnvClient', () => {
       token: 'rnd',
       repoFullName: 'owner/api',
       projectName: 'api-docker-test',
-      branchName: 'test',
+      branchName: 'dev',
       rootDirectory: 'backend',
       buildCommand: 'npm ci && npm run build',
       startCommand: 'npm run start:prod',
@@ -348,13 +348,13 @@ describe('RenderEnvClient', () => {
         jsonResponse([{ project: { id: 'prj-4', name: 'api-service' } }]),
       )
       .mockResolvedValueOnce(
-        jsonResponse([{ environment: { id: 'env-4', name: 'test' } }]),
+        jsonResponse([{ environment: { id: 'env-4', name: 'dev' } }]),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           service: {
             id: 'srv-image',
-            name: 'api-service-test',
+            name: 'api-service-dev',
           },
         }),
       );
@@ -376,8 +376,8 @@ describe('RenderEnvClient', () => {
     const target = await client.createTarget({
       token: 'rnd',
       repoFullName: 'owner/api-service',
-      projectName: 'api-service-test',
-      branchName: 'test',
+      projectName: 'api-service-dev',
+      branchName: 'dev',
       deploymentStrategy: 'render_image_pushed',
       renderInstanceType: 'free',
       renderRegion: 'singapore',
@@ -396,7 +396,7 @@ describe('RenderEnvClient', () => {
     const body = JSON.parse(request.body) as Record<string, unknown>;
     expect(body).toMatchObject({
       type: 'web_service',
-      name: 'api-service-test',
+      name: 'api-service-dev',
       ownerId: 'tea-configured',
       environmentId: 'env-4',
       autoDeploy: 'no',
@@ -423,13 +423,13 @@ describe('RenderEnvClient', () => {
         jsonResponse([{ project: { id: 'prj-5', name: 'api-service' } }]),
       )
       .mockResolvedValueOnce(
-        jsonResponse([{ environment: { id: 'env-5', name: 'test' } }]),
+        jsonResponse([{ environment: { id: 'env-5', name: 'dev' } }]),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           service: {
             id: 'srv-1',
-            name: 'api-service-test',
+            name: 'api-service-dev',
           },
         }),
       );
@@ -449,8 +449,8 @@ describe('RenderEnvClient', () => {
     await client.createTarget({
       token: 'rnd',
       repoFullName: 'owner/api-service',
-      projectName: 'api-service-test',
-      branchName: 'test',
+      projectName: 'api-service-dev',
+      branchName: 'dev',
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -478,8 +478,8 @@ describe('RenderEnvClient', () => {
       new RenderEnvClient().createTarget({
         token: 'rnd',
         repoFullName: 'owner/api-service',
-        projectName: 'api-service-test',
-        branchName: 'test',
+        projectName: 'api-service-dev',
+        branchName: 'dev',
       }),
     ).rejects.toThrow('Render workspace lookup returned no owner id');
   });
@@ -500,7 +500,7 @@ describe('RenderEnvClient', () => {
       new RenderEnvClient().createTarget({
         token: 'rnd',
         repoFullName: 'owner/api-service',
-        projectName: 'api-service-test',
+        projectName: 'api-service-dev',
         branchName: 'main',
       }),
     ).rejects.toThrow('Render service creation returned an invalid response');
@@ -543,7 +543,7 @@ describe('RenderEnvClient', () => {
         jsonResponse([{ project: { id: 'prj-shapes', name: 'api-service' } }]),
       )
       .mockResolvedValueOnce(
-        jsonResponse([{ environment: { id: 'env-shapes', name: 'test' } }]),
+        jsonResponse([{ environment: { id: 'env-shapes', name: 'dev' } }]),
       )
       .mockResolvedValueOnce(jsonResponse(payload));
 
@@ -551,8 +551,8 @@ describe('RenderEnvClient', () => {
       new RenderEnvClient().createTarget({
         token: 'rnd',
         repoFullName: 'owner/api-service',
-        projectName: 'api-service-test',
-        branchName: 'test',
+        projectName: 'api-service-dev',
+        branchName: 'dev',
       }),
     ).resolves.toMatchObject({
       id: expected.id,
@@ -579,7 +579,7 @@ describe('RenderEnvClient', () => {
         jsonResponse({
           service: {
             id: 'srv-1',
-            name: 'api-service-test',
+            name: 'api-service-dev',
           },
         }),
       );
@@ -600,7 +600,7 @@ describe('RenderEnvClient', () => {
       client.createTarget({
         token: 'rnd',
         repoFullName: 'owner/api-service',
-        projectName: 'api-service-test',
+        projectName: 'api-service-dev',
         branchName: 'main',
       }),
     ).resolves.toMatchObject({
@@ -610,7 +610,7 @@ describe('RenderEnvClient', () => {
       client.createTarget({
         token: 'rnd',
         repoFullName: 'owner/api-service',
-        projectName: 'api-service-test',
+        projectName: 'api-service-dev',
         branchName: 'uat',
       }),
     ).resolves.toMatchObject({
@@ -875,7 +875,7 @@ describe('RenderEnvClient', () => {
           jsonResponse([{ project: { id: 'prj-hr', name: 'hr-be' } }]),
         )
         .mockResolvedValueOnce(
-          jsonResponse([{ environment: { id: 'env-hr-test', name: 'test' } }]),
+          jsonResponse([{ environment: { id: 'env-hr-test', name: 'dev' } }]),
         )
         .mockResolvedValueOnce(
           jsonResponse({ service: { id: 'srv-hr', name: 'hr-be-test' } }),
@@ -887,7 +887,7 @@ describe('RenderEnvClient', () => {
         token: 'rnd',
         repoFullName: 'Alpha-Explora/hr-be',
         projectName: 'hr-be-test',
-        branchName: 'test',
+        branchName: 'dev',
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(4);
@@ -895,7 +895,7 @@ describe('RenderEnvClient', () => {
         'https://api.render.com/v1/projects?ownerId=tea-1&limit=100',
       );
       expect(fetchMock.mock.calls[2][0]).toBe(
-        'https://api.render.com/v1/environments?projectId=prj-hr&name=test&limit=1',
+        'https://api.render.com/v1/environments?projectId=prj-hr&name=dev&limit=1',
       );
       expect(target.metadata).toMatchObject({
         renderEnvironmentId: 'env-hr-test',
@@ -963,7 +963,7 @@ describe('RenderEnvClient', () => {
         .mockResolvedValueOnce(jsonResponse([]))
         .mockResolvedValueOnce(jsonResponse({ project: { id: 'prj-new' } }))
         .mockResolvedValueOnce(
-          jsonResponse([{ environment: { id: 'env-new-test', name: 'test' } }]),
+          jsonResponse([{ environment: { id: 'env-new-test', name: 'dev' } }]),
         )
         .mockResolvedValueOnce(
           jsonResponse({ service: { id: 'srv-new', name: 'hr-be-test' } }),
@@ -975,7 +975,7 @@ describe('RenderEnvClient', () => {
         token: 'rnd',
         repoFullName: 'Alpha-Explora/hr-be',
         projectName: 'hr-be-test',
-        branchName: 'test',
+        branchName: 'dev',
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(5);
@@ -986,7 +986,7 @@ describe('RenderEnvClient', () => {
       expect(JSON.parse(createProjectRequest.body)).toEqual({
         name: 'hr-be',
         ownerId: 'tea-1',
-        environments: [{ name: 'test' }],
+        environments: [{ name: 'dev' }],
       });
       expect(target.metadata).toMatchObject({
         renderEnvironmentId: 'env-new-test',

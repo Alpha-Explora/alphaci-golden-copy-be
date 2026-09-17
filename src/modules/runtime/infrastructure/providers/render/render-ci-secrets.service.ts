@@ -1,18 +1,9 @@
-import {
-  BadRequestException,
-  Injectable,
-  InternalServerErrorException,
-  NotFoundException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { BadRequestException, Injectable } from '@nestjs/common';
 
-import type { AppConfig } from '#kernel/config/app.config';
-import { EnvTokenEncryptionService } from '../../../application/encryption.service';
 import type {
   DeploymentTargetSummary,
   EnvTargetSlot,
 } from '../../../core/deployments.types';
-import { ProviderConnectionsRepository } from '../../repositories/provider-connections.repository';
 import type {
   ProviderCiSecretsInstaller,
   ProviderCiSecretsInstallerInput,
@@ -26,11 +17,6 @@ import { RENDER_SERVICE_BRANCHES, renderBranchFor } from './render-conventions';
 
 export interface RenderCiSecretNames {
   [key: string]: string;
-  apiKey: string;
-  serviceId: string;
-  ownerId: string;
-  registryCredentialId: string;
-  deployHookUrl: string;
   healthcheckUrl: string;
 }
 
@@ -38,12 +24,12 @@ export interface RenderCiSecretNames {
 export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
   readonly provider = 'render';
 
+  // Only the GitHub port remains: with no credential to resolve, the Render
+  // connection repository, the token decryptor and the configuration this used
+  // to read are no longer anything this class needs.
   constructor(
     @Inject(GITHUB_ACTIONS_SECRETS)
     private readonly githubService: GithubActionsSecretsPort,
-    private readonly providerConnectionsRepository: ProviderConnectionsRepository,
-    private readonly encryptionService: EnvTokenEncryptionService,
-    private readonly configService: ConfigService,
   ) {}
 
   supports(target: DeploymentTargetSummary): boolean {
@@ -72,55 +58,18 @@ export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
       input.target.slot,
       input.target.branchName,
     );
-    const renderApiKey = await this.resolveRenderToken(input);
 
-    await this.githubService.setActionsSecretStrict(
-      input.githubAccessToken,
-      owner,
-      repo,
-      secretNames.apiKey,
-      renderApiKey,
-    );
-    await this.githubService.setActionsSecretStrict(
-      input.githubAccessToken,
-      owner,
-      repo,
-      secretNames.serviceId,
-      input.target.providerProjectId,
-    );
-    await this.githubService.setActionsSecretStrict(
-      input.githubAccessToken,
-      owner,
-      repo,
-      secretNames.ownerId,
-      await this.resolveRenderOwnerId(input),
-    );
-    const registryCredentialId = this.providerMetadataString(
-      input.target.providerMetadata,
-      'renderRegistryCredentialId',
-    );
-    if (registryCredentialId) {
-      await this.githubService.setActionsSecretStrict(
-        input.githubAccessToken,
-        owner,
-        repo,
-        secretNames.registryCredentialId,
-        registryCredentialId,
-      );
-    }
-    const deployHookUrl = this.providerMetadataString(
-      input.target.providerMetadata,
-      'renderDeployHookUrl',
-    );
-    if (deployHookUrl) {
-      await this.githubService.setActionsSecretStrict(
-        input.githubAccessToken,
-        owner,
-        repo,
-        secretNames.deployHookUrl,
-        deployHookUrl,
-      );
-    }
+    /*
+     * Only the service address, never a credential.
+     *
+     * This used to install the platform's Render API key, plus the service and
+     * owner ids, into every customer repository. A Render key is issued on an
+     * account and cannot be scoped to one service, so anyone able to push a
+     * workflow to any generated repository could manage - or delete - every
+     * service on the account, including this platform's own. Nothing read them
+     * either: the deploy job never used them, and now the platform performs
+     * the release itself, so there is nothing they could be for.
+     */
     const healthcheckUrl = this.resolveRenderHealthcheckUrl(input.target);
     if (healthcheckUrl) {
       await this.githubService.setActionsSecretStrict(
@@ -143,15 +92,8 @@ export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
     // the generated jobs read are the same function, so a branch cannot be
     // installed under one spelling and read under another.
     const branch = renderBranchFor(branchName);
-    const prefix = `RENDER_${slot.toUpperCase()}_${branch.toUpperCase()}`;
-    const branchSuffix = branch.toUpperCase();
     return {
-      apiKey: `${prefix}_API_KEY`,
-      serviceId: `${prefix}_SERVICE_ID`,
-      ownerId: `${prefix}_OWNER_ID`,
-      registryCredentialId: `${prefix}_REGISTRY_CREDENTIAL_ID`,
-      deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchSuffix}`,
-      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchSuffix}`,
+      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branch.toUpperCase()}`,
     };
   }
 
@@ -164,91 +106,6 @@ export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
     }
 
     return [owner, repo];
-  }
-
-  private async resolveRenderToken(input: {
-    userId: string;
-    providerConnectionId: string | null;
-    target: DeploymentTargetSummary;
-  }): Promise<string> {
-    if (input.target.ownershipMode === 'flowci_managed') {
-      const config = this.configService.getOrThrow<AppConfig>('app');
-      const token = config.envProvisioning.flowciManaged.renderToken.trim();
-      if (!token) {
-        throw new InternalServerErrorException(
-          'ALPHACI_RENDER_API_KEY is required for ALPHACI-managed Render deployments',
-        );
-      }
-
-      return token;
-    }
-
-    if (!input.providerConnectionId) {
-      throw new BadRequestException(
-        'providerConnectionId is required for BYO Render deployment secrets',
-      );
-    }
-
-    const connection =
-      await this.providerConnectionsRepository.findActiveProviderConnection(
-        input.providerConnectionId,
-        input.userId,
-      );
-    if (!connection || connection.provider !== 'render') {
-      throw new NotFoundException('Render provider connection not found');
-    }
-
-    return this.encryptionService.decrypt(connection.encryptedToken);
-  }
-
-  private async resolveRenderOwnerId(input: {
-    userId: string;
-    providerConnectionId: string | null;
-    target: DeploymentTargetSummary;
-  }): Promise<string> {
-    const metadataOwnerId = this.providerMetadataString(
-      input.target.providerMetadata,
-      'renderOwnerId',
-    );
-    if (metadataOwnerId) {
-      return metadataOwnerId;
-    }
-
-    if (input.target.ownershipMode === 'byo') {
-      if (!input.providerConnectionId) {
-        throw new BadRequestException(
-          'providerConnectionId is required for BYO Render owner metadata',
-        );
-      }
-
-      const connection =
-        await this.providerConnectionsRepository.findActiveProviderConnection(
-          input.providerConnectionId,
-          input.userId,
-        );
-      if (!connection || connection.provider !== 'render') {
-        throw new NotFoundException('Render provider connection not found');
-      }
-
-      const connectionOwnerId = this.providerMetadataString(
-        connection.metadata,
-        'ownerId',
-      );
-      if (connectionOwnerId) {
-        return connectionOwnerId;
-      }
-    }
-
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    const ownerId =
-      config.envProvisioning.flowciManaged.renderOwnerId?.trim() ?? '';
-    if (!ownerId) {
-      throw new BadRequestException(
-        'Render owner id is required for image deployment secrets',
-      );
-    }
-
-    return ownerId;
   }
 
   private providerMetadataString(

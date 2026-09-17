@@ -4,7 +4,11 @@ import type { RenderCostPolicyService } from './render-cost-policy.service';
 import type { DeploymentProvisioningTarget } from '../../../core/deployment-provisioning.contract';
 import type { WorkflowTargetExpansionInput } from '../../../core/workflow-fragment.contract';
 import { RenderCiSecretsService } from './render-ci-secrets.service';
-import { renderBranchFor, RENDER_SERVICE_BRANCHES } from './render-conventions';
+import {
+  renderBranchFor,
+  RENDER_SERVICE_BRANCHES,
+  type RenderServiceBranch,
+} from './render-conventions';
 
 /*
  * Provisioning points the Render service at an image; the generated pipeline
@@ -89,18 +93,18 @@ describe('Render provisioning and the generated pipeline agree on the image', ()
 });
 
 /*
- * The same drift, one level down: the installer writes the secrets and the
- * generated jobs read them. When the flow gained `dev`, the installer mapped
- * every non-main branch to UAT while the generator wrote per-branch names, so
- * a dev deploy would have read the uat service's credentials.
+ * The credential half of the same question.
+ *
+ * The generated deploy job and the secret installer are written in different
+ * files, and they used to disagree about which Render secrets existed at all:
+ * the installer wrote an account-wide API key that no job ever read. Now the
+ * platform performs the release, so neither side may put a hosting credential
+ * in a customer repository.
  */
-describe('Render secret names agree between the installer and the pipeline', () => {
-  const installer = new RenderCiSecretsService(
-    null as never,
-    null as never,
-    null as never,
-    null as never,
-  );
+describe('neither half puts a hosting credential in the repository', () => {
+  const installer = new RenderCiSecretsService({
+    setActionsSecretStrict: jest.fn(),
+  } as never);
 
   const requested = {
     slot: 'backend',
@@ -109,7 +113,15 @@ describe('Render secret names agree between the installer and the pipeline', () 
     projectName: 'myvercel-backend',
   } as unknown as DeploymentProvisioningTarget;
 
-  it('installs exactly the names the generated jobs read', () => {
+  it('installs only the service address, named after the branch', () => {
+    for (const branch of RENDER_SERVICE_BRANCHES) {
+      expect(installer.renderSecretNames('backend', branch)).toEqual({
+        healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branch.toUpperCase()}`,
+      });
+    }
+  });
+
+  it('emits deploy jobs that ask for no Render secret', () => {
     const targets = renderWorkflowFragment.expandTargets!(
       {
         ...requested,
@@ -118,23 +130,24 @@ describe('Render secret names agree between the installer and the pipeline', () 
       {},
     );
 
-    expect(targets.length).toBeGreaterThan(0);
+    expect(targets.length).toBe(RENDER_SERVICE_BRANCHES.length);
     for (const target of targets) {
-      expect(target.secretNames).toEqual(
-        installer.renderSecretNames('backend', target.branchName),
-      );
+      const branch = target.branchName as RenderServiceBranch;
+      const fragment = renderWorkflowFragment.build(target, branch, {
+        serviceName: 'demo',
+        servicePath: '.',
+        centralWorkflowRef: 'v1',
+      });
+      expect(JSON.stringify(fragment?.jobs)).not.toMatch(/secrets\.RENDER/i);
     }
   });
 
-  it('never invents a branch Render has no service for', () => {
-    // A target on a branch outside the Render set resolves to a real one
-    // rather than producing secrets nothing installs.
-    expect(RENDER_SERVICE_BRANCHES).toContain(renderBranchFor('dev'));
-    expect(RENDER_SERVICE_BRANCHES).toContain(renderBranchFor(undefined));
+  it('never falls back to a branch Render has no service for', () => {
+    expect(RENDER_SERVICE_BRANCHES).toContain(renderBranchFor('nonsense'));
     expect(renderBranchFor('main')).toBe('main');
-    expect(renderBranchFor('uat')).toBe('uat');
-    // The fallback is never production: guessing wrong must not point a
-    // deploy at the customer's live environment.
+    expect(renderBranchFor('dev')).toBe('dev');
+    // The fallback is never production: guessing wrong must not point a deploy
+    // at the customer's live environment.
     expect(renderBranchFor('something-else')).not.toBe('main');
   });
 });

@@ -1371,7 +1371,12 @@ jobs:
     expect(packageWorkflow?.[4]).not.toContain('deploy-render-backend-test');
     expect(packageWorkflow?.[4]).toContain('deploy-render-backend-uat');
     expect(packageWorkflow?.[4]).toContain('deploy-render-backend-main');
-    expect(packageWorkflow?.[4]).toContain('RENDER_DEPLOY_HOOK_URL_UAT');
+    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-dev');
+    // The deploy job asks the platform to release and carries no hosting
+    // credential; a Render key in a customer repository would reach every
+    // service on the account.
+    expect(packageWorkflow?.[4]).toContain('release.yml@');
+    expect(packageWorkflow?.[4]).not.toMatch(/secrets\.RENDER/);
     expect(githubServiceMock.createBranch).toHaveBeenCalledWith(
       'oauth-token',
       'tone',

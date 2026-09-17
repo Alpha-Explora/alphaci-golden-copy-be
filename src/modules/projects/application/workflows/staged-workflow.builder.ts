@@ -114,6 +114,16 @@ const ALPHACI_VALIDATE_URL = `${PLATFORM_BASE_URL}/api/v1/ci/validate`;
 export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
 
 /**
+ * Where a generated pipeline asks this deployment to release what it built.
+ *
+ * The base, not an endpoint: release.yml appends its own paths, and one value
+ * covers both the request and the status poll. Installed as a repository
+ * secret beside the token for the same reason the report URL is - a customer
+ * repository must not carry a hardcoded address of someone else's platform.
+ */
+export const ALPHACI_API_URL = PLATFORM_BASE_URL;
+
+/**
  * Branch promotion model enforced by the generated pipelines:
  *
  *   dev  → where work lands. Full quality stage under a relaxed policy: the

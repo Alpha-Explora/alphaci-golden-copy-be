@@ -374,13 +374,30 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
       const lanes = ownLane ? [ownLane] : [...CROSS_LINK_LANES];
 
       for (const lane of lanes) {
-        const backendUrl = backends
-          .map(({ target: backend }) =>
-            this.crossLinkLane(backend) === lane ||
-            this.crossLinkLane(backend) === null
-              ? this.targetPublicUrl(backend, lane)
-              : null,
-          )
+        const scope = this.crossLinkScope(target, lane);
+        const inLane = backends.filter(({ target: backend }) => {
+          const backendLane = this.crossLinkLane(backend);
+          return backendLane === lane || backendLane === null;
+        });
+
+        /*
+         * Prefer the backend on the same branch as the variable being written.
+         *
+         * Lane alone stopped being enough once every branch had a service:
+         * dev, uat and main backends all sit in the preview lane except the
+         * production one, so the first match won and the uat frontend was
+         * handed the dev API URL - a frontend quietly calling a different
+         * environment's backend, which no test of either half would catch.
+         */
+        const sameBranch = scope.gitBranch
+          ? inLane.filter(
+              ({ target: backend }) => backend.branchName === scope.gitBranch,
+            )
+          : [];
+        const candidates = sameBranch.length > 0 ? sameBranch : inLane;
+
+        const backendUrl = candidates
+          .map(({ target: backend }) => this.targetPublicUrl(backend, lane))
           .find((url): url is string => Boolean(url));
         if (!backendUrl) {
           continue;
@@ -390,7 +407,7 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
           userId: input.userId,
           projectId,
           target,
-          scope: this.crossLinkScope(target, lane),
+          scope,
           userKeys,
           vars: [
             { key: 'NEXT_PUBLIC_API_URL', value: backendUrl },

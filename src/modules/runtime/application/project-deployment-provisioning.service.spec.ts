@@ -181,28 +181,35 @@ describe('ProjectDeploymentProvisioningService', () => {
   });
 
   it('can apply a variable group to a selected Vercel target branch', async () => {
-    deploymentTargetsService.createDeploymentTarget
-      .mockResolvedValueOnce({
-        id: 'target-backend-uat',
-        provider: 'render',
-        providerProjectId: 'srv-1',
-        providerProjectName: 'orders-api-uat',
-        branchName: 'uat',
-      })
-      .mockResolvedValueOnce({
-        id: 'target-backend-main',
-        provider: 'render',
-        providerProjectId: 'srv-2',
-        providerProjectName: 'orders-api-main',
-        branchName: 'main',
-      })
-      .mockResolvedValueOnce({
-        id: 'target-frontend',
-        provider: 'vercel',
-        providerProjectId: 'prj_1',
-        providerProjectName: 'orders-web-test',
-        branchName: 'uat',
-      });
+    /*
+     * Keyed by what was asked for, not by call order: Render fans a backend
+     * request out to one target per branch in the flow, so a fixed sequence of
+     * three answers silently handed the frontend a backend target's id when
+     * `dev` joined that flow.
+     */
+    deploymentTargetsService.createDeploymentTarget.mockImplementation(
+      (_projectId: string, _userId: string, dto: Record<string, unknown>) => {
+        const slot = String(dto['slot']);
+        const branch = String(dto['branchName'] ?? 'uat');
+        return Promise.resolve(
+          slot === 'frontend'
+            ? {
+                id: 'target-frontend',
+                provider: 'vercel',
+                providerProjectId: 'prj_1',
+                providerProjectName: 'orders-web-uat',
+                branchName: branch,
+              }
+            : {
+                id: `target-backend-${branch}`,
+                provider: 'render',
+                providerProjectId: `srv-${branch}`,
+                providerProjectName: `orders-api-${branch}`,
+                branchName: branch,
+              },
+        );
+      },
+    );
     const service = new ProjectDeploymentProvisioningService(
       deploymentTargetsService as never,
       envVarsService as never,
@@ -447,16 +454,18 @@ describe('ProjectDeploymentProvisioningService', () => {
               providerMetadata: {},
             });
           }
+          // One service per branch in the flow, each carrying its own branch:
+          // a fixture that called every Render target 'uat' hid which service
+          // the frontend was actually pointed at.
+          const branch = dto.projectName?.split('-').pop() ?? 'uat';
           return Promise.resolve({
             id: `render-${dto.projectName}`,
             provider: 'render',
             providerProjectId: `srv-${dto.projectName}`,
             providerProjectName: dto.projectName,
             deploymentStrategy: 'render_git_connected',
-            branchName: dto.projectName?.endsWith('-main') ? 'main' : 'uat',
-            renderEnvironmentName: dto.projectName?.endsWith('-main')
-              ? 'production'
-              : 'uat',
+            branchName: branch,
+            renderEnvironmentName: branch === 'main' ? 'production' : branch,
             providerMetadata: {
               renderServiceUrl: `https://${dto.projectName}.onrender.com`,
             },
@@ -514,6 +523,7 @@ describe('ProjectDeploymentProvisioningService', () => {
           ],
         },
       );
+
       expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
         'project-1',
         'user-1',
