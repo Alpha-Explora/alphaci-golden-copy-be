@@ -11,7 +11,12 @@ const conformanceScript = require(
   createProfileTsConfig: (
     outputDirectory: string,
     excludedSourceRoots: readonly string[],
-  ) => { exclude: readonly string[] };
+  ) => {
+    compilerOptions: {
+      paths: Record<string, readonly string[]>;
+    };
+    exclude: readonly string[];
+  };
 };
 
 describe('build profile conformance configuration', () => {
@@ -30,6 +35,10 @@ describe('build profile conformance configuration', () => {
       expect(config.exclude).toEqual(
         expect.arrayContaining(exclusions.sourceRoots),
       );
+      expect(config.compilerOptions.paths).toEqual({
+        '#kernel/*': ['src/kernel/*'],
+        '#modules/*': ['src/modules/*'],
+      });
     },
   );
 });

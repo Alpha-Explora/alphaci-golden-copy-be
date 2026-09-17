@@ -31,6 +31,13 @@ function createProfileTsConfig(outputDirectory, excludedSourceRoots = []) {
     compilerOptions: {
       outDir: outputDirectory,
       incremental: false,
+      // The runtime package imports remain canonical for Nest and Node. The
+      // isolated artifact compiler also needs type-only aliases because its
+      // emitted files live outside the repository's normal dist directory.
+      paths: {
+        '#kernel/*': ['src/kernel/*'],
+        '#modules/*': ['src/modules/*'],
+      },
     },
     include: ['src'],
     exclude: [...BASE_PROFILE_EXCLUDES, ...excludedSourceRoots],
