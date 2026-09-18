@@ -308,6 +308,54 @@ describe('dotnet scaffold — usings survive the strict format gate', () => {
       usings.indexOf('Xunit'),
     );
   });
+
+  /*
+   * The same check, for names that sort somewhere else.
+   *
+   * The rule above passed while the scaffold was broken, because every case
+   * used `StPeterApi`: the hand-written order put the project namespace
+   * between NetArchTest and Xunit, which is exactly right for a name starting
+   * with S. It is wrong for `Alphatest`, which sorts before NetArchTest, and
+   * wrong again for `Zebra`, which sorts after Xunit - and `Alphatest` is the
+   * name the first real project used. Its quality stage failed on every branch
+   * with "Fix imports ordering", and a red quality stage means the package
+   * stage never opens: no image, no release, and an API suite left polling a
+   * placeholder.
+   *
+   * A fixture of one name cannot catch an ordering that depends on the name.
+   */
+  it.each([
+    ['alphatest', 'Alphatest'],
+    ['zebra-api', 'ZebraApi'],
+    ['st-peter-api', 'StPeterApi'],
+  ])(
+    'orders usings correctly for a project named %s',
+    (serviceName, projectName) => {
+      const generated = buildProjectScaffold({
+        serviceName,
+        stack: 'dotnet',
+        includeDocker: false,
+        runtimeVersion: '10.0.x',
+      }).filter((file) => file.path.endsWith('.cs'));
+
+      expect(generated.length).toBeGreaterThanOrEqual(4);
+
+      for (const file of generated) {
+        const usings = usingsOf(file.content);
+        expect({ path: file.path, usings }).toEqual({
+          path: file.path,
+          usings: sortedTheWayFormatWants(usings),
+        });
+      }
+
+      // The project namespace is genuinely present, so the loop above is not
+      // passing over files that never mention it.
+      const architecture = generated.find((file) =>
+        file.path.endsWith('ArchitectureTests.cs'),
+      )!;
+      expect(usingsOf(architecture.content)).toContain(`${projectName}.Domain`);
+    },
+  );
 });
 
 /*

@@ -341,6 +341,43 @@ function appSettings(): string {
 }
 
 /**
+ * Using directives in the order `dotnet format` demands.
+ *
+ * System namespaces first, then everything else ordinally - the two rules the
+ * scaffold's own .editorconfig turns on, including
+ * `dotnet_sort_system_directives_first = true`. Ordinal rather than
+ * locale-aware because that is what Roslyn's sorter uses: `NSubstitute`
+ * precedes `NetArchTest`, since an uppercase S sorts before a lowercase e.
+ *
+ * Sorted here rather than written out, because one namespace is the PROJECT's
+ * and its position depends on the customer's name: `Alphatest.Domain` sorts
+ * before NetArchTest while `Zebra.Domain` sorts after Xunit. A hand-written
+ * order is therefore right for some project names and wrong for others, and it
+ * was wrong for the first one anyone tried.
+ *
+ * The cost was not a lint warning. Quality failed on every branch with "Fix
+ * imports ordering", and with that stage red the package stage never opened:
+ * no image was built, nothing was released, and the API suite spent its runs
+ * polling a placeholder image. A scaffold has to pass its own pipeline.
+ */
+function sortedUsings(namespaces: readonly string[]): string[] {
+  const isSystem = (namespace: string): boolean =>
+    namespace === 'System' || namespace.startsWith('System.');
+
+  return [...namespaces]
+    .sort((left, right) => {
+      if (isSystem(left) !== isSystem(right)) {
+        return isSystem(left) ? -1 : 1;
+      }
+      if (left === right) {
+        return 0;
+      }
+      return left < right ? -1 : 1;
+    })
+    .map((namespace) => `using ${namespace};`);
+}
+
+/**
  * A starting layering rule, written as an ordinary test.
  *
  * NetArchTest asserts over the compiled assembly, so "clean architecture" stops
@@ -355,12 +392,7 @@ function appSettings(): string {
  */
 function architectureTests(projectName: string): string {
   return [
-    // Ordered as `dotnet format --severity warn` demands: the project
-    // namespace sorts before Xunit, and the strict lint gate on uat and main
-    // fails the build over it. A scaffold has to pass its own pipeline.
-    'using NetArchTest.Rules;',
-    `using ${projectName}.Domain;`,
-    'using Xunit;',
+    ...sortedUsings(['NetArchTest.Rules', `${projectName}.Domain`, 'Xunit']),
     '',
     `namespace ${projectName}.Tests;`,
     '',
@@ -426,13 +458,15 @@ function architectureTests(projectName: string): string {
  */
 function serviceStatusTests(projectName: string): string {
   return [
-    'using System.Net.Http.Json;',
-    'using Microsoft.AspNetCore.Mvc.Testing;',
-    'using Microsoft.AspNetCore.TestHost;',
-    'using Microsoft.Extensions.DependencyInjection;',
-    'using NSubstitute;',
-    `using ${projectName}.Domain;`,
-    'using Xunit;',
+    ...sortedUsings([
+      'System.Net.Http.Json',
+      'Microsoft.AspNetCore.Mvc.Testing',
+      'Microsoft.AspNetCore.TestHost',
+      'Microsoft.Extensions.DependencyInjection',
+      'NSubstitute',
+      `${projectName}.Domain`,
+      'Xunit',
+    ]),
     '',
     `namespace ${projectName}.Tests;`,
     '',
@@ -477,10 +511,12 @@ function serviceStatusTests(projectName: string): string {
 
 function healthTests(projectName: string): string {
   return [
-    'using System.Net;',
-    'using System.Net.Http.Json;',
-    'using Microsoft.AspNetCore.Mvc.Testing;',
-    'using Xunit;',
+    ...sortedUsings([
+      'System.Net',
+      'System.Net.Http.Json',
+      'Microsoft.AspNetCore.Mvc.Testing',
+      'Xunit',
+    ]),
     '',
     `namespace ${projectName}.Tests;`,
     '',
