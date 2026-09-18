@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const PROVENANCE_SCHEMA_VERSION = 1;
 const PACKAGE_NAME = '@alphaci/capability-catalog';
-const SOURCE_REPOSITORY = 'github.com/Alpha-Explora/alphaci-enterprise-be';
+const SOURCE_REPOSITORY = 'github.com/Alpha-Explora/alphaci-golden-copy-be';
 const AUTHORITATIVE_SOURCE = 'src/kernel/composition/catalog.source.json';
 const PROVENANCE_FILE = 'provenance.json';
 
