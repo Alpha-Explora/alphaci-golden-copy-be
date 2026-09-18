@@ -67,7 +67,10 @@ function projectVisibilitySql(userParam: string, tenantParam: string): string {
 }
 
 export type ProvisionedProjectStatus =
-  'provisioning' | 'provisioned' | 'failed' | 'orphaned';
+  | 'provisioning'
+  | 'provisioned'
+  | 'failed'
+  | 'orphaned';
 
 export interface ProvisionedProjectRow {
   id: string;

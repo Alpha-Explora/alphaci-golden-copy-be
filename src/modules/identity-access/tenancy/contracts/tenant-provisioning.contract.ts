@@ -6,7 +6,10 @@ import type {
 export type TenantKind = 'customer' | 'institution' | 'enterprise';
 export type TenantStatus = 'active' | 'suspended' | 'archived';
 export type TenantMembershipStatus =
-  'invited' | 'active' | 'suspended' | 'removed';
+  | 'invited'
+  | 'active'
+  | 'suspended'
+  | 'removed';
 
 export interface TenantRecord {
   readonly id: string;

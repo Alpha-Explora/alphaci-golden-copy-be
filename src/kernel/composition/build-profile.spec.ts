@@ -38,9 +38,7 @@ function allEnabledConfig(
   const capabilities: readonly string[] = manifest.capabilities;
   return {
     auth: {
-      selfServeAuthEnabled: capabilities.includes(
-        'identity.self-serve-auth',
-      ),
+      selfServeAuthEnabled: capabilities.includes('identity.self-serve-auth'),
     },
     composition: { profile, edition },
     subscription: { gateEnabled: true },
