@@ -8,6 +8,7 @@ const SAAS_KEYS = [
   'identity.workspaces',
   'identity.hierarchy',
   'identity.edition-entitlements',
+  'identity.self-serve-auth',
   'platform.audit-events',
   'platform.notifications',
   'platform.public-site',

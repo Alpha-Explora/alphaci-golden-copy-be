@@ -17,6 +17,7 @@ const REGISTRY_KEYS = [
   'identity.edu-provisioning',
   'identity.ferpa-workflows',
   'identity.edition-entitlements',
+  'identity.self-serve-auth',
   'platform.audit-events',
   'platform.notifications',
   'platform.data-residency',
@@ -46,6 +47,7 @@ const SAAS_KEYS = [
   'identity.workspaces',
   'identity.hierarchy',
   'identity.edition-entitlements',
+  'identity.self-serve-auth',
   'platform.audit-events',
   'platform.notifications',
   'platform.public-site',
@@ -217,8 +219,8 @@ const record = (
 });
 
 describe('declared composition catalog', () => {
-  it('keeps the 31 registry records in their existing order', () => {
-    expect(CAPABILITIES).toHaveLength(31);
+  it('keeps the 32 registry records in their existing order', () => {
+    expect(CAPABILITIES).toHaveLength(32);
     expect(CAPABILITIES.map(({ key }) => key)).toEqual(REGISTRY_KEYS);
   });
 

@@ -78,6 +78,16 @@ export const CAPABILITIES = [
     requires: [],
   },
   {
+    key: 'identity.self-serve-auth',
+    context: 'identity-access',
+    description:
+      'Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow.',
+    maturity: 'not-implemented',
+    configuration: 'Not implemented in this backend. No AppConfig flag.',
+    configurationFlags: [],
+    requires: [],
+  },
+  {
     key: 'platform.audit-events',
     context: 'platform-ops',
     description:

@@ -195,6 +195,30 @@
     }
   },
   {
+    "key": "identity.self-serve-auth",
+    "context": "identity-access",
+    "description": "Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow.",
+    "maturity": "not-implemented",
+    "configuration": "Not implemented in this backend. No AppConfig flag.",
+    "configurationFlags": [],
+    "editions": [
+      "saas"
+    ],
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": "selfServeAuthEnabled",
+      "domains": [],
+      "routes": [
+        "/signup"
+      ],
+      "featureBarrels": [
+        "@/features/auth/self-serve"
+      ],
+      "artifactSymbols": []
+    }
+  },
+  {
     "key": "platform.audit-events",
     "context": "platform-ops",
     "description": "Project audit event recording through the application outbox.",

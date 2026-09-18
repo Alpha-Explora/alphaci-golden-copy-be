@@ -27,6 +27,16 @@
       "summary": "Declared the SaaS-only public marketing site; EDU and Enterprise deployments go straight to login.",
       "reference": "CHANGELOG.md",
       "compositionHash": "sha256:edcf6a33098219f39572b4c403cb7323a2891234ebcae6ab43b9b5535ebc89fc"
+    },
+    {
+      "date": "2026-09-18",
+      "change": "added",
+      "keys": [
+        "identity.self-serve-auth"
+      ],
+      "summary": "Added the self-serve auth capability so SaaS composes email, Google, and public signup while enterprise and edu keep provider-only sign-in.",
+      "reference": "CHANGELOG.md",
+      "compositionHash": "sha256:d74ba5ec310e79cd25e360617eb417b3da99679b7a88d62ddecea9debdc906db"
     }
   ]
 }

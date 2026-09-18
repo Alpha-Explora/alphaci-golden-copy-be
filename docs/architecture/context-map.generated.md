@@ -21,7 +21,7 @@ This map is generated from the current source tree and architecture metrics. It 
 
 | Context | Owns | Public boundary | Owned schemas | Measured source/test files |
 |---|---|---|---|---|
-| `identity-access` | authentication, administration, capabilities, workspaces, hierarchy, and repository access policy | `src/modules/identity-access/index.ts` | `identity`, `orgs`, `hierarchy` | 112 source files / 20 tests |
+| `identity-access` | authentication, administration, capabilities, workspaces, hierarchy, and repository access policy | `src/modules/identity-access/index.ts` | `identity`, `orgs`, `hierarchy` | 117 source files / 22 tests |
 | `projects` | project lifecycle, catalog, workflows, existing repositories, and project read models | `src/modules/projects/index.ts` | `projects`, `workflow` | 109 source files / 34 tests |
 | `pipelines` | GitHub integration, CI token lifecycle, and CI report ingestion | `src/modules/pipelines/index.ts` | `github_app`, `ci`, `workflow` | 47 source files / 13 tests |
 | `runtime` | deployment targets, environment metadata, domains, provider connections, provider adapters, and deployment history | `src/modules/runtime/index.ts` | `runtime`, `env_provisioning`, `runtime_deployments`, `runtime_domains`, `runtime_secrets`, `gcp_operations` | 138 source files / 50 tests |

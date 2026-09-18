@@ -40,6 +40,7 @@ This table lists every current registry capability in registry order. Status is 
 | `identity.edu-provisioning` | `not-implemented` | Education-specific identity provisioning. Not implemented in this backend. |
 | `identity.ferpa-workflows` | `not-implemented` | FERPA-oriented education workflow automation. Not implemented in this backend. |
 | `identity.edition-entitlements` | `not-implemented` | Runtime edition and pack entitlement resolution. Not implemented in this backend. |
+| `identity.self-serve-auth` | `not-applicable` | Not part of this pack composition. |
 | `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
 | `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
 | `platform.data-residency` | `not-applicable` | Not part of this pack composition. |

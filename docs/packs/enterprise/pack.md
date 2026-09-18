@@ -40,6 +40,7 @@ This table lists every current registry capability in registry order. Status is 
 | `identity.edu-provisioning` | `not-applicable` | Not part of this pack composition. |
 | `identity.ferpa-workflows` | `not-applicable` | Not part of this pack composition. |
 | `identity.edition-entitlements` | `not-implemented` | Runtime edition and pack entitlement resolution. Not implemented in this backend. |
+| `identity.self-serve-auth` | `not-applicable` | Not part of this pack composition. |
 | `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
 | `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
 | `platform.data-residency` | `not-implemented` | Customer-specific data-location controls. Not implemented in this backend. |
