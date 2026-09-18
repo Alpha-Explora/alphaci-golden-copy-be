@@ -11,6 +11,11 @@ import { AdminModule } from '#modules/identity-access/admin/admin.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module';
 import { AuthController } from './api/auth.controller';
 import { AuthService } from './application/auth.service';
+import { EmailCodeDeliveryService } from './application/email-code-delivery.service.js';
+import { EmailCodeTemplateService } from './application/email-code-template.service.js';
+import { GOOGLE_OAUTH } from './application/google-oauth.port.js';
+import { PasswordHasherService } from './application/password-hasher.service.js';
+import { SelfServeAuthService } from './application/self-serve-auth.service.js';
 import {
   ADMISSION_POLICY,
   type AdmissionPolicy,
@@ -18,6 +23,7 @@ import {
 import { OpenRegistrationAdmissionPolicy } from './application/admission/open-registration.policy';
 import { OrgMembershipAdmissionPolicy } from './application/admission/org-membership.policy';
 import { AuthIdentityModule } from './auth-identity.module';
+import { GoogleOAuthClient } from './infrastructure/google-oauth.client.js';
 
 @Module({
   imports: [
@@ -31,6 +37,14 @@ import { AuthIdentityModule } from './auth-identity.module';
   controllers: [AuthController],
   providers: [
     AuthService,
+    SelfServeAuthService,
+    PasswordHasherService,
+    EmailCodeTemplateService,
+    EmailCodeDeliveryService,
+    {
+      provide: GOOGLE_OAUTH,
+      useClass: GoogleOAuthClient,
+    },
     {
       provide: ADMISSION_POLICY,
       inject: [ConfigService],
@@ -57,6 +71,6 @@ import { AuthIdentityModule } from './auth-identity.module';
     DevQuickLoginGuard,
     SessionAuthGuard,
   ],
-  exports: [AuthService],
+  exports: [AuthService, SelfServeAuthService],
 })
 export class AuthModule {}

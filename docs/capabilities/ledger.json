@@ -37,6 +37,16 @@
       "summary": "Added the self-serve auth capability so SaaS composes email, Google, and public signup while enterprise and edu keep provider-only sign-in.",
       "reference": "CHANGELOG.md",
       "compositionHash": "sha256:d74ba5ec310e79cd25e360617eb417b3da99679b7a88d62ddecea9debdc906db"
+    },
+    {
+      "date": "2026-09-18",
+      "change": "maturity-changed",
+      "keys": [
+        "identity.self-serve-auth"
+      ],
+      "summary": "Enabled the configurable SaaS self-serve auth slice while keeping billing checkout deferred and EDU or Enterprise provider-only.",
+      "reference": "docs/superpowers/plans/2026-09-18-saas-self-serve-auth-backend.md",
+      "compositionHash": "sha256:228a02ee961108bc2c51daeb5d91e49a5843eede9f1507a835bcef4514499b3d"
     }
   ]
 }

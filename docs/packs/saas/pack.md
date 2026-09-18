@@ -40,7 +40,7 @@ This table lists every current registry capability in registry order. Status is 
 | `identity.edu-provisioning` | `not-applicable` | Not part of this pack composition. |
 | `identity.ferpa-workflows` | `not-applicable` | Not part of this pack composition. |
 | `identity.edition-entitlements` | `not-implemented` | Runtime edition and pack entitlement resolution. Not implemented in this backend. |
-| `identity.self-serve-auth` | `not-implemented` | Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow. Not implemented in this backend. |
+| `identity.self-serve-auth` | `configuration-gated` | Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow. SaaS-only email-code delivery via AUTH_EMAIL_CODE_DELIVERY; optional Google OAuth via GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_CALLBACK_URL. Billing checkout remains deferred. |
 | `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
 | `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
 | `platform.data-residency` | `not-applicable` | Not part of this pack composition. |

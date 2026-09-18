@@ -140,6 +140,12 @@ const EXECUTABLE_KEYS = [
   'pipelines.ci-run-tracking',
 ] as const;
 
+const SAAS_EXECUTABLE_KEYS = [
+  ...EXECUTABLE_KEYS.slice(0, 2),
+  'identity.self-serve-auth',
+  ...EXECUTABLE_KEYS.slice(2),
+] as const;
+
 const ENTERPRISE_EXECUTABLE_KEYS = [
   ...EXECUTABLE_KEYS.slice(0, 12),
   'runtime.client-composition',
@@ -147,6 +153,7 @@ const ENTERPRISE_EXECUTABLE_KEYS = [
 ] as const;
 
 const allFlagsEnabled = {
+  auth: { selfServeAuthEnabled: true },
   envProvisioning: { enabled: true },
   gcpDeployments: { enabled: true, dedicatedProjectsEnabled: true },
   projectSyncSnapshots: {
@@ -249,7 +256,9 @@ describe('resolveCapabilities', () => {
       const capabilities: readonly string[] = currentManifest.capabilities;
       const expected = capabilities.includes('runtime.client-composition')
         ? ENTERPRISE_EXECUTABLE_KEYS
-        : EXECUTABLE_KEYS;
+        : currentManifest.edition === 'saas'
+          ? SAAS_EXECUTABLE_KEYS
+          : EXECUTABLE_KEYS;
       expect([
         ...resolveCapabilities({
           manifest: currentManifest,

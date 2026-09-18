@@ -35,6 +35,7 @@ function allEnabledConfig(
   edition: 'saas' | 'edu' | 'enterprise',
 ) {
   return {
+    auth: { selfServeAuthEnabled: edition === 'saas' },
     composition: { profile, edition },
     subscription: { gateEnabled: true },
     envProvisioning: { enabled: true },
@@ -143,6 +144,15 @@ describe('build profiles', () => {
       config: allEnabledConfig(profile, edition),
     });
 
-    expect([...resolved]).toEqual(EXPECTED_RESOLVED_KEYS);
+    const expected =
+      edition === 'saas'
+        ? [
+            ...EXPECTED_RESOLVED_KEYS.slice(0, 2),
+            'identity.self-serve-auth',
+            ...EXPECTED_RESOLVED_KEYS.slice(2),
+          ]
+        : EXPECTED_RESOLVED_KEYS;
+
+    expect([...resolved]).toEqual(expected);
   });
 });

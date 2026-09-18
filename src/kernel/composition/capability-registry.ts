@@ -82,9 +82,10 @@ export const CAPABILITIES = [
     context: 'identity-access',
     description:
       'Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow.',
-    maturity: 'not-implemented',
-    configuration: 'Not implemented in this backend. No AppConfig flag.',
-    configurationFlags: [],
+    maturity: 'limited',
+    configuration:
+      'SaaS-only email-code delivery via AUTH_EMAIL_CODE_DELIVERY; optional Google OAuth via GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_CALLBACK_URL. Billing checkout remains deferred.',
+    configurationFlags: ['auth.selfServeAuthEnabled'],
     requires: [],
   },
   {

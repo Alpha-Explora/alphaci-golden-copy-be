@@ -3,10 +3,12 @@ import type { TestingModule } from '@nestjs/testing';
 import { UnauthorizedException } from '@nestjs/common';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from '../application/auth.service.js';
+import { SelfServeAuthService } from '../application/self-serve-auth.service.js';
 import { SubscriptionService } from '#modules/billing/subscription/application/subscription.service.js';
 import { ConfigService } from '@nestjs/config';
 import { PlatformAdminAccessService } from '#modules/identity-access/admin/application/platform-admin-access.service.js';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard.js';
+import { CapabilityGuard } from '#kernel/composition/capability.guard.js';
 import { SUBSCRIPTION_ACCESS } from '#kernel/auth/subscription-access.port.js';
 import type { Request, Response } from 'express';
 import type {
@@ -73,6 +75,38 @@ const makeSubscriptionService = () =>
     getForUser: jest.fn().mockResolvedValue(fakeFreeSub),
   }) as unknown as SubscriptionService;
 
+const makeSelfServeAuthService = () =>
+  ({
+    checkEmailSignupAvailability: jest
+      .fn()
+      .mockReturnValue({ ok: true, available: true }),
+    startEmailSignup: jest
+      .fn()
+      .mockResolvedValue({ ok: true, verificationRequired: true }),
+    verifyEmailSignupCode: jest.fn().mockResolvedValue({
+      ok: true,
+      authenticated: true,
+      user: fakeUser,
+    }),
+    loginWithEmail: jest.fn().mockResolvedValue({
+      ok: true,
+      authenticated: true,
+      user: fakeUser,
+    }),
+    resendEmailSignupCode: jest
+      .fn()
+      .mockResolvedValue({ ok: true, verificationRequired: true }),
+    startGoogleAuth: jest
+      .fn()
+      .mockResolvedValue('https://accounts.google.com/o/oauth2/mock'),
+    handleGoogleCallback: jest
+      .fn()
+      .mockResolvedValue('http://localhost:3000/auth/callback?auth=success'),
+    claimSessionHandoff: jest
+      .fn()
+      .mockResolvedValue({ ok: true, auth: 'success' }),
+  }) as unknown as SelfServeAuthService;
+
 const makeConfigService = () =>
   ({
     getOrThrow: jest
@@ -93,15 +127,21 @@ describe('AuthController', () => {
   let controller: AuthController;
   let authService: AuthService;
   let subscriptionService: SubscriptionService;
+  let selfServeAuthService: SelfServeAuthService;
 
   beforeEach(async () => {
     authService = makeAuthService();
     subscriptionService = makeSubscriptionService();
+    selfServeAuthService = makeSelfServeAuthService();
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [
         { provide: AuthService, useValue: authService },
+        {
+          provide: SelfServeAuthService,
+          useValue: selfServeAuthService,
+        },
         { provide: SUBSCRIPTION_ACCESS, useValue: subscriptionService },
         {
           provide: PlatformAdminAccessService,
@@ -112,6 +152,8 @@ describe('AuthController', () => {
     })
       .overrideGuard(SessionAuthGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(CapabilityGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     controller = module.get(AuthController);
@@ -119,6 +161,65 @@ describe('AuthController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('delegates self-serve email endpoints to the self-serve service', async () => {
+    const req = makeRequest();
+    const signup = {
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      email: 'ada@example.com',
+      password: 'password123',
+    };
+    const code = { email: signup.email, code: '123456' };
+
+    controller.checkEmailSignupAvailability({ email: signup.email });
+    await controller.startEmailSignup(signup);
+    await controller.verifyEmailSignupCode(req, code);
+    await controller.loginWithEmail(req, {
+      email: signup.email,
+      password: signup.password,
+    });
+    await controller.resendEmailSignupCode({ email: signup.email });
+
+    expect(
+      selfServeAuthService.checkEmailSignupAvailability,
+    ).toHaveBeenCalledWith(signup.email);
+    expect(selfServeAuthService.startEmailSignup).toHaveBeenCalledWith(signup);
+    expect(selfServeAuthService.verifyEmailSignupCode).toHaveBeenCalledWith(
+      req,
+      code,
+    );
+    expect(selfServeAuthService.loginWithEmail).toHaveBeenCalledWith(req, {
+      email: signup.email,
+      password: signup.password,
+    });
+    expect(selfServeAuthService.resendEmailSignupCode).toHaveBeenCalledWith(
+      signup.email,
+    );
+  });
+
+  it('redirects Google start/callback and delegates the session claim', async () => {
+    const req = makeRequest();
+    const res = makeResponse();
+
+    await controller.googleStart(res, 'http://localhost:3000/dashboard');
+    await controller.googleCallback(req, res, 'code-1', 'state-1');
+    await controller.claimSessionHandoff(req, { token: 'handoff-token' });
+
+    expect(selfServeAuthService.startGoogleAuth).toHaveBeenCalledWith(
+      'http://localhost:3000/dashboard',
+    );
+    expect(selfServeAuthService.handleGoogleCallback).toHaveBeenCalledWith(
+      req,
+      'code-1',
+      'state-1',
+    );
+    expect(selfServeAuthService.claimSessionHandoff).toHaveBeenCalledWith(
+      req,
+      'handoff-token',
+    );
+    expect(res.redirect).toHaveBeenCalledTimes(2);
   });
 
   it('delegates development Quick login to the auth service', async () => {

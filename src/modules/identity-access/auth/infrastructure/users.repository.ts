@@ -38,6 +38,15 @@ interface UpsertGoogleUserInput {
   avatarUrl?: string;
 }
 
+export interface CreateFederatedUserInput {
+  login: string;
+  name?: string;
+  email?: string;
+  avatarUrl?: string;
+  provider: 'email' | 'google';
+  providerUserId: string;
+}
+
 interface PersistedUserRow {
   id: string;
   login: string;
@@ -47,6 +56,7 @@ interface PersistedUserRow {
   onboarding_completed_at: string | null;
   archived_at?: string | null;
   github_user_id?: string | null;
+  google_user_id?: string | null;
   is_internal?: boolean | null;
 }
 
@@ -169,6 +179,68 @@ export class UsersRepository {
     return this.toSessionUser(row);
   }
 
+  async createFederatedUser(
+    input: CreateFederatedUserInput,
+  ): Promise<SessionUser> {
+    const normalizedLogin = this.normalizeLogin(
+      input.login,
+      input.providerUserId,
+      input.provider,
+    );
+
+    const result = await this.databaseService.query<PersistedUserRow>(
+      `
+        WITH candidate AS (
+          SELECT CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM app_users
+              WHERE login = $1
+            )
+              THEN CONCAT($1, '-', SUBSTRING(md5($2) FROM 1 FOR 6))
+              ELSE $1
+          END AS safe_login
+        )
+        INSERT INTO app_users (
+          login,
+          display_name,
+          email,
+          avatar_url,
+          provider,
+          google_user_id,
+          is_dummy,
+          is_internal,
+          last_login_at
+        )
+        VALUES (
+          (SELECT safe_login FROM candidate),
+          $3,
+          $4,
+          $5,
+          $6,
+          CASE WHEN $6 = 'google' THEN $2 ELSE NULL END,
+          false,
+          false,
+          NOW()
+        )
+        RETURNING id, login, display_name, email, avatar_url,
+          onboarding_completed_at, is_internal;
+      `,
+      [
+        normalizedLogin,
+        input.providerUserId,
+        input.name ?? input.login,
+        input.email ?? null,
+        input.avatarUrl ?? null,
+        input.provider,
+      ],
+    );
+
+    const row = result.rows[0];
+    if (!row) throw new Error('Federated user insert returned no row');
+    return this.toSessionUser(row);
+  }
+
   async deleteById(userId: string): Promise<void> {
     await this.databaseService.query(`DELETE FROM app_users WHERE id = $1;`, [
       userId,
@@ -213,6 +285,33 @@ export class UsersRepository {
       login: row.login,
       archivedAt: row.archived_at ?? null,
       githubUserId: row.github_user_id ?? null,
+    };
+  }
+
+  /**
+   * Compatibility lookup for Google accounts created before linked identities
+   * were introduced. The self-serve Google flow uses this only to avoid
+   * colliding with the legacy app_users.google_user_id unique key.
+   */
+  async findByGoogleUserIdIncludingArchived(
+    googleUserId: string,
+  ): Promise<ArchivedUserLookup | null> {
+    const result = await this.databaseService.query<PersistedUserRow>(
+      `SELECT id, login, archived_at, google_user_id
+         FROM app_users
+        WHERE google_user_id = $1
+        LIMIT 1;`,
+      [googleUserId],
+    );
+
+    const row = result.rows[0];
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      login: row.login,
+      archivedAt: row.archived_at ?? null,
+      githubUserId: row.google_user_id ?? null,
     };
   }
 

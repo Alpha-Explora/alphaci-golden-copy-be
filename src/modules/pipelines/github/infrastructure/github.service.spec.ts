@@ -32,6 +32,7 @@ const appConfig: AppConfig = {
   auth: {
     admission: 'open',
     devQuickLoginEnabled: false,
+    selfServeAuthEnabled: false,
   },
   composition: {
     edition: 'enterprise',
@@ -53,6 +54,12 @@ const appConfig: AppConfig = {
     leadTeamSlug: 'team-lead',
     developerTeamSlug: 'developers',
     teamRoleReconcileIntervalMs: 0,
+  },
+  email: {
+    codeDelivery: 'log',
+    provider: null,
+    apiKey: '',
+    from: '',
   },
   templates: {
     repoPath: '../alphaci-workflow',

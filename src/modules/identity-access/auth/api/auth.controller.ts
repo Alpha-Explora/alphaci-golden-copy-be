@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -19,11 +20,24 @@ import { DevOnlyGuard } from '#kernel/auth/dev-only.guard';
 import { DevQuickLoginGuard } from '#kernel/auth/dev-quick-login.guard';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import {
+  CapabilityGuard,
+  RequiresCapability,
+} from '#kernel/composition/index.js';
+import {
   SUBSCRIPTION_ACCESS,
   type SubscriptionAccessPort,
 } from '#kernel/auth/subscription-access.port';
 import { PlatformAdminAccessService } from '#modules/identity-access/admin/index.js';
 import { AuthService } from '../application/auth.service';
+import { SelfServeAuthService } from '../application/self-serve-auth.service.js';
+import {
+  CheckEmailAvailabilityDto,
+  EmailLoginDto,
+  EmailSignupDto,
+  ResendEmailCodeDto,
+  VerifyEmailCodeDto,
+} from './dto/email-auth.dto.js';
+import { ClaimSessionHandoffDto } from './dto/claim-session-handoff.dto.js';
 
 @Throttle({ default: { ttl: 60_000, limit: 10 } })
 @Controller('auth')
@@ -32,6 +46,7 @@ export class AuthController {
 
   constructor(
     private readonly authService: AuthService,
+    private readonly selfServeAuthService: SelfServeAuthService,
     @Inject(SUBSCRIPTION_ACCESS)
     private readonly subscriptionService: SubscriptionAccessPort,
     private readonly platformAdminAccessService: PlatformAdminAccessService,
@@ -65,6 +80,87 @@ export class AuthController {
       state,
     );
     return res.redirect(redirectUrl);
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Post('email/check')
+  checkEmailSignupAvailability(@Body() body: CheckEmailAvailabilityDto) {
+    return this.selfServeAuthService.checkEmailSignupAvailability(body.email);
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Post('email/signup')
+  startEmailSignup(@Body() body: EmailSignupDto) {
+    return this.selfServeAuthService.startEmailSignup(body);
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Post('email/verify-code')
+  verifyEmailSignupCode(@Req() req: Request, @Body() body: VerifyEmailCodeDto) {
+    return this.selfServeAuthService.verifyEmailSignupCode(req, body);
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Post('email/login')
+  loginWithEmail(@Req() req: Request, @Body() body: EmailLoginDto) {
+    return this.selfServeAuthService.loginWithEmail(req, body);
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Post('email/resend-code')
+  resendEmailSignupCode(@Body() body: ResendEmailCodeDto) {
+    return this.selfServeAuthService.resendEmailSignupCode(body.email);
+  }
+
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Get('google/start')
+  async googleStart(
+    @Res() res: Response,
+    @Query('returnTo') returnTo?: string,
+  ) {
+    const redirectUrl =
+      await this.selfServeAuthService.startGoogleAuth(returnTo);
+    return res.redirect(redirectUrl);
+  }
+
+  @SkipThrottle()
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Get('google/callback')
+  async googleCallback(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('code') code?: string,
+    @Query('state') state?: string,
+  ) {
+    const redirectUrl = await this.selfServeAuthService.handleGoogleCallback(
+      req,
+      code,
+      state,
+    );
+    return res.redirect(redirectUrl);
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @UseGuards(CapabilityGuard)
+  @RequiresCapability('identity.self-serve-auth')
+  @Post('session/claim')
+  claimSessionHandoff(
+    @Req() req: Request,
+    @Body() body: ClaimSessionHandoffDto,
+  ) {
+    return this.selfServeAuthService.claimSessionHandoff(req, body.token);
   }
 
   @UseGuards(DevQuickLoginGuard)

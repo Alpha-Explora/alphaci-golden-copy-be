@@ -32,6 +32,9 @@ export function authConfig(env: Env): AppConfig['auth'] {
     // processes remain disabled even if a copied local .env contains it.
     devQuickLoginEnabled:
       env['NODE_ENV'] === 'development' && env['DEV_QUICK_LOGIN'] === 'true',
+    selfServeAuthEnabled:
+      env['ALPHACI_EDITION'] === 'saas' &&
+      env['AUTH_SELF_SERVE_ENABLED'] !== 'false',
   };
 }
 

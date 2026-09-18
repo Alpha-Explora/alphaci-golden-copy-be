@@ -14,6 +14,8 @@ export { authConfig, githubConfig, provisioningConfig, subscriptionConfig };
 export type {
   AppConfig,
   AuthAdmissionMode,
+  EmailCodeDeliveryMode,
+  GoogleOAuthConfig,
   GithubTeamRoleSyncMode,
 } from './app.config.types';
 
@@ -33,6 +35,35 @@ function templatesConfig(env: NodeJS.ProcessEnv): AppConfig['templates'] {
     // Every deployment that worked was setting this explicitly to cover it.
     workflowDir: env['TEMPLATE_WORKFLOW_DIR'] ?? 'workflow-templates/customer',
     centralWorkflowRepo: resolveCentralWorkflowRepo(env),
+  };
+}
+
+function googleConfig(env: NodeJS.ProcessEnv): AppConfig['google'] {
+  const clientId = env['GOOGLE_CLIENT_ID']?.trim();
+  const clientSecret = env['GOOGLE_CLIENT_SECRET']?.trim();
+  const callbackUrl = env['GOOGLE_CALLBACK_URL']?.trim();
+
+  if (!clientId || !clientSecret || !callbackUrl) {
+    return undefined;
+  }
+
+  return { clientId, clientSecret, callbackUrl };
+}
+
+function emailConfig(env: NodeJS.ProcessEnv): AppConfig['email'] {
+  const configuredMode = env['AUTH_EMAIL_CODE_DELIVERY']?.trim();
+  const codeDelivery =
+    configuredMode === 'log' || configuredMode === 'provider'
+      ? configuredMode
+      : env['NODE_ENV'] === 'development'
+        ? 'log'
+        : 'provider';
+
+  return {
+    codeDelivery,
+    provider: env['AUTH_EMAIL_PROVIDER']?.trim() === 'resend' ? 'resend' : null,
+    apiKey: env['RESEND_API_KEY']?.trim() ?? '',
+    from: env['AUTH_EMAIL_FROM']?.trim() ?? '',
   };
 }
 
@@ -180,12 +211,15 @@ function hierarchyConfig(env: NodeJS.ProcessEnv): AppConfig['hierarchy'] {
 
 export const appConfig = registerAs('app', (): AppConfig => {
   const env = process.env;
+  const google = googleConfig(env);
 
   return {
     frontendUrl: env['FRONTEND_URL'] ?? 'http://localhost:3000',
     auth: authConfig(env),
     composition: parseCompositionConfig(env),
     github: githubConfig(env),
+    ...(google ? { google } : {}),
+    email: emailConfig(env),
     templates: templatesConfig(env),
     subscription: subscriptionConfig(env),
     envProvisioning: provisioningConfig(env),

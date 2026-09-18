@@ -30,6 +30,14 @@ export interface EnvironmentVariables {
   SESSION_SECRET: string;
   DEV_QUICK_LOGIN?: string;
   AUTH_ADMISSION?: string;
+  AUTH_SELF_SERVE_ENABLED?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_CALLBACK_URL?: string;
+  AUTH_EMAIL_CODE_DELIVERY?: string;
+  AUTH_EMAIL_PROVIDER?: string;
+  AUTH_EMAIL_FROM?: string;
+  RESEND_API_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -251,6 +259,17 @@ function validateDevQuickLoginFlag(env: RawEnv): void {
   throw new Error('[env] DEV_QUICK_LOGIN must be either "true" or "false".');
 }
 
+function validateSelfServeAuthFlag(env: RawEnv): void {
+  const raw = env['AUTH_SELF_SERVE_ENABLED'];
+  if (raw === undefined || raw === 'true' || raw === 'false') {
+    return;
+  }
+
+  throw new Error(
+    '[env] AUTH_SELF_SERVE_ENABLED must be either "true" or "false".',
+  );
+}
+
 function validateAuthAdmission(env: RawEnv, compositionEdition: string): void {
   const raw = env['AUTH_ADMISSION'];
   if (raw !== undefined && raw !== 'open' && raw !== 'org-membership') {
@@ -277,6 +296,52 @@ function validateAuthAdmission(env: RawEnv, compositionEdition: string): void {
     throw new Error(
       '[env] AUTH_ADMISSION=open is not permitted for ALPHACI_EDITION=enterprise; use org-membership.',
     );
+  }
+}
+
+function validateGoogleOAuthConfig(env: RawEnv): void {
+  const keys = [
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'GOOGLE_CALLBACK_URL',
+  ] as const;
+  const configured = keys.some((key) => {
+    const value = env[key];
+    return typeof value === 'string' && value.trim() !== '';
+  });
+
+  if (!configured) {
+    return;
+  }
+
+  for (const key of keys) {
+    requireString(env, key);
+  }
+
+  const callbackUrl = requireString(env, 'GOOGLE_CALLBACK_URL');
+  let parsed: URL;
+  try {
+    parsed = new URL(callbackUrl);
+  } catch {
+    throw new Error('[env] GOOGLE_CALLBACK_URL must be a valid absolute URL.');
+  }
+
+  if (parsed.protocol !== 'https:' && env['NODE_ENV'] === 'production') {
+    throw new Error('[env] GOOGLE_CALLBACK_URL must use HTTPS in production.');
+  }
+}
+
+function validateEmailDeliveryConfig(env: RawEnv): void {
+  const mode = env['AUTH_EMAIL_CODE_DELIVERY'];
+  if (mode !== undefined && mode !== 'log' && mode !== 'provider') {
+    throw new Error(
+      '[env] AUTH_EMAIL_CODE_DELIVERY must be either "log" or "provider".',
+    );
+  }
+
+  const provider = env['AUTH_EMAIL_PROVIDER'];
+  if (provider !== undefined && provider !== 'resend') {
+    throw new Error('[env] AUTH_EMAIL_PROVIDER must be "resend" when set.');
   }
 }
 
@@ -341,12 +406,15 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // unknowingly running with an insecure secret.
   const SESSION_SECRET = requireSessionSecret(env);
   validateDevQuickLoginFlag(env);
+  validateSelfServeAuthFlag(env);
 
   // Composition is validated against the build ceiling before Nest creates
   // the application graph. appConfig parses the same pure function later;
   // keeping this check here makes an invalid artifact/profile fail at boot.
   const composition = parseCompositionConfig(env as NodeJS.ProcessEnv);
   validateAuthAdmission(env, composition.edition);
+  validateGoogleOAuthConfig(env);
+  validateEmailDeliveryConfig(env);
 
   const SUPABASE_URL = getTrimmedString(env, ['SUPABASE_URL']);
   const SUPABASE_ANON_KEY = getTrimmedString(env, ['SUPABASE_ANON_KEY']);

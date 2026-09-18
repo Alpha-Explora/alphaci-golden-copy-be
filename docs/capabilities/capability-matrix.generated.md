@@ -33,7 +33,7 @@ This matrix is generated from the application-owned capability registry and pack
 | `identity.edu-provisioning` | `identity-access` | Education-specific identity provisioning. | not-implemented | edu | Not implemented in this backend. No AppConfig flag. |
 | `identity.ferpa-workflows` | `identity-access` | FERPA-oriented education workflow automation. | not-implemented | edu | Not implemented in this backend. No AppConfig flag. |
 | `identity.edition-entitlements` | `identity-access` | Runtime edition and pack entitlement resolution. | not-implemented | saas, edu, enterprise | Not implemented in this backend. No AppConfig flag. |
-| `identity.self-serve-auth` | `identity-access` | Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow. | not-implemented | saas | Not implemented in this backend. No AppConfig flag. |
+| `identity.self-serve-auth` | `identity-access` | Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow. | limited | saas | SaaS-only email-code delivery via AUTH_EMAIL_CODE_DELIVERY; optional Google OAuth via GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_CALLBACK_URL. Billing checkout remains deferred. |
 | `platform.audit-events` | `platform-ops` | Project audit event recording through the application outbox. | stable | saas, edu, enterprise | auditEvents.enabled |
 | `platform.notifications` | `platform-ops` | In-app notification requests and persistence. | stable | saas, edu, enterprise | notifications.enabled |
 | `platform.data-residency` | `platform-ops` | Customer-specific data-location controls. | not-implemented | enterprise | Not implemented in this backend. No AppConfig flag. |

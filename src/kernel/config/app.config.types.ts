@@ -10,6 +10,14 @@ export type GithubTeamRoleSyncMode = 'off' | 'seed' | 'enforce';
 /** How OAuth sign-in admission is selected for the running deployment. */
 export type AuthAdmissionMode = 'open' | 'org-membership';
 
+export type EmailCodeDeliveryMode = 'log' | 'provider';
+
+export interface GoogleOAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  callbackUrl: string;
+}
+
 export interface AppConfig {
   frontendUrl: string;
   auth: {
@@ -24,6 +32,11 @@ export interface AppConfig {
      * production or test process.
      */
     devQuickLoginEnabled: boolean;
+    /**
+     * Enables SaaS self-serve email and Google authentication. The edition
+     * composition still provides the hard SaaS-only boundary.
+     */
+    selfServeAuthEnabled: boolean;
   };
   composition: {
     edition: Edition;
@@ -94,6 +107,19 @@ export interface AppConfig {
      * 0 disables the sweep. Only runs under teamRoleSync='enforce'.
      */
     teamRoleReconcileIntervalMs: number;
+  };
+  /** Optional SaaS-only Google OAuth configuration. */
+  google?: GoogleOAuthConfig;
+  /**
+   * Email verification delivery. Empty provider values intentionally remain
+   * representable so a public auth endpoint can return a clean not-configured
+   * response instead of claiming that an email was delivered.
+   */
+  email: {
+    codeDelivery: EmailCodeDeliveryMode;
+    provider: 'resend' | null;
+    apiKey: string;
+    from: string;
   };
   templates: {
     repoPath: string;

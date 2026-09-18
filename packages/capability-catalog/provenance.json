@@ -4,7 +4,7 @@
   "packageVersion": "0.3.0",
   "sourceRepository": "github.com/Alpha-Explora/alphaci-enterprise-be",
   "authoritativeSource": "src/kernel/composition/catalog.source.json",
-  "catalogSourceDigest": "sha256:ad9661768994c3f6b79f4aefd854eec2d52bd5fb75b94dc060f89ea878dea5b2",
+  "catalogSourceDigest": "sha256:c6003b1cc6e2fa96941519e2c5b378ed9410b7ba295270f6a3df4c963d387755",
   "canonicalFiles": [
     "package.json",
     "catalog.json",
@@ -12,5 +12,5 @@
     "index.js",
     "manifests.json"
   ],
-  "artifactDigest": "sha256:a0f1a439baf54ab0c4e837c6ad7a62d4d983d514296aa4516f6087477324a60f"
+  "artifactDigest": "sha256:4c6fdc13fcb09a29f3a6e03e6dbaead9db63e774845b11d66179e91be7f734ad"
 }
