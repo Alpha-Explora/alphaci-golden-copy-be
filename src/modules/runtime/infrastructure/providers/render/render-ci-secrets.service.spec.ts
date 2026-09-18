@@ -132,13 +132,31 @@ describe('RenderCiSecretsService', () => {
   });
 
   it('names the secret after the branch the target deploys', async () => {
+    await install({ ...baseTarget, branchName: 'main' });
+
+    expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
+      'gh-token',
+      'tone',
+      'orders-api',
+      'RENDER_HEALTHCHECK_URL_MAIN',
+      expect.any(String),
+    );
+  });
+
+  /*
+   * dev is not hosted, so it has no service and no secret of its own. The name
+   * falls back to the first hosted tier rather than to production: a target
+   * that should never have reached here must not end up addressing the
+   * customer's live environment.
+   */
+  it('falls back to the first hosted tier for an unhosted branch', async () => {
     await install({ ...baseTarget, branchName: 'dev' });
 
     expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_HEALTHCHECK_URL_DEV',
+      'RENDER_HEALTHCHECK_URL_UAT',
       expect.any(String),
     );
   });

@@ -54,6 +54,32 @@ export const PROTECTED_BRANCHES = PIPELINE_BRANCHES.filter(
 );
 
 /**
+ * Branches that get hosted infrastructure: a service, a deploy job, and an
+ * address something can be tested against.
+ *
+ * `dev` is deliberately absent. It is where developers push, and a developer
+ * runs their own branch locally — so a hosted dev tier is a service per
+ * project that nobody visits, paid for on every plan and kept warm by nothing.
+ * dev still builds and still runs the full quality stage; it simply has
+ * nowhere to deploy to.
+ *
+ * Separate from PROTECTED_BRANCHES even though the two hold the same names
+ * today. One answers "what may be pushed to directly" and the other answers
+ * "what costs money to run" — and a future tier could easily be one without
+ * being the other. Collapsing them would make that a silent change.
+ *
+ * Written out rather than derived so the list reads as a decision, with
+ * `satisfies` keeping it tied to the flow: rename a tier above and this stops
+ * compiling rather than quietly hosting a branch that no longer exists.
+ */
+export const HOSTED_BRANCHES = [
+  'uat',
+  'main',
+] as const satisfies readonly PipelineBranch[];
+
+export type HostedBranch = (typeof HOSTED_BRANCHES)[number];
+
+/**
  * Every branch a provisioned repository ends up with, default branch included.
  *
  * Reported to the caller so the product can show what it actually created. The

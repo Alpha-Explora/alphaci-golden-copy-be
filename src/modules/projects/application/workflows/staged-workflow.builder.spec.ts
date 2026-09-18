@@ -1374,6 +1374,52 @@ describe('the verify stage', () => {
     );
   });
 
+  /*
+   * playwright-e2e.yml carries a branch gate of its own, defaulting to `test`
+   * and comparing against github.ref_name. A workflow_run stage always reports
+   * the DEFAULT branch there, so that comparison was `main != test` on every
+   * run: the suite reported `skipped`, which finalises as a pass. Playwright
+   * had therefore never executed once on a generated pipeline.
+   *
+   * The branch is decided by this job's own `if:`, from the resolved
+   * originating branch, so the inner gate is switched off rather than fed a
+   * value it cannot read correctly.
+   */
+  it('disables the browser suite inner branch gate, having already scoped it', () => {
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate('react'),
+      {
+        templateId: 'fe-react',
+        serviceName: 'orders-web',
+        deploymentTargets: [
+          {
+            slot: 'standalone',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            secretNames: {
+              token: 'VERCEL_TOKEN_STANDALONE',
+              orgId: 'VERCEL_ORG_ID_STANDALONE',
+              projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+            },
+          },
+        ],
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+    const verify = yaml.load(
+      bundle.workflowFiles.find((candidate) => candidate.stage === 'verify')!
+        .yaml,
+    ) as ParsedWorkflow;
+
+    for (const jobId of ['ui-tests-uat', 'ui-tests-main']) {
+      expect(verify.jobs[jobId]?.with?.['run-only-on-branch']).toBe('*');
+    }
+    // The scoping that does the work still lives here.
+    expect(verify.jobs['ui-tests-uat']?.if).toContain("== 'uat'");
+    expect(verify.jobs['ui-tests-main']?.if).toContain("== 'main'");
+  });
+
   it('takes the collection path from the toolchain, not a hardcoded guess', () => {
     const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
 

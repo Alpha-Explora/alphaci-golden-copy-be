@@ -16,7 +16,10 @@ import type {
   ToolchainFragmentResult,
   ToolchainUiVerification,
 } from '#kernel/ports/toolchain-fragment.port';
-import { PIPELINE_BRANCHES } from '#kernel/config/pipeline-branches';
+import {
+  HOSTED_BRANCHES,
+  PIPELINE_BRANCHES,
+} from '#kernel/config/pipeline-branches';
 import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
@@ -738,6 +741,21 @@ function buildVerifyWorkflowFile(
       'e2e-base-url': uiUrl(branch),
       'e2e-tests-directory': verification.ui!.testsDirectory,
       'browser-list': verification.ui!.browsers,
+      /*
+       * The branch is decided above, by the `if:` on this job.
+       *
+       * playwright-e2e.yml carries a second branch gate of its own, defaulting
+       * to `test` - a tier that no longer exists - and it compares against
+       * `github.ref_name`. A workflow_run stage always reports the DEFAULT
+       * branch there, which is the whole reason this pipeline resolves its own
+       * context, so that comparison was `main != test` on every run: the suite
+       * reported `skipped`, and `skipped` finalises as a pass. Playwright has
+       * therefore never executed once on a generated pipeline.
+       *
+       * `*` disables the inner gate rather than feeding it a branch it cannot
+       * see correctly. One gate, in the half that knows the answer.
+       */
+      'run-only-on-branch': '*',
       'upload-artifacts': true,
     },
   });
@@ -1537,18 +1555,30 @@ function buildPackageDeploymentPlan(
   return { jobs, jobIds, promotionNeeds, skippedTargets };
 }
 
-function isPipelineBranch(value: string | undefined): value is DeployBranch {
-  return (PIPELINE_BRANCHES as readonly string[]).includes(value ?? '');
+function isHostedBranch(value: string | undefined): value is DeployBranch {
+  return (HOSTED_BRANCHES as readonly string[]).includes(value ?? '');
 }
 
+/**
+ * Which branches a deployment target produces jobs for.
+ *
+ * A target that names a branch deploys that one; a branch-neutral target - a
+ * Vercel project serves every branch from one project - fans out across the
+ * hosted tiers.
+ *
+ * Hosted rather than every pipeline branch, so a target cannot ask for a dev
+ * deployment. dev is local: it builds and runs the full quality stage, and
+ * there is nothing to deploy it to. A target naming it produces no jobs at
+ * all rather than jobs pointed at a service that does not exist.
+ */
 function resolveDeploymentBranches(
   branchName: string | undefined,
 ): DeployBranch[] {
-  if (isPipelineBranch(branchName)) {
+  if (isHostedBranch(branchName)) {
     return [branchName];
   }
 
-  return [...PIPELINE_BRANCHES];
+  return branchName === undefined ? [...HOSTED_BRANCHES] : [];
 }
 
 /**

@@ -145,9 +145,12 @@ describe('neither half puts a hosting credential in the repository', () => {
   it('never falls back to a branch Render has no service for', () => {
     expect(RENDER_SERVICE_BRANCHES).toContain(renderBranchFor('nonsense'));
     expect(renderBranchFor('main')).toBe('main');
-    expect(renderBranchFor('dev')).toBe('dev');
+    expect(renderBranchFor('uat')).toBe('uat');
+    // dev is not hosted, so it resolves like any other unknown branch.
+    expect(RENDER_SERVICE_BRANCHES).toContain(renderBranchFor('dev'));
     // The fallback is never production: guessing wrong must not point a deploy
     // at the customer's live environment.
     expect(renderBranchFor('something-else')).not.toBe('main');
+    expect(renderBranchFor('dev')).not.toBe('main');
   });
 });
