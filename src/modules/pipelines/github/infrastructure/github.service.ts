@@ -1962,6 +1962,101 @@ export class GithubService
   }
 
   /**
+   * Create-or-update an Actions VARIABLE, which is not a quieter secret.
+   *
+   * The two are not interchangeable and both are installed deliberately. A
+   * workflow can interpolate a variable inside a reusable-workflow `with:`
+   * block; GitHub rejects the whole file at parse time when a secret appears
+   * there, and redacts a secret routed through a job output. So every address
+   * a later stage has to be *handed* — a deployment hostname, a health URL —
+   * can only travel as a variable, even when the same value is also installed
+   * as a secret for the workflow that receives it through `secrets:`.
+   *
+   * No sealed box here: variables are stored and read back in plaintext, which
+   * is why nothing confidential may be written through this method.
+   *
+   * PATCH-then-POST because the variables API has no idempotent PUT. A 404
+   * from the PATCH is the documented way to learn the variable does not exist
+   * yet, so it is a branch rather than a failure.
+   */
+  async setActionsVariable(
+    accessToken: string | null | undefined,
+    owner: string,
+    repo: string,
+    variableName: string,
+    variableValue: string,
+    options: { throwOnFailure?: boolean } = {},
+  ): Promise<void> {
+    const fail = (message: string): void => {
+      if (options.throwOnFailure) {
+        throw new BadGatewayException(message);
+      }
+      this.logger.warn(message);
+    };
+
+    if (!accessToken) {
+      fail(
+        `setActionsVariable: no token available for ${owner}/${repo}/${variableName}, skipping`,
+      );
+      return;
+    }
+
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'cicd-workflow-product',
+      'Content-Type': 'application/json',
+    };
+    const body = JSON.stringify({ name: variableName, value: variableValue });
+
+    const patchRes = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${owner}/${repo}/actions/variables/${variableName}`,
+      { method: 'PATCH', headers, body },
+    );
+
+    if (patchRes.ok || patchRes.status === 204) {
+      return;
+    }
+
+    if (patchRes.status !== 404) {
+      const detail = await patchRes.text();
+      fail(
+        `setActionsVariable: failed to update ${variableName} on ${owner}/${repo} (${String(patchRes.status)}): ${detail}`,
+      );
+      return;
+    }
+
+    const createRes = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${owner}/${repo}/actions/variables`,
+      { method: 'POST', headers, body },
+    );
+
+    if (!createRes.ok && createRes.status !== 201) {
+      const detail = await createRes.text();
+      fail(
+        `setActionsVariable: failed to create ${variableName} on ${owner}/${repo} (${String(createRes.status)}): ${detail}`,
+      );
+    }
+  }
+
+  async setActionsVariableStrict(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    variableName: string,
+    variableValue: string,
+  ): Promise<void> {
+    await this.setActionsVariable(
+      accessToken,
+      owner,
+      repo,
+      variableName,
+      variableValue,
+      { throwOnFailure: true },
+    );
+  }
+
+  /**
    * Every protected branch requires the env-guard check by default so a pull
    * request that adds a `.env`-style file can never be merged; the guard
    * workflow runs on all pushes and pull requests, so the context is always

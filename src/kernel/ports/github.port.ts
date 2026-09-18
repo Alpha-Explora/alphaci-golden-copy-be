@@ -312,6 +312,13 @@ export interface GithubProjectPort {
     secretName: string,
     secretValue: string,
   ): Promise<void>;
+  setActionsVariableStrict(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    variableName: string,
+    variableValue: string,
+  ): Promise<void>;
   applyBranchProtection(
     accessToken: string,
     owner: string,

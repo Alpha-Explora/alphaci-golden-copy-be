@@ -3,7 +3,10 @@ import yaml from 'js-yaml';
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import { vercelAliasSecret } from '#kernel/ports/workflow-fragment.port';
+import {
+  VERCEL_ALIAS_VARIABLE,
+  vercelBranchAlias,
+} from '#kernel/ports/workflow-fragment.port';
 import type {
   WorkflowFragmentBranch,
   WorkflowFragmentRegistry,
@@ -762,7 +765,17 @@ function buildVerifyWorkflowFile(
       BRANCH: `\${{ ${BRANCH_EXPR} }}`,
     };
     const lines: string[] = ['set -euo pipefail', '', '{'];
-    const cases: string[] = [];
+    const requiredByBranch: Record<string, string[]> = { uat: [], main: [] };
+
+    /*
+     * One variable for every branch, because the branch is a prefix on it.
+     * A Render service is per-branch and so are its variables; a Vercel
+     * project serves all three branches, so a per-branch variable would have
+     * been three copies of one hostname.
+     */
+    if (verification.ui) {
+      env[VERCEL_ALIAS_VARIABLE] = `\${{ vars.${VERCEL_ALIAS_VARIABLE} }}`;
+    }
 
     for (const branch of ['uat', 'main'] as const) {
       if (verification.api) {
@@ -771,27 +784,55 @@ function buildVerifyWorkflowFile(
           `\${{ steps.resolve.outputs.api-${branch} }}`;
         env[variable] = `\${{ vars.${variable} }}`;
         lines.push(`  echo "api-${branch}=\${${variable}}"`);
-        cases.push(
-          `  ${branch}) required="\${${variable}}"; name="${variable}" ;;`,
-        );
+        requiredByBranch[branch]!.push(variable);
       }
       if (verification.ui) {
-        const variable = vercelAliasSecret(branch);
         outputs[`ui-${branch}`] = `\${{ steps.resolve.outputs.ui-${branch} }}`;
-        env[variable] = `\${{ vars.${variable} }}`;
-        lines.push(`  echo "ui-${branch}=\${${variable}}"`);
-        cases.push(
-          `  ${branch}) required="\${${variable}}"; name="${variable}" ;;`,
+        lines.push(
+          `  echo "ui-${branch}=${vercelBranchAlias(branch, `\${${VERCEL_ALIAS_VARIABLE}}`)}"`,
         );
+        requiredByBranch[branch]!.push(VERCEL_ALIAS_VARIABLE);
       }
     }
+
+    /*
+     * Every variable this branch needs, not just the first one.
+     *
+     * These used to be one `case` arm per variable, which put two `uat)`
+     * labels in the same statement for a repository that has both an API and
+     * a UI suite - and a `case` stops at the first match, so the second
+     * variable was never checked at all.
+     */
+    const cases = (['uat', 'main'] as const).flatMap((branch) => {
+      const required = requiredByBranch[branch] ?? [];
+      if (required.length === 0) {
+        return [];
+      }
+      return [
+        `  ${branch})`,
+        ...required.map((variable) => `    require "${variable}"`),
+        '    ;;',
+      ];
+    });
 
     lines.push(
       '} >> "$GITHUB_OUTPUT"',
       '',
-      '# Only the variable this branch needs is required. A dev run tests no',
-      '# deployed service, so demanding the uat address there would fail a',
-      '# branch that was never going to use it.',
+      'require() {',
+      // Indirect expansion: $1 is the variable NAME, so ${!1} is its value.
+      // `:-` keeps `set -u` from treating an unset one as a fatal error,
+      // because an unset variable is exactly what this function reports on.
+      '  value="${!1:-}"',
+      '  if [ -z "${value}" ]; then',
+      '    echo "::error::Repository variable $1 is not set, so the ${BRANCH} deployment cannot be located and nothing was tested against it. ALPHACI installs it when the deployment target is provisioned, so an empty one means either this project predates that, or the variable was removed. Add it under Settings > Secrets and variables > Actions > Variables. It is a variable rather than a secret because it is a public address, and because GitHub redacts secrets passed between jobs."',
+      '    exit 1',
+      '  fi',
+      '  echo "  $1=${value}"',
+      '}',
+      '',
+      '# A dev run tests no deployed service, so demanding the uat address',
+      '# there would fail a branch that was never going to use it.',
+      'echo "Resolving deployment targets for ${BRANCH}"',
       'case "${BRANCH}" in',
       ...cases,
       '  *)',
@@ -799,13 +840,6 @@ function buildVerifyWorkflowFile(
       '    exit 0',
       '    ;;',
       'esac',
-      '',
-      'if [ -z "${required}" ]; then',
-      '  echo "::error::Repository variable ${name} is not set, so the ${BRANCH} deployment cannot be located and nothing was tested against it. Add it under Settings > Secrets and variables > Actions > Variables. It is a variable rather than a secret because it is a public address, and because GitHub redacts secrets passed between jobs."',
-      '  exit 1',
-      'fi',
-      '',
-      'echo "Testing ${BRANCH} against ${required}"',
     );
 
     return {

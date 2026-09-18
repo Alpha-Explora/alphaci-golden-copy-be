@@ -122,19 +122,42 @@ export class WorkflowFragmentRegistry {
 }
 
 /**
- * Secret holding the stable hostname a Vercel branch deploy is aliased to.
+ * Repository VARIABLE holding the project's Vercel production hostname, from
+ * which every branch's alias is derived.
  *
- * Named in one place because two different workflows depend on it agreeing:
- * the deploy job passes it as `branch-alias` to point the preview at that
- * hostname, and the verify stage reads it to know where to send a browser. A
- * rename reaching only one of the two produces a deploy that is live at an
- * address nothing looks at, and a UI suite pointed at nothing — neither of
- * which fails loudly.
+ * One variable rather than one per branch, and installed by provisioning
+ * rather than by hand: the platform already knows the Vercel project name, so
+ * asking someone to paste three hostnames was asking them to re-enter a value
+ * the system had. It is a variable and not a secret because a `workflow_run`
+ * stage can be handed a variable and never a secret, and because a hostname is
+ * public by construction.
  *
- * A secret rather than a derived name: `<service>-<branch>.vercel.app` has to
- * be globally unique across all of Vercel, so a convention would collide
- * between two customers who happened to pick the same service name.
+ * A derived name carries one risk worth recording: `<branch>-<project>` has to
+ * be free across all of Vercel, and `vercel alias set` only warns when it is
+ * not. That warning is the signal to give this project an explicit hostname —
+ * the variable is still a variable, so overriding it needs no code change.
  */
-export function vercelAliasSecret(branch: string): string {
-  return `VERCEL_ALIAS_${branch.toUpperCase()}`;
+export const VERCEL_ALIAS_VARIABLE = 'VERCEL_ALIAS';
+
+/**
+ * The value written into {@link VERCEL_ALIAS_VARIABLE}.
+ *
+ * `<project>.vercel.app` is the domain Vercel assigns a project when it is
+ * created, so it is already proven unique and already what `--prod` lands on.
+ */
+export function vercelAliasHost(projectName: string): string {
+  return `${projectName.trim()}.vercel.app`;
+}
+
+/**
+ * The hostname a given branch answers on.
+ *
+ * `main` needs no alias at all: a production deploy already lands on the base
+ * host. Every other branch gets it as a prefix. Taking the stem as an argument
+ * is what lets the deploy job, the verify stage and the provisioning writer
+ * share one derivation while spelling the stem three different ways — an
+ * Actions expression, a shell variable, and a literal hostname.
+ */
+export function vercelBranchAlias(branch: string, aliasStem: string): string {
+  return branch === 'main' ? aliasStem : `${branch}-${aliasStem}`;
 }

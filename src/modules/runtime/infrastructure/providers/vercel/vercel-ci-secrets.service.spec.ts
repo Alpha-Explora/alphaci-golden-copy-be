@@ -8,6 +8,7 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 describe('VercelCiSecretsService', () => {
   const githubService = {
     setActionsSecretStrict: jest.fn(),
+    setActionsVariableStrict: jest.fn(),
   };
   const providerConnectionsRepository = {
     findActiveProviderConnection: jest.fn(),
@@ -101,6 +102,58 @@ describe('VercelCiSecretsService', () => {
       'VERCEL_FRONTEND_PROJECT_ID',
       'prj_1',
     );
+  });
+
+  /*
+   * The alias stem, installed rather than asked for.
+   *
+   * A CI-pushed deploy has no predictable address: `vercel deploy` returns a
+   * per-deployment hostname, and Vercel assigns the stable
+   * `<project>-git-<branch>-<scope>` name only to deployments its own Git
+   * integration created. The deploy job therefore aliases each preview to a
+   * hostname derived from this one variable, and the platform already knows
+   * the project name — so nobody should be pasting it back in by hand.
+   *
+   * One variable, not one per branch: the branch is a prefix on the stem.
+   */
+  it('publishes one alias variable derived from the Vercel project name', async () => {
+    const service = makeService();
+
+    const result = await service.installForTarget({
+      githubAccessToken: 'github-token',
+      repoFullName: 'owner/web',
+      userId: 'user-1',
+      providerConnectionId: 'connection-1',
+      target: {
+        id: 'target-1',
+        projectId: 'project-1',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        providerConnectionId: 'connection-1',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'web',
+        repoFullName: 'owner/web',
+        branchName: 'test',
+        rootDirectory: null,
+        buildCommand: null,
+        startCommand: null,
+        environmentMap: {},
+        deploymentStrategy: 'vercel_ci_pushed',
+        providerMetadata: { vercelOrgId: 'user_123' },
+        status: 'active',
+      },
+    });
+
+    expect(githubService.setActionsVariableStrict).toHaveBeenCalledTimes(1);
+    expect(githubService.setActionsVariableStrict).toHaveBeenCalledWith(
+      'github-token',
+      'owner',
+      'web',
+      'VERCEL_ALIAS',
+      'web.vercel.app',
+    );
+    expect(result.githubVariables).toEqual({ alias: 'VERCEL_ALIAS' });
   });
 
   it('uses the ALPHACI-managed Vercel token for managed CI-pushed targets', async () => {

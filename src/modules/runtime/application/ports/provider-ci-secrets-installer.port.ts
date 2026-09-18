@@ -15,12 +15,25 @@ export interface ProviderCiSecretsInstallerInput {
   target: DeploymentTargetSummary;
 }
 
+/**
+ * What a provider installed, by name.
+ *
+ * `githubVariables` is optional so a provider that has no addresses to publish
+ * does not have to say so, and so the two kinds can never be confused at the
+ * call site: a value that appears under `githubSecrets` is unreadable
+ * afterwards, while one under `githubVariables` is public by construction.
+ */
+export interface ProviderCiSecretsInstallResult {
+  githubSecrets: Record<string, string>;
+  githubVariables?: Record<string, string>;
+}
+
 export interface ProviderCiSecretsInstaller {
   readonly provider: string;
   supports(target: DeploymentTargetSummary): boolean;
   installForTarget(
     input: ProviderCiSecretsInstallerInput,
-  ): Promise<{ githubSecrets: Record<string, string> }>;
+  ): Promise<ProviderCiSecretsInstallResult>;
 }
 
 export const PROVIDER_CI_SECRETS_INSTALLERS = Symbol(
