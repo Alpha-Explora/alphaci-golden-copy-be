@@ -7,9 +7,17 @@ import type {
 /** See AppConfig['github']['teamRoleSync']. */
 export type GithubTeamRoleSyncMode = 'off' | 'seed' | 'enforce';
 
+/** How OAuth sign-in admission is selected for the running deployment. */
+export type AuthAdmissionMode = 'open' | 'org-membership';
+
 export interface AppConfig {
   frontendUrl: string;
   auth: {
+    /**
+     * Admission policy selected from AUTH_ADMISSION. When unset, the config
+     * derives org-membership from GITHUB_INTERNAL_ORG and otherwise uses open.
+     */
+    admission: AuthAdmissionMode;
     /**
      * Enables the local-only development fixture session endpoint. This is
      * derived from DEV_QUICK_LOGIN and NODE_ENV; it is never true in a

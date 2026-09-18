@@ -11,7 +11,11 @@ import { resolveCentralWorkflowRepo } from './central-workflow';
 import { parseCompositionConfig } from '#kernel/composition/composition-config.js';
 
 export { authConfig, githubConfig, provisioningConfig, subscriptionConfig };
-export type { AppConfig, GithubTeamRoleSyncMode } from './app.config.types';
+export type {
+  AppConfig,
+  AuthAdmissionMode,
+  GithubTeamRoleSyncMode,
+} from './app.config.types';
 
 function templatesConfig(env: NodeJS.ProcessEnv): AppConfig['templates'] {
   return {

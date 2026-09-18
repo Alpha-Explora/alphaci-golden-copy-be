@@ -1,11 +1,32 @@
 import type { SubscriptionPlan } from '#kernel/auth/session-user.interface';
 
-import type { AppConfig, GithubTeamRoleSyncMode } from './app.config.types';
+import type {
+  AppConfig,
+  AuthAdmissionMode,
+  GithubTeamRoleSyncMode,
+} from './app.config.types';
 
 type Env = NodeJS.ProcessEnv;
 
+function resolveAuthAdmission(
+  raw: string | undefined,
+  internalOrg: string,
+): AuthAdmissionMode {
+  // validateEnv rejects unrecognized explicit values. Keeping the pure config
+  // factory defensive lets direct callers still receive the safe legacy
+  // derivation when validation is not part of the call path.
+  if (raw === 'open' || raw === 'org-membership') {
+    return raw;
+  }
+
+  return internalOrg ? 'org-membership' : 'open';
+}
+
 export function authConfig(env: Env): AppConfig['auth'] {
+  const internalOrg = env['GITHUB_INTERNAL_ORG']?.trim() ?? '';
+
   return {
+    admission: resolveAuthAdmission(env['AUTH_ADMISSION'], internalOrg),
     // This is intentionally a conjunctive gate. A deployment cannot enable
     // the fixture endpoint by setting the flag alone, and production/test
     // processes remain disabled even if a copied local .env contains it.

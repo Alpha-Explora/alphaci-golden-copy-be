@@ -29,6 +29,7 @@ export interface EnvironmentVariables {
   ENABLE_SWAGGER: string;
   SESSION_SECRET: string;
   DEV_QUICK_LOGIN?: string;
+  AUTH_ADMISSION?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -250,6 +251,35 @@ function validateDevQuickLoginFlag(env: RawEnv): void {
   throw new Error('[env] DEV_QUICK_LOGIN must be either "true" or "false".');
 }
 
+function validateAuthAdmission(env: RawEnv, compositionEdition: string): void {
+  const raw = env['AUTH_ADMISSION'];
+  if (raw !== undefined && raw !== 'open' && raw !== 'org-membership') {
+    throw new Error(
+      '[env] AUTH_ADMISSION must be either "open" or "org-membership".',
+    );
+  }
+
+  const internalOrg =
+    typeof env['GITHUB_INTERNAL_ORG'] === 'string'
+      ? env['GITHUB_INTERNAL_ORG'].trim()
+      : '';
+  if (raw === 'org-membership' && !internalOrg) {
+    throw new Error(
+      '[env] AUTH_ADMISSION=org-membership requires GITHUB_INTERNAL_ORG to be set to a non-empty value.',
+    );
+  }
+
+  // Only an explicit open override is rejected. An unset value may derive to
+  // open when no internal org is configured, which preserves existing
+  // deployments while still making an operator's enterprise override fail
+  // loudly at boot.
+  if (raw === 'open' && compositionEdition === 'enterprise') {
+    throw new Error(
+      '[env] AUTH_ADMISSION=open is not permitted for ALPHACI_EDITION=enterprise; use org-membership.',
+    );
+  }
+}
+
 function validateProductionGithubAppConfig(env: RawEnv): void {
   if (env['NODE_ENV'] !== 'production') return;
 
@@ -315,7 +345,8 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // Composition is validated against the build ceiling before Nest creates
   // the application graph. appConfig parses the same pure function later;
   // keeping this check here makes an invalid artifact/profile fail at boot.
-  parseCompositionConfig(env as NodeJS.ProcessEnv);
+  const composition = parseCompositionConfig(env as NodeJS.ProcessEnv);
+  validateAuthAdmission(env, composition.edition);
 
   const SUPABASE_URL = getTrimmedString(env, ['SUPABASE_URL']);
   const SUPABASE_ANON_KEY = getTrimmedString(env, ['SUPABASE_ANON_KEY']);

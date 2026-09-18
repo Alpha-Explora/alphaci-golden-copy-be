@@ -37,11 +37,14 @@ describe('appConfig factory', () => {
     delete process.env['SESSION_STORE_DRIVER'];
     delete process.env['ALPHACI_EDITION'];
     delete process.env['ALPHACI_BUILD_PROFILE'];
+    delete process.env['AUTH_ADMISSION'];
+    delete process.env['GITHUB_INTERNAL_ORG'];
 
     const config = appConfig();
 
     expect(config.frontendUrl).toBe('http://localhost:3000');
     expect(config.auth.devQuickLoginEnabled).toBe(false);
+    expect(config.auth.admission).toBe('open');
     expect(config.github.clientId).toBe('');
     expect(config.session.secret).toBe(validSessionSecret);
     expect(config.subscription.mockEnabled).toBe(false);
@@ -83,6 +86,31 @@ describe('appConfig factory', () => {
     process.env['DEV_QUICK_LOGIN'] = 'true';
 
     expect(appConfig().auth.devQuickLoginEnabled).toBe(false);
+  });
+
+  describe('OAuth admission policy derivation', () => {
+    it('derives org-membership when GITHUB_INTERNAL_ORG is configured', () => {
+      delete process.env['AUTH_ADMISSION'];
+      process.env['GITHUB_INTERNAL_ORG'] = 'Alpha-Explora';
+
+      expect(appConfig().auth.admission).toBe('org-membership');
+    });
+
+    it('derives open when GITHUB_INTERNAL_ORG is unset', () => {
+      delete process.env['AUTH_ADMISSION'];
+      delete process.env['GITHUB_INTERNAL_ORG'];
+
+      expect(appConfig().auth.admission).toBe('open');
+    });
+
+    it('honors an explicit AUTH_ADMISSION value over GITHUB_INTERNAL_ORG', () => {
+      process.env['AUTH_ADMISSION'] = 'open';
+      process.env['GITHUB_INTERNAL_ORG'] = 'Alpha-Explora';
+      process.env['ALPHACI_BUILD_PROFILE'] = 'hosted';
+      process.env['ALPHACI_EDITION'] = 'saas';
+
+      expect(appConfig().auth.admission).toBe('open');
+    });
   });
 
   it.each([

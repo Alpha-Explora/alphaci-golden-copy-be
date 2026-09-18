@@ -118,6 +118,79 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('OAuth admission policy', () => {
+    it('accepts AUTH_ADMISSION=org-membership', () => {
+      expect(
+        validateEnv(
+          validEnv({
+            AUTH_ADMISSION: 'org-membership',
+            GITHUB_INTERNAL_ORG: 'Alpha-Explora',
+          }),
+        ),
+      ).toEqual(expect.objectContaining({ AUTH_ADMISSION: 'org-membership' }));
+    });
+
+    it('accepts AUTH_ADMISSION=open for a hosted edition', () => {
+      expect(
+        validateEnv(
+          validEnv({
+            AUTH_ADMISSION: 'open',
+            ALPHACI_BUILD_PROFILE: 'hosted',
+            ALPHACI_EDITION: 'saas',
+          }),
+        ),
+      ).toEqual(expect.objectContaining({ AUTH_ADMISSION: 'open' }));
+    });
+
+    it('rejects an unrecognized AUTH_ADMISSION value', () => {
+      expect(() =>
+        validateEnv(validEnv({ AUTH_ADMISSION: 'invite-only' })),
+      ).toThrow(/AUTH_ADMISSION/);
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['empty', ''],
+      ['whitespace-only', '   '],
+    ] as const)(
+      'rejects org-membership admission when GITHUB_INTERNAL_ORG is %s',
+      (_label, internalOrg) => {
+        const env = validEnv({ AUTH_ADMISSION: 'org-membership' });
+        if (internalOrg === undefined) {
+          delete env['GITHUB_INTERNAL_ORG'];
+        } else {
+          env['GITHUB_INTERNAL_ORG'] = internalOrg;
+        }
+
+        expect(() => validateEnv(env)).toThrow(
+          /AUTH_ADMISSION.*GITHUB_INTERNAL_ORG/,
+        );
+      },
+    );
+
+    it('rejects explicit open admission for the enterprise edition', () => {
+      expect(() => validateEnv(validEnv({ AUTH_ADMISSION: 'open' }))).toThrow(
+        /AUTH_ADMISSION.*enterprise/,
+      );
+    });
+
+    it('allows explicit open admission for a hosted edition', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            AUTH_ADMISSION: 'open',
+            ALPHACI_BUILD_PROFILE: 'hosted',
+            ALPHACI_EDITION: 'saas',
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('keeps the unset enterprise default valid', () => {
+      expect(() => validateEnv(validEnv())).not.toThrow();
+    });
+  });
+
   describe('NODE_ENV validation', () => {
     it('throws for an invalid NODE_ENV value', () => {
       expect(() => validateEnv(validEnv({ NODE_ENV: 'staging' }))).toThrow(

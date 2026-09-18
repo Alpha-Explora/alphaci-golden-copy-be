@@ -9,6 +9,7 @@ import { OAuthStateRepository } from '../infrastructure/oauth-state.repository.j
 import { SUBSCRIPTION_BOOTSTRAP } from '#modules/billing/subscription/application/subscription.contracts.js';
 import { GITHUB_TEAM_ROLE_PORT } from '#kernel/ports/github-team-role.port.js';
 import { GithubTeamRoleService } from '#modules/pipelines/github/application/github-team-role.service.js';
+import type { AuthAdmissionMode } from '#kernel/config/app.config.types.js';
 import type { Request } from 'express';
 import type {
   SessionUser,
@@ -16,6 +17,9 @@ import type {
 } from '#kernel/auth/session-user.interface.js';
 import type { ArchivedUserLookup } from '../infrastructure/users.repository.js';
 import { DEV_QUICK_LOGIN_FIXTURE } from './dev-quick-login.fixture.js';
+import { ADMISSION_POLICY } from './admission/admission-policy.port.js';
+import { OpenRegistrationAdmissionPolicy } from './admission/open-registration.policy.js';
+import { OrgMembershipAdmissionPolicy } from './admission/org-membership.policy.js';
 
 const fakeUser: SessionUser = {
   id: 'user-1',
@@ -36,8 +40,12 @@ const makeConfig = (
   withGitHub = true,
   internalOrg = '',
   devQuickLoginEnabled = false,
-) =>
-  ({
+  admission?: AuthAdmissionMode,
+) => {
+  const resolvedAdmission =
+    admission ?? (internalOrg ? 'org-membership' : 'open');
+
+  return {
     get: jest.fn((key: string) => {
       if (key === 'NODE_ENV') {
         return 'development';
@@ -52,7 +60,7 @@ const makeConfig = (
     }),
     getOrThrow: jest.fn().mockReturnValue({
       frontendUrl: 'http://localhost:3000',
-      auth: { devQuickLoginEnabled },
+      auth: { devQuickLoginEnabled, admission: resolvedAdmission },
       archivedAccountRetentionDays: 30,
       github: {
         clientId: withGitHub ? 'gh-client-id' : '',
@@ -62,7 +70,8 @@ const makeConfig = (
         internalOrg,
       },
     }),
-  }) as unknown as ConfigService;
+  } as unknown as ConfigService;
+};
 
 const makeUsersRepo = (overrides?: Partial<UsersRepository>) =>
   ({
@@ -130,22 +139,40 @@ async function createService(
   _unusedAuthTestArg?: unknown,
   internalOrg = '',
   devQuickLoginEnabled = false,
+  admission?: AuthAdmissionMode,
 ) {
   const usersRepo = makeUsersRepo(usersRepoOverrides);
   const subsRepo = makeSubsRepo();
   const oauthStateRepo = makeOAuthStateRepo(oauthStateOverrides);
+  const resolvedAdmission =
+    admission ?? (internalOrg ? 'org-membership' : 'open');
 
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       AuthService,
       {
         provide: ConfigService,
-        useValue: makeConfig(withGitHub, internalOrg, devQuickLoginEnabled),
+        useValue: makeConfig(
+          withGitHub,
+          internalOrg,
+          devQuickLoginEnabled,
+          resolvedAdmission,
+        ),
       },
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: SUBSCRIPTION_BOOTSTRAP, useValue: subsRepo },
       { provide: OAuthStateRepository, useValue: oauthStateRepo },
+      {
+        provide: ADMISSION_POLICY,
+        useValue:
+          internalOrg || resolvedAdmission === 'org-membership'
+            ? new OrgMembershipAdmissionPolicy({
+                internalOrg,
+                admission: resolvedAdmission,
+              })
+            : new OpenRegistrationAdmissionPolicy(),
+      },
       // Sync disabled by default so these tests continue to exercise the
       // legacy org-ownership seeding path unchanged.
       {
@@ -679,6 +706,42 @@ describe('AuthService', () => {
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(usersRepo.upsertGitHubUser).toHaveBeenCalledWith(
         expect.objectContaining({ isInternal: true }),
+      );
+    });
+
+    it('admits a confirmed non-member in explicit open mode and stamps false', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Membership still runs for stamping even though admission is open.
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+      });
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
+        undefined,
+        'acme-internal',
+        false,
+        'open',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=success');
+      expect(usersRepo.upsertGitHubUser).toHaveBeenCalledWith(
+        expect.objectContaining({ isInternal: false }),
       );
     });
 
