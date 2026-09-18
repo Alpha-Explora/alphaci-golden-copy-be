@@ -15,7 +15,7 @@
  *
  * Each mode clears ALPHACI_CLIENT and ALPHACI_CLIENT_CONFIG unless it wants them,
  * so a client left in .env cannot leak into a run that is not testing one.
- * enterprise-client uses northwind, the only policy declared in src/packs.
+ * enterprise-client uses st-peter, the only policy declared in src/packs.
  */
 import { spawn } from "node:child_process";
 
@@ -41,7 +41,7 @@ const EDITIONS = {
   "enterprise-client": {
     ALPHACI_BUILD_PROFILE: "enterprise",
     ALPHACI_EDITION: "enterprise",
-    ALPHACI_CLIENT: "northwind",
+    ALPHACI_CLIENT: "st-peter",
     ALPHACI_CLIENT_CONFIG: "",
   },
 };

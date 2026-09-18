@@ -1,6 +1,19 @@
 import type { AppConfig } from '#kernel/config/app.config.js';
 import { createEnterpriseClientPolicyPack } from './client-policy-pack.js';
 
+/** Mirrors the policy that ships in `clients/index.ts`. */
+const stPeter = {
+  clientId: 'st-peter',
+  displayName: 'St. Peter',
+  edition: 'enterprise',
+  disabledCapabilities: [],
+} as const;
+
+/**
+ * An injected policy, deliberately not the shipped one: the tests below are
+ * about lookup and mounted-config precedence, so using a client the registry
+ * does not declare keeps them from passing for the wrong reason.
+ */
 const northwind = {
   clientId: 'northwind',
   displayName: 'Northwind Industries',
@@ -26,18 +39,22 @@ const compositionFor = (
 });
 
 describe('EnterpriseClientPolicyPack', () => {
-  it('resolves the declared Northwind preset as a deny-only policy', () => {
+  /*
+   * Reads the registry that actually ships, so renaming the declared client
+   * without updating what selects it fails here rather than at a customer's
+   * startup. The fixtures below inject their own policies and are unaffected.
+   */
+  it('resolves the declared St. Peter preset as a deny-only policy', () => {
     const pack = createEnterpriseClientPolicyPack();
     const source = pack.createSource(
-      compositionFor({ id: 'northwind', configPath: null }),
+      compositionFor({ id: 'st-peter', configPath: null }),
     );
     const policy = source.deployment();
 
-    expect(policy).toEqual(northwind);
+    expect(policy).toEqual(stPeter);
     expect(policy).not.toHaveProperty('enabledCapabilities');
-    expect(policy?.disabledCapabilities).toEqual([
-      'runtime.preview-deployments',
-    ]);
+    // Narrowed to nothing: an empty deny list is a policy, not a gap.
+    expect(policy?.disabledCapabilities).toEqual([]);
   });
 
   it('preserves declared policy lookup and mounted-config precedence', () => {

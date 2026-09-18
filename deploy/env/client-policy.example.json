@@ -1,6 +1,6 @@
 {
-  "clientId": "northwind",
-  "displayName": "Northwind Industries",
+  "clientId": "st-peter",
+  "displayName": "St. Peter",
   "edition": "enterprise",
-  "disabledCapabilities": ["runtime.preview-deployments"]
+  "disabledCapabilities": []
 }
