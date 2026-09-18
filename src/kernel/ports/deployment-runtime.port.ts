@@ -208,10 +208,43 @@ export interface DeploymentHistoryResponse {
   providerError: string | null;
 }
 
+/**
+ * An environment this project is configured to have, deployed or not.
+ *
+ * Deployment history answers "what happened". This answers "what exists", and
+ * the two are not the same question: a project provisioned an hour ago has a
+ * uat and a main environment with real addresses and nothing deployed to
+ * either. Reporting only history left that project looking like it had no
+ * environments at all, which is the opposite of what provisioning just did.
+ *
+ * Kept out of DeploymentHistoryItem deliberately. These are not deployments
+ * and must never be counted as any - the history list stays a record of what
+ * actually ran.
+ */
+export interface DeploymentEnvironment {
+  targetId: string;
+  targetName: string;
+  provider: DeploymentProvider;
+  /** The branch that releases to it. */
+  branch: string;
+  /** 'production' for the production tier, otherwise the branch's lane. */
+  environment: string | null;
+  /** Where it will answer once something is released to it. */
+  url: string | null;
+  dashboardUrl: string;
+}
+
 export interface DeploymentHistoryQuery {
   listDeployments(
     project: DeploymentProjectReference,
   ): Promise<DeploymentHistoryResponse>;
+  /**
+   * Optional so a provider-less or older implementation keeps satisfying the
+   * port; callers fall back to history alone.
+   */
+  listEnvironments?(
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentEnvironment[]>;
 }
 
 export const DEPLOYMENT_HISTORY_QUERY = Symbol('DEPLOYMENT_HISTORY_QUERY');

@@ -11,15 +11,28 @@ import type {
  * alias resolves to. Grouping this way means a push to a branch updates that
  * branch's card in place instead of appending another row nobody reads.
  */
+/**
+ * `not_deployed` is an environment that exists and has never been released to.
+ *
+ * Not a deployment status, which is why it is not in DeploymentHistoryStatus:
+ * nothing ran, so there is nothing for a provider to report. It is here
+ * because the branch is still a real environment with a real address, and a
+ * project provisioned an hour ago is made entirely of them.
+ */
+export type ProjectBranchPreviewStatus =
+  | DeploymentHistoryStatus
+  | 'not_deployed';
+
 export interface ProjectBranchPreview {
   branch: string;
   /** True for the branch the provider deploys to production. */
   isProduction: boolean;
-  deploymentId: string;
+  /** Null when nothing has been deployed to this environment yet. */
+  deploymentId: string | null;
   targetId: string;
   targetName: string;
   provider: EnvProvider;
-  status: DeploymentHistoryStatus;
+  status: ProjectBranchPreviewStatus;
   commitSha: string | null;
   commitMessage: string | null;
   /** Set when the branch's newest deployment was built for a pull request. */
@@ -27,7 +40,8 @@ export interface ProjectBranchPreview {
   /** The URL to open, and to frame when `embeddable` is true. */
   previewUrl: string | null;
   inspectorUrl: string | null;
-  createdAt: string;
+  /** Null for an environment with no deployment to date. */
+  createdAt: string | null;
   readyAt: string | null;
   /** null means undetermined — the UI must not frame it, but should still link it. */
   embeddable: boolean | null;

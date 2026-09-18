@@ -87,13 +87,28 @@ function featureFlagConfig(
       enabled: env['CI_RUN_TRACKING_ENABLED'] === 'true',
       liveGithubEnabled: env['CI_RUN_LIVE_GITHUB_ENABLED'] !== 'false',
     },
+    /*
+     * On unless a deployment turns them off, which is the opposite of how they
+     * started.
+     *
+     * Opt-in made sense while the read model was unproven. It has since become
+     * the answer to "where is my deployment", and a flag defaulting to false
+     * meant every deployment had the feature built, shipped and invisible:
+     * a project with live Render and Vercel deployments showed "Branch previews
+     * are not enabled", which reads as a product that does not have the
+     * feature rather than one nobody switched on.
+     *
+     * Still flags, so a deployment that must not call out to providers can
+     * say so - and `liveProvidersEnabled` below keeps the same shape it always
+     * had.
+     */
     deploymentHistory: {
-      enabled: env['DEPLOYMENT_HISTORY_ENABLED'] === 'true',
+      enabled: env['DEPLOYMENT_HISTORY_ENABLED'] !== 'false',
       liveProvidersEnabled:
         env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] !== 'false',
     },
     previewDeployments: {
-      enabled: env['PREVIEW_DEPLOYMENTS_ENABLED'] === 'true',
+      enabled: env['PREVIEW_DEPLOYMENTS_ENABLED'] !== 'false',
     },
     driftDetection: {
       enabled: env['DRIFT_DETECTION_ENABLED'] === 'true',
