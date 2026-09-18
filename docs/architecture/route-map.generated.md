@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 149 current API routes."
+description: "Generated inventory of the 157 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **149 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **157 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -42,6 +42,8 @@ The current compiled API exposes **149 routes** under the global `/api/v1` prefi
 - `GET /api/v1/auth/config-check`
 - `GET /api/v1/auth/github/callback`
 - `GET /api/v1/auth/github/start`
+- `GET /api/v1/auth/google/callback`
+- `GET /api/v1/auth/google/start`
 - `GET /api/v1/auth/me`
 - `GET /api/v1/capabilities`
 - `GET /api/v1/catalog/categories`
@@ -121,8 +123,14 @@ The current compiled API exposes **149 routes** under the global `/api/v1` prefi
 - `POST /api/v1/auth/account/restore`
 - `POST /api/v1/auth/account/start-fresh`
 - `POST /api/v1/auth/dev/quick-login`
+- `POST /api/v1/auth/email/check`
+- `POST /api/v1/auth/email/login`
+- `POST /api/v1/auth/email/resend-code`
+- `POST /api/v1/auth/email/signup`
+- `POST /api/v1/auth/email/verify-code`
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/auth/onboarding/complete`
+- `POST /api/v1/auth/session/claim`
 - `POST /api/v1/ci/report`
 - `POST /api/v1/ci/validate`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/archive`

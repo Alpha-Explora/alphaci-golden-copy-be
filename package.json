@@ -53,6 +53,8 @@
     "boundaries:graph": "depcruise src --config .dependency-cruiser.cjs --output-type dot > dependency-graph.dot",
     "boundaries:new": "depcruise src tests --config .dependency-cruiser.cjs",
     "db:apply:all": "node scripts/apply-all-migrations.mjs",
+    "db:provision-tenant": "npm run build && node --env-file=.env dist/scripts/provision-tenant.js",
+    "db:backfill-tenant-scope": "npm run build && node --env-file=.env dist/scripts/backfill-tenant-scope.js",
     "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
     "check:capabilities": "node ./scripts/check-capabilities.cjs",
     "generate:composition": "node ./scripts/generate-composition-source.mjs",

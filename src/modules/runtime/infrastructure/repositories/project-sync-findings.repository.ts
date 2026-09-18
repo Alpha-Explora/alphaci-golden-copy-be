@@ -1,6 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import type { DeploymentDriftFindingsStore } from '../../core/deployment-provisioning.contract';
 import type {
   ProjectDriftFinding,
@@ -24,20 +28,51 @@ interface ProjectSyncFindingRow {
   resolved_at: string | null;
 }
 
+function projectTenantPredicate(
+  projectAlias: string,
+  tenantParam: string,
+): string {
+  return `
+    ${projectAlias}.tenant_id = ${tenantParam}::uuid
+    AND (
+      ${projectAlias}.workspace_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM orgs.workspaces AS tenant_workspace
+        WHERE tenant_workspace.id = ${projectAlias}.workspace_id
+          AND tenant_workspace.tenant_id = ${tenantParam}::uuid
+      )
+    )
+  `;
+}
+
 @Injectable()
 export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsStore {
-  constructor(private readonly databaseService: DatabaseService) {}
+  /**
+   * This adapter is project-scoped even when detection is initiated by a
+   * worker. There is intentionally no deployment-global reconciliation method;
+   * a worker must establish the validated tenant context before calling it.
+   */
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext: TenantContextPort,
+  ) {}
 
   async findActiveByProject(projectId: string): Promise<ProjectDriftFinding[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<ProjectSyncFindingRow>(
       `
-        SELECT *
-        FROM projects.project_sync_findings
-        WHERE project_id = $1
-          AND status = 'active'
-        ORDER BY detected_at DESC, code ASC;
+        SELECT finding.*
+        FROM projects.project_sync_findings AS finding
+        JOIN projects.provisioned_projects AS project
+          ON project.id = finding.project_id
+        WHERE finding.project_id = $1
+          AND ${projectTenantPredicate('project', '$2')}
+          AND finding.status = 'active'
+        ORDER BY finding.detected_at DESC, finding.code ASC;
       `,
-      [projectId],
+      [projectId, tenantId],
     );
 
     return result.rows.map((row) => this.toFinding(row));
@@ -47,15 +82,19 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
     projectId: string,
     findingId: string,
   ): Promise<ProjectDriftFinding | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<ProjectSyncFindingRow>(
       `
-        SELECT *
-        FROM projects.project_sync_findings
-        WHERE project_id = $1
-          AND id = $2
+        SELECT finding.*
+        FROM projects.project_sync_findings AS finding
+        JOIN projects.provisioned_projects AS project
+          ON project.id = finding.project_id
+        WHERE finding.project_id = $1
+          AND finding.id = $2
+          AND ${projectTenantPredicate('project', '$3')}
         LIMIT 1;
       `,
-      [projectId, findingId],
+      [projectId, findingId, tenantId],
     );
 
     const row = result.rows[0];
@@ -66,14 +105,18 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
     findingId: string,
     status: 'resolved' | 'ignored',
   ): Promise<void> {
+    const tenantId = this.requireTenantId();
     await this.databaseService.query(
       `
-        UPDATE projects.project_sync_findings
+        UPDATE projects.project_sync_findings AS finding
         SET status = $2,
             resolved_at = NOW()
-        WHERE id = $1;
+        FROM projects.provisioned_projects AS project
+        WHERE finding.id = $1
+          AND project.id = finding.project_id
+          AND ${projectTenantPredicate('project', '$3')};
       `,
-      [findingId, status],
+      [findingId, status, tenantId],
     );
   }
 
@@ -81,6 +124,7 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
     projectId: string,
     findings: ProjectDriftFindingInput[],
   ): Promise<ProjectDriftFinding[]> {
+    const tenantId = this.requireTenantId();
     const existing = await this.findActiveByProject(projectId);
     const nextKeys = new Set(findings.map((finding) => this.key(finding)));
 
@@ -90,12 +134,16 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
         .map((finding) =>
           this.databaseService.query(
             `
-              UPDATE projects.project_sync_findings
+              UPDATE projects.project_sync_findings AS finding
               SET status = 'resolved',
                   resolved_at = NOW()
-              WHERE id = $1;
+              FROM projects.provisioned_projects AS project
+              WHERE finding.id = $1
+                AND finding.project_id = $2
+                AND project.id = finding.project_id
+                AND ${projectTenantPredicate('project', '$3')};
             `,
-            [finding.id],
+            [finding.id, projectId, tenantId],
           ),
         ),
     );
@@ -107,18 +155,24 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
       if (current) {
         await this.databaseService.query(
           `
-            UPDATE projects.project_sync_findings
+            UPDATE projects.project_sync_findings AS current_finding
             SET severity = $2,
                 message = $3,
                 details_json = $4::jsonb,
                 detected_at = NOW()
-            WHERE id = $1;
+            FROM projects.provisioned_projects AS project
+            WHERE current_finding.id = $1
+              AND current_finding.project_id = $5
+              AND project.id = current_finding.project_id
+              AND ${projectTenantPredicate('project', '$6')};
           `,
           [
             current.id,
             finding.severity,
             finding.message,
             JSON.stringify(finding.details ?? {}),
+            projectId,
+            tenantId,
           ],
         );
       } else {
@@ -134,7 +188,19 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
               details_json,
               status
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'active');
+            SELECT $1, $2, $3, $4, $5, $6, $7::jsonb, 'active'
+            FROM projects.provisioned_projects AS project
+            WHERE project.id = $1
+              AND ${projectTenantPredicate('project', '$8')}
+              AND (
+                $2::uuid IS NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM env_provisioning.project_deployment_targets AS target
+                  WHERE target.id = $2::uuid
+                    AND target.project_id = project.id
+                )
+              );
           `,
           [
             projectId,
@@ -144,6 +210,7 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
             finding.code,
             finding.message,
             JSON.stringify(finding.details ?? {}),
+            tenantId,
           ],
         );
       }
@@ -175,5 +242,9 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
       detectedAt: row.detected_at,
       resolvedAt: row.resolved_at,
     };
+  }
+
+  private requireTenantId(): string {
+    return this.tenantContext.require().tenantId;
   }
 }

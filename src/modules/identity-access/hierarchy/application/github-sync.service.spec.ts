@@ -70,12 +70,13 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
     } as unknown as jest.Mocked<OutboxRepository>;
     assignmentsRepository = {
       findById: jest.fn(),
+      findByIdForWorker: jest.fn(),
       createOrResetWithClient: jest.fn(),
       setDesiredUnassigned: jest.fn(),
-      markGrantVerified: jest.fn(),
-      markGrantFailed: jest.fn(),
-      markRevokeVerified: jest.fn(),
-      markRevokeFailed: jest.fn(),
+      markGrantVerifiedForWorker: jest.fn(),
+      markGrantFailedForWorker: jest.fn(),
+      markRevokeVerifiedForWorker: jest.fn(),
+      markRevokeFailedForWorker: jest.fn(),
     } as unknown as jest.Mocked<AssignmentsRepository>;
     syncRepository = {
       upsertPending: jest.fn(),
@@ -87,6 +88,7 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
     } as unknown as jest.Mocked<GithubAccessSyncRepository>;
     repositoriesRepository = {
       findById: jest.fn().mockResolvedValue(baseRepository),
+      findByIdForWorker: jest.fn().mockResolvedValue(baseRepository),
     } as unknown as jest.Mocked<RepositoriesRepository>;
     sessionUserLookup = {
       findSessionUser: jest.fn().mockResolvedValue(baseUser),
@@ -180,7 +182,7 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
   });
 
   it('transition #2a: a verified grant marks the assignment active — never active before verification', async () => {
-    assignmentsRepository.findById.mockResolvedValue(baseAssignment());
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(baseAssignment());
     provider.ensureTeam.mockResolvedValue({
       githubTeamId: 'team-1',
       githubTeamSlug: 'payments-api-developers',
@@ -197,15 +199,17 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
 
     // Order matters: verification must run before the row is marked active.
     expect(provider.verifyEffectivePermission).toHaveBeenCalled();
-    expect(assignmentsRepository.markGrantVerified).toHaveBeenCalledWith(
-      'assignment-1',
-    );
-    expect(assignmentsRepository.markGrantFailed).not.toHaveBeenCalled();
+    expect(
+      assignmentsRepository.markGrantVerifiedForWorker,
+    ).toHaveBeenCalledWith('assignment-1');
+    expect(
+      assignmentsRepository.markGrantFailedForWorker,
+    ).not.toHaveBeenCalled();
     expect(syncRepository.markVerified).toHaveBeenCalled();
   });
 
   it('transition #2b: a grant that fails verification is marked failed, not active, and is requeued for retry', async () => {
-    assignmentsRepository.findById.mockResolvedValue(baseAssignment());
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(baseAssignment());
     provider.ensureTeam.mockResolvedValue({
       githubTeamId: 'team-1',
       githubTeamSlug: 'payments-api-developers',
@@ -218,17 +222,19 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
       actingUserId: 'pm-1',
     });
 
-    expect(assignmentsRepository.markGrantFailed).toHaveBeenCalledWith(
+    expect(assignmentsRepository.markGrantFailedForWorker).toHaveBeenCalledWith(
       'assignment-1',
     );
-    expect(assignmentsRepository.markGrantVerified).not.toHaveBeenCalled();
+    expect(
+      assignmentsRepository.markGrantVerifiedForWorker,
+    ).not.toHaveBeenCalled();
     expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
     );
   });
 
   it('a grant is NOT requeued once retryCount has hit the max (stays failed, surfaced on the admin view)', async () => {
-    assignmentsRepository.findById.mockResolvedValue(baseAssignment());
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(baseAssignment());
     provider.ensureTeam.mockRejectedValue(new Error('GitHub API down'));
     syncRepository.markFailed.mockResolvedValue(5); // at the default max
 
@@ -237,13 +243,13 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
       actingUserId: 'pm-1',
     });
 
-    expect(assignmentsRepository.markGrantFailed).toHaveBeenCalled();
+    expect(assignmentsRepository.markGrantFailedForWorker).toHaveBeenCalled();
     expect(outboxRepository.publishBestEffort).not.toHaveBeenCalled();
   });
 
   it('requeues a grant when the repository or user cannot be resolved', async () => {
-    assignmentsRepository.findById.mockResolvedValue(baseAssignment());
-    repositoriesRepository.findById.mockResolvedValue(null);
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(baseAssignment());
+    repositoriesRepository.findByIdForWorker.mockResolvedValue(null);
     syncRepository.markFailed.mockResolvedValue(1);
 
     await service.processJob(HIERARCHY_OUTBOX_TOPICS.grant, {
@@ -274,7 +280,7 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
   });
 
   it('transition #4a: a verified revoke marks the assignment revoked', async () => {
-    assignmentsRepository.findById.mockResolvedValue(
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(
       baseAssignment({
         desiredState: 'unassigned',
         effectiveState: 'revoking',
@@ -300,14 +306,16 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
       actingUserId: 'pm-1',
     });
 
-    expect(assignmentsRepository.markRevokeVerified).toHaveBeenCalledWith(
-      'assignment-1',
-    );
-    expect(assignmentsRepository.markRevokeFailed).not.toHaveBeenCalled();
+    expect(
+      assignmentsRepository.markRevokeVerifiedForWorker,
+    ).toHaveBeenCalledWith('assignment-1');
+    expect(
+      assignmentsRepository.markRevokeFailedForWorker,
+    ).not.toHaveBeenCalled();
   });
 
   it('transition #4b: a revoke that still reports access is NEVER marked revoked (fails closed, high-priority) and is requeued', async () => {
-    assignmentsRepository.findById.mockResolvedValue(
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(
       baseAssignment({
         desiredState: 'unassigned',
         effectiveState: 'revoking',
@@ -339,23 +347,25 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
       actingUserId: 'pm-1',
     });
 
-    expect(assignmentsRepository.markRevokeVerified).not.toHaveBeenCalled();
-    expect(assignmentsRepository.markRevokeFailed).toHaveBeenCalledWith(
-      'assignment-1',
-    );
+    expect(
+      assignmentsRepository.markRevokeVerifiedForWorker,
+    ).not.toHaveBeenCalled();
+    expect(
+      assignmentsRepository.markRevokeFailedForWorker,
+    ).toHaveBeenCalledWith('assignment-1');
     expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
       expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
     );
   });
 
   it('requeues a revoke when the repository or user cannot be resolved', async () => {
-    assignmentsRepository.findById.mockResolvedValue(
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(
       baseAssignment({
         desiredState: 'unassigned',
         effectiveState: 'revoking',
       }),
     );
-    repositoriesRepository.findById.mockResolvedValue(null);
+    repositoriesRepository.findByIdForWorker.mockResolvedValue(null);
     syncRepository.findByAssignmentId.mockResolvedValue(null);
     syncRepository.markFailed.mockResolvedValue(1);
 
@@ -370,7 +380,7 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
   });
 
   it('a grant job for an assignment superseded by a later revoke (desired_state no longer assigned) is a no-op', async () => {
-    assignmentsRepository.findById.mockResolvedValue(
+    assignmentsRepository.findByIdForWorker.mockResolvedValue(
       baseAssignment({ desiredState: 'unassigned' }),
     );
 
@@ -380,8 +390,12 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
     });
 
     expect(provider.ensureTeam).not.toHaveBeenCalled();
-    expect(assignmentsRepository.markGrantVerified).not.toHaveBeenCalled();
-    expect(assignmentsRepository.markGrantFailed).not.toHaveBeenCalled();
+    expect(
+      assignmentsRepository.markGrantVerifiedForWorker,
+    ).not.toHaveBeenCalled();
+    expect(
+      assignmentsRepository.markGrantFailedForWorker,
+    ).not.toHaveBeenCalled();
   });
 
   it('requestReconcile re-enqueues a grant job when desired_state is assigned', async () => {

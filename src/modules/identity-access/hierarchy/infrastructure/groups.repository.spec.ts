@@ -1,6 +1,18 @@
 import type { DatabaseService } from '#kernel/db/database.service';
 import { GroupsRepository } from './groups.repository';
 
+const tenantContext = {
+  current: jest.fn(),
+  require: jest.fn(() => ({
+    tenantId: 'tenant-1',
+    userId: 'actor-1',
+    membershipRole: 'admin' as const,
+    deploymentMode: 'hosted' as const,
+  })),
+  set: jest.fn(),
+  clear: jest.fn(),
+};
+
 const ownerRow = {
   id: 'member-1',
   workspace_id: 'group-1',
@@ -71,7 +83,8 @@ function stubGuardedSql(
     }
     if (
       options.allowRoleUpdate &&
-      sql.includes('UPDATE orgs.workspace_members SET role')
+      sql.includes('UPDATE orgs.workspace_members') &&
+      sql.includes('SET role')
     ) {
       return { rows: [] };
     }
@@ -92,7 +105,7 @@ describe('GroupsRepository last-owner SQL guards', () => {
     const client = db._clientMock;
     stubGuardedSql(client, 1);
 
-    const repo = new GroupsRepository(db);
+    const repo = new GroupsRepository(db, tenantContext);
     const result = await repo.changeMemberRoleGuarded(
       'group-1',
       'member-1',
@@ -101,9 +114,7 @@ describe('GroupsRepository last-owner SQL guards', () => {
 
     expect(result.blockedLastOwner).toBe(true);
     expect(result.member?.role).toBe('admin');
-    expect(
-      queryIncludes(client, 'UPDATE orgs.workspace_members SET role'),
-    ).toBe(false);
+    expect(queryIncludes(client, 'UPDATE orgs.workspace_members')).toBe(false);
   });
 
   it('changeMemberRoleGuarded allows demote when owner count is 2', async () => {
@@ -111,7 +122,7 @@ describe('GroupsRepository last-owner SQL guards', () => {
     const client = db._clientMock;
     stubGuardedSql(client, 2, { allowRoleUpdate: true });
 
-    const repo = new GroupsRepository(db);
+    const repo = new GroupsRepository(db, tenantContext);
     const result = await repo.changeMemberRoleGuarded(
       'group-1',
       'member-1',
@@ -120,9 +131,7 @@ describe('GroupsRepository last-owner SQL guards', () => {
 
     expect(result.blockedLastOwner).toBe(false);
     expect(result.member?.role).toBe('member');
-    expect(
-      queryIncludes(client, 'UPDATE orgs.workspace_members SET role'),
-    ).toBe(true);
+    expect(queryIncludes(client, 'UPDATE orgs.workspace_members')).toBe(true);
   });
 
   it('removeMemberGuardedWithClient blocks removing the last admin', async () => {
@@ -130,7 +139,7 @@ describe('GroupsRepository last-owner SQL guards', () => {
     const client = db._clientMock;
     stubGuardedSql(client, 1);
 
-    const repo = new GroupsRepository(db);
+    const repo = new GroupsRepository(db, tenantContext);
     const result = await repo.removeMemberGuardedWithClient(
       client,
       'group-1',
@@ -147,7 +156,7 @@ describe('GroupsRepository last-owner SQL guards', () => {
 describe('GroupsRepository addMemberDirect', () => {
   it('addMemberDirect upserts an active member and clears removal columns', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupsRepository(db);
+    const repo = new GroupsRepository(db, tenantContext);
 
     await repo.addMemberDirect('group-1', 'user-2', 'member', 'actor-1');
 
@@ -160,6 +169,51 @@ describe('GroupsRepository addMemberDirect', () => {
     expect(sql).toContain('ON CONFLICT (workspace_id, user_id)');
     expect(sql).toContain("member_status = 'active'");
     expect(sql).toContain('removed_at = NULL');
-    expect(params).toEqual(['group-1', 'user-2', 'member', 'actor-1']);
+    expect(params).toEqual([
+      'group-1',
+      'user-2',
+      'member',
+      'actor-1',
+      'tenant-1',
+    ]);
+  });
+});
+
+describe('GroupsRepository tenant gates', () => {
+  it('fails closed when no validated tenant context exists', async () => {
+    const db = makeDatabaseService();
+    const repo = new GroupsRepository(db);
+
+    await expect(repo.listAllGroups()).rejects.toThrow(
+      'Tenant context is not available for this request',
+    );
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('requires the creator to be the validated context user', async () => {
+    const db = makeDatabaseService();
+    const repo = new GroupsRepository(db, tenantContext);
+
+    await expect(
+      repo.createGroup({ name: 'Group', creatorUserId: 'other-user' }),
+    ).rejects.toThrow(
+      'Group creator must match the validated tenant context user',
+    );
+    expect(db.withClient).not.toHaveBeenCalled();
+  });
+
+  it('requires active tenant membership for a direct member write', async () => {
+    const db = makeDatabaseService();
+    const repo = new GroupsRepository(db, tenantContext);
+
+    await repo.addMemberDirect('group-1', 'user-2', 'member', 'actor-1');
+
+    const [sql, params] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(sql).toContain('tenancy.tenant_memberships');
+    expect(sql).toContain("tenant_membership.status = 'active'");
+    expect(params.at(-1)).toBe('tenant-1');
   });
 });

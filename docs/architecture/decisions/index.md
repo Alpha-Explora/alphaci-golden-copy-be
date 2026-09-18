@@ -10,3 +10,4 @@
 * [ADR-0008: Build profiles and artifact exclusion](adr-0008-build-profiles-and-artifact-exclusion.md) - pack sets per artifact and excluded source.
 * [ADR-0009: Client capability policies](adr-0009-client-capability-policies.md) - deny-only per-client narrowing within an edition.
 * [ADR-0010: Single authoring source for composition](adr-0010-single-authoring-source-for-composition.md) - one capability record, generated registry, manifests, and pack rows.
+* [ADR-0011: Deployment database isolation](adr-0011-deployment-database-isolation.md) - hosted multi-tenancy and Enterprise single-tenancy per deployment/database.

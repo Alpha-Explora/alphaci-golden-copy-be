@@ -29,7 +29,13 @@ export interface UsageQuotaPort {
     limitCode: string,
     increment?: number,
   ): Promise<void>;
-  assertManagedFleetCapacity(fact: ManagedFleetCapacityFact): Promise<void>;
+  assertDeploymentGlobalManagedFleetCapacity(
+    fact: ManagedFleetCapacityFact,
+  ): Promise<void>;
+  /** @deprecated Use the explicitly scoped deployment-global method above. */
+  assertManagedFleetCapacity?: (
+    fact: ManagedFleetCapacityFact,
+  ) => Promise<void>;
 }
 
 export const USAGE_QUOTA = Symbol('UsageQuota');

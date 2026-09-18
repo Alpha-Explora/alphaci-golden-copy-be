@@ -19,6 +19,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import { DevOnlyGuard } from '#kernel/auth/dev-only.guard';
 import { DevQuickLoginGuard } from '#kernel/auth/dev-quick-login.guard';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SkipTenantContext } from '#kernel/tenancy/skip-tenant-context.decorator.js';
 import {
   CapabilityGuard,
   RequiresCapability,
@@ -200,6 +201,7 @@ export class AuthController {
 
   @SkipThrottle()
   @UseGuards(SessionAuthGuard)
+  @SkipTenantContext()
   @Get('me')
   async me(@Req() req: Request) {
     const user = await this.authService.getSessionUser(req);
@@ -234,6 +236,7 @@ export class AuthController {
   }
 
   @UseGuards(SessionAuthGuard)
+  @SkipTenantContext()
   @Post('onboarding/complete')
   async completeOnboarding(@Req() req: Request) {
     await this.authService.completeOnboarding(req);
@@ -241,6 +244,7 @@ export class AuthController {
   }
 
   @UseGuards(SessionAuthGuard)
+  @SkipTenantContext()
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.authService.logout(req);
@@ -259,6 +263,7 @@ export class AuthController {
    * explicitly requested. Returns { ok: true, archived: true }.
    */
   @UseGuards(SessionAuthGuard)
+  @SkipTenantContext()
   @Delete('account')
   async deleteAccount(
     @Req() req: Request,

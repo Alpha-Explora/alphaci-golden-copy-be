@@ -1,5 +1,10 @@
 import { ProjectDashboardSnapshotsRepository } from './project-dashboard-snapshots.repository';
 import type { DatabaseService } from '#kernel/db/database.service';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 
 const makeDatabaseService = (query: jest.Mock) =>
   ({
@@ -9,11 +14,25 @@ const makeDatabaseService = (query: jest.Mock) =>
 describe('ProjectDashboardSnapshotsRepository', () => {
   let query: jest.Mock;
   let repository: ProjectDashboardSnapshotsRepository;
+  let tenantContext: TenantContextPort;
 
   beforeEach(() => {
     query = jest.fn();
+    const context: TenantContext = {
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      membershipRole: 'member',
+      deploymentMode: 'hosted',
+    };
+    tenantContext = {
+      current: () => context,
+      require: () => context,
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
     repository = new ProjectDashboardSnapshotsRepository(
       makeDatabaseService(query),
+      tenantContext,
     );
   });
 
@@ -63,6 +82,7 @@ describe('ProjectDashboardSnapshotsRepository', () => {
         '2026-06-12T00:00:00.000Z',
         '2026-06-12T00:00:01.000Z',
         'user-1',
+        'tenant-1',
       ],
     );
     expect(result).toMatchObject({
@@ -93,13 +113,24 @@ describe('ProjectDashboardSnapshotsRepository', () => {
     const result = await repository.findLatestByProject('project-1');
 
     expect(query).toHaveBeenCalledWith(
-      expect.stringContaining('ORDER BY created_at DESC'),
-      ['project-1'],
+      expect.stringContaining('ORDER BY snapshot.created_at DESC'),
+      ['project-1', 'tenant-1'],
     );
     expect(result).toMatchObject({
       id: 'snapshot-1',
       projectId: 'project-1',
       status: 'ok',
     });
+  });
+
+  it('fails closed when no tenant context is available', async () => {
+    const unscopedRepository = new ProjectDashboardSnapshotsRepository(
+      makeDatabaseService(query),
+    );
+
+    await expect(
+      unscopedRepository.findLatestByProject('project-1'),
+    ).rejects.toThrow(TenantContextRequiredError);
+    expect(query).not.toHaveBeenCalled();
   });
 });

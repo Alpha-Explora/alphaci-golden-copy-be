@@ -34,8 +34,12 @@ function allEnabledConfig(
   profile: 'hosted' | 'enterprise',
   edition: 'saas' | 'edu' | 'enterprise',
 ) {
+  const manifest = PACK_MANIFESTS[edition];
+  const capabilities: readonly string[] = manifest.capabilities;
   return {
-    auth: { selfServeAuthEnabled: edition === 'saas' },
+    auth: {
+      selfServeAuthEnabled: capabilities.includes('identity.self-serve-auth'),
+    },
     composition: { profile, edition },
     subscription: { gateEnabled: true },
     envProvisioning: { enabled: true },
@@ -139,19 +143,20 @@ describe('build profiles', () => {
     ['hosted', 'edu'],
     ['enterprise', 'enterprise'],
   ] as const)('resolves the expected key set for %s/%s', (profile, edition) => {
+    const manifest = PACK_MANIFESTS[edition];
+    const capabilities: readonly string[] = manifest.capabilities;
     const resolved = resolveCapabilities({
-      manifest: PACK_MANIFESTS[edition],
+      manifest,
       config: allEnabledConfig(profile, edition),
     });
 
-    const expected =
-      edition === 'saas'
-        ? [
-            ...EXPECTED_RESOLVED_KEYS.slice(0, 2),
-            'identity.self-serve-auth',
-            ...EXPECTED_RESOLVED_KEYS.slice(2),
-          ]
-        : EXPECTED_RESOLVED_KEYS;
+    const expected = capabilities.includes('identity.self-serve-auth')
+      ? [
+          ...EXPECTED_RESOLVED_KEYS.slice(0, 2),
+          'identity.self-serve-auth',
+          ...EXPECTED_RESOLVED_KEYS.slice(2),
+        ]
+      : EXPECTED_RESOLVED_KEYS;
 
     expect([...resolved]).toEqual(expected);
   });

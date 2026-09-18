@@ -20,6 +20,10 @@ const schemaGate = require(
     reference: string,
     legacyReferences: Set<string>,
   ) => boolean;
+  schemaOwnershipSnapshot: () => {
+    owners: Record<string, string[]>;
+    legacyMigrationReferences: Record<string, string[]>;
+  };
 };
 
 describe('schema ownership gate', () => {
@@ -106,5 +110,31 @@ describe('schema ownership gate', () => {
     // app_users intentionally existed in both the legacy public schema and
     // identity, so the gate refuses to guess which search_path is active.
     expect(schemaGate.resolveKnownUnqualifiedTable('app_users')).toBeNull();
+  });
+
+  it('keeps tenancy under identity-access and records its project-root transition', () => {
+    const snapshot = schemaGate.schemaOwnershipSnapshot();
+
+    expect(snapshot.owners['identity-access']).toEqual(
+      expect.arrayContaining(['tenancy']),
+    );
+    expect(
+      snapshot.legacyMigrationReferences[
+        'identity-access/20260918000000_tenancy_kernel.sql'
+      ],
+    ).toEqual(['projects.provisioned_projects']);
+    expect(
+      snapshot.legacyMigrationReferences[
+        'identity-access/20260918000010_tenant_scope_extensions.sql'
+      ],
+    ).toEqual([
+      'env_provisioning.provider_connections',
+      'workflow.workflow_generations',
+    ]);
+    expect(
+      snapshot.legacyMigrationReferences[
+        'pipelines/20260918000020_ci_run_reports_tenant_scope.sql'
+      ],
+    ).toEqual(['tenancy.tenants']);
   });
 });

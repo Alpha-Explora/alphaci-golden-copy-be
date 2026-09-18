@@ -198,11 +198,12 @@ export class GithubSyncService {
     assignmentId: string,
     actingUserId: string,
   ): Promise<void> {
-    const assignment = await this.assignmentsRepository.findById(assignmentId);
+    const assignment =
+      await this.assignmentsRepository.findByIdForWorker(assignmentId);
     if (!assignment || assignment.desiredState !== 'assigned') {
       return; // superseded by a later revoke — nothing to do.
     }
-    const repository = await this.repositoriesRepository.findById(
+    const repository = await this.repositoriesRepository.findByIdForWorker(
       assignment.repositoryId,
     );
     const user = await this.sessionUserLookup.findSessionUser(
@@ -251,7 +252,7 @@ export class GithubSyncService {
         return;
       }
 
-      await this.assignmentsRepository.markGrantVerified(assignmentId);
+      await this.assignmentsRepository.markGrantVerifiedForWorker(assignmentId);
       await this.syncRepository.markVerified({
         assignmentId,
         githubTeamId: team.githubTeamId,
@@ -284,11 +285,12 @@ export class GithubSyncService {
     assignmentId: string,
     actingUserId: string,
   ): Promise<void> {
-    const assignment = await this.assignmentsRepository.findById(assignmentId);
+    const assignment =
+      await this.assignmentsRepository.findByIdForWorker(assignmentId);
     if (!assignment || assignment.desiredState !== 'unassigned') {
       return;
     }
-    const repository = await this.repositoriesRepository.findById(
+    const repository = await this.repositoriesRepository.findByIdForWorker(
       assignment.repositoryId,
     );
     const user = await this.sessionUserLookup.findSessionUser(
@@ -346,7 +348,9 @@ export class GithubSyncService {
         return;
       }
 
-      await this.assignmentsRepository.markRevokeVerified(assignmentId);
+      await this.assignmentsRepository.markRevokeVerifiedForWorker(
+        assignmentId,
+      );
       await this.syncRepository.markVerified({
         assignmentId,
         githubTeamId: sync?.githubTeamId ?? '',
@@ -381,7 +385,7 @@ export class GithubSyncService {
     groupId?: string,
     actingUserId?: string,
   ): Promise<void> {
-    await this.assignmentsRepository.markGrantFailed(assignmentId);
+    await this.assignmentsRepository.markGrantFailedForWorker(assignmentId);
     const retryCount = await this.syncRepository.markFailed({
       assignmentId,
       error: message,
@@ -409,7 +413,7 @@ export class GithubSyncService {
     // 'revoked' (hierarchy state-machine contract, hierarchy retry and security contract "must retry automatically,
     // remain visible to administrators, and block any claim that access has
     // been removed until verified").
-    await this.assignmentsRepository.markRevokeFailed(assignmentId);
+    await this.assignmentsRepository.markRevokeFailedForWorker(assignmentId);
     const retryCount = await this.syncRepository.markFailed({
       assignmentId,
       error: message,

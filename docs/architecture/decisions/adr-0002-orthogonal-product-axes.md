@@ -31,11 +31,19 @@ build -> edition manifest -> deployment configuration -> tenant override
 
 A lower layer may disable a capability but may not enable one that an upper layer did not provide.
 
+The physical isolation rule is intentionally separate from composition: the
+`hosted` profile is multi-tenant and may serve SaaS and Education tenants from
+one hosted database; the `enterprise` profile is single-tenant per dedicated
+cloud or on-prem database. `ALPHACI_EDITION` selects a pack, never a database
+schema, and an Enterprise client policy never creates a new database boundary.
+
 ## Rejected alternatives
 
 - Conditional source branches such as `edition === "edu"` were rejected.
 - Copying the domain tree for each edition was rejected.
 - Treating an on-prem deployment target as a product edition was rejected.
+- Creating edition-specific PostgreSQL schemas was rejected.
+- Treating an Enterprise client policy as a tenant or database selector was rejected.
 
 ## Consequences
 
@@ -50,4 +58,4 @@ The documentation check scans `src/` for edition comparison branches. Capability
 
 ## Later decisions
 
-[ADR-0007](adr-0007-runtime-composition-resolution.md) makes composition resolution a runtime behaviour and states the narrowing layers in force. [ADR-0008](adr-0008-build-profiles-and-artifact-exclusion.md) makes the build layer an explicit set of packs. The orthogonality rule in this record is unchanged.
+[ADR-0007](adr-0007-runtime-composition-resolution.md) makes composition resolution a runtime behaviour and states the narrowing layers in force. [ADR-0008](adr-0008-build-profiles-and-artifact-exclusion.md) makes the build layer an explicit set of packs. [ADR-0011](adr-0011-deployment-database-isolation.md) records the physical database boundary. The orthogonality rule in this record is unchanged.

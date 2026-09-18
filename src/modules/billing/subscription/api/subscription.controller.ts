@@ -11,10 +11,12 @@ import type { Request } from 'express';
 
 import type { SessionUser } from '#kernel/auth/session-user.interface';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SkipTenantContext } from '#kernel/tenancy/skip-tenant-context.decorator.js';
 import { ActivateSubscriptionDto } from './dto/activate-subscription.dto';
 import { SubscriptionService } from '../application/subscription.service';
 
 @Controller('subscription')
+@SkipTenantContext()
 export class SubscriptionController {
   constructor(private readonly subscriptionService: SubscriptionService) {}
 

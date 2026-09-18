@@ -2,7 +2,7 @@ import { AuditEventsService } from './audit-events.service';
 
 describe('AuditEventsService', () => {
   const repository = {
-    create: jest.fn(),
+    createDeploymentGlobal: jest.fn(),
     listByProjectForUser: jest.fn(),
   };
   const capabilityResolver = { deployment: jest.fn() };
@@ -29,7 +29,7 @@ describe('AuditEventsService', () => {
       metadata: { pullRequestNumber: 42 },
     });
 
-    expect(repository.create).not.toHaveBeenCalled();
+    expect(repository.createDeploymentGlobal).not.toHaveBeenCalled();
   });
 
   it('writes audit rows when audit is enabled', async () => {
@@ -46,7 +46,7 @@ describe('AuditEventsService', () => {
       metadata: { pullRequestNumber: 42 },
     });
 
-    expect(repository.create).toHaveBeenCalledWith({
+    expect(repository.createDeploymentGlobal).toHaveBeenCalledWith({
       actorUserId: 'user-1',
       projectId: 'project-1',
       eventCode: 'workflow_pr_created',
@@ -56,14 +56,16 @@ describe('AuditEventsService', () => {
   });
 
   it('does not throw when project event recording fails', async () => {
-    repository.create.mockRejectedValueOnce(new Error('database down'));
+    repository.createDeploymentGlobal.mockRejectedValueOnce(
+      new Error('database down'),
+    );
     const service = new AuditEventsService(
       repository as never,
       capabilityResolver as never,
     );
 
     await expect(
-      service.recordProjectEvent({
+      service.recordDeploymentGlobalProjectEvent({
         actorUserId: 'user-1',
         projectId: 'project-1',
         eventCode: 'workflow_pr_created',

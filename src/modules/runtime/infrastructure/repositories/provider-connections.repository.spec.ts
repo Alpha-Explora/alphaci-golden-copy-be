@@ -1,6 +1,9 @@
 import { Test } from '@nestjs/testing';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import { TENANT_CONTEXT } from '#kernel/tenancy/tenant-context.port.js';
+import type { TenantContext } from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 
 const row = {
@@ -15,6 +18,20 @@ const row = {
 };
 
 describe('ProviderConnectionsRepository', () => {
+  const context: TenantContext = {
+    tenantId: 'tenant-1',
+    userId: 'user-1',
+    membershipRole: 'member',
+    deploymentMode: 'hosted',
+  };
+
+  const tenantContext = {
+    current: () => context,
+    require: () => context,
+    set: jest.fn(),
+    clear: jest.fn(),
+  };
+
   it('stores only encrypted provider tokens', async () => {
     const database = {
       query: jest.fn().mockResolvedValue({ rows: [row] }),
@@ -23,6 +40,7 @@ describe('ProviderConnectionsRepository', () => {
       providers: [
         ProviderConnectionsRepository,
         { provide: DatabaseService, useValue: database },
+        { provide: TENANT_CONTEXT, useValue: tenantContext },
       ],
     }).compile();
 
@@ -43,8 +61,34 @@ describe('ProviderConnectionsRepository', () => {
     expect(queryText).toContain(
       'INSERT INTO env_provisioning.provider_connections',
     );
+    expect(queryText).toContain('tenant_id');
     expect(queryText).toContain('encrypted_token');
+    expect(queryValues).toContain('tenant-1');
     expect(queryValues).toContain('encrypted-token');
     expect(queryValues).not.toContain('plain-token');
+  });
+
+  it('fails closed for request-facing reads without tenant context', async () => {
+    const database = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    } as unknown as DatabaseService;
+    const repository = new ProviderConnectionsRepository(database);
+
+    await expect(repository.listProviderConnections('user-1')).rejects.toThrow(
+      TenantContextRequiredError,
+    );
+    expect(database.query).not.toHaveBeenCalled();
+  });
+
+  it('keeps the worker lifecycle marker usable without request context', async () => {
+    const database = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    } as unknown as DatabaseService;
+    const repository = new ProviderConnectionsRepository(database);
+
+    await expect(
+      repository.markProviderConnectionUsed('connection-1'),
+    ).resolves.toBeUndefined();
+    expect(database.query).toHaveBeenCalledTimes(1);
   });
 });

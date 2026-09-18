@@ -16,11 +16,13 @@ import {
   RequiresCapability,
 } from '#kernel/composition/index.js';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SkipTenantContext } from '#kernel/tenancy/skip-tenant-context.decorator.js';
 import { NotificationsService } from '../application/notifications.service';
 
 @Controller('notifications')
 @UseGuards(SessionAuthGuard, CapabilityGuard)
 @RequiresCapability('platform.notifications')
+@SkipTenantContext()
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 

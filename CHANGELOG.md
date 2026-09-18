@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added the initial tenancy kernel for hosted multi-tenant SaaS/EDU and Enterprise single-tenant-per-database deployments, with explicit tenant provisioning/backfill commands, validated tenant context, and workspace/project scope enforcement.
+- Added ADR-0011 and runbooks for deployment database boundaries and tenant-scope migration evidence.
+
 - Added the limited Enterprise-only `runtime.client-composition` capability, including the profile-keyed `src/packs/enterprise` client-policy pack, backend-owned `clientComposition` projection, and frontend artifact-symbol exclusion contract.
 - Added focused pack-loader, static-import boundary, API projection, and profile artifact tests proving hosted compilation/runtime do not include the Enterprise implementation while Enterprise does.
 - Added deterministic `provenance.json` generation for `@alphaci/capability-catalog`, including the catalog source digest and canonical package artifact digest, with checker coverage for stale and tampered output.

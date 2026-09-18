@@ -1,6 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import type {
   DeploymentTargetStatus,
   DeploymentStrategy,
@@ -93,13 +97,36 @@ function toInsertParams(input: CreateDeploymentTargetInput): unknown[] {
   ];
 }
 
+function projectTenantPredicate(
+  projectAlias: string,
+  tenantParam: string,
+): string {
+  return `
+    ${projectAlias}.tenant_id = ${tenantParam}::uuid
+    AND (
+      ${projectAlias}.workspace_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM orgs.workspaces AS tenant_workspace
+        WHERE tenant_workspace.id = ${projectAlias}.workspace_id
+          AND tenant_workspace.tenant_id = ${tenantParam}::uuid
+      )
+    )
+  `;
+}
+
 @Injectable()
 export class DeploymentTargetsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext: TenantContextPort,
+  ) {}
 
   async createDeploymentTarget(
     input: CreateDeploymentTargetInput,
   ): Promise<DeploymentTargetSummary> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
         INSERT INTO env_provisioning.project_deployment_targets (
@@ -126,10 +153,13 @@ export class DeploymentTargetsRepository {
           deployment_strategy,
           provider_metadata
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+        FROM projects.provisioned_projects AS project
+        WHERE project.id = $1
+          AND ${projectTenantPredicate('project', '$23')}
         RETURNING *;
       `,
-      toInsertParams(input),
+      [...toInsertParams(input), tenantId],
     );
 
     const row = result.rows[0];
@@ -145,14 +175,18 @@ export class DeploymentTargetsRepository {
   async listDeploymentTargets(
     projectId: string,
   ): Promise<DeploymentTargetSummary[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
-        SELECT *
-        FROM env_provisioning.project_deployment_targets
-        WHERE project_id = $1
-        ORDER BY created_at DESC;
+        SELECT target.*
+        FROM env_provisioning.project_deployment_targets AS target
+        JOIN projects.provisioned_projects AS project
+          ON project.id = target.project_id
+        WHERE target.project_id = $1
+          AND ${projectTenantPredicate('project', '$2')}
+        ORDER BY target.created_at DESC;
       `,
-      [projectId],
+      [projectId, tenantId],
     );
 
     return result.rows.map((row) => this.toSummary(row));
@@ -163,16 +197,20 @@ export class DeploymentTargetsRepository {
     providerMetadata: Record<string, unknown>,
     status?: DeploymentTargetStatus,
   ): Promise<DeploymentTargetSummary> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
-        UPDATE env_provisioning.project_deployment_targets
+        UPDATE env_provisioning.project_deployment_targets AS target
         SET provider_metadata = $2,
             status = COALESCE($3, status),
             updated_at = NOW()
-        WHERE id = $1
-        RETURNING *;
+        FROM projects.provisioned_projects AS project
+        WHERE target.id = $1
+          AND project.id = target.project_id
+          AND ${projectTenantPredicate('project', '$4')}
+        RETURNING target.*;
       `,
-      [targetId, JSON.stringify(providerMetadata), status ?? null],
+      [targetId, JSON.stringify(providerMetadata), status ?? null, tenantId],
     );
 
     const row = result.rows[0];
@@ -191,6 +229,7 @@ export class DeploymentTargetsRepository {
     userId: string,
     input: UpdateDeploymentTargetMetadataInput,
   ): Promise<DeploymentTargetSummary | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
         UPDATE env_provisioning.project_deployment_targets AS target
@@ -206,14 +245,18 @@ export class DeploymentTargetsRepository {
         WHERE project.id = target.project_id
           AND target.project_id = $1
           AND target.id = $2
+          AND ${projectTenantPredicate('project', '$18')}
           AND (
             project.user_id = $3
             OR EXISTS (
               SELECT 1
               FROM orgs.workspace_members AS member
+              JOIN orgs.workspaces AS workspace
+                ON workspace.id = member.workspace_id
               WHERE member.workspace_id = project.workspace_id
                 AND member.user_id = $3
                 AND member.role IN ('admin', 'delegated_lead', 'member')
+                AND workspace.tenant_id = $18::uuid
             )
           )
         RETURNING target.*;
@@ -236,6 +279,7 @@ export class DeploymentTargetsRepository {
         input.startCommand ?? null,
         input.renderEnvironmentName !== undefined,
         input.renderEnvironmentName ?? null,
+        tenantId,
       ],
     );
 
@@ -248,6 +292,7 @@ export class DeploymentTargetsRepository {
     targetId: string,
     userId: string,
   ): Promise<boolean> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ id: string }>(
       `
         DELETE FROM env_provisioning.project_deployment_targets AS target
@@ -255,19 +300,23 @@ export class DeploymentTargetsRepository {
         WHERE project.id = target.project_id
           AND target.project_id = $1
           AND target.id = $2
+          AND ${projectTenantPredicate('project', '$4')}
           AND (
             project.user_id = $3
             OR EXISTS (
               SELECT 1
               FROM orgs.workspace_members AS member
+              JOIN orgs.workspaces AS workspace
+                ON workspace.id = member.workspace_id
               WHERE member.workspace_id = project.workspace_id
                 AND member.user_id = $3
                 AND member.role IN ('admin', 'delegated_lead', 'member')
+                AND workspace.tenant_id = $4::uuid
             )
           )
         RETURNING target.id;
       `,
-      [projectId, targetId, userId],
+      [projectId, targetId, userId, tenantId],
     );
 
     return (result.rowCount ?? 0) > 0;
@@ -277,29 +326,38 @@ export class DeploymentTargetsRepository {
     targetId: string,
     userId: string,
   ): Promise<DeploymentTargetSummary | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
         SELECT t.*
         FROM env_provisioning.project_deployment_targets t
         JOIN projects.provisioned_projects p ON p.id = t.project_id
         WHERE t.id = $1
+          AND ${projectTenantPredicate('p', '$3')}
           AND (
             p.user_id = $2
             OR EXISTS (
               SELECT 1
               FROM orgs.workspace_members AS member
+              JOIN orgs.workspaces AS workspace
+                ON workspace.id = member.workspace_id
               WHERE member.workspace_id = p.workspace_id
                 AND member.user_id = $2
                 AND member.role IN ('admin', 'delegated_lead', 'member')
+                AND workspace.tenant_id = $3::uuid
             )
           )
         LIMIT 1;
       `,
-      [targetId, userId],
+      [targetId, userId, tenantId],
     );
 
     const row = result.rows[0];
     return row ? this.toSummary(row) : null;
+  }
+
+  private requireTenantId(): string {
+    return this.tenantContext.require().tenantId;
   }
 
   private toSummary(row: DeploymentTargetRow): DeploymentTargetSummary {

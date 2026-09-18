@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import type { QueryActivityDto } from '../api/dto/query-activity.dto';
 
 export interface GroupActivityRow {
@@ -15,7 +20,12 @@ export interface GroupActivityRow {
 
 @Injectable()
 export class GroupActivityRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   /**
    * Cursor-paginated activity list. Fetches one extra row beyond `limit` to
@@ -30,12 +40,14 @@ export class GroupActivityRepository {
     groupId: string,
     query: QueryActivityDto,
   ): Promise<{ rows: GroupActivityRow[]; nextCursor: string | null }> {
+    const tenantId = this.requireTenantId();
     const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
     const conditions: string[] = [
       'event.workspace_id = $1',
+      'workspace.tenant_id = $2::uuid',
       "event.event_code LIKE 'hierarchy.%'",
     ];
-    const values: unknown[] = [groupId];
+    const values: unknown[] = [groupId, tenantId];
 
     if (query.memberId) {
       values.push(query.memberId);
@@ -106,6 +118,7 @@ export class GroupActivityRepository {
           event.id, event.event_code, event.message, event.actor_user_id,
           user_profile.login AS actor_login, event.metadata_json, event.created_at
         FROM audit.audit_events AS event
+        JOIN orgs.workspaces AS workspace ON workspace.id = event.workspace_id
         LEFT JOIN identity.app_users AS user_profile ON user_profile.id = event.actor_user_id
         WHERE ${conditions.join(' AND ')}
         ORDER BY event.created_at DESC
@@ -118,5 +131,12 @@ export class GroupActivityRepository {
     const rows = hasNextPage ? result.rows.slice(0, limit) : result.rows;
     const nextCursor = hasNextPage ? (rows.at(-1)?.created_at ?? null) : null;
     return { rows, nextCursor };
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require().tenantId;
   }
 }

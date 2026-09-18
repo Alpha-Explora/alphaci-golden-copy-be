@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 
 /**
  * Role-aware visibility predicate for a provisioned project (table aliased `pp`).
@@ -32,8 +37,10 @@ import { DatabaseService } from '#kernel/db/database.service';
  * of a shared team workspace, and the reason a personal workspace never has
  * other members in it.
  */
-function projectVisibilitySql(userParam: string): string {
+function projectVisibilitySql(userParam: string, tenantParam: string): string {
   return `
+    pp.tenant_id = ${tenantParam}::uuid
+    AND (
     EXISTS (SELECT 1 FROM identity.app_users vu
              WHERE vu.id = ${userParam} AND vu.app_role = 'admin')
     OR EXISTS (SELECT 1 FROM identity.platform_admins vpa
@@ -41,18 +48,22 @@ function projectVisibilitySql(userParam: string): string {
     OR pp.user_id = ${userParam}
     OR EXISTS (
       SELECT 1 FROM orgs.workspace_members vm
+       JOIN orgs.workspaces vw ON vw.id = vm.workspace_id
        WHERE vm.workspace_id = pp.workspace_id
          AND vm.user_id = ${userParam}
          AND vm.member_status = 'active'
+         AND vw.tenant_id = ${tenantParam}::uuid
     )
     OR EXISTS (
       SELECT 1
-        FROM hierarchy.repositories vhr
-        JOIN hierarchy.repository_assignments vra ON vra.repository_id = vhr.id
+       FROM hierarchy.repositories vhr
+       JOIN orgs.workspaces vhw ON vhw.id = vhr.group_id
+       JOIN hierarchy.repository_assignments vra ON vra.repository_id = vhr.id
        WHERE vhr.provisioned_project_id = pp.id
+         AND vhw.tenant_id = ${tenantParam}::uuid
          AND vra.user_id = ${userParam}
          AND vra.status IN ('active', 'pending')
-    )`;
+    ))`;
 }
 
 export type ProvisionedProjectStatus =
@@ -79,6 +90,7 @@ export interface ProvisionedProjectRow {
   workflow_recipe_id: string | null;
   project_options: Record<string, unknown> | null;
   workspace_id?: string | null;
+  tenant_id?: string | null;
   is_example?: boolean;
   /**
    * Viewer-relative: true only when the querying user is the actual row
@@ -110,17 +122,59 @@ export interface CreateProvisionedProjectInput {
   projectOptions?: Record<string, unknown> | null;
   workflowSha256?: string | null;
   workspaceId?: string | null;
+  tenantId?: string | null;
 }
 
 @Injectable()
 export class ProjectsRepository {
   private readonly logger = new Logger(ProjectsRepository.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   async create(
     data: CreateProvisionedProjectInput,
   ): Promise<ProvisionedProjectRow> {
+    const tenantId = this.requireTenantId();
+    if (data.tenantId && data.tenantId !== tenantId) {
+      throw new Error('Project tenant does not match the validated context');
+    }
+    if (data.workspaceId) {
+      const workspace = await this.databaseService.query<{ id: string }>(
+        `
+          SELECT id
+          FROM orgs.workspaces
+          WHERE id = $1 AND tenant_id = $2::uuid;
+        `,
+        [data.workspaceId, tenantId],
+      );
+      if (!workspace.rows[0]) {
+        throw new Error(
+          'Project workspace does not belong to the validated context',
+        );
+      }
+    }
+    const ownerMembership = await this.databaseService.query<{
+      user_id: string;
+    }>(
+      `
+        SELECT user_id
+        FROM tenancy.tenant_memberships
+        WHERE tenant_id = $1::uuid
+          AND user_id = $2
+          AND status = 'active';
+      `,
+      [tenantId, data.userId],
+    );
+    if (!ownerMembership.rows[0]) {
+      throw new Error(
+        'Project owner does not belong to the validated tenant context',
+      );
+    }
     const query = `
       INSERT INTO projects.provisioned_projects (
         user_id,
@@ -147,6 +201,7 @@ export class ProjectsRepository {
         workflow_template_id,
         project_options,
         workspace_id,
+        tenant_id,
         is_example
       )
       VALUES (
@@ -154,7 +209,7 @@ export class ProjectsRepository {
         $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15,
         $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25
+        $21, $22, $23, $24, $25, $26
       )
       RETURNING
         id,
@@ -174,13 +229,14 @@ export class ProjectsRepository {
         workflow_recipe_id,
         project_options,
         workspace_id,
+        tenant_id,
         is_example,
         created_at,
         updated_at;
     `;
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       query,
-      this.toCreateParams(data),
+      this.toCreateParams({ ...data, tenantId }),
     );
 
     const row = result.rows[0];
@@ -229,6 +285,7 @@ export class ProjectsRepository {
       data.templateId,
       JSON.stringify(projectOptions),
       data.workspaceId ?? null,
+      data.tenantId ?? null,
       false,
     ];
   }
@@ -247,14 +304,15 @@ export class ProjectsRepository {
     limit = 50,
     workspaceId?: string | null,
   ): Promise<ProvisionedProjectRow[]> {
+    const tenantId = this.requireTenantId();
     const safeLimit = Number.isFinite(limit)
       ? Math.max(1, Math.min(100, Math.trunc(limit)))
       : 25;
 
-    const workspaceFilter = workspaceId ? 'AND pp.workspace_id = $3' : '';
+    const workspaceFilter = workspaceId ? 'AND pp.workspace_id = $4' : '';
     const values = workspaceId
-      ? [userId, safeLimit, workspaceId]
-      : [userId, safeLimit];
+      ? [userId, safeLimit, tenantId, workspaceId]
+      : [userId, safeLimit, tenantId];
 
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
@@ -276,12 +334,13 @@ export class ProjectsRepository {
           pp.workflow_recipe_id,
           pp.project_options,
           pp.workspace_id,
+          pp.tenant_id,
           pp.is_example,
           (pp.user_id = $1) AS is_owner,
           pp.created_at,
           pp.updated_at
         FROM projects.provisioned_projects AS pp
-        WHERE (${projectVisibilitySql('$1')})
+        WHERE (${projectVisibilitySql('$1', '$3')})
         ${workspaceFilter}
         ORDER BY pp.created_at DESC
         LIMIT $2;
@@ -332,13 +391,16 @@ export class ProjectsRepository {
     userId: string,
     workspaceId: string,
   ): Promise<boolean> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ allowed: boolean }>(
       `
         SELECT (
           EXISTS (
             SELECT 1 FROM orgs.workspace_members m
+             JOIN orgs.workspaces w ON w.id = m.workspace_id
              WHERE m.workspace_id = $2 AND m.user_id = $1
                AND m.member_status = 'active'
+               AND w.tenant_id = $3::uuid
           )
           OR EXISTS (SELECT 1 FROM identity.app_users u
                       WHERE u.id = $1 AND u.app_role = 'admin')
@@ -346,7 +408,7 @@ export class ProjectsRepository {
                       WHERE pa.user_id = $1)
         ) AS allowed;
       `,
-      [userId, workspaceId],
+      [userId, workspaceId, tenantId],
     );
     return result.rows[0]?.allowed ?? false;
   }
@@ -356,6 +418,7 @@ export class ProjectsRepository {
     userId: string,
     allowedRoles?: string[],
   ): Promise<ProvisionedProjectRow | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
         SELECT
@@ -376,11 +439,13 @@ export class ProjectsRepository {
           pp.workflow_recipe_id,
           pp.project_options,
           pp.workspace_id,
+          pp.tenant_id,
           pp.is_example,
           pp.created_at,
           pp.updated_at
         FROM projects.provisioned_projects AS pp
         WHERE pp.id = $1
+          AND pp.tenant_id = $4::uuid
           AND (
             CASE WHEN $3::text[] IS NOT NULL THEN
               -- Restricted mode (e.g. destructive delete): owner OR a workspace
@@ -389,19 +454,22 @@ export class ProjectsRepository {
               OR EXISTS (
                 SELECT 1
                 FROM orgs.workspace_members AS member
+                JOIN orgs.workspaces AS workspace
+                  ON workspace.id = member.workspace_id
                 WHERE member.workspace_id = pp.workspace_id
                   AND member.user_id = $2
                   AND member.role = ANY($3::text[])
+                  AND workspace.tenant_id = $4::uuid
               )
             ELSE
               -- Default read: same role-aware visibility as the dashboard list
               -- (global admin / owner / group manager / assigned member).
-              ${projectVisibilitySql('$2')}
+               ${projectVisibilitySql('$2', '$4')}
             END
           )
         LIMIT 1;
       `,
-      [id, userId, allowedRoles ?? null],
+      [id, userId, allowedRoles ?? null, tenantId],
     );
 
     return result.rows[0] ?? null;
@@ -414,6 +482,7 @@ export class ProjectsRepository {
     commitUrl?: string | null,
     failureReason?: string | null,
   ): Promise<void> {
+    const tenantId = this.requireTenantId();
     await this.databaseService.query(
       `
         UPDATE projects.provisioned_projects
@@ -423,9 +492,16 @@ export class ProjectsRepository {
           github_commit_url  = COALESCE($4, github_commit_url),
           failure_reason     = COALESCE($5, failure_reason),
           updated_at         = NOW()
-        WHERE id = $1;
+        WHERE id = $1 AND tenant_id = $6::uuid;
       `,
-      [id, status, commitSha ?? null, commitUrl ?? null, failureReason ?? null],
+      [
+        id,
+        status,
+        commitSha ?? null,
+        commitUrl ?? null,
+        failureReason ?? null,
+        tenantId,
+      ],
     );
   }
 
@@ -448,23 +524,28 @@ export class ProjectsRepository {
     userId: string,
     allowedRoles: string[] = ['admin', 'delegated_lead', 'member'],
   ): Promise<boolean> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ id: string }>(
       `
         DELETE FROM projects.provisioned_projects
         WHERE id = $1
+          AND tenant_id = $4::uuid
           AND (
             user_id = $2
             OR EXISTS (
               SELECT 1
               FROM orgs.workspace_members AS member
+              JOIN orgs.workspaces AS workspace
+                ON workspace.id = member.workspace_id
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $2
                 AND member.role = ANY($3::text[])
+                AND workspace.tenant_id = $4::uuid
             )
           )
         RETURNING id;
       `,
-      [id, userId, allowedRoles],
+      [id, userId, allowedRoles, tenantId],
     );
     return (result.rowCount ?? 0) > 0;
   }
@@ -475,9 +556,10 @@ export class ProjectsRepository {
    */
   async markOrphaned(ids: string[], userId: string): Promise<number> {
     if (ids.length === 0) return 0;
+    const tenantId = this.requireTenantId();
 
-    // Build $2, $3, … placeholders for the id list ($1 = userId)
-    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ');
+    // Build $3, $4, … placeholders for the id list ($1 = userId, $2 = tenant)
+    const placeholders = ids.map((_, i) => `$${i + 3}`).join(', ');
 
     const result = await this.databaseService.query(
       `
@@ -488,15 +570,19 @@ export class ProjectsRepository {
             OR EXISTS (
               SELECT 1
               FROM orgs.workspace_members AS member
+              JOIN orgs.workspaces AS workspace
+                ON workspace.id = member.workspace_id
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
                 AND member.role IN ('admin', 'delegated_lead', 'member')
+                AND workspace.tenant_id = $2::uuid
             )
           )
+          AND projects.provisioned_projects.tenant_id = $2::uuid
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
           AND status <> 'orphaned';
       `,
-      [userId, ...ids],
+      [userId, tenantId, ...ids],
     );
     return result.rowCount ?? 0;
   }
@@ -507,8 +593,9 @@ export class ProjectsRepository {
    */
   async markReachable(ids: string[], userId: string): Promise<number> {
     if (ids.length === 0) return 0;
+    const tenantId = this.requireTenantId();
 
-    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ');
+    const placeholders = ids.map((_, i) => `$${i + 3}`).join(', ');
 
     const result = await this.databaseService.query(
       `
@@ -519,15 +606,19 @@ export class ProjectsRepository {
             OR EXISTS (
               SELECT 1
               FROM orgs.workspace_members AS member
+              JOIN orgs.workspaces AS workspace
+                ON workspace.id = member.workspace_id
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
                 AND member.role IN ('admin', 'delegated_lead', 'member')
+                AND workspace.tenant_id = $2::uuid
             )
           )
+          AND projects.provisioned_projects.tenant_id = $2::uuid
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
           AND status = 'orphaned';
       `,
-      [userId, ...ids],
+      [userId, tenantId, ...ids],
     );
     return result.rowCount ?? 0;
   }
@@ -594,6 +685,13 @@ export class ProjectsRepository {
       `,
     );
     return result.rows;
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require().tenantId;
   }
 
   private splitRepoFullName(repoFullName: string): {

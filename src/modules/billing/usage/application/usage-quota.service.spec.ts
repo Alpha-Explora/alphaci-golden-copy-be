@@ -5,13 +5,37 @@ import {
 
 import type { DatabaseService } from '#kernel/db/database.service';
 import type { ManagedQuotaDefinition } from '#kernel/ports/usage-quota.port';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import { UsageQuotaService } from './usage-quota.service';
+
+const TENANT_A = '11111111-1111-4111-8111-111111111111';
+const TENANT_B = '33333333-3333-4333-8333-333333333333';
+const USER_ID = '22222222-2222-4222-8222-222222222222';
 
 const makeDatabaseService = (query: jest.Mock, isEnabled = true) =>
   ({
     query,
     isEnabled: () => isEnabled,
   }) as unknown as DatabaseService;
+
+const makeTenantContext = (tenantId = TENANT_A): TenantContextPort => {
+  const context: TenantContext = {
+    tenantId,
+    userId: USER_ID,
+    membershipRole: 'member',
+    deploymentMode: 'hosted',
+  };
+  return {
+    current: () => context,
+    require: () => context,
+    set: jest.fn(),
+    clear: jest.fn(),
+  };
+};
 
 const managedQuotaDefinitions: readonly ManagedQuotaDefinition[] = [
   {
@@ -58,6 +82,7 @@ describe('UsageQuotaService', () => {
       makeDatabaseService(query),
       configService as never,
       capabilityResolver as never,
+      makeTenantContext(),
     );
     registerManagedQuotas(service);
   });
@@ -100,6 +125,9 @@ describe('UsageQuotaService', () => {
         }),
       ]),
     });
+    const countQuery = query.mock.calls[2];
+    expect(countQuery?.[1]).toEqual(['user-1', TENANT_A]);
+    expect(String(countQuery?.[0] ?? '')).toContain('p.tenant_id = $2::uuid');
   });
 
   it('treats pro_monthly subscriptions as pro quota plan', async () => {
@@ -201,7 +229,7 @@ describe('UsageQuotaService', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  describe('assertManagedFleetCapacity', () => {
+  describe('assertDeploymentGlobalManagedFleetCapacity', () => {
     const withFleetCap = (provider: 'render' | 'vercel', max: number) => {
       configService.getOrThrow.mockReturnValue({
         envProvisioning: {
@@ -218,7 +246,7 @@ describe('UsageQuotaService', () => {
       query.mockResolvedValueOnce({ rows: [{ count: '2' }] });
 
       await expect(
-        service.assertManagedFleetCapacity({
+        service.assertDeploymentGlobalManagedFleetCapacity({
           providerId: 'render',
           quotaCode: 'managed_render_services',
           fleetCapConfigKey: 'renderManagedFleetMax',
@@ -232,7 +260,7 @@ describe('UsageQuotaService', () => {
       query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
 
       await expect(
-        service.assertManagedFleetCapacity({
+        service.assertDeploymentGlobalManagedFleetCapacity({
           providerId: 'vercel',
           quotaCode: 'managed_vercel_projects',
           fleetCapConfigKey: 'vercelManagedFleetMax',
@@ -245,7 +273,7 @@ describe('UsageQuotaService', () => {
       withFleetCap('render', 0);
 
       await expect(
-        service.assertManagedFleetCapacity({
+        service.assertDeploymentGlobalManagedFleetCapacity({
           providerId: 'render',
           quotaCode: 'managed_render_services',
           fleetCapConfigKey: 'renderManagedFleetMax',
@@ -260,11 +288,12 @@ describe('UsageQuotaService', () => {
         makeDatabaseService(query, false),
         configService as never,
         capabilityResolver as never,
+        makeTenantContext(),
       );
       registerManagedQuotas(service);
 
       await expect(
-        service.assertManagedFleetCapacity({
+        service.assertDeploymentGlobalManagedFleetCapacity({
           providerId: 'render',
           quotaCode: 'managed_render_services',
           fleetCapConfigKey: 'renderManagedFleetMax',
@@ -273,5 +302,84 @@ describe('UsageQuotaService', () => {
       ).resolves.toBeUndefined();
       expect(query).not.toHaveBeenCalled();
     });
+  });
+
+  it('fails closed for usage reads without tenant context', async () => {
+    const unscopedService = new UsageQuotaService(
+      makeDatabaseService(query),
+      configService as never,
+      capabilityResolver as never,
+    );
+
+    await expect(unscopedService.getUsage('user-1')).rejects.toBeInstanceOf(
+      TenantContextRequiredError,
+    );
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for quota enforcement without tenant context', async () => {
+    const unscopedService = new UsageQuotaService(
+      makeDatabaseService(query),
+      configService as never,
+      capabilityResolver as never,
+    );
+
+    await expect(
+      unscopedService.assertWithinLimit('user-1', 'projects'),
+    ).rejects.toBeInstanceOf(TenantContextRequiredError);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('uses the selected tenant when reading quota counters', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ is_internal: false }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            projects: '0',
+            deployment_targets: '0',
+            env_keys: '0',
+            workflow_prs: '0',
+          },
+        ],
+      });
+    service = new UsageQuotaService(
+      makeDatabaseService(query),
+      configService as never,
+      capabilityResolver as never,
+      makeTenantContext(TENANT_B),
+    );
+
+    const usage = await service.getUsage('user-1');
+
+    expect(usage.items.find((item) => item.code === 'projects')?.current).toBe(
+      0,
+    );
+    const countQuery = query.mock.calls[2];
+    expect(countQuery?.[1]).toEqual(['user-1', TENANT_B]);
+    expect(String(countQuery?.[0] ?? '')).toContain('tenant_id = $2::uuid');
+  });
+
+  it('allows the explicit fleet-global guard without tenant context', async () => {
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: { flowciManaged: { renderManagedFleetMax: 2 } },
+    });
+    query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
+    const unscopedService = new UsageQuotaService(
+      makeDatabaseService(query),
+      configService as never,
+      capabilityResolver as never,
+    );
+
+    await expect(
+      unscopedService.assertDeploymentGlobalManagedFleetCapacity({
+        providerId: 'render',
+        quotaCode: 'managed_render_services',
+        fleetCapConfigKey: 'renderManagedFleetMax',
+        providerLabel: 'Render',
+      }),
+    ).resolves.toBeUndefined();
+    expect(query).toHaveBeenCalledWith(expect.any(String), ['render']);
   });
 });

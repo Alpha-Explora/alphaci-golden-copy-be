@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SkipTenantContext } from '#kernel/tenancy/skip-tenant-context.decorator.js';
 import { CreateRepoDto } from './dto/create-repo.dto.js';
 import { LinkInstallationDto } from './dto/link-installation.dto';
 import { GithubService } from '../infrastructure/github.service';
@@ -13,6 +14,7 @@ import {
 
 @Controller('github')
 @UseGuards(SessionAuthGuard)
+@SkipTenantContext()
 export class GithubController {
   constructor(private readonly githubService: GithubService) {}
 

@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 
 export type ProjectDashboardSnapshotStatus = 'ok' | 'warning' | 'error';
 
@@ -47,11 +52,17 @@ interface ProjectDashboardSnapshotRow {
 
 @Injectable()
 export class ProjectDashboardSnapshotsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   async createSnapshot(
     input: CreateProjectDashboardSnapshotInput,
   ): Promise<ProjectDashboardSnapshot> {
+    const tenantId = this.requireTenantId();
     const result =
       await this.databaseService.query<ProjectDashboardSnapshotRow>(
         `
@@ -64,7 +75,11 @@ export class ProjectDashboardSnapshotsRepository {
             completed_at,
             created_by
           )
-          VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7)
+          SELECT
+            $1, $2, $3::jsonb, $4::jsonb, $5, $6, $7
+          FROM projects.provisioned_projects AS project
+          WHERE project.id = $1
+            AND project.tenant_id = $8::uuid
           RETURNING *;
         `,
         [
@@ -75,6 +90,7 @@ export class ProjectDashboardSnapshotsRepository {
           input.startedAt,
           input.completedAt,
           input.createdBy,
+          tenantId,
         ],
       );
 
@@ -91,16 +107,20 @@ export class ProjectDashboardSnapshotsRepository {
   async findLatestByProject(
     projectId: string,
   ): Promise<ProjectDashboardSnapshot | null> {
+    const tenantId = this.requireTenantId();
     const result =
       await this.databaseService.query<ProjectDashboardSnapshotRow>(
         `
-          SELECT *
-          FROM projects.project_dashboard_snapshots
-          WHERE project_id = $1
-          ORDER BY created_at DESC
+          SELECT snapshot.*
+          FROM projects.project_dashboard_snapshots AS snapshot
+          JOIN projects.provisioned_projects AS project
+            ON project.id = snapshot.project_id
+          WHERE snapshot.project_id = $1
+            AND project.tenant_id = $2::uuid
+          ORDER BY snapshot.created_at DESC
           LIMIT 1;
         `,
-        [projectId],
+        [projectId, tenantId],
       );
 
     const row = result.rows[0];
@@ -130,5 +150,13 @@ export class ProjectDashboardSnapshotsRepository {
       createdBy: row.created_by,
       createdAt: row.created_at,
     };
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+
+    return this.tenantContext.require().tenantId;
   }
 }

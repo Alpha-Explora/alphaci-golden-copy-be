@@ -256,7 +256,7 @@ describe('resolveCapabilities', () => {
       const capabilities: readonly string[] = currentManifest.capabilities;
       const expected = capabilities.includes('runtime.client-composition')
         ? ENTERPRISE_EXECUTABLE_KEYS
-        : currentManifest.edition === 'saas'
+        : capabilities.includes('identity.self-serve-auth')
           ? SAAS_EXECUTABLE_KEYS
           : EXECUTABLE_KEYS;
       expect([

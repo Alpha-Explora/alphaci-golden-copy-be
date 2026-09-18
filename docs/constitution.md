@@ -27,6 +27,7 @@ The application has six bounded contexts: `identity-access`, `projects`, `pipeli
 - A provider, deployment mode, capability, or pack is not an additional bounded context.
 - Each context owns its application policy, persistence boundary, public index, and composition root.
 - Cross-context production code uses a public index, serialisable contract, or focused injected port. Composition-only Nest module imports are allowed at context roots.
+- Tenancy tables and tenant authorization remain owned by `identity-access` until a separate bounded context is justified; `tenancy` is a schema, not a seventh product context.
 
 ## Product axes
 
@@ -37,6 +38,11 @@ The narrowing order is:
 ```text
 build -> edition manifest -> deployment configuration -> tenant override
 ```
+
+The physical deployment rule is independent of that narrowing order: `hosted`
+is multi-tenant and may contain SaaS and Education tenants in one hosted
+database; `enterprise` is one active tenant per dedicated cloud or on-prem
+database. Edition and client policy never select a PostgreSQL schema.
 
 The [capability contract](/capabilities/capability-contract.md) and [pack contract](/packs/pack-contract.md) define the documentation-level representation of these values. Runtime capability behavior remains in the existing application implementation.
 
@@ -57,7 +63,7 @@ See the [event map](/architecture/events-map.generated.md) and [outbox relay run
 
 ## Schema ownership
 
-Migration directories and inline SQL are checked against the six context owners. Existing cross-schema references are exact transition allowances in the source gate; new references require an explicit ownership decision. The [schema map](/architecture/schema-ownership.generated.md) is generated from that gate.
+Migration directories and inline SQL are checked against the six context owners. Existing cross-schema references are exact transition allowances in the source gate; new references require an explicit ownership decision. The `tenancy` schema is owned by `identity-access`. The [schema map](/architecture/schema-ownership.generated.md) is generated from that gate.
 
 ## Documentation contract
 

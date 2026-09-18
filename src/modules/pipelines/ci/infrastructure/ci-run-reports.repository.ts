@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import type { FriendlyMessage } from '../application/translate-results';
 import type { StageId } from '../application/stages';
 
@@ -8,6 +13,7 @@ export type CiRunStatus = 'success' | 'failure' | 'running' | 'cancelled';
 
 export interface UpsertCiRunReportInput {
   userId: string;
+  tenantId: string;
   repoFullName: string;
   branch: string;
   commitSha: string;
@@ -37,14 +43,19 @@ export interface CiRunReportRow {
 
 @Injectable()
 export class CiRunReportsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   /**
-   * Upsert a CI run report. The unique key is (repo_full_name, run_id, stage).
-   * On conflict the status, results, friendly_messages, raw_logs, and updated_at
-   * are refreshed.
+   * Explicit deployment-global ingestion path for bearer-authenticated worker
+   * reports. The token validation path has already authorized the repository;
+   * request-facing reads are tenant-scoped below.
    */
-  async upsert(data: UpsertCiRunReportInput): Promise<void> {
+  async upsertDeploymentGlobal(data: UpsertCiRunReportInput): Promise<void> {
     // Cap raw logs at 50 000 characters to keep the column bounded.
     const rawLogs =
       data.rawLogs !== undefined && data.rawLogs !== null
@@ -55,6 +66,7 @@ export class CiRunReportsRepository {
       `
         INSERT INTO workflow.ci_run_reports (
           user_id,
+          tenant_id,
           repo_full_name,
           branch,
           commit_sha,
@@ -65,8 +77,8 @@ export class CiRunReportsRepository {
           friendly_messages,
           raw_logs
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        ON CONFLICT (repo_full_name, run_id, stage)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (tenant_id, repo_full_name, run_id, stage)
         DO UPDATE SET
           status            = EXCLUDED.status,
           results           = EXCLUDED.results,
@@ -76,6 +88,7 @@ export class CiRunReportsRepository {
       `,
       [
         data.userId,
+        data.tenantId,
         data.repoFullName,
         data.branch,
         data.commitSha,
@@ -87,6 +100,11 @@ export class CiRunReportsRepository {
         rawLogs,
       ],
     );
+  }
+
+  /** Compatibility name retained for existing ingestion callers. */
+  async upsert(data: UpsertCiRunReportInput): Promise<void> {
+    return this.upsertDeploymentGlobal(data);
   }
 
   /**
@@ -102,28 +120,37 @@ export class CiRunReportsRepository {
     limit = 150,
     offset = 0,
   ): Promise<CiRunReportRow[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<CiRunReportRow>(
       `
         SELECT
-          id,
-          user_id,
-          repo_full_name,
-          branch,
-          commit_sha,
-          run_id::text AS run_id,
-          stage,
-          status,
-          results,
-          friendly_messages,
-          raw_logs,
-          created_at,
-          updated_at
-        FROM workflow.ci_run_reports
-        WHERE repo_full_name = $1
-        ORDER BY run_id DESC, stage ASC
+          report.id,
+          report.user_id,
+          report.repo_full_name,
+          report.branch,
+          report.commit_sha,
+          report.run_id::text AS run_id,
+          report.stage,
+          report.status,
+          report.results,
+          report.friendly_messages,
+          report.raw_logs,
+          report.created_at,
+          report.updated_at
+        FROM workflow.ci_run_reports AS report
+        WHERE report.repo_full_name = $1
+          AND report.tenant_id = $4::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM projects.provisioned_projects AS project
+            WHERE project.repo_full_name = report.repo_full_name
+              AND project.user_id = report.user_id
+              AND project.tenant_id = $4::uuid
+          )
+        ORDER BY report.run_id DESC, report.stage ASC
         LIMIT $2 OFFSET $3;
       `,
-      [repoFullName, limit, offset],
+      [repoFullName, limit, offset, tenantId],
     );
 
     return result.rows;
@@ -142,30 +169,47 @@ export class CiRunReportsRepository {
     limit = 150,
     offset = 0,
   ): Promise<CiRunReportRow[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<CiRunReportRow>(
       `
         SELECT
-          id,
-          user_id,
-          repo_full_name,
-          branch,
-          commit_sha,
-          run_id::text AS run_id,
-          stage,
-          status,
-          results,
-          friendly_messages,
-          raw_logs,
-          created_at,
-          updated_at
-        FROM workflow.ci_run_reports
-        WHERE user_id = $1
-        ORDER BY run_id DESC, stage ASC
+          report.id,
+          report.user_id,
+          report.repo_full_name,
+          report.branch,
+          report.commit_sha,
+          report.run_id::text AS run_id,
+          report.stage,
+          report.status,
+          report.results,
+          report.friendly_messages,
+          report.raw_logs,
+          report.created_at,
+          report.updated_at
+        FROM workflow.ci_run_reports AS report
+        WHERE report.user_id = $1
+          AND report.tenant_id = $4::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM projects.provisioned_projects AS project
+            WHERE project.user_id = report.user_id
+              AND project.repo_full_name = report.repo_full_name
+              AND project.tenant_id = $4::uuid
+          )
+        ORDER BY report.run_id DESC, report.stage ASC
         LIMIT $2 OFFSET $3;
       `,
-      [userId, limit, offset],
+      [userId, limit, offset, tenantId],
     );
 
     return result.rows;
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+
+    return this.tenantContext.require().tenantId;
   }
 }

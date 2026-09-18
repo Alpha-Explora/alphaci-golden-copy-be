@@ -1,4 +1,9 @@
 import type { DatabaseService } from '#kernel/db/database.service';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
 
 const makeDatabaseService = (query: jest.Mock) =>
@@ -9,11 +14,25 @@ const makeDatabaseService = (query: jest.Mock) =>
 describe('ProjectWorkflowUpdateRequestsRepository', () => {
   let query: jest.Mock;
   let repository: ProjectWorkflowUpdateRequestsRepository;
+  let tenantContext: TenantContextPort;
 
   beforeEach(() => {
     query = jest.fn();
+    const context: TenantContext = {
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      membershipRole: 'member',
+      deploymentMode: 'hosted',
+    };
+    tenantContext = {
+      current: () => context,
+      require: () => context,
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
     repository = new ProjectWorkflowUpdateRequestsRepository(
       makeDatabaseService(query),
+      tenantContext,
     );
   });
 
@@ -65,6 +84,7 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
         'created',
         JSON.stringify({ nodeVersion: '24' }),
         JSON.stringify([{ path: '.github/workflows/00-alphaci-access.yml' }]),
+        'tenant-1',
       ],
     );
     expect(result).toMatchObject({
@@ -73,5 +93,26 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
       pullRequestNumber: 42,
       status: 'created',
     });
+  });
+
+  it('fails closed when no tenant context is available', async () => {
+    const unscopedRepository = new ProjectWorkflowUpdateRequestsRepository(
+      makeDatabaseService(query),
+    );
+
+    await expect(
+      unscopedRepository.createRequest({
+        projectId: 'project-1',
+        requestedBy: 'user-1',
+        branchName: 'alphaci/workflow-update-20260612000000',
+        baseBranch: 'main',
+        pullRequestNumber: 42,
+        pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
+        status: 'created',
+        settings: {},
+        workflowFiles: [],
+      }),
+    ).rejects.toThrow(TenantContextRequiredError);
+    expect(query).not.toHaveBeenCalled();
   });
 });

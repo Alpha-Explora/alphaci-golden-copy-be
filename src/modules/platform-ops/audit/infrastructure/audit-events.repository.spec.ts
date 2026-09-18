@@ -1,8 +1,32 @@
 import type { DatabaseService } from '#kernel/db/database.service';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import { AuditEventsRepository } from './audit-events.repository';
+
+const TENANT_A = '11111111-1111-4111-8111-111111111111';
+const TENANT_B = '33333333-3333-4333-8333-333333333333';
+const USER_ID = '22222222-2222-4222-8222-222222222222';
 
 const makeDatabaseService = (query: jest.Mock) =>
   ({ query }) as unknown as DatabaseService;
+
+const makeTenantContext = (tenantId = TENANT_A): TenantContextPort => {
+  const context: TenantContext = {
+    tenantId,
+    userId: USER_ID,
+    membershipRole: 'member',
+    deploymentMode: 'hosted',
+  };
+  return {
+    current: () => context,
+    require: () => context,
+    set: jest.fn(),
+    clear: jest.fn(),
+  };
+};
 
 describe('AuditEventsRepository', () => {
   let query: jest.Mock;
@@ -10,7 +34,10 @@ describe('AuditEventsRepository', () => {
 
   beforeEach(() => {
     query = jest.fn();
-    repository = new AuditEventsRepository(makeDatabaseService(query));
+    repository = new AuditEventsRepository(
+      makeDatabaseService(query),
+      makeTenantContext(),
+    );
   });
 
   it('creates an audit event with nullable ownership fields', async () => {
@@ -29,8 +56,11 @@ describe('AuditEventsRepository', () => {
       ],
     });
 
+    const globalRepository = new AuditEventsRepository(
+      makeDatabaseService(query),
+    );
     await expect(
-      repository.create({
+      globalRepository.createDeploymentGlobal({
         projectId: 'project-1',
         actorUserId: 'user-1',
         eventCode: 'workflow_pr_created',
@@ -64,7 +94,7 @@ describe('AuditEventsRepository', () => {
     query.mockResolvedValueOnce({ rows: [] });
 
     await expect(
-      repository.create({
+      repository.createDeploymentGlobal({
         eventCode: 'workflow_pr_created',
         message: 'Workflow update PR created',
       }),
@@ -103,7 +133,39 @@ describe('AuditEventsRepository', () => {
     ]);
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('JOIN projects.provisioned_projects'),
-      ['project-1', 'user-1', 10],
+      ['project-1', 'user-1', TENANT_A, 10],
     );
+    expect(String(query.mock.calls[0]?.[0] ?? '')).toContain(
+      'project.tenant_id = $3::uuid',
+    );
+  });
+
+  it('does not return events for a project outside the selected tenant', async () => {
+    repository = new AuditEventsRepository(
+      makeDatabaseService(query),
+      makeTenantContext(TENANT_B),
+    );
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      repository.listByProjectForUser('project-1', 'user-1'),
+    ).resolves.toEqual([]);
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      'project-1',
+      'user-1',
+      TENANT_B,
+      50,
+    ]);
+  });
+
+  it('fails closed when a user-facing project read has no tenant context', async () => {
+    const unscopedRepository = new AuditEventsRepository(
+      makeDatabaseService(query),
+    );
+
+    await expect(
+      unscopedRepository.listByProjectForUser('project-1', 'user-1'),
+    ).rejects.toBeInstanceOf(TenantContextRequiredError);
+    expect(query).not.toHaveBeenCalled();
   });
 });

@@ -1,10 +1,33 @@
 import type { DatabaseService } from '#kernel/db/database.service';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import { ProjectSyncFindingsRepository } from './project-sync-findings.repository';
+
+const TENANT_A = '11111111-1111-4111-8111-111111111111';
+const USER_ID = '22222222-2222-4222-8222-222222222222';
 
 const makeDatabaseService = (query: jest.Mock) =>
   ({
     query,
   }) as unknown as DatabaseService;
+
+const makeTenantContext = (tenantId = TENANT_A): TenantContextPort => {
+  const context: TenantContext = {
+    tenantId,
+    userId: USER_ID,
+    membershipRole: 'member',
+    deploymentMode: 'hosted',
+  };
+  return {
+    current: () => context,
+    require: () => context,
+    set: jest.fn(),
+    clear: jest.fn(),
+  };
+};
 
 describe('ProjectSyncFindingsRepository', () => {
   let query: jest.Mock;
@@ -12,7 +35,10 @@ describe('ProjectSyncFindingsRepository', () => {
 
   beforeEach(() => {
     query = jest.fn();
-    repository = new ProjectSyncFindingsRepository(makeDatabaseService(query));
+    repository = new ProjectSyncFindingsRepository(
+      makeDatabaseService(query),
+      makeTenantContext(),
+    );
   });
 
   it('maps active project findings from storage rows', async () => {
@@ -44,7 +70,10 @@ describe('ProjectSyncFindingsRepository', () => {
     ]);
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("status = 'active'"),
-      ['project-1'],
+      ['project-1', TENANT_A],
+    );
+    expect(String(query.mock.calls[0]?.[0] ?? '')).toContain(
+      'project.tenant_id = $2::uuid',
     );
   });
 
@@ -108,7 +137,7 @@ describe('ProjectSyncFindingsRepository', () => {
 
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("SET status = 'resolved'"),
-      ['old-finding'],
+      ['old-finding', 'project-1', TENANT_A],
     );
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO projects.project_sync_findings'),
@@ -120,7 +149,11 @@ describe('ProjectSyncFindingsRepository', () => {
         'deployment_target_metadata_missing',
         'Target metadata is missing.',
         JSON.stringify({}),
+        TENANT_A,
       ],
+    );
+    expect(String(query.mock.calls[2]?.[0] ?? '')).toContain(
+      'project.tenant_id = $8::uuid',
     );
   });
 
@@ -149,6 +182,11 @@ describe('ProjectSyncFindingsRepository', () => {
       id: 'finding-1',
       code: 'ci_token_missing',
     });
+    expect(query.mock.calls[0]?.[1]).toEqual([
+      'project-1',
+      'finding-1',
+      TENANT_A,
+    ]);
   });
 
   it('marks a finding resolved or ignored', async () => {
@@ -158,7 +196,48 @@ describe('ProjectSyncFindingsRepository', () => {
 
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('SET status = $2'),
-      ['finding-1', 'ignored'],
+      ['finding-1', 'ignored', TENANT_A],
     );
+    expect(String(query.mock.calls[0]?.[0] ?? '')).toContain(
+      'project.tenant_id = $3::uuid',
+    );
+  });
+
+  it('keeps a tenant A context from reading or mutating tenant B findings', async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 0 });
+
+    await expect(
+      repository.findActiveByProject('tenant-b-project'),
+    ).resolves.toEqual([]);
+    await expect(
+      repository.markStatus('tenant-b-finding', 'ignored'),
+    ).resolves.toBeUndefined();
+
+    expect(query.mock.calls[0]?.[1]).toEqual(['tenant-b-project', TENANT_A]);
+    expect(query.mock.calls[1]?.[1]).toEqual([
+      'tenant-b-finding',
+      'ignored',
+      TENANT_A,
+    ]);
+  });
+
+  it('fails closed before querying when the validated tenant context is absent', async () => {
+    const noContext: TenantContextPort = {
+      current: () => null,
+      require: () => {
+        throw new TenantContextRequiredError();
+      },
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
+    const noContextRepository = new ProjectSyncFindingsRepository(
+      makeDatabaseService(query),
+      noContext,
+    );
+
+    await expect(
+      noContextRepository.findActiveByProject('project-1'),
+    ).rejects.toThrow(TenantContextRequiredError);
+    expect(query).not.toHaveBeenCalled();
   });
 });

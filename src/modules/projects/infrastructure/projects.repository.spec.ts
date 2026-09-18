@@ -2,6 +2,11 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 
 import { DatabaseService } from '#kernel/db/database.service.js';
+import { TENANT_CONTEXT } from '#kernel/tenancy/tenant-context.port.js';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -30,20 +35,40 @@ const fakeRow: ProvisionedProjectRow = {
 
 const makeDatabaseService = (rows: ProvisionedProjectRow[] = [fakeRow]) =>
   ({
-    query: jest.fn().mockResolvedValue({ rows }),
+    query: jest
+      .fn()
+      .mockImplementation((query: string) =>
+        query.includes('FROM tenancy.tenant_memberships')
+          ? Promise.resolve({ rows: [{ user_id: 'user-1' }] })
+          : Promise.resolve({ rows }),
+      ),
   }) as unknown as DatabaseService;
 
 describe('ProjectsRepository', () => {
   let repo: ProjectsRepository;
   let db: DatabaseService;
+  let tenantContext: TenantContextPort;
 
   beforeEach(async () => {
     db = makeDatabaseService();
+    const context: TenantContext = {
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      membershipRole: 'member',
+      deploymentMode: 'hosted',
+    };
+    tenantContext = {
+      current: () => context,
+      require: () => context,
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProjectsRepository,
         { provide: DatabaseService, useValue: db },
+        { provide: TENANT_CONTEXT, useValue: tenantContext },
       ],
     }).compile();
 
@@ -99,10 +124,11 @@ describe('ProjectsRepository', () => {
         null,
       ]),
     );
-    const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
-      string,
-      unknown[],
-    ];
+    const [query, values] = (db.query as jest.Mock).mock.calls.find(
+      ([sql]) =>
+        typeof sql === 'string' &&
+        sql.includes('INSERT INTO projects.provisioned_projects'),
+    ) as [string, unknown[]];
     const columnsMatch = query.match(
       /INSERT INTO projects\.provisioned_projects \(([\s\S]*?)\)\s*VALUES/,
     );
@@ -112,11 +138,10 @@ describe('ProjectsRepository', () => {
       throw new Error('Project insert query shape changed unexpectedly');
     }
 
-    const columns =
-      columnsMatch[1]
-        .split(',')
-        .map((column) => column.trim())
-        .filter(Boolean) ?? [];
+    const columns = columnsMatch[1]
+      .split(',')
+      .map((column) => column.trim())
+      .filter(Boolean);
     const placeholders = placeholdersMatch[1].match(/\$\d+/g) ?? [];
 
     expect(columns).toHaveLength(values.length);
@@ -125,7 +150,9 @@ describe('ProjectsRepository', () => {
   });
 
   it('throws when insert returns no row', async () => {
-    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+    (db.query as jest.Mock)
+      .mockResolvedValueOnce({ rows: [{ user_id: 'user-1' }] })
+      .mockResolvedValueOnce({ rows: [] });
 
     await expect(
       repo.create({
@@ -144,7 +171,7 @@ describe('ProjectsRepository', () => {
 
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('FROM projects.provisioned_projects'),
-      ['user-1', 10],
+      ['user-1', 10, 'tenant-1'],
     );
     expect(result).toEqual([fakeRow]);
   });
@@ -157,20 +184,28 @@ describe('ProjectsRepository', () => {
       unknown[],
     ];
     expect(query).toContain('orgs.workspace_members');
-    expect(query).toContain('workspace_id = $3');
-    expect(values).toEqual(['user-2', 10, 'workspace-1']);
+    expect(query).toContain('workspace_id = $4');
+    expect(values).toEqual(['user-2', 10, 'tenant-1', 'workspace-1']);
   });
 
   it('clamps list limit to 100', async () => {
     await repo.listByUser('user-1', 999);
 
-    expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 100]);
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'user-1',
+      100,
+      'tenant-1',
+    ]);
   });
 
   it('defaults list limit to 25 for invalid input', async () => {
     await repo.listByUser('user-1', NaN);
 
-    expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 25]);
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'user-1',
+      25,
+      'tenant-1',
+    ]);
   });
 
   it('computes a viewer-relative is_owner column against the same viewer param used by the visibility predicate', async () => {
@@ -191,7 +226,7 @@ describe('ProjectsRepository', () => {
 
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('WHERE pp.id = $1'),
-      ['project-1', 'user-1', null],
+      ['project-1', 'user-1', null, 'tenant-1'],
     );
     expect(result).toEqual(fakeRow);
   });
@@ -217,6 +252,7 @@ describe('ProjectsRepository', () => {
       'project-1',
       'user-1',
       ['admin', 'delegated_lead'],
+      'tenant-1',
     ]);
   });
 
@@ -230,6 +266,7 @@ describe('ProjectsRepository', () => {
       'project-1',
       'user-1',
       ['admin', 'delegated_lead', 'member'],
+      'tenant-1',
     ]);
   });
 
@@ -245,6 +282,7 @@ describe('ProjectsRepository', () => {
       'project-1',
       'user-1',
       ['admin', 'delegated_lead'],
+      'tenant-1',
     ]);
   });
 
@@ -326,10 +364,11 @@ describe('ProjectsRepository', () => {
       status: 'provisioned',
     });
 
-    const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
-      string,
-      unknown[],
-    ];
+    const [query, values] = (db.query as jest.Mock).mock.calls.find(
+      ([sql]) =>
+        typeof sql === 'string' &&
+        sql.includes('INSERT INTO projects.provisioned_projects'),
+    ) as [string, unknown[]];
     expect(query).toContain('is_example');
     expect(values[values.length - 1]).toBe(false);
   });
