@@ -36,6 +36,7 @@ const EDU_KEYS = [
   'identity.edu-provisioning',
   'identity.ferpa-workflows',
   'identity.edition-entitlements',
+  'identity.edu-auth',
   'platform.audit-events',
   'platform.notifications',
   'billing.subscription-gate',

@@ -24,6 +24,7 @@ Entries are newest first. A ledger entry is required whenever a capability key, 
 
 | Date | Change | Keys | Summary | Reference |
 |---|---|---|---|---|
+| 2026-09-18 | added | `identity.edu-auth` | Added the limited EDU authentication surface with server-adapted Supabase recovery, staff GitHub linking, and lab session context. | docs/superpowers/plans/2026-09-18-edu-authentication-migration.md |
 | 2026-09-18 | maturity-changed | `identity.self-serve-auth` | Enabled the configurable SaaS self-serve auth slice while keeping billing checkout deferred and EDU or Enterprise provider-only. | docs/superpowers/plans/2026-09-18-saas-self-serve-auth-backend.md |
 | 2026-09-18 | added | `identity.self-serve-auth` | Added the self-serve auth capability so SaaS composes email, Google, and public signup while enterprise and edu keep provider-only sign-in. | CHANGELOG.md |
 | 2026-09-15 | added | `platform.public-site` | Declared the SaaS-only public marketing site; EDU and Enterprise deployments go straight to login. | CHANGELOG.md |
@@ -32,7 +33,7 @@ Entries are newest first. A ledger entry is required whenever a capability key, 
 
 ## Current catalog
 
-- Capabilities: **32**
-- Composition hash: `sha256:228a02ee961108bc2c51daeb5d91e49a5843eede9f1507a835bcef4514499b3d`
+- Capabilities: **33**
+- Composition hash: `sha256:2a04af52031e7a65b281d62458b553b1783e3e522b62873bce9ef988ad89da35`
 
 The hash covers every capability key, maturity, dependency edge, configuration flag, and edition membership in registry order. `npm run check:capability-ledger` recomputes it and rejects a catalog that moved without a ledger entry. `npm run ledger:record` appends an entry with the correct hash.

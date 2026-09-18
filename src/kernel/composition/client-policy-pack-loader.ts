@@ -1,9 +1,10 @@
 import type { BuildProfile } from './capability-types.js';
 import type { ClientPolicyPack } from './client-policy-pack.port.js';
 
-/** Build-profile keyed module paths; hosted has no policy pack to load. */
+/** Build-profile keyed module paths; hosted profiles have no policy pack. */
 export const CLIENT_POLICY_PACK_MODULE_SPECIFIERS = {
-  hosted: null,
+  'hosted-saas': null,
+  'hosted-edu': null,
   enterprise: '../../packs/enterprise/index.js',
 } as const satisfies Record<BuildProfile, string | null>;
 

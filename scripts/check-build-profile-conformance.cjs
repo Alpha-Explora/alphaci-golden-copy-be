@@ -6,8 +6,9 @@
  * TypeScript artifact and scanning that artifact. Tests and the composition
  * policy declaration are excluded because neither is pack-owned implementation
  * code. The Enterprise inventory contains the real client-policy pack source;
- * hosted profile builds exclude that root and the generated profile config
- * prevents it from entering the hosted artifact by default.
+ * hosted-saas and hosted-edu builds exclude the source roots for the other
+ * editions, and the generated profile config prevents them from entering the
+ * isolated artifact.
  */
 
 const fs = require('node:fs');

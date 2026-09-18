@@ -21,10 +21,10 @@ sources:
 
 ## Current composition
 
-- Build profile: `hosted` (`saas`, `edu`)
-- Runtime selection behavior: `ALPHACI_EDITION=saas` selects the SaaS manifest within the hosted build ceiling.
-- Artifact exclusion inventory: reserved SaaS-only source root/marker declarations are absent from the current compiled profile artifact; no SaaS-only implementation exists yet.
-- Current backend applicability: The same six-context backend exposes the shared capability catalog. Hosted deployment is a deployment-target and configuration concern, not a separate capability set.
+- Build profile: `hosted-saas` (`saas`)
+- Runtime selection behavior: `ALPHACI_EDITION=saas` selects the SaaS manifest within the hosted-SaaS build ceiling.
+- Artifact exclusion inventory: the hosted-SaaS artifact excludes the EDU auth source tree, Enterprise policy source, and their declared markers.
+- Current backend applicability: the six-context backend exposes the shared capability catalog through a SaaS-only physical artifact ceiling.
 
 ## Capability status
 
@@ -41,6 +41,7 @@ This table lists every current registry capability in registry order. Status is 
 | `identity.ferpa-workflows` | `not-applicable` | Not part of this pack composition. |
 | `identity.edition-entitlements` | `not-implemented` | Runtime edition and pack entitlement resolution. Not implemented in this backend. |
 | `identity.self-serve-auth` | `configuration-gated` | Self-serve sign-in and registration: email and password credentials, Google sign-in, and the public signup flow. SaaS-only email-code delivery via AUTH_EMAIL_CODE_DELIVERY; optional Google OAuth via GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_CALLBACK_URL. Billing checkout remains deferred. |
+| `identity.edu-auth` | `not-applicable` | Not part of this pack composition. |
 | `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
 | `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
 | `platform.data-residency` | `not-applicable` | Not part of this pack composition. |
@@ -71,7 +72,7 @@ Hosted deployment is a deployment target, not a replacement for the pack identit
 
 ## Configuration and entitlements
 
-Configuration narrows the capability set. The documented order is `build profile -> edition manifest -> deployment configuration -> tenant override`. `ALPHACI_BUILD_PROFILE` defaults safely to `enterprise`; hosted builds must opt in explicitly. The current backend capability endpoint remains the compatibility surface.
+Configuration narrows the capability set. The documented order is `build profile -> edition manifest -> deployment configuration -> tenant override`. `ALPHACI_BUILD_PROFILE` defaults safely to `enterprise`; `hosted-saas` must be selected explicitly. The current backend capability endpoint remains the compatibility surface.
 
 ## Explicit non-support
 

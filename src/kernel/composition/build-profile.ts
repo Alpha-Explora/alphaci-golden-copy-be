@@ -30,7 +30,7 @@ export const PACK_ARTIFACT_INVENTORY = {
     symbols: ['SaasOnlyCapabilityMarker'],
   },
   edu: {
-    sourceRoots: ['src/packs/edu'],
+    sourceRoots: ['src/packs/edu', 'src/modules/identity-access/auth/edu'],
     symbols: ['EduOnlyCapabilityMarker'],
   },
   enterprise: {
@@ -40,9 +40,13 @@ export const PACK_ARTIFACT_INVENTORY = {
 } as const satisfies PackArtifactInventoryMap;
 
 export const BUILD_PROFILES = {
-  hosted: {
-    editions: ['saas', 'edu'],
-    excludedEditions: ['enterprise'],
+  'hosted-saas': {
+    editions: ['saas'],
+    excludedEditions: ['edu', 'enterprise'],
+  },
+  'hosted-edu': {
+    editions: ['edu'],
+    excludedEditions: ['saas', 'enterprise'],
   },
   enterprise: {
     editions: ['enterprise'],
@@ -56,7 +60,8 @@ export const BUILD_PROFILES = {
 export const BUILD_PROFILE_CAPABILITY_CEILINGS: Readonly<
   Record<BuildProfile, ReadonlySet<CapabilityKey>>
 > = {
-  hosted: capabilityCeiling(BUILD_PROFILES.hosted.editions),
+  'hosted-saas': capabilityCeiling(BUILD_PROFILES['hosted-saas'].editions),
+  'hosted-edu': capabilityCeiling(BUILD_PROFILES['hosted-edu'].editions),
   enterprise: capabilityCeiling(BUILD_PROFILES.enterprise.editions),
 };
 
@@ -65,14 +70,16 @@ export function parseBuildProfile(value: unknown): BuildProfile {
   if (raw === '') return 'enterprise';
 
   const profileByValue: Record<string, BuildProfile> = {
-    hosted: 'hosted',
+    'hosted-saas': 'hosted-saas',
+    'hosted-edu': 'hosted-edu',
     enterprise: 'enterprise',
   };
   const profile = profileByValue[raw];
   if (!profile) {
     throw new Error(
       `[config] Invalid ALPHACI_BUILD_PROFILE: '${String(value)}'. ` +
-        'Allowed values: hosted, enterprise. Default when unset: enterprise.',
+        'Allowed values: hosted-saas, hosted-edu, enterprise. ' +
+        'Default when unset: enterprise.',
     );
   }
   return profile;

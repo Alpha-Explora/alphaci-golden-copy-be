@@ -25,7 +25,8 @@ A build profile is a declared set of packs compiled into one artifact. A profile
 
 | Profile | Packs | Tenancy | Edition resolved from |
 |---|---|---|---|
-| `hosted` | saas, edu | multi-tenant | the tenant |
+| `hosted-saas` | saas | multi-tenant | the environment |
+| `hosted-edu` | edu | multi-tenant | the environment |
 | `enterprise` | enterprise | single-tenant per deployment | the environment, at startup |
 
 An artifact excludes source for packs its profile does not contain. Exclusion is derived from declared composition data and is applied by build configuration. It never takes the form of an edition comparison in source.
@@ -37,7 +38,7 @@ The backend implementation uses `ALPHACI_BUILD_PROFILE`, defaulting to
 ceiling at boot. The Enterprise inventory now contains the real
 `src/packs/enterprise` client-policy implementation and its public
 `EnterpriseClientPolicyPack` symbol. The profile-keyed loader keeps that source
-out of hosted compilation and does not load it at hosted runtime. The scanner
+out of both hosted profiles and does not load it at hosted runtime. The scanner
 fails closed when a declared excluded path or marker appears, and the profile
 conformance command uses an isolated build plus a profile-specific
 compiled-output scan without mutating the normal `dist` directory.
@@ -45,7 +46,7 @@ compiled-output scan without mutating the normal `dist` directory.
 ## Rejected alternatives
 
 - One artifact for every profile was rejected. Code for a pack a customer did not buy would ship to that customer.
-- One artifact per pack was rejected. It cannot express a hosted deployment that serves more than one pack and resolves the edition per tenant.
+- One combined hosted artifact was rejected. It would ship EDU authentication code to SaaS deployments and make physical source exclusion impossible.
 - Duplicated source trees per pack were rejected. Exclusion removes code from a build; it does not create a second copy to maintain.
 - Relying on runtime checks alone was rejected. A runtime check cannot remove code from an artifact a customer receives.
 
@@ -59,7 +60,7 @@ compiled-output scan without mutating the normal `dist` directory.
 ## Verification
 
 Run `npm run check:composition-profiles`. It builds the composition code in a
-temporary output directory, checks hosted/SaaS, hosted/EDU, and
+temporary output directory, checks hosted-saas/SaaS, hosted-edu/EDU, and
 Enterprise/Enterprise resolved sets, and scans each profile's isolated compiled
 artifact for declared exclusions. A future profile build can pass its isolated
 compiled entries to the same scanner.

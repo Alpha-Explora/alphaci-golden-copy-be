@@ -37,6 +37,8 @@ export interface AppConfig {
      * composition still provides the hard SaaS-only boundary.
      */
     selfServeAuthEnabled: boolean;
+    /** Enables the EDU Supabase-backed authentication vertical slice. */
+    eduAuthEnabled: boolean;
   };
   composition: {
     edition: Edition;

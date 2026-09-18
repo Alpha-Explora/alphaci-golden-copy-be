@@ -20,7 +20,7 @@ const conformanceScript = require(
 };
 
 describe('build profile conformance configuration', () => {
-  it.each(['hosted', 'enterprise'] as const)(
+  it.each(['hosted-saas', 'hosted-edu', 'enterprise'] as const)(
     'adds every declared root for absent packs to the generated %s tsconfig exclude list',
     (profile) => {
       const exclusions = artifactExclusionsFor(

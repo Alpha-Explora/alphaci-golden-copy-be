@@ -11,6 +11,13 @@ declare module 'express-session' {
     oauthReturnTo?: string;
     oauthProvider?: 'github' | 'google';
     githubAccessToken?: string;
+    /** EDU profile/session state is only composed into the hosted-EDU artifact. */
+    eduUserId?: string;
+    eduRole?: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'SUPER_ADMIN';
+    eduSelectedLabId?: string;
+    eduGithubOAuthState?: string;
+    eduGithubOAuthReturnTo?: string;
+    eduGithubOAuthUserId?: string;
     pendingArchived?: {
       githubUserId: string;
       login: string;

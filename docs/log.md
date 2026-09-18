@@ -1,5 +1,24 @@
 # Directory Update Log
 
+## 2026-09-18
+
+- **Creation**: Added the limited `identity.edu-auth` capability and isolated
+  EDU authentication slice: server-side Supabase password/recovery adapter,
+  school-domain signup/JIT policy, dedicated EDU profile/lab/membership storage,
+  staff-only GitHub identity linking, and server-authoritative lab selection.
+- **Update**: Split the former combined hosted artifact into `hosted-saas` and
+  `hosted-edu` profiles. SaaS now physically excludes the EDU auth source tree;
+  EDU includes it while excluding SaaS and Enterprise pack roots. Enterprise
+  composition remains unchanged.
+- **Creation**: Added EDU feature-sliced MVVM routes for student/staff doors,
+  signup, recovery, GitHub linking, session state, and lab selection. The
+  frontend keeps a transport mapping between the backend's `fullName`/
+  `selectedOrgId` contract and its local view model.
+- **Creation**: Added the EDU auth runbook and recorded the phase-one limit that
+  GitHub OAuth tokens are not retained; future lab operations require an explicit
+  vault and scope decision. Live Supabase, GitHub, migration, cookie, and roster
+  evidence remains an environment gate.
+
 ## 2026-09-15
 
 - **Update**: Added deterministic provenance to the generated `@alphaci/capability-catalog` package. `provenance.json` binds the backend source digest and package identity to a canonical generated-file digest, and the package checker now rejects stale or tampered output.

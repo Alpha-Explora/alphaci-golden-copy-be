@@ -36,7 +36,7 @@ A policy declares `clientId`, `displayName`, `edition`, and `disabledCapabilitie
 
 Two sources satisfy one port. The real Enterprise implementation lives in
 `src/packs/enterprise` and is exposed through a profile-keyed pack contract.
-The hosted profile has no Enterprise pack source in its artifact and the
+Both hosted profiles have no Enterprise pack source in their artifacts and the
 loader returns no pack without importing it. A deployment-supplied policy is a
 JSON document named by `ALPHACI_CLIENT_CONFIG`, which lets a customer-hosted
 installation carry its own composition without a release. A store-backed
