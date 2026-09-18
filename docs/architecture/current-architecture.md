@@ -40,10 +40,10 @@ src/
 │   ├── events/                           # outbox persistence and dispatch
 │   ├── http/                             # middleware and exception filters
 │   └── ports/                             # focused dependency-inversion ports
-├── packs/                                 # profile-owned Enterprise implementation packs
+├── packs/                                 # profile-owned implementation packs
 │   └── enterprise/                        # client-policy parser, registry, and factory
 └── modules/
-    ├── identity-access/                  # auth, admin, capabilities, hierarchy
+    ├── identity-access/                  # auth, EDU auth, admin, capabilities, hierarchy
     ├── projects/                         # projects, catalog, workflows, repos
     ├── pipelines/                        # GitHub integration and CI reporting
     ├── runtime/                          # targets, env, domains, providers
@@ -51,11 +51,11 @@ src/
     └── platform-ops/                     # audit, notifications, feedback
 ```
 
-Each context has a `<context>.module.ts` composition root and an `index.ts` public API. Feature Nest modules remain private composition details behind those roots. The full ownership and source count are in the [generated context map](/architecture/context-map.generated.md).
+Each context has a `<context>.module.ts` composition root and an `index.ts` public API. Feature Nest modules remain private composition details behind those roots. The EDU authentication slice lives under `src/modules/identity-access/auth/edu` and is imported only by the `hosted-edu` profile seam; SaaS and Enterprise artifacts do not compile that source root. The full ownership and source count are in the [generated context map](/architecture/context-map.generated.md).
 
 ## HTTP composition
 
-`src/main.ts` creates the Express application, applies proxy trust, session storage, security headers, JSON and URL-encoded body parsers, CORS, validation, exception handling, the global `api/v1` prefix, optional Swagger, and the listener. `AppModule` adds configuration validation, throttling, database access, health, and the six context roots.
+`src/main.ts` creates the Express application, applies proxy trust, session storage, security headers, JSON and URL-encoded body parsers, CORS, validation, exception handling, the global `api/v1` prefix, optional Swagger, and the listener. `AppModule` adds configuration validation, throttling, database access, health, and the six context roots. `identity-access` composes the EDU auth module only when the `hosted-edu` physical profile is selected; the controller is additionally guarded by the `identity.edu-auth` capability and its EDU configuration gate.
 
 ## Technical kernel
 
@@ -87,7 +87,7 @@ supabase/migrations/
 
 ## API surface
 
-The current compiled API route inventory contains 145 routes under `/api/v1`. The [route map](/architecture/route-map.generated.md) is generated from the checked-in route reference and is protected by the route inventory test.
+The current compiled API route inventory contains 157 routes under `/api/v1`. The [route map](/architecture/route-map.generated.md) is generated from the checked-in route reference and is protected by the route inventory test.
 
 ## Verification
 

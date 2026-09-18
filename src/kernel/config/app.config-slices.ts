@@ -35,6 +35,8 @@ export function authConfig(env: Env): AppConfig['auth'] {
     selfServeAuthEnabled:
       env['ALPHACI_EDITION'] === 'saas' &&
       env['AUTH_SELF_SERVE_ENABLED'] !== 'false',
+    eduAuthEnabled:
+      env['ALPHACI_EDITION'] === 'edu' && env['AUTH_EDU_ENABLED'] !== 'false',
   };
 }
 

@@ -222,6 +222,44 @@
     }
   },
   {
+    "key": "identity.edu-auth",
+    "context": "identity-access",
+    "description": "EDU authentication, recovery, staff GitHub linking, and lab context.",
+    "maturity": "limited",
+    "configuration": "EDU-only authentication via the Supabase Auth adapter; lab administration and broader EDU provisioning remain deferred.",
+    "configurationFlags": [
+      "auth.eduAuthEnabled"
+    ],
+    "editions": [
+      "edu"
+    ],
+    "requires": [],
+    "surface": {
+      "apiField": null,
+      "viewFlag": "eduAuthEnabled",
+      "domains": [
+        "auth"
+      ],
+      "routes": [
+        "/signin",
+        "/signin/staff",
+        "/signin/create-account",
+        "/signin/forgot-password",
+        "/auth/reset-password",
+        "/connect-github"
+      ],
+      "featureBarrels": [
+        "@/features/auth/edu-signin",
+        "@/features/auth/edu-signup",
+        "@/features/auth/edu-password-recovery",
+        "@/features/auth/edu-connect-github",
+        "@/features/auth/edu-labs",
+        "@/features/auth/edu-session"
+      ],
+      "artifactSymbols": []
+    }
+  },
+  {
     "key": "platform.audit-events",
     "context": "platform-ops",
     "description": "Project audit event recording through the application outbox.",

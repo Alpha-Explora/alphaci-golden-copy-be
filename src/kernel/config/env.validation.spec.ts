@@ -135,7 +135,7 @@ describe('validateEnv', () => {
         validateEnv(
           validEnv({
             AUTH_ADMISSION: 'open',
-            ALPHACI_BUILD_PROFILE: 'hosted',
+            ALPHACI_BUILD_PROFILE: 'hosted-saas',
             ALPHACI_EDITION: 'saas',
           }),
         ),
@@ -179,7 +179,7 @@ describe('validateEnv', () => {
         validateEnv(
           validEnv({
             AUTH_ADMISSION: 'open',
-            ALPHACI_BUILD_PROFILE: 'hosted',
+            ALPHACI_BUILD_PROFILE: 'hosted-saas',
             ALPHACI_EDITION: 'saas',
           }),
         ),
@@ -220,11 +220,11 @@ describe('validateEnv', () => {
       expect(() =>
         validateEnv(
           validEnv({
-            ALPHACI_BUILD_PROFILE: 'hosted',
+            ALPHACI_BUILD_PROFILE: 'hosted-saas',
             ALPHACI_EDITION: 'enterprise',
           }),
         ),
-      ).toThrow(/not allowed by build profile 'hosted'/);
+      ).toThrow(/not allowed by build profile 'hosted-saas'/);
     });
   });
 

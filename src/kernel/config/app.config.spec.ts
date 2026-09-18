@@ -44,6 +44,7 @@ describe('appConfig factory', () => {
 
     expect(config.frontendUrl).toBe('http://localhost:3000');
     expect(config.auth.devQuickLoginEnabled).toBe(false);
+    expect(config.auth.eduAuthEnabled).toBe(false);
     expect(config.auth.admission).toBe('open');
     expect(config.github.clientId).toBe('');
     expect(config.session.secret).toBe(validSessionSecret);
@@ -106,7 +107,7 @@ describe('appConfig factory', () => {
     it('honors an explicit AUTH_ADMISSION value over GITHUB_INTERNAL_ORG', () => {
       process.env['AUTH_ADMISSION'] = 'open';
       process.env['GITHUB_INTERNAL_ORG'] = 'Alpha-Explora';
-      process.env['ALPHACI_BUILD_PROFILE'] = 'hosted';
+      process.env['ALPHACI_BUILD_PROFILE'] = 'hosted-saas';
       process.env['ALPHACI_EDITION'] = 'saas';
 
       expect(appConfig().auth.admission).toBe('open');
@@ -120,7 +121,11 @@ describe('appConfig factory', () => {
   ] as const)('selects the %s composition edition', (raw, expected) => {
     process.env['ALPHACI_EDITION'] = raw;
     process.env['ALPHACI_BUILD_PROFILE'] =
-      raw === 'enterprise' ? 'enterprise' : 'hosted';
+      raw === 'enterprise'
+        ? 'enterprise'
+        : raw === 'saas'
+          ? 'hosted-saas'
+          : 'hosted-edu';
 
     expect(appConfig().composition.edition).toBe(expected);
   });
@@ -132,11 +137,17 @@ describe('appConfig factory', () => {
   });
 
   it.each([
-    ['hosted', 'hosted'],
+    ['hosted-saas', 'hosted-saas'],
+    ['hosted-edu', 'hosted-edu'],
     ['enterprise', 'enterprise'],
   ] as const)('selects the %s build profile', (raw, expected) => {
     process.env['ALPHACI_BUILD_PROFILE'] = raw;
-    process.env['ALPHACI_EDITION'] = raw === 'hosted' ? 'saas' : 'enterprise';
+    process.env['ALPHACI_EDITION'] =
+      raw === 'hosted-saas'
+        ? 'saas'
+        : raw === 'hosted-edu'
+          ? 'edu'
+          : 'enterprise';
 
     expect(appConfig().composition.profile).toBe(expected);
   });
@@ -152,11 +163,13 @@ describe('appConfig factory', () => {
     expect(() => appConfig()).toThrow(/ALPHACI_BUILD_PROFILE/);
   });
 
-  it('rejects an Enterprise edition in the hosted build profile', () => {
-    process.env['ALPHACI_BUILD_PROFILE'] = 'hosted';
+  it('rejects an Enterprise edition in the SaaS hosted build profile', () => {
+    process.env['ALPHACI_BUILD_PROFILE'] = 'hosted-saas';
     process.env['ALPHACI_EDITION'] = 'enterprise';
 
-    expect(() => appConfig()).toThrow(/not allowed by build profile 'hosted'/);
+    expect(() => appConfig()).toThrow(
+      /not allowed by build profile 'hosted-saas'/,
+    );
   });
 
   it('reads environment variables when set', () => {

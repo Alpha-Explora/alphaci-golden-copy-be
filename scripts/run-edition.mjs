@@ -5,10 +5,9 @@
  *
  *   node scripts/run-edition.mjs <edition> <command> [args...]
  *
- * The profile is derived here rather than passed in, because the pairing is not
- * free: saas and edu both compile from the hosted profile and enterprise has its
- * own. Setting the two by hand is how a deployment ends up running an edition its
- * artifact never compiled.
+ * The profile is derived here rather than passed in. Each edition runs from a
+ * physically separate artifact ceiling so a deployment cannot run EDU code from
+ * a SaaS build (or Enterprise code from either hosted build).
  *
  * Values set here win over .env files. dotenv and Next both leave an existing
  * process.env entry alone rather than overwriting it.
@@ -21,13 +20,13 @@ import { spawn } from "node:child_process";
 
 const EDITIONS = {
   saas: {
-    ALPHACI_BUILD_PROFILE: "hosted",
+    ALPHACI_BUILD_PROFILE: "hosted-saas",
     ALPHACI_EDITION: "saas",
     ALPHACI_CLIENT: "",
     ALPHACI_CLIENT_CONFIG: "",
   },
   edu: {
-    ALPHACI_BUILD_PROFILE: "hosted",
+    ALPHACI_BUILD_PROFILE: "hosted-edu",
     ALPHACI_EDITION: "edu",
     ALPHACI_CLIENT: "",
     ALPHACI_CLIENT_CONFIG: "",

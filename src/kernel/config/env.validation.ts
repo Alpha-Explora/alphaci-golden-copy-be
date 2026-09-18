@@ -31,6 +31,7 @@ export interface EnvironmentVariables {
   DEV_QUICK_LOGIN?: string;
   AUTH_ADMISSION?: string;
   AUTH_SELF_SERVE_ENABLED?: string;
+  AUTH_EDU_ENABLED?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_CALLBACK_URL?: string;

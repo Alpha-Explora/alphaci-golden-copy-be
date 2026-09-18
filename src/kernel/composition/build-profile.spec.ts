@@ -30,12 +30,32 @@ const EXPECTED_RESOLVED_KEYS = [
   'pipelines.ci-run-tracking',
 ] as const;
 
+const AUTH_FLAGS_BY_EDITION = {
+  saas: { selfServeAuthEnabled: true, eduAuthEnabled: false },
+  edu: { selfServeAuthEnabled: false, eduAuthEnabled: true },
+  enterprise: { selfServeAuthEnabled: false, eduAuthEnabled: false },
+} as const;
+
+const EXPECTED_RESOLVED_KEYS_BY_EDITION = {
+  saas: [
+    ...EXPECTED_RESOLVED_KEYS.slice(0, 2),
+    'identity.self-serve-auth',
+    ...EXPECTED_RESOLVED_KEYS.slice(2),
+  ],
+  edu: [
+    ...EXPECTED_RESOLVED_KEYS.slice(0, 2),
+    'identity.edu-auth',
+    ...EXPECTED_RESOLVED_KEYS.slice(2),
+  ],
+  enterprise: EXPECTED_RESOLVED_KEYS,
+} as const;
+
 function allEnabledConfig(
-  profile: 'hosted' | 'enterprise',
+  profile: 'hosted-saas' | 'hosted-edu' | 'enterprise',
   edition: 'saas' | 'edu' | 'enterprise',
 ) {
   return {
-    auth: { selfServeAuthEnabled: edition === 'saas' },
+    auth: AUTH_FLAGS_BY_EDITION[edition],
     composition: { profile, edition },
     subscription: { gateEnabled: true },
     envProvisioning: { enabled: true },
@@ -60,7 +80,14 @@ function allEnabledConfig(
 describe('build profiles', () => {
   it('declares exactly the approved profile-to-edition ceiling', () => {
     expect(BUILD_PROFILES).toEqual({
-      hosted: { editions: ['saas', 'edu'], excludedEditions: ['enterprise'] },
+      'hosted-saas': {
+        editions: ['saas'],
+        excludedEditions: ['edu', 'enterprise'],
+      },
+      'hosted-edu': {
+        editions: ['edu'],
+        excludedEditions: ['saas', 'enterprise'],
+      },
       enterprise: {
         editions: ['enterprise'],
         excludedEditions: ['saas', 'edu'],
@@ -71,7 +98,8 @@ describe('build profiles', () => {
   it.each([
     [undefined, 'enterprise'],
     ['', 'enterprise'],
-    [' HOSTED ', 'hosted'],
+    [' HOSTED-SaaS ', 'hosted-saas'],
+    ['hosted-edu', 'hosted-edu'],
     ['enterprise', 'enterprise'],
   ] as const)('parses %p as %s', (raw, expected) => {
     expect(parseBuildProfile(raw)).toBe(expected);
@@ -82,16 +110,17 @@ describe('build profiles', () => {
   });
 
   it('uses set membership for edition ceilings', () => {
-    expect(buildProfileAllowsEdition('hosted', 'saas')).toBe(true);
-    expect(buildProfileAllowsEdition('hosted', 'edu')).toBe(true);
-    expect(buildProfileAllowsEdition('hosted', 'enterprise')).toBe(false);
+    expect(buildProfileAllowsEdition('hosted-saas', 'saas')).toBe(true);
+    expect(buildProfileAllowsEdition('hosted-saas', 'edu')).toBe(false);
+    expect(buildProfileAllowsEdition('hosted-edu', 'edu')).toBe(true);
+    expect(buildProfileAllowsEdition('hosted-edu', 'saas')).toBe(false);
     expect(buildProfileAllowsEdition('enterprise', 'enterprise')).toBe(true);
     expect(buildProfileAllowsEdition('enterprise', 'saas')).toBe(false);
   });
 
   it('exposes capability ceilings and derives exclusions from profile data', () => {
     expect(
-      BUILD_PROFILE_CAPABILITY_CEILINGS.hosted.has('identity.lms-lti'),
+      BUILD_PROFILE_CAPABILITY_CEILINGS['hosted-edu'].has('identity.lms-lti'),
     ).toBe(true);
     expect(
       BUILD_PROFILE_CAPABILITY_CEILINGS.enterprise.has(
@@ -99,7 +128,11 @@ describe('build profiles', () => {
       ),
     ).toBe(true);
     expect(artifactExclusionsFor('enterprise')).toEqual({
-      sourceRoots: ['src/packs/saas', 'src/packs/edu'],
+      sourceRoots: [
+        'src/packs/saas',
+        'src/packs/edu',
+        'src/modules/identity-access/auth/edu',
+      ],
       symbols: ['SaasOnlyCapabilityMarker', 'EduOnlyCapabilityMarker'],
     });
     expect(PACK_ARTIFACT_INVENTORY).toEqual({
@@ -108,7 +141,7 @@ describe('build profiles', () => {
         symbols: ['SaasOnlyCapabilityMarker'],
       },
       edu: {
-        sourceRoots: ['src/packs/edu'],
+        sourceRoots: ['src/packs/edu', 'src/modules/identity-access/auth/edu'],
         symbols: ['EduOnlyCapabilityMarker'],
       },
       enterprise: {
@@ -119,8 +152,8 @@ describe('build profiles', () => {
   });
 
   it.each([
-    ['hosted', 'saas'],
-    ['hosted', 'edu'],
+    ['hosted-saas', 'saas'],
+    ['hosted-edu', 'edu'],
     ['enterprise', 'enterprise'],
   ] as const)('accepts the %s/%s manifest', (profile, edition) => {
     expect(() =>
@@ -135,8 +168,8 @@ describe('build profiles', () => {
   });
 
   it.each([
-    ['hosted', 'saas'],
-    ['hosted', 'edu'],
+    ['hosted-saas', 'saas'],
+    ['hosted-edu', 'edu'],
     ['enterprise', 'enterprise'],
   ] as const)('resolves the expected key set for %s/%s', (profile, edition) => {
     const resolved = resolveCapabilities({
@@ -144,15 +177,6 @@ describe('build profiles', () => {
       config: allEnabledConfig(profile, edition),
     });
 
-    const expected =
-      edition === 'saas'
-        ? [
-            ...EXPECTED_RESOLVED_KEYS.slice(0, 2),
-            'identity.self-serve-auth',
-            ...EXPECTED_RESOLVED_KEYS.slice(2),
-          ]
-        : EXPECTED_RESOLVED_KEYS;
-
-    expect([...resolved]).toEqual(expected);
+    expect([...resolved]).toEqual(EXPECTED_RESOLVED_KEYS_BY_EDITION[edition]);
   });
 });

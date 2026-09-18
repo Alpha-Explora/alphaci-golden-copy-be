@@ -12,6 +12,7 @@ export type CapabilityKey =
   | "identity.ferpa-workflows"
   | "identity.edition-entitlements"
   | "identity.self-serve-auth"
+  | "identity.edu-auth"
   | "platform.audit-events"
   | "platform.notifications"
   | "platform.data-residency"

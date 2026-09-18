@@ -18,6 +18,7 @@ const REGISTRY_KEYS = [
   'identity.ferpa-workflows',
   'identity.edition-entitlements',
   'identity.self-serve-auth',
+  'identity.edu-auth',
   'platform.audit-events',
   'platform.notifications',
   'platform.data-residency',
@@ -75,6 +76,7 @@ const EDU_KEYS = [
   'identity.edu-provisioning',
   'identity.ferpa-workflows',
   'identity.edition-entitlements',
+  'identity.edu-auth',
   'platform.audit-events',
   'platform.notifications',
   'billing.subscription-gate',
@@ -146,14 +148,26 @@ const SAAS_EXECUTABLE_KEYS = [
   ...EXECUTABLE_KEYS.slice(2),
 ] as const;
 
+const EDU_EXECUTABLE_KEYS = [
+  ...EXECUTABLE_KEYS.slice(0, 2),
+  'identity.edu-auth',
+  ...EXECUTABLE_KEYS.slice(2),
+] as const;
+
 const ENTERPRISE_EXECUTABLE_KEYS = [
   ...EXECUTABLE_KEYS.slice(0, 12),
   'runtime.client-composition',
   ...EXECUTABLE_KEYS.slice(12),
 ] as const;
 
+const EXECUTABLE_KEYS_BY_EDITION = {
+  saas: SAAS_EXECUTABLE_KEYS,
+  edu: EDU_EXECUTABLE_KEYS,
+  enterprise: EXECUTABLE_KEYS,
+} as const;
+
 const allFlagsEnabled = {
-  auth: { selfServeAuthEnabled: true },
+  auth: { selfServeAuthEnabled: true, eduAuthEnabled: true },
   envProvisioning: { enabled: true },
   gcpDeployments: { enabled: true, dedicatedProjectsEnabled: true },
   projectSyncSnapshots: {
@@ -192,8 +206,8 @@ const configForManifest = (
     CapabilityManifest['edition'],
     AppConfig['composition']['profile']
   > = {
-    saas: 'hosted',
-    edu: 'hosted',
+    saas: 'hosted-saas',
+    edu: 'hosted-edu',
     enterprise: 'enterprise',
   };
   const capabilities: readonly string[] = PACK_MANIFESTS[edition].capabilities;
@@ -226,8 +240,8 @@ const record = (
 });
 
 describe('declared composition catalog', () => {
-  it('keeps the 32 registry records in their existing order', () => {
-    expect(CAPABILITIES).toHaveLength(32);
+  it('keeps the 33 registry records in their existing order', () => {
+    expect(CAPABILITIES).toHaveLength(33);
     expect(CAPABILITIES.map(({ key }) => key)).toEqual(REGISTRY_KEYS);
   });
 
@@ -256,9 +270,7 @@ describe('resolveCapabilities', () => {
       const capabilities: readonly string[] = currentManifest.capabilities;
       const expected = capabilities.includes('runtime.client-composition')
         ? ENTERPRISE_EXECUTABLE_KEYS
-        : currentManifest.edition === 'saas'
-          ? SAAS_EXECUTABLE_KEYS
-          : EXECUTABLE_KEYS;
+        : EXECUTABLE_KEYS_BY_EDITION[currentManifest.edition];
       expect([
         ...resolveCapabilities({
           manifest: currentManifest,

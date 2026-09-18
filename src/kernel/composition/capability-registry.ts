@@ -89,6 +89,17 @@ export const CAPABILITIES = [
     requires: [],
   },
   {
+    key: 'identity.edu-auth',
+    context: 'identity-access',
+    description:
+      'EDU authentication, recovery, staff GitHub linking, and lab context.',
+    maturity: 'limited',
+    configuration:
+      'EDU-only authentication via the Supabase Auth adapter; lab administration and broader EDU provisioning remain deferred.',
+    configurationFlags: ['auth.eduAuthEnabled'],
+    requires: [],
+  },
+  {
     key: 'platform.audit-events',
     context: 'platform-ops',
     description:

@@ -21,10 +21,10 @@ sources:
 
 ## Current composition
 
-- Build profile: `hosted` (`saas`, `edu`)
-- Runtime selection behavior: `ALPHACI_EDITION=edu` selects the EDU manifest within the hosted build ceiling.
-- Artifact exclusion inventory: reserved EDU-only source root/marker declarations are absent from the current compiled profile artifact; no EDU-only implementation exists yet.
-- Current backend applicability: The same six-context backend exposes the shared capability catalog. An institution-hosted or shared deployment target remains a separate deployment value.
+- Build profile: `hosted-edu` (`edu`)
+- Runtime selection behavior: `ALPHACI_EDITION=edu` selects the EDU manifest within the hosted-EDU build ceiling.
+- Artifact inclusion inventory: the hosted-EDU artifact includes `src/modules/identity-access/auth/edu` and the EDU pack marker while excluding SaaS and Enterprise pack source roots.
+- Current backend applicability: the identity-access context contains the limited EDU authentication slice. SIS/LMS provisioning, roster import, and broader EDU authorization remain deferred.
 
 ## Capability status
 
@@ -41,6 +41,7 @@ This table lists every current registry capability in registry order. Status is 
 | `identity.ferpa-workflows` | `not-implemented` | FERPA-oriented education workflow automation. Not implemented in this backend. |
 | `identity.edition-entitlements` | `not-implemented` | Runtime edition and pack entitlement resolution. Not implemented in this backend. |
 | `identity.self-serve-auth` | `not-applicable` | Not part of this pack composition. |
+| `identity.edu-auth` | `configuration-gated` | EDU Supabase-backed sign-in, school-email signup, recovery, staff GitHub linking, and server-authoritative lab selection. Configuration: `AUTH_EDU_ENABLED`, `EDU_SUPABASE_*`, `EDU_STUDENT_EMAIL_DOMAINS`, and isolated `EDU_GITHUB_*` values. |
 | `platform.audit-events` | `available` | Project audit event recording through the application outbox. Configuration: auditEvents.enabled. |
 | `platform.notifications` | `available` | In-app notification requests and persistence. Configuration: notifications.enabled. |
 | `platform.data-residency` | `not-applicable` | Not part of this pack composition. |
@@ -67,15 +68,15 @@ This table lists every current registry capability in registry order. Status is 
 
 ## Deployment scope
 
-EDU is an edition composition reference. An institution-hosted or shared deployment target remains a separate deployment value. Provider behavior is documented in the [provider map](/architecture/provider-map.generated.md).
+EDU is an edition composition reference with a physically isolated hosted-EDU artifact. An institution-hosted or shared deployment target remains a separate deployment value. Provider behavior is documented in the [provider map](/architecture/provider-map.generated.md).
 
 ## Configuration and entitlements
 
-The narrowing order is `build profile -> edition manifest -> deployment configuration -> tenant override`. `ALPHACI_BUILD_PROFILE` defaults safely to `enterprise`; hosted builds must opt in explicitly. EDU-specific entitlements remain out of scope.
+The narrowing order is `build profile -> edition manifest -> deployment configuration -> tenant override`. `ALPHACI_BUILD_PROFILE` defaults safely to `enterprise`; `hosted-edu` must be selected explicitly. `AUTH_EDU_ENABLED` defaults on only for the EDU edition and can be set to `false` for a staged disable. EDU-specific entitlements, roster import, SIS/LMS provisioning, and live GitHub lab operations remain out of scope for this slice.
 
 ## Explicit non-support
 
-No additional non-registry product areas. Catalog rows with status `not-implemented` are the current EDU product gaps in this backend.
+No additional non-registry product areas. Catalog rows with status `not-implemented` plus roster import and SIS/LMS provisioning are the current EDU product gaps in this backend.
 
 ## Ownership and verification
 

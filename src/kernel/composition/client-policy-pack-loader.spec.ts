@@ -14,15 +14,18 @@ const enterprisePack: ClientPolicyPack = {
 };
 
 describe('loadClientPolicyPack', () => {
-  it('does not ask for an Enterprise module in the hosted profile', async () => {
-    const loadModule = jest.fn();
+  it.each(['hosted-saas', 'hosted-edu'] as const)(
+    'does not ask for an Enterprise module in the %s profile',
+    async (profile) => {
+      const loadModule = jest.fn();
 
-    await expect(
-      loadClientPolicyPack('hosted', { loadModule }),
-    ).resolves.toBeNull();
+      await expect(
+        loadClientPolicyPack(profile, { loadModule }),
+      ).resolves.toBeNull();
 
-    expect(loadModule).not.toHaveBeenCalled();
-  });
+      expect(loadModule).not.toHaveBeenCalled();
+    },
+  );
 
   it('resolves the public default pack contract by profile', async () => {
     const loadModule = jest.fn(async (specifier: string) => {

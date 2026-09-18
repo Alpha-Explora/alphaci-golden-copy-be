@@ -33,6 +33,7 @@ const appConfig: AppConfig = {
     admission: 'open',
     devQuickLoginEnabled: false,
     selfServeAuthEnabled: false,
+    eduAuthEnabled: false,
   },
   composition: {
     edition: 'enterprise',
