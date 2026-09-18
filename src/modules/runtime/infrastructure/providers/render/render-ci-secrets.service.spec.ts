@@ -6,6 +6,7 @@ import { RenderCiSecretsService } from './render-ci-secrets.service';
 describe('RenderCiSecretsService', () => {
   const githubService = {
     setActionsSecretStrict: jest.fn(),
+    setActionsVariableStrict: jest.fn(),
   };
 
   const baseTarget: DeploymentTargetSummary = {
@@ -44,6 +45,7 @@ describe('RenderCiSecretsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     githubService.setActionsSecretStrict.mockResolvedValue(undefined);
+    githubService.setActionsVariableStrict.mockResolvedValue(undefined);
     service = new RenderCiSecretsService(githubService);
   });
 
@@ -70,6 +72,38 @@ describe('RenderCiSecretsService', () => {
     expect(result.githubSecrets).toEqual({
       healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
     });
+  });
+
+  /*
+   * The same address as a secret AND as a variable, which is not redundancy.
+   *
+   * render-deploy.yml is handed it through `secrets:`, while the post-deploy
+   * verify stage is triggered by `workflow_run` and can only be handed a
+   * variable: GitHub rejects a workflow file that names a secret inside a
+   * reusable-workflow `with:` block, and redacts one routed through a job
+   * output. Installing only the secret is what made every post-deploy API
+   * test fail with "Repository variable RENDER_HEALTHCHECK_URL_UAT is not
+   * set" on a repository where that secret demonstrably existed.
+   */
+  it('publishes the service address as a variable as well as a secret', async () => {
+    const result = await install();
+
+    expect(githubService.setActionsVariableStrict).toHaveBeenCalledWith(
+      'gh-token',
+      'tone',
+      'orders-api',
+      'RENDER_HEALTHCHECK_URL_UAT',
+      'https://orders-api-uat.onrender.com',
+    );
+    expect(result.githubVariables).toEqual({
+      healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
+    });
+  });
+
+  it('publishes no variable when the target has no resolvable address', async () => {
+    await install({ ...baseTarget, providerMetadata: {} });
+
+    expect(githubService.setActionsVariableStrict).not.toHaveBeenCalled();
   });
 
   /*

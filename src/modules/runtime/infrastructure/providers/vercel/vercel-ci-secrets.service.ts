@@ -7,6 +7,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
+import {
+  VERCEL_ALIAS_VARIABLE,
+  vercelAliasHost,
+} from '#kernel/ports/workflow-fragment.port';
 import { EnvTokenEncryptionService } from '../../../application/encryption.service';
 import type {
   DeploymentTargetSummary,
@@ -16,6 +20,7 @@ import { ProviderConnectionsRepository } from '../../repositories/provider-conne
 import type {
   ProviderCiSecretsInstaller,
   ProviderCiSecretsInstallerInput,
+  ProviderCiSecretsInstallResult,
 } from '../../../application/ports/provider-ci-secrets-installer.port';
 import {
   GITHUB_ACTIONS_SECRETS,
@@ -36,6 +41,12 @@ export interface VercelCiSecretNames {
   token: string;
   orgId: string;
   projectId: string;
+}
+
+/** Repository variables Vercel publishes, as opposed to its credentials. */
+export interface VercelCiVariableNames {
+  [key: string]: string;
+  alias: string;
 }
 
 @Injectable()
@@ -59,7 +70,7 @@ export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
 
   async installForTarget(
     input: ProviderCiSecretsInstallerInput,
-  ): Promise<{ githubSecrets: Record<string, string> }> {
+  ): Promise<ProviderCiSecretsInstallResult> {
     if (!this.supports(input.target)) {
       return { githubSecrets: this.vercelSecretNames(input.target.slot) };
     }
@@ -94,7 +105,38 @@ export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
       input.target.providerProjectId,
     );
 
-    return { githubSecrets: secretNames };
+    /*
+     * Where each branch's deployment can be reached.
+     *
+     * A CI-pushed deploy has no predictable address of its own: `vercel
+     * deploy` returns a per-deployment hostname, and Vercel only assigns the
+     * stable `<project>-git-<branch>-<scope>` name to deployments its own Git
+     * integration created. So the deploy job aliases each preview to a
+     * derived hostname, and this is the stem every one of them is derived
+     * from — written here because the platform already knows the project
+     * name, and nobody should be asked to paste back a value the system has.
+     *
+     * One variable, not one per branch: the branch is a prefix, and `main`
+     * needs no alias because a production deploy already lands on this host.
+     */
+    const variableNames = this.vercelVariableNames();
+    await this.githubService.setActionsVariableStrict(
+      input.githubAccessToken,
+      owner,
+      repo,
+      variableNames.alias,
+      vercelAliasHost(input.target.providerProjectName),
+    );
+
+    return { githubSecrets: secretNames, githubVariables: variableNames };
+  }
+
+  /**
+   * Named through the same helper the workflow generator reads, so the name
+   * written here and the name the generated pipeline looks up cannot drift.
+   */
+  vercelVariableNames(): VercelCiVariableNames {
+    return { alias: VERCEL_ALIAS_VARIABLE };
   }
 
   vercelSecretNames(slot: EnvTargetSlot): VercelCiSecretNames {

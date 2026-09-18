@@ -259,6 +259,13 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     const providerMetadata = {
       ...input.target.providerMetadata,
       githubSecrets: secretResult.githubSecrets,
+      // Recorded separately from the secrets so the reader can tell which
+      // names hold a credential and which hold a public address. Omitted
+      // entirely for a provider that publishes none, rather than written as an
+      // empty object that would read like "it installed nothing".
+      ...(secretResult.githubVariables && {
+        githubVariables: secretResult.githubVariables,
+      }),
     };
     await this.deploymentTargetsService.updateProviderMetadata(
       input.target.id,

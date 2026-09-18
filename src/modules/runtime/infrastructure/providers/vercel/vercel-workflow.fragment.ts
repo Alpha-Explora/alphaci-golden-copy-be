@@ -1,4 +1,7 @@
-import { vercelAliasSecret } from '#kernel/ports/workflow-fragment.port';
+import {
+  VERCEL_ALIAS_VARIABLE,
+  vercelBranchAlias,
+} from '#kernel/ports/workflow-fragment.port';
 
 import type {
   WorkflowFragment,
@@ -41,9 +44,10 @@ function buildVercelFragment(
            * suite would have no address to aim at. Production needs none:
            * --prod already lands on a fixed domain.
            *
-           * The name is shared with the verify stage through
-           * vercelAliasSecret, so the address this deploy claims and the one
-           * the browser is sent to cannot drift apart.
+           * The hostname is derived through vercelBranchAlias, the same
+           * function the verify stage and the provisioning writer use, so the
+           * address this deploy claims and the one the browser is sent to
+           * cannot drift apart.
            *
            * `vars`, not `secrets`: GitHub forbids the secrets context inside a
            * reusable workflow call's `with:` block and rejects the whole file
@@ -54,7 +58,10 @@ function buildVercelFragment(
           ...(branch === 'main'
             ? {}
             : {
-                'branch-alias': `\${{ vars.${vercelAliasSecret(branch)} }}`,
+                'branch-alias': vercelBranchAlias(
+                  branch,
+                  `\${{ vars.${VERCEL_ALIAS_VARIABLE} }}`,
+                ),
               }),
           'checkout-ref': HEAD_SHA_EXPR,
         },

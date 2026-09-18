@@ -47,7 +47,7 @@ this repository's TypeScript source.
 
 The generated package also contains `provenance.json`. It records the package
 name and version, the stable source repository identifier
-`github.com/Alpha-Explora/alphaci-enterprise-be`, the authoritative source path
+`github.com/Alpha-Explora/alphaci-golden-copy-be`, the authoritative source path
 `src/kernel/composition/catalog.source.json`, a catalog source digest, and a
 deterministic artifact digest. It contains no timestamps or checkout-specific
 paths.

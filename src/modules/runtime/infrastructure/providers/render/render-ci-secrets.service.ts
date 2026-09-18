@@ -7,6 +7,7 @@ import type {
 import type {
   ProviderCiSecretsInstaller,
   ProviderCiSecretsInstallerInput,
+  ProviderCiSecretsInstallResult,
 } from '../../../application/ports/provider-ci-secrets-installer.port';
 import {
   GITHUB_ACTIONS_SECRETS,
@@ -43,7 +44,7 @@ export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
 
   async installForTarget(
     input: ProviderCiSecretsInstallerInput,
-  ): Promise<{ githubSecrets: Record<string, string> }> {
+  ): Promise<ProviderCiSecretsInstallResult> {
     if (!this.supports(input.target)) {
       return {
         githubSecrets: this.renderSecretNames(
@@ -79,9 +80,31 @@ export class RenderCiSecretsService implements ProviderCiSecretsInstaller {
         secretNames.healthcheckUrl,
         healthcheckUrl,
       );
+      /*
+       * The same address again, as a variable this time.
+       *
+       * Not a duplicate: the two are read by different stages through
+       * channels that cannot substitute for each other. render-deploy.yml
+       * receives it through `secrets:` to poll health after releasing, while
+       * the verify stage is triggered by `workflow_run` and can only be
+       * handed a variable — GitHub rejects a workflow file that names a
+       * secret inside a reusable-workflow `with:` block, and redacts one
+       * passed through a job output.
+       *
+       * Installing only the secret is what left every post-deploy API test
+       * failing with "Repository variable RENDER_HEALTHCHECK_URL_UAT is not
+       * set" on a repository where that name demonstrably existed.
+       */
+      await this.githubService.setActionsVariableStrict(
+        input.githubAccessToken,
+        owner,
+        repo,
+        secretNames.healthcheckUrl,
+        healthcheckUrl,
+      );
     }
 
-    return { githubSecrets: secretNames };
+    return { githubSecrets: secretNames, githubVariables: secretNames };
   }
 
   renderSecretNames(

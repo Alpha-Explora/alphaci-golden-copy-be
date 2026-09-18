@@ -37,6 +37,10 @@ interface ParsedWorkflow {
         uses?: string;
         with?: Record<string, unknown>;
         secrets?: Record<string, string> | string;
+        steps?: Array<{
+          run?: string;
+          env?: Record<string, string>;
+        }>;
       }
     | undefined
   >;
@@ -1301,6 +1305,73 @@ describe('the verify stage', () => {
     expect(jobs).toContain('ui-tests-main');
     expect(jobs.some((id) => id.startsWith('api-tests'))).toBe(false);
     expect(jobs.some((id) => id.startsWith('contract-tests'))).toBe(false);
+  });
+
+  /*
+   * One variable for a Vercel project, because one project serves every
+   * branch and the branch is a prefix on its hostname.
+   *
+   * A Render service is per-branch and so is its variable; asking for
+   * VERCEL_ALIAS_DEV, _UAT and _MAIN was asking for three copies of one
+   * hostname, none of which anything installed.
+   */
+  it('reads one alias variable and derives each branch hostname from it', () => {
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate('react'),
+      {
+        templateId: 'fe-react',
+        serviceName: 'orders-web',
+        deploymentTargets: [
+          {
+            slot: 'standalone',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            secretNames: {
+              token: 'VERCEL_TOKEN_STANDALONE',
+              orgId: 'VERCEL_ORG_ID_STANDALONE',
+              projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+            },
+          },
+        ],
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+    const parsed = yaml.load(
+      bundle.workflowFiles.find((candidate) => candidate.stage === 'verify')!
+        .yaml,
+    ) as ParsedWorkflow;
+    const step = parsed.jobs['resolve-targets']?.steps?.[0];
+
+    expect(
+      Object.keys(step?.env ?? {}).filter((key) => key.startsWith('VERCEL')),
+    ).toEqual(['VERCEL_ALIAS']);
+    expect(step?.env?.['VERCEL_ALIAS']).toBe('${{ vars.VERCEL_ALIAS }}');
+    // main is the base host: a production deploy already lands there, so it
+    // carries no prefix and needs no alias of its own.
+    expect(step?.run).toContain('echo "ui-main=${VERCEL_ALIAS}"');
+    expect(step?.run).toContain('echo "ui-uat=uat-${VERCEL_ALIAS}"');
+    expect(step?.run).toContain('require "VERCEL_ALIAS"');
+  });
+
+  /*
+   * Every variable a branch needs, checked one per line.
+   *
+   * These used to be one `case` arm per variable, so a repository with both an
+   * API and a UI suite got two `uat)` labels in one statement — and a `case`
+   * stops at the first match, leaving the second variable unchecked.
+   */
+  it('checks each required variable in its own branch arm', () => {
+    const verify = verifyOf([renderTarget('uat'), renderTarget('main')])!;
+    const run = verify.jobs['resolve-targets']?.steps?.[0]?.run ?? '';
+
+    expect(run).toContain('require() {');
+    expect(run).toContain('require "RENDER_HEALTHCHECK_URL_UAT"');
+    expect(run).toContain('require "RENDER_HEALTHCHECK_URL_MAIN"');
+    // A dev run tests no deployed service, so it must not demand either.
+    expect(run).toContain(
+      'echo "Branch ${BRANCH} runs no tests against a deployed environment."',
+    );
   });
 
   it('takes the collection path from the toolchain, not a hardcoded guess', () => {

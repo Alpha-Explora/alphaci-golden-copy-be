@@ -233,6 +233,8 @@ import {
       useFactory: (githubService: GithubService): GithubActionsSecretsPort => ({
         setActionsSecretStrict: (...args) =>
           githubService.setActionsSecretStrict(...args),
+        setActionsVariableStrict: (...args) =>
+          githubService.setActionsVariableStrict(...args),
       }),
     },
     {
