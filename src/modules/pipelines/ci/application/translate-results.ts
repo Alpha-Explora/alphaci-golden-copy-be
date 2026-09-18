@@ -140,13 +140,25 @@ const FAILED_JOB_COPY: Record<
   Exclude<FailedJobKind, 'unknown'>,
   { title: string; hint: string }
 > = {
+  /*
+   * Tool-neutral, for the reason the security hints below already give: this
+   * path serves .NET as well, where the commands are `dotnet format` and a
+   * `dotnet build` with analyzers, and naming the wrong one is worse than
+   * naming none.
+   *
+   * It named npm. A .NET project whose quality stage failed on
+   * `dotnet format` was told to run `npm run lint` in a repository that has no
+   * package.json - so the one message pointing at the fix sent the reader
+   * somewhere that does not exist. The violations themselves are listed under
+   * the message with their file and line, which is the part that acts.
+   */
   lint: {
     title: 'Lint check failed',
-    hint: 'Run npm run lint locally, fix the reported violations, then re-run the workflow.',
+    hint: 'Fix the violations listed below, then re-run the workflow. The lint step in the stage log names the command this project runs.',
   },
   typecheck: {
     title: 'Type check failed',
-    hint: 'Run npm run typecheck locally, fix the reported TypeScript errors, then re-run the workflow.',
+    hint: 'Fix the type errors listed below, then re-run the workflow. The type-check step in the stage log names the command this project runs.',
   },
   test: {
     title: 'Tests failed',
@@ -271,10 +283,20 @@ export interface CiAnnotation {
 function annotationItems(annotations: readonly CiAnnotation[]): MessageItem[] {
   return capItems(
     annotations.map((annotation) => {
+      /*
+       * `== null` catches null as well as undefined, deliberately.
+       *
+       * GitHub omits the line on a file-level annotation, and the payload
+       * reaches us as JSON, where "absent" arrives as `null` rather than
+       * `undefined`. A strict check let it through to String(), and every
+       * file-level diagnostic was labelled `path:null` - which reads like a
+       * line number nobody can find. Observed on a real report:
+       * `tests/Alphatest.Tests/ArchitectureTests.cs:null`.
+       */
       const where =
         annotation.path === undefined
           ? undefined
-          : annotation.line === undefined
+          : annotation.line == null
             ? annotation.path
             : `${annotation.path}:${String(annotation.line)}`;
       const text = annotation.message ?? annotation.title ?? '';
@@ -471,7 +493,10 @@ function pushLintMessages(messages: FriendlyMessage[], lint: LintResult): void {
       severity: 'error',
       title: `${String(lint.errors)} lint error(s)`,
       detail: `${String(lint.errors)} lint errors found.`,
-      hint: 'Run `npm run lint -- --fix` to auto-fix issues.',
+      // Tool-neutral for the same reason as the copy above: a .NET project
+      // has no npm script to run, and most linters fix this class of issue
+      // themselves.
+      hint: 'Fix the violations listed below, then re-run the workflow. Most linters can apply these automatically with their fix option.',
     };
 
     if (lint.issues !== undefined && lint.issues.length > 0) {

@@ -56,7 +56,9 @@ describe('translateResults', () => {
         'Failed GitHub Actions job: typecheck',
       );
       expect(msgs[0]?.title).toBe('Type check failed');
-      expect(msgs[0]?.hint).toContain('npm run typecheck');
+      // Tool-neutral: a .NET project has no npm script to run.
+      expect(msgs[0]?.hint).not.toContain('npm');
+      expect(msgs[0]?.hint).toContain('type errors listed below');
       expect(msgs[0]?.items).toEqual([{ label: 'typecheck' }]);
     });
   });
@@ -126,7 +128,9 @@ describe('translateResults', () => {
       );
       expect(err).toBeDefined();
       expect(err?.title).toBe('5 lint error(s)');
-      expect(err?.hint).toContain('npm run lint');
+      // Tool-neutral: a .NET project has no npm script to run.
+      expect(err?.hint).not.toContain('npm');
+      expect(err?.hint).toContain('violations listed below');
     });
 
     it('returns warning when lint.warnings > 0 and no errors', () => {
@@ -332,6 +336,29 @@ describe('translateResults — annotations name the actual errors', () => {
 
     const error = messages.find((message) => message.severity === 'error');
     expect(error?.items?.[0]?.label).toBe('Process completed with exit code 1');
+  });
+
+  /*
+   * GitHub omits the line on a file-level annotation, and the payload reaches
+   * us as JSON - so "absent" arrives as null, not undefined. A strict check
+   * let it through to String() and labelled every such diagnostic
+   * `path:null`, which reads like a line number nobody can find. Observed on
+   * a real report as `tests/Alphatest.Tests/ArchitectureTests.cs:null`.
+   */
+  it('names the file alone when the annotation carries no line', () => {
+    const messages = translateResults('quality', 'failure', {}, undefined, [
+      {
+        path: 'tests/Alphatest.Tests/ArchitectureTests.cs',
+        line: null,
+        message: 'Fix imports ordering.',
+      } as never,
+    ]);
+
+    const error = messages.find((message) => message.severity === 'error');
+    expect(error?.items?.[0]?.label).toBe(
+      'tests/Alphatest.Tests/ArchitectureTests.cs',
+    );
+    expect(error?.items?.[0]?.label).not.toContain('null');
   });
 });
 
