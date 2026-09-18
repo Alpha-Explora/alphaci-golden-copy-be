@@ -1,4 +1,4 @@
-import type { PipelineBranch } from '#kernel/config/pipeline-branches';
+import { HOSTED_BRANCHES } from '#kernel/config/pipeline-branches';
 
 /**
  * The facts the two halves of Render support must agree on.
@@ -24,19 +24,17 @@ const IMAGE_REGISTRY = 'ghcr.io';
 /**
  * Branches that get their own managed Render service.
  *
- * `satisfies` ties this to the promotion flow: a branch renamed in
- * PIPELINE_BRANCHES stops compiling here rather than silently generating jobs
- * for a branch Render has no service for.
+ * Render hosts exactly what the product hosts, so this is the shared list
+ * rather than a second opinion about it. It briefly held every branch in the
+ * flow, which gave each project a dev service nobody visited: dev is where
+ * developers push and they run that code locally, so the service existed only
+ * to be paid for. Two services per backend project, not three.
  *
- * Every branch in the flow has its own service, so a developer can see their
- * own change running. That costs three free services per backend project;
- * RenderCostPolicyService owns whether those may be paid ones.
+ * Re-exported under the Render name because the rest of this provider reads
+ * it as "the branches Render has a service for", which is the question it is
+ * actually asking.
  */
-export const RENDER_SERVICE_BRANCHES = [
-  'dev',
-  'uat',
-  'main',
-] as const satisfies readonly PipelineBranch[];
+export const RENDER_SERVICE_BRANCHES = HOSTED_BRANCHES;
 
 export type RenderServiceBranch = (typeof RENDER_SERVICE_BRANCHES)[number];
 

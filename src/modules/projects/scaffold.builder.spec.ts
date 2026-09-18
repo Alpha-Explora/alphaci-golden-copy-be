@@ -69,6 +69,65 @@ describe('buildProjectScaffold', () => {
     includeDocker: false,
   };
 
+  /*
+   * The verify stage runs `npm run test:e2e` against the deployed uat URL,
+   * and playwright-e2e.yml exits 1 when tests/e2e is absent. A frontend
+   * scaffold without a browser suite therefore goes red at its last stage on
+   * the first promotion, for a project whose code is fine.
+   */
+  it.each(['react', 'nextjs'])(
+    'ships a runnable browser suite for %s',
+    (stack) => {
+      const files = buildProjectScaffold({
+        ...baseOptions,
+        stack,
+        repoShape: 'standalone',
+      });
+      const paths = files.map((file) => file.path);
+
+      expect(paths).toContain('playwright.config.ts');
+      expect(paths).toContain('tests/e2e/home.e2e-spec.ts');
+
+      const pkg = JSON.parse(
+        files.find((file) => file.path === 'package.json')!.content,
+      ) as {
+        scripts: Record<string, string>;
+        devDependencies: Record<string, string>;
+      };
+      expect(pkg.scripts['test:e2e']).toBe('playwright test');
+      expect(pkg.devDependencies['@playwright/test']).toBeDefined();
+
+      // The two runners must not collect each other's files: jest ignores the
+      // browser directory, and Playwright only matches the e2e suffix.
+      const jestConfig = files.find(
+        (file) => file.path === 'jest.config.ts',
+      )!.content;
+      expect(jestConfig).toContain('/tests/e2e/');
+      expect(
+        files.find((file) => file.path === 'playwright.config.ts')!.content,
+      ).toContain('*.e2e-spec.ts');
+    },
+  );
+
+  /*
+   * A browser suite pointed at a dev server instead of the deployment it was
+   * asked about is worse than one that fails, so there is no localhost
+   * fallback: an unset base URL stops the run.
+   */
+  it('refuses to run the browser suite without a deployment URL', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'react',
+      repoShape: 'standalone',
+    });
+    const config = files.find(
+      (file) => file.path === 'playwright.config.ts',
+    )!.content;
+
+    expect(config).toContain('E2E_BASE_URL');
+    expect(config).not.toContain('localhost');
+  });
+
   it("renders the monorepo workspace scaffold for the catalog ID 'mono'", () => {
     const files = buildProjectScaffold({ ...baseOptions, repoShape: 'mono' });
     const paths = files.map((file) => file.path);

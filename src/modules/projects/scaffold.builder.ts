@@ -247,7 +247,103 @@ function buildPackageJson(packageName: string, stack: string): string {
     pkg.devDependencies['ts-node'] = '^10.9.2';
   }
 
+  /*
+   * The browser suite, for the stacks that render in one.
+   *
+   * The generated verify stage runs `npm run test:e2e` against the deployed
+   * uat URL, and playwright-e2e.yml fails when tests/e2e is absent. Shipping
+   * the runner and the script with the scaffold is what keeps that stage
+   * green on a project nobody has written a spec for yet - without them a
+   * fresh repository goes red at its last stage on the first promotion.
+   */
+  if (isNextJs || stack === 'react') {
+    scripts['test:e2e'] = 'playwright test';
+    pkg.devDependencies['@playwright/test'] = '^1.49.0';
+  }
+
   return JSON.stringify(pkg, null, 2);
+}
+
+/**
+ * Playwright configuration for the deployed-app suite.
+ *
+ * testDir and the `.e2e-spec.ts` suffix match what jest.config.ts already
+ * excludes, so the two runners cannot pick up each other's files.
+ *
+ * The base URL arrives as E2E_BASE_URL, which playwright-e2e.yml sets from
+ * the verify stage's resolved deployment hostname. There is no fallback to
+ * localhost on purpose: a suite that quietly tests a dev server instead of
+ * the deployment it was pointed at is worse than one that fails.
+ */
+function buildPlaywrightConfig(): string {
+  return [
+    "import { defineConfig, devices } from '@playwright/test';",
+    '',
+    'const baseURL = process.env.E2E_BASE_URL;',
+    '',
+    'if (!baseURL) {',
+    '  throw new Error(',
+    "    'E2E_BASE_URL is not set. The end-to-end suite runs against a deployed " +
+      "environment, so there is no default to fall back to.',",
+    '  );',
+    '}',
+    '',
+    'export default defineConfig({',
+    "  testDir: 'tests/e2e',",
+    "  testMatch: '**/*.e2e-spec.ts',",
+    '  // A deployed environment is shared, so a failure is worth one retry',
+    '  // before it is called a failure - but only in CI, where flakes cost a',
+    '  // promotion rather than a rerun.',
+    '  retries: process.env.CI ? 1 : 0,',
+    '  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",',
+    '  use: {',
+    '    baseURL,',
+    "    trace: 'on-first-retry',",
+    '  },',
+    '  projects: [',
+    "    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },",
+    '  ],',
+    '});',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The smoke spec every generated frontend starts with.
+ *
+ * Deliberately shallow: it asserts the deployment answers and renders, which
+ * is the question the verify stage exists to ask. Anything about this app's
+ * own behaviour belongs in specs the team writes, and a scaffold that guessed
+ * at those would ship failing tests on day one.
+ */
+function buildE2eSmokeSpec(serviceName: string): string {
+  return [
+    "import { expect, test } from '@playwright/test';",
+    '',
+    `test.describe('${serviceName} deployment', () => {`,
+    "  test('serves its entry page', async ({ page }) => {",
+    "    const response = await page.goto('/');",
+    '',
+    '    expect(response?.ok()).toBeTruthy();',
+    "    await expect(page.locator('body')).toBeVisible();",
+    '  });',
+    '});',
+    '',
+  ].join('\n');
+}
+
+/** The browser-suite files a frontend scaffold ships, rooted at `prefix`. */
+function buildBrowserSuiteFiles(
+  serviceName: string,
+  prefix = '',
+): ScaffoldFile[] {
+  return [
+    { path: `${prefix}playwright.config.ts`, content: buildPlaywrightConfig() },
+    {
+      path: `${prefix}tests/e2e/home.e2e-spec.ts`,
+      content: buildE2eSmokeSpec(serviceName),
+    },
+  ];
 }
 
 // Base tsconfig covers src AND tests so `tsc --noEmit` type-checks the test
@@ -871,6 +967,7 @@ function buildServiceSubdirFiles(
       },
       { path: `${dir}/src/app/page.tsx`, content: buildNextPage(serviceName) },
       { path: `${dir}/next.config.ts`, content: buildNextConfig() },
+      ...buildBrowserSuiteFiles(serviceName, `${dir}/`),
     );
   } else if (stack === 'react') {
     files.push(
@@ -879,6 +976,7 @@ function buildServiceSubdirFiles(
         path: `${dir}/tests/unit/App.spec.tsx`,
         content: buildReactAppSpec(serviceName, '../../src/App'),
       },
+      ...buildBrowserSuiteFiles(serviceName, `${dir}/`),
     );
   }
 
@@ -963,6 +1061,7 @@ function buildStandaloneScaffold(
       { path: 'src/app/layout.tsx', content: buildNextLayout(serviceName) },
       { path: 'src/app/page.tsx', content: buildNextPage(serviceName) },
       { path: 'next.config.ts', content: buildNextConfig() },
+      ...buildBrowserSuiteFiles(serviceName),
     ];
   } else if (stack === 'react') {
     stackFiles = [
@@ -971,6 +1070,7 @@ function buildStandaloneScaffold(
         path: 'tests/unit/App.spec.tsx',
         content: buildReactAppSpec(serviceName, '../../src/App'),
       },
+      ...buildBrowserSuiteFiles(serviceName),
     ];
   } else {
     stackFiles = [];

@@ -1371,7 +1371,10 @@ jobs:
     expect(packageWorkflow?.[4]).not.toContain('deploy-render-backend-test');
     expect(packageWorkflow?.[4]).toContain('deploy-render-backend-uat');
     expect(packageWorkflow?.[4]).toContain('deploy-render-backend-main');
-    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-dev');
+    // dev is local: it builds and runs the full quality stage, and deploys
+    // nowhere, so it must not generate a deploy job pointed at a service that
+    // does not exist.
+    expect(packageWorkflow?.[4]).not.toContain('deploy-render-backend-dev');
     // The deploy job asks the platform to release and carries no hosting
     // credential; a Render key in a customer repository would reach every
     // service on the account.

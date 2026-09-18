@@ -91,15 +91,14 @@ describe('default hosting when none was configured', () => {
     expect(targets[0]?.slot).toBe('frontend');
   });
 
-  it('produces deploy jobs for a backend', () => {
-    // Render services are per-branch, so its expansion pins uat and main.
+  it('produces deploy jobs for a backend, on the hosted tiers only', () => {
+    // Render services are per-branch, so its expansion pins one per hosted
+    // tier. dev is absent deliberately: it builds and runs the full quality
+    // stage, but a developer runs that branch locally, so a dev service would
+    // be one per project that nobody visits.
     const { targets } = hostingFor('dotnet');
 
-    expect(targets.map((target) => target.branchName)).toEqual([
-      'dev',
-      'uat',
-      'main',
-    ]);
+    expect(targets.map((target) => target.branchName)).toEqual(['uat', 'main']);
     expect(targets.every((target) => target.provider === 'render')).toBe(true);
   });
 
