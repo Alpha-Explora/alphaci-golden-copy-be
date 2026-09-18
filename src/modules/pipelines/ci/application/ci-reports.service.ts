@@ -1,11 +1,18 @@
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import { CiRunReportsRepository } from '../infrastructure/ci-run-reports.repository';
 import { translateResults } from './translate-results';
 import {
@@ -74,6 +81,11 @@ export interface RunsResponse {
 
 interface OwnershipRow {
   user_id: string;
+  tenant_id: string;
+}
+
+interface TenantRepoRow {
+  repo_full_name: string;
 }
 
 const ALL_STAGES = STAGE_ORDER;
@@ -125,6 +137,9 @@ export class CiReportsService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly ciRunReportsRepository: CiRunReportsRepository,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
   ) {}
 
   /**
@@ -132,9 +147,22 @@ export class CiReportsService {
    * Resolves user ownership from the provisioned project, translates results
    * into friendly messages, then upserts the row.
    */
-  async ingestReport(body: CiReportBodyDto): Promise<{ received: true }> {
+  async ingestDeploymentGlobalReport(
+    body: CiReportBodyDto,
+    validatedProjectId: string,
+    validatedTenantId: string,
+  ): Promise<{ received: true }> {
     try {
-      const userId = await this.resolveUserIdByRepo(body.repoFullName);
+      // CI report ingestion is authenticated by the project bearer token in
+      // CiController, not by a user session. The generated workflow has no
+      // request tenant context, so this worker-facing path intentionally
+      // resolves ownership deployment-wide. User-facing reads are scoped in
+      // getRuns below.
+      const ownership = await this.resolveUserIdByRepo(
+        body.repoFullName,
+        validatedProjectId,
+        validatedTenantId,
+      );
       const status = this.conclusionToStatus(body.conclusion);
       const friendlyMessages = translateResults(
         body.stage,
@@ -144,8 +172,9 @@ export class CiReportsService {
         body.annotations ?? [],
       );
 
-      await this.ciRunReportsRepository.upsert({
-        userId,
+      await this.ciRunReportsRepository.upsertDeploymentGlobal({
+        userId: ownership.user_id,
+        tenantId: ownership.tenant_id,
         repoFullName: body.repoFullName,
         branch: body.branch,
         commitSha: body.commitSha,
@@ -203,11 +232,29 @@ export class CiReportsService {
   }
 
   /**
+   * Compatibility name for the existing CI controller/service surface. The
+   * delegated method is explicitly deployment-global because bearer-authenticated
+   * workflow ingestion has no request tenant context.
+   */
+  async ingestReport(
+    body: CiReportBodyDto,
+    validatedProjectId: string,
+    validatedTenantId: string,
+  ): Promise<{ received: true }> {
+    return this.ingestDeploymentGlobalReport(
+      body,
+      validatedProjectId,
+      validatedTenantId,
+    );
+  }
+
+  /**
    * Return grouped runs for the authenticated user.
    *
    * When repoFullName is provided the results are scoped to that repository and
-   * ownership is verified. When omitted the user's runs across all their repos
-   * are returned (no ownership check needed — the query filters by user_id).
+   * ownership is verified in the selected tenant. When omitted, the user's
+   * deployment-wide report rows are filtered through the selected tenant's
+   * project repository allowlist before grouping.
    */
   async getRuns(
     userId: string,
@@ -215,8 +262,9 @@ export class CiReportsService {
     limit?: number,
     offset?: number,
   ): Promise<RunsResponse> {
+    const tenantId = this.requireTenantId();
     if (repoFullName) {
-      await this.assertOwnership(userId, repoFullName);
+      await this.assertOwnership(userId, repoFullName, tenantId);
       const rows = await this.ciRunReportsRepository.findRecentByRepo(
         repoFullName,
         limit,
@@ -225,26 +273,46 @@ export class CiReportsService {
       return { runs: this.groupIntoRuns(rows) };
     }
 
+    const tenantRepos = await this.findTenantRepos(userId, tenantId);
+    const tenantRepoNames = new Set(
+      tenantRepos.map((repo) => repo.repo_full_name),
+    );
     const rows = await this.ciRunReportsRepository.findRecentByUser(
       userId,
       limit,
       offset,
     );
-    return { runs: this.groupIntoRuns(rows) };
+    return {
+      runs: this.groupIntoRuns(
+        rows.filter((row) => tenantRepoNames.has(row.repo_full_name)),
+      ),
+    };
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
 
-  private async resolveUserIdByRepo(repoFullName: string): Promise<string> {
+  private async resolveUserIdByRepo(
+    repoFullName: string,
+    validatedProjectId: string,
+    validatedTenantId: string,
+  ): Promise<OwnershipRow> {
+    // This lookup belongs to bearer-authenticated CI ingestion. Do not add a
+    // session tenant predicate here: the workflow is a deployment-global
+    // worker and has already proven the repo through the CI token validation
+    // path before the report is accepted. Pin this lookup to the exact project
+    // and tenant returned by validation because repo names are not database-
+    // wide unique across tenants.
     const result = await this.databaseService.query<OwnershipRow>(
       `
-        SELECT user_id
+        SELECT user_id, tenant_id
         FROM projects.provisioned_projects
         WHERE repo_full_name = $1
           AND status = 'provisioned'
+          AND id = $2::uuid
+          AND tenant_id = $3::uuid
         LIMIT 1;
       `,
-      [repoFullName],
+      [repoFullName, validatedProjectId, validatedTenantId],
     );
 
     const row = result.rows[0];
@@ -254,12 +322,13 @@ export class CiReportsService {
       );
     }
 
-    return row.user_id;
+    return row;
   }
 
   private async assertOwnership(
     userId: string,
     repoFullName: string,
+    tenantId: string,
   ): Promise<void> {
     const result = await this.databaseService.query<OwnershipRow>(
       `
@@ -267,9 +336,10 @@ export class CiReportsService {
         FROM projects.provisioned_projects
         WHERE repo_full_name = $1
           AND user_id = $2
+          AND tenant_id = $3::uuid
         LIMIT 1;
       `,
-      [repoFullName, userId],
+      [repoFullName, userId, tenantId],
     );
 
     if (!result.rows[0]) {
@@ -277,6 +347,22 @@ export class CiReportsService {
         `You do not have access to reports for repository '${repoFullName}'.`,
       );
     }
+  }
+
+  private async findTenantRepos(
+    userId: string,
+    tenantId: string,
+  ): Promise<TenantRepoRow[]> {
+    const result = await this.databaseService.query<TenantRepoRow>(
+      `
+        SELECT repo_full_name
+        FROM projects.provisioned_projects
+        WHERE user_id = $1
+          AND tenant_id = $2::uuid;
+      `,
+      [userId, tenantId],
+    );
+    return result.rows;
   }
 
   private conclusionToStatus(
@@ -325,7 +411,7 @@ export class CiReportsService {
     return translateResults(
       row.stage,
       'failure',
-      (row.results ?? {}) as Parameters<typeof translateResults>[2],
+      row.results ?? {},
       row.raw_logs ?? undefined,
     );
   }
@@ -470,5 +556,12 @@ export class CiReportsService {
         stages,
       };
     });
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require().tenantId;
   }
 }

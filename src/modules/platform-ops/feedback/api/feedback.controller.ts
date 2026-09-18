@@ -10,6 +10,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SkipTenantContext } from '#kernel/tenancy/skip-tenant-context.decorator.js';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 import { FeedbackService } from '../application/feedback.service';
 
@@ -19,6 +20,7 @@ import { FeedbackService } from '../application/feedback.service';
  */
 @Controller('feedback')
 @UseGuards(SessionAuthGuard)
+@SkipTenantContext()
 export class FeedbackController {
   constructor(private readonly feedbackService: FeedbackService) {}
 

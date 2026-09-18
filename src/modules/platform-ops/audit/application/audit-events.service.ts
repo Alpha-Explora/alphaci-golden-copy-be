@@ -25,15 +25,23 @@ export class AuditEventsService {
     if (!this.enabled()) {
       return;
     }
-    await this.repository.create(input);
+    await this.repository.createDeploymentGlobal(input);
   }
 
   /** Security-sensitive administrative events bypass the optional UI flag. */
   async recordAlwaysOn(input: CreateAuditEventInput): Promise<void> {
-    await this.repository.create(input);
+    await this.repository.createDeploymentGlobal(input);
   }
 
-  async recordProjectEvent(input: CreateAuditEventInput): Promise<void> {
+  /**
+   * Explicit deployment-global project-event sink for workers/outbox paths.
+   * The event may carry a project_id for audit attribution, but this write does
+   * not authorize or read that project. User-facing project reads go through
+   * listProjectEvents, whose repository query requires tenant context.
+   */
+  async recordDeploymentGlobalProjectEvent(
+    input: CreateAuditEventInput,
+  ): Promise<void> {
     try {
       await this.record(input);
     } catch (error) {
@@ -41,6 +49,11 @@ export class AuditEventsService {
         `Audit event '${input.eventCode}' was not recorded: ${String(error)}`,
       );
     }
+  }
+
+  /** Compatibility name retained for existing worker callers. */
+  async recordProjectEvent(input: CreateAuditEventInput): Promise<void> {
+    return this.recordDeploymentGlobalProjectEvent(input);
   }
 
   async listProjectEvents(

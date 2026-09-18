@@ -1,18 +1,44 @@
 import { CiReportsService } from './ci-reports.service';
+import type { CiReportBodyDto } from '../api/dto/ci-report-body.dto';
 import type { DatabaseService } from '#kernel/db/database.service';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import type {
   CiRunReportRow,
   CiRunReportsRepository,
 } from '../infrastructure/ci-run-reports.repository';
 
+const TENANT_A = '11111111-1111-4111-8111-111111111111';
+const USER_ID = '22222222-2222-4222-8222-222222222222';
+
 const makeDatabaseService = () =>
   ({
-    query: jest.fn(),
+    query: jest.fn().mockResolvedValue({
+      rows: [{ repo_full_name: 'acme/orders-api' }],
+    }),
   }) as unknown as DatabaseService;
+
+const makeTenantContext = (tenantId = TENANT_A): TenantContextPort => {
+  const context: TenantContext = {
+    tenantId,
+    userId: USER_ID,
+    membershipRole: 'member',
+    deploymentMode: 'hosted',
+  };
+  return {
+    current: () => context,
+    require: () => context,
+    set: jest.fn(),
+    clear: jest.fn(),
+  };
+};
 
 const makeRunReportsRepository = () =>
   ({
-    upsert: jest.fn(),
+    upsertDeploymentGlobal: jest.fn(),
     findRecentByRepo: jest.fn(),
     findRecentByUser: jest.fn(),
   }) as unknown as CiRunReportsRepository;
@@ -44,7 +70,11 @@ describe('CiReportsService.getRuns grouping', () => {
   beforeEach(() => {
     databaseService = makeDatabaseService();
     runReportsRepository = makeRunReportsRepository();
-    service = new CiReportsService(databaseService, runReportsRepository);
+    service = new CiReportsService(
+      databaseService,
+      runReportsRepository,
+      makeTenantContext(),
+    );
   });
 
   it('merges access/quality/package rows sharing a commit SHA into one run, even though each stage has its own GitHub run_id', async () => {
@@ -153,7 +183,11 @@ describe('CiReportsService.getRuns per-tool checks', () => {
   beforeEach(() => {
     databaseService = makeDatabaseService();
     runReportsRepository = makeRunReportsRepository();
-    service = new CiReportsService(databaseService, runReportsRepository);
+    service = new CiReportsService(
+      databaseService,
+      runReportsRepository,
+      makeTenantContext(),
+    );
   });
 
   const stageOf = async (results: Record<string, unknown>) => {
@@ -277,7 +311,11 @@ describe('CiReportsService.getRuns, one commit promoted across branches', () => 
 
   beforeEach(() => {
     runReportsRepository = makeRunReportsRepository();
-    service = new CiReportsService(makeDatabaseService(), runReportsRepository);
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      makeTenantContext(),
+    );
   });
 
   it('keeps one run per branch instead of collapsing them', async () => {
@@ -364,5 +402,124 @@ describe('CiReportsService.getRuns, one commit promoted across branches', () => 
     expect(qualityOf('uat')).toBe('failure');
     expect(qualityOf('dev')).toBe('success');
     expect(qualityOf('main')).toBe('success');
+  });
+});
+
+describe('CiReportsService tenant scope', () => {
+  it('keeps bearer-authenticated ingestion on the explicit deployment-global path', async () => {
+    const query = jest.fn().mockResolvedValueOnce({
+      rows: [{ user_id: 'user-1', tenant_id: TENANT_A }],
+    });
+    const databaseService = { query } as unknown as DatabaseService;
+    const runReportsRepository = makeRunReportsRepository();
+    const service = new CiReportsService(databaseService, runReportsRepository);
+    const body: CiReportBodyDto = {
+      repoFullName: 'acme/orders-api',
+      branch: 'main',
+      commitSha: 'sha-1',
+      runId: 42,
+      stage: 'access',
+      conclusion: 'success',
+      results: {},
+    };
+
+    await expect(
+      service.ingestDeploymentGlobalReport(body, 'project-1', TENANT_A),
+    ).resolves.toEqual({ received: true });
+    expect(runReportsRepository.upsertDeploymentGlobal).toHaveBeenCalled();
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      body.repoFullName,
+      'project-1',
+      TENANT_A,
+    ]);
+  });
+
+  it('pins bearer report ownership to the project returned by token validation', async () => {
+    const query = jest.fn().mockResolvedValueOnce({
+      rows: [{ user_id: 'user-1', tenant_id: TENANT_A }],
+    });
+    const databaseService = { query } as unknown as DatabaseService;
+    const runReportsRepository = makeRunReportsRepository();
+    const service = new CiReportsService(databaseService, runReportsRepository);
+    const body: CiReportBodyDto = {
+      repoFullName: 'acme/orders-api',
+      branch: 'main',
+      commitSha: 'sha-1',
+      runId: 42,
+      stage: 'access',
+      conclusion: 'success',
+      results: {},
+    };
+
+    await service.ingestDeploymentGlobalReport(body, 'project-1', TENANT_A);
+
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      body.repoFullName,
+      'project-1',
+      TENANT_A,
+    ]);
+    expect(String(query.mock.calls[0]?.[0] ?? '')).toContain('id = $2::uuid');
+  });
+
+  it('filters user-wide report rows through the selected tenant project set', async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ repo_full_name: 'acme/orders-api' }] });
+    const databaseService = { query } as unknown as DatabaseService;
+    const runReportsRepository = makeRunReportsRepository();
+    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
+      row({ repo_full_name: 'acme/orders-api', run_id: '200' }),
+      row({ repo_full_name: 'other/secret-api', run_id: '100' }),
+    ]);
+    const service = new CiReportsService(
+      databaseService,
+      runReportsRepository,
+      makeTenantContext(),
+    );
+
+    const { runs } = await service.getRuns('user-1');
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.repoFullName).toBe('acme/orders-api');
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      'user-1',
+      TENANT_A,
+    ]);
+    expect(String(query.mock.calls[0]?.[0] ?? '')).toContain(
+      'tenant_id = $2::uuid',
+    );
+  });
+
+  it('rejects a repository owned by another tenant before reading its reports', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ rows: [] });
+    const databaseService = { query } as unknown as DatabaseService;
+    const runReportsRepository = makeRunReportsRepository();
+    const service = new CiReportsService(
+      databaseService,
+      runReportsRepository,
+      makeTenantContext(),
+    );
+
+    await expect(service.getRuns('user-1', 'other/secret-api')).rejects.toThrow(
+      'You do not have access',
+    );
+    expect(runReportsRepository.findRecentByRepo).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      'other/secret-api',
+      'user-1',
+      TENANT_A,
+    ]);
+  });
+
+  it('fails closed when a user-facing report read has no tenant context', async () => {
+    const databaseService = makeDatabaseService();
+    const runReportsRepository = makeRunReportsRepository();
+    const service = new CiReportsService(databaseService, runReportsRepository);
+
+    await expect(service.getRuns('user-1')).rejects.toBeInstanceOf(
+      TenantContextRequiredError,
+    );
+    expect(databaseService.query).not.toHaveBeenCalled();
+    expect(runReportsRepository.findRecentByUser).not.toHaveBeenCalled();
   });
 });

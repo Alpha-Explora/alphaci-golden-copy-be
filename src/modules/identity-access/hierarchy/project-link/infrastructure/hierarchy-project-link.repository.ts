@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 
 export interface LinkProjectInput {
   projectId: string;
@@ -27,22 +32,44 @@ export interface LinkProjectInput {
  */
 @Injectable()
 export class HierarchyProjectLinkRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   /** True when the workspace is a Group (team), not a personal workspace. */
   async isTeamWorkspace(workspaceId: string): Promise<boolean> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ exists: boolean }>(
-      `SELECT TRUE AS exists FROM orgs.workspaces WHERE id = $1 AND kind = 'team' LIMIT 1;`,
-      [workspaceId],
+      `
+        SELECT TRUE AS exists
+        FROM orgs.workspaces
+        WHERE id = $1 AND kind = 'team' AND tenant_id = $2::uuid
+        LIMIT 1;
+      `,
+      [workspaceId, tenantId],
     );
     return result.rows.length > 0;
   }
 
   /** Existing hierarchy repository id for this project, if already linked. */
   async findLinkedRepositoryId(projectId: string): Promise<string | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ id: string }>(
-      `SELECT id FROM hierarchy.repositories WHERE provisioned_project_id = $1 LIMIT 1;`,
-      [projectId],
+      `
+        SELECT repository.id
+        FROM hierarchy.repositories AS repository
+        JOIN orgs.workspaces AS workspace ON workspace.id = repository.group_id
+        JOIN projects.provisioned_projects AS project
+          ON project.id = repository.provisioned_project_id
+        WHERE repository.provisioned_project_id = $1
+          AND project.tenant_id = $2::uuid
+          AND workspace.tenant_id = $2::uuid
+        LIMIT 1;
+      `,
+      [projectId, tenantId],
     );
     return result.rows[0]?.id ?? null;
   }
@@ -58,16 +85,21 @@ export class HierarchyProjectLinkRepository {
    * caller re-reads the winner's row.
    */
   async link(input: LinkProjectInput): Promise<string | null> {
+    const tenantId = this.requireTenantId();
     return this.databaseService.withClient(async (client) => {
       await client.query('BEGIN');
       try {
         const system = await client.query<{ id: string }>(
           `
             INSERT INTO hierarchy.systems (group_id, name, owner_id, status)
-            VALUES ($1, $2, $3, 'active')
+            SELECT $1, $2, $3, 'active'
+            FROM orgs.workspaces AS workspace
+            WHERE workspace.id = $1
+              AND workspace.kind = 'team'
+              AND workspace.tenant_id = $4::uuid
             RETURNING id;
           `,
-          [input.workspaceId, input.name, input.createdBy],
+          [input.workspaceId, input.name, input.createdBy, tenantId],
         );
         const systemId = system.rows[0]?.id;
         if (!systemId) throw new Error('System insert returned no row');
@@ -75,10 +107,15 @@ export class HierarchyProjectLinkRepository {
         const deliveryProject = await client.query<{ id: string }>(
           `
             INSERT INTO hierarchy.delivery_projects (system_id, group_id, name, manager_id, status)
-            VALUES ($1, $2, $3, $4, 'active')
+            SELECT $1, $2, $3, $4, 'active'
+            FROM hierarchy.systems AS system
+            JOIN orgs.workspaces AS workspace ON workspace.id = system.group_id
+            WHERE system.id = $1
+              AND system.group_id = $2
+              AND workspace.tenant_id = $5::uuid
             RETURNING id;
           `,
-          [systemId, input.workspaceId, input.name, input.createdBy],
+          [systemId, input.workspaceId, input.name, input.createdBy, tenantId],
         );
         const deliveryProjectId = deliveryProject.rows[0]?.id;
         if (!deliveryProjectId) {
@@ -91,7 +128,13 @@ export class HierarchyProjectLinkRepository {
               delivery_project_id, group_id, name, repo_full_name,
               visibility, created_by, status, provisioned_project_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            SELECT $1, $2, $3, $4, $5, $6, $7, $8
+            FROM projects.provisioned_projects AS project
+            JOIN orgs.workspaces AS workspace ON workspace.id = project.workspace_id
+            WHERE project.id = $8::uuid
+              AND project.workspace_id = $2
+              AND project.tenant_id = $9::uuid
+              AND workspace.tenant_id = $9::uuid
             ON CONFLICT (provisioned_project_id) DO NOTHING
             RETURNING id;
           `,
@@ -104,6 +147,7 @@ export class HierarchyProjectLinkRepository {
             input.createdBy,
             input.projectStatus === 'provisioned' ? 'active' : 'pending',
             input.projectId,
+            tenantId,
           ],
         );
 
@@ -122,5 +166,12 @@ export class HierarchyProjectLinkRepository {
         throw error;
       }
     });
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require().tenantId;
   }
 }

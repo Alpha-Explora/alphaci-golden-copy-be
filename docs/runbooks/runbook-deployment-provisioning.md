@@ -21,6 +21,20 @@ sources:
 
 Runtime can create provider deployment targets during project setup and push initial environment values to the configured provider. Environment values are write-only from the backend perspective; the repository stores metadata rather than secret values.
 
+## Database boundary
+
+Provision the application database separately from provider targets:
+
+| Deployment | Required database boundary | Tenant arrangement |
+|---|---|---|
+| Hosted SaaS/EDU | Hosted shared database | Multiple tenants, selected and revalidated through memberships |
+| Enterprise cloud | Dedicated database/project per customer deployment | One active tenant in that database |
+| Enterprise on-prem | Customer-controlled dedicated database | One active tenant in that database |
+| Local/staging | Explicit non-production database | Use declared seed/backfill mappings; never reuse production credentials |
+
+The database URL is the phase-one Enterprise boundary. `ALPHACI_EDITION` and
+`ALPHACI_CLIENT` do not choose a database. See the [database-boundaries runbook](runbook-deployment-database-boundaries.md) before provisioning a new customer deployment.
+
 ## Provider strategy
 
 | Provider | Current composition | Current outcome |

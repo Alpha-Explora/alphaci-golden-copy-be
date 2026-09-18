@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import type {
   ApprovalState,
   ConfigurationAction,
@@ -42,7 +47,12 @@ interface ConfigurationChangeRow {
  */
 @Injectable()
 export class RepoConfigurationChangesRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   async record(input: {
     repositoryId: string;
@@ -54,13 +64,18 @@ export class RepoConfigurationChangesRepository {
     approvalState: ApprovalState;
     githubSyncState: ConfigurationSyncState;
   }): Promise<ConfigurationChangeRecord> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<ConfigurationChangeRow>(
       `
         INSERT INTO hierarchy.repository_configuration_changes (
           repository_id, requested_by, environment_scope, configuration_type,
           action, variable_name, approval_state, github_sync_state
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8
+        FROM hierarchy.repositories AS repository
+        JOIN orgs.workspaces AS workspace ON workspace.id = repository.group_id
+        WHERE repository.id = $1
+          AND workspace.tenant_id = $9::uuid
         RETURNING id, repository_id, requested_by, environment_scope, configuration_type,
           action, variable_name, approval_state, github_sync_state, created_at;
       `,
@@ -73,6 +88,7 @@ export class RepoConfigurationChangesRepository {
         input.variableName,
         input.approvalState,
         input.githubSyncState,
+        tenantId,
       ],
     );
     const row = result.rows[0];
@@ -96,6 +112,7 @@ export class RepoConfigurationChangesRepository {
       updatedAt: string;
     }>
   > {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{
       variable_name: string;
       environment_scope: EnvironmentScope;
@@ -105,11 +122,16 @@ export class RepoConfigurationChangesRepository {
       `
         SELECT DISTINCT ON (variable_name, environment_scope)
           variable_name, environment_scope, action, created_at AS updated_at
-        FROM hierarchy.repository_configuration_changes
-        WHERE repository_id = $1 AND configuration_type = $2
-        ORDER BY variable_name, environment_scope, created_at DESC
+        FROM hierarchy.repository_configuration_changes AS configuration_change
+        JOIN hierarchy.repositories AS repository ON repository.id = configuration_change.repository_id
+        JOIN orgs.workspaces AS workspace ON workspace.id = repository.group_id
+        WHERE configuration_change.repository_id = $1
+          AND configuration_change.configuration_type = $2
+          AND workspace.tenant_id = $3::uuid
+        ORDER BY configuration_change.variable_name,
+          configuration_change.environment_scope, configuration_change.created_at DESC
       `,
-      [repositoryId, configurationType],
+      [repositoryId, configurationType, tenantId],
     );
     return result.rows
       .filter((row) => row.action !== 'delete')
@@ -133,5 +155,12 @@ export class RepoConfigurationChangesRepository {
       githubSyncState: row.github_sync_state,
       createdAt: row.created_at,
     };
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require().tenantId;
   }
 }

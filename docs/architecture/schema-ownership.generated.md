@@ -22,7 +22,7 @@ This map is generated from the owner and exact transition-reference data used by
 | Owner | Schemas |
 |---|---|
 | `billing` | `billing`, `billing_lifecycle`, `usage` |
-| `identity-access` | `hierarchy`, `identity`, `orgs` |
+| `identity-access` | `hierarchy`, `identity`, `orgs`, `tenancy` |
 | `pipelines` | `ci`, `github_app`, `workflow` |
 | `platform-ops` | `audit`, `notifications`, `platform`, `support` |
 | `projects` | `projects`, `workflow` |
@@ -47,8 +47,11 @@ These are exact file-to-schema.table allowances required for historical migratio
 | `identity-access/20260713061000_hierarchy_core.sql` | `projects.provisioned_projects` |
 | `identity-access/20260818000000_link_group_projects_to_hierarchy.sql` | `projects.provisioned_projects` |
 | `identity-access/20260824120000_backfill_hierarchy_links.sql` | `projects.provisioned_projects` |
+| `identity-access/20260918000000_tenancy_kernel.sql` | `projects.provisioned_projects` |
+| `identity-access/20260918000010_tenant_scope_extensions.sql` | `env_provisioning.provider_connections`, `workflow.workflow_generations` |
 | `pipelines/20260607000200_project_ci_tokens.sql` | `projects.provisioned_projects` |
 | `pipelines/20260614000100_ci_run_reports.sql` | `identity.app_users` |
+| `pipelines/20260918000020_ci_run_reports_tenant_scope.sql` | `tenancy.tenants` |
 | `platform-ops/20260614000300_workspaces_audit_notifications.sql` | `orgs.workspace_members`, `orgs.workspaces`, `projects.provisioned_projects` |
 | `platform-ops/20260617000300_user_feedback.sql` | `identity.app_users` |
 | `projects/20260609_backfill_projects_schema_from_public.sql` | `billing.subscription_plans`, `billing.user_subscriptions`, `ci.project_ci_tokens`, `github_app.github_installation_accounts`, `github_app.github_installations`, `identity.app_users`, `identity.oauth_states`, `platform.outbox_events`, `public.app_users`, `public.github_installation_repos`, `public.github_installations`, `public.oauth_states`, `public.outbox_events`, `public.project_ci_tokens`, `public.provisioned_projects`, `public.subscription_plans`, `public.user_subscriptions`, `public.workflow_generations` |
@@ -73,15 +76,20 @@ These are exact source-file allowances for current cross-context reads or shared
 | `src/modules/identity-access/hierarchy/infrastructure/github-access-sync.repository.ts` | `identity.app_users` |
 | `src/modules/identity-access/hierarchy/infrastructure/group-activity.repository.ts` | `audit.audit_events` |
 | `src/modules/identity-access/hierarchy/infrastructure/groups.repository.ts` | `hierarchy.systems` |
+| `src/modules/identity-access/hierarchy/infrastructure/repositories.repository.ts` | `projects.provisioned_projects` |
+| `src/modules/identity-access/hierarchy/project-link/infrastructure/hierarchy-project-link.repository.ts` | `projects.provisioned_projects` |
+| `src/modules/identity-access/tenancy/infrastructure/tenancy.repository.ts` | `projects.provisioned_projects` |
 | `src/modules/identity-access/workspaces/infrastructure/workspaces.repository.ts` | `projects.provisioned_projects` |
 | `src/modules/pipelines/ci/application/ci-reports.service.ts` | `projects.provisioned_projects` |
+| `src/modules/pipelines/ci/infrastructure/ci-run-reports.repository.ts` | `projects.provisioned_projects` |
 | `src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts` | `billing.user_subscriptions`, `identity.app_users`, `projects.provisioned_projects` |
 | `src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts` | `projects.provisioned_projects` |
 | `src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts` | `identity.app_users` |
-| `src/modules/projects/infrastructure/projects.repository.ts` | `hierarchy.repositories`, `hierarchy.repository_assignments`, `identity.app_users`, `identity.platform_admins`, `orgs.workspace_members` |
-| `src/modules/runtime/infrastructure/repositories/deployment-targets.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |
-| `src/modules/runtime/infrastructure/repositories/env-vars.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |
-| `src/modules/runtime/infrastructure/repositories/project-sync-findings.repository.ts` | `projects.project_sync_findings`, `projects.provisioned_projects` |
+| `src/modules/projects/infrastructure/projects.repository.ts` | `hierarchy.repositories`, `hierarchy.repository_assignments`, `identity.app_users`, `identity.platform_admins`, `orgs.workspace_members`, `orgs.workspaces`, `tenancy.tenant_memberships` |
+| `src/modules/runtime/infrastructure/repositories/custom-domains.repository.ts` | `orgs.workspaces`, `projects.provisioned_projects` |
+| `src/modules/runtime/infrastructure/repositories/deployment-targets.repository.ts` | `orgs.workspace_members`, `orgs.workspaces`, `projects.provisioned_projects` |
+| `src/modules/runtime/infrastructure/repositories/env-vars.repository.ts` | `orgs.workspace_members`, `orgs.workspaces`, `projects.provisioned_projects` |
+| `src/modules/runtime/infrastructure/repositories/project-sync-findings.repository.ts` | `orgs.workspaces`, `projects.project_sync_findings`, `projects.provisioned_projects` |
 
 ## Verification
 

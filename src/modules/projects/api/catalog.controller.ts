@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SkipTenantContext } from '#kernel/tenancy/skip-tenant-context.decorator.js';
 import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
@@ -18,6 +19,7 @@ import { CatalogService } from '../application/catalog/catalog.service';
 
 @Controller('catalog')
 @UseGuards(SessionAuthGuard)
+@SkipTenantContext()
 export class CatalogController {
   constructor(
     private readonly catalogService: CatalogService,

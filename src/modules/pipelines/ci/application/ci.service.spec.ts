@@ -7,7 +7,7 @@ import type { CiTokensRepository } from '../infrastructure/ci-tokens.repository'
 const makeRepository = () =>
   ({
     upsertProjectToken: jest.fn(),
-    findValidationContext: jest.fn(),
+    findDeploymentGlobalValidationContext: jest.fn(),
     revokeProjectTokens: jest.fn(),
   }) as unknown as CiTokensRepository;
 
@@ -24,6 +24,7 @@ const makeConfigService = (gateEnabled: boolean) =>
 /** A context row that passes every check except the entitlement rule. */
 const validContext = (overrides: Record<string, unknown> = {}) => ({
   project_id: 'project-1',
+  tenant_id: '11111111-1111-4111-8111-111111111111',
   user_id: 'user-1',
   repo_full_name: 'owner/repo',
   project_status: 'provisioned',
@@ -62,9 +63,9 @@ describe('CiService', () => {
   });
 
   it('validates an active token for a provisioned project and repo', async () => {
-    (repository.findValidationContext as jest.Mock).mockResolvedValueOnce(
-      validContext(),
-    );
+    (
+      repository.findDeploymentGlobalValidationContext as jest.Mock
+    ).mockResolvedValueOnce(validContext());
 
     const result = await service.validateRun({
       token: 'aci_valid-token',
@@ -75,6 +76,7 @@ describe('CiService', () => {
     expect(result).toEqual({
       authorized: true,
       projectId: 'project-1',
+      tenantId: '11111111-1111-4111-8111-111111111111',
       repoFullName: 'owner/repo',
       stage: 'quality',
     });
@@ -91,7 +93,9 @@ describe('CiService', () => {
   });
 
   it('rejects a token that does not match the repo', async () => {
-    (repository.findValidationContext as jest.Mock).mockResolvedValueOnce(null);
+    (
+      repository.findDeploymentGlobalValidationContext as jest.Mock
+    ).mockResolvedValueOnce(null);
 
     await expect(
       service.validateRun({
@@ -103,9 +107,9 @@ describe('CiService', () => {
   });
 
   it('rejects inactive subscriptions while the gate is enabled', async () => {
-    (repository.findValidationContext as jest.Mock).mockResolvedValueOnce(
-      validContext({ subscription_status: 'inactive' }),
-    );
+    (
+      repository.findDeploymentGlobalValidationContext as jest.Mock
+    ).mockResolvedValueOnce(validContext({ subscription_status: 'inactive' }));
 
     await expect(
       service.validateRun({
@@ -117,7 +121,9 @@ describe('CiService', () => {
   });
 
   it('authorises an internal user with no subscription row', async () => {
-    (repository.findValidationContext as jest.Mock).mockResolvedValueOnce(
+    (
+      repository.findDeploymentGlobalValidationContext as jest.Mock
+    ).mockResolvedValueOnce(
       validContext({ subscription_status: null, is_internal: true }),
     );
 
@@ -136,7 +142,9 @@ describe('CiService', () => {
     });
 
     it('authorises a provisioned project with no subscription at all', async () => {
-      (repository.findValidationContext as jest.Mock).mockResolvedValueOnce(
+      (
+        repository.findDeploymentGlobalValidationContext as jest.Mock
+      ).mockResolvedValueOnce(
         validContext({ subscription_status: null, is_internal: false }),
       );
 
@@ -150,9 +158,9 @@ describe('CiService', () => {
     });
 
     it('still rejects a revoked token', async () => {
-      (repository.findValidationContext as jest.Mock).mockResolvedValueOnce(
-        validContext({ token_status: 'revoked' }),
-      );
+      (
+        repository.findDeploymentGlobalValidationContext as jest.Mock
+      ).mockResolvedValueOnce(validContext({ token_status: 'revoked' }));
 
       await expect(
         service.validateRun({
@@ -164,9 +172,9 @@ describe('CiService', () => {
     });
 
     it('still rejects a project that is not provisioned', async () => {
-      (repository.findValidationContext as jest.Mock).mockResolvedValueOnce(
-        validContext({ project_status: 'provisioning' }),
-      );
+      (
+        repository.findDeploymentGlobalValidationContext as jest.Mock
+      ).mockResolvedValueOnce(validContext({ project_status: 'provisioning' }));
 
       await expect(
         service.validateRun({

@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 
 export type WorkflowUpdateRequestStatus = 'created' | 'failed';
 
@@ -48,11 +53,17 @@ interface WorkflowUpdateRequestRow {
 
 @Injectable()
 export class ProjectWorkflowUpdateRequestsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   async createRequest(
     input: CreateWorkflowUpdateRequestInput,
   ): Promise<WorkflowUpdateRequestRecord> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<WorkflowUpdateRequestRow>(
       `
         INSERT INTO projects.project_workflow_update_requests (
@@ -66,7 +77,11 @@ export class ProjectWorkflowUpdateRequestsRepository {
           settings_json,
           workflow_files_json
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
+        SELECT
+          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb
+        FROM projects.provisioned_projects AS project
+        WHERE project.id = $1
+          AND project.tenant_id = $10::uuid
         RETURNING *;
       `,
       [
@@ -79,6 +94,7 @@ export class ProjectWorkflowUpdateRequestsRepository {
         input.status,
         JSON.stringify(input.settings),
         JSON.stringify(input.workflowFiles),
+        tenantId,
       ],
     );
 
@@ -115,5 +131,13 @@ export class ProjectWorkflowUpdateRequestsRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+
+    return this.tenantContext.require().tenantId;
   }
 }

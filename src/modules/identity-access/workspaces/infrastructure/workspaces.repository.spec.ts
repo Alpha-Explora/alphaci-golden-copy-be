@@ -1,4 +1,5 @@
 import type { DatabaseService } from '#kernel/db/database.service';
+import type { TenantContextPort } from '#kernel/tenancy/tenant-context.port.js';
 import { WorkspacesRepository } from './workspaces.repository';
 
 const makeDatabaseService = (query: jest.Mock) =>
@@ -7,10 +8,26 @@ const makeDatabaseService = (query: jest.Mock) =>
 describe('WorkspacesRepository', () => {
   let query: jest.Mock;
   let repository: WorkspacesRepository;
+  let tenantContext: TenantContextPort;
 
   beforeEach(() => {
     query = jest.fn();
-    repository = new WorkspacesRepository(makeDatabaseService(query));
+    const context = {
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      membershipRole: 'member',
+      deploymentMode: 'hosted',
+    } as const;
+    tenantContext = {
+      current: () => context,
+      require: () => context,
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
+    repository = new WorkspacesRepository(
+      makeDatabaseService(query),
+      tenantContext,
+    );
   });
 
   it('lists workspaces for a user membership', async () => {
@@ -35,7 +52,7 @@ describe('WorkspacesRepository', () => {
     ]);
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('FROM orgs.workspace_members'),
-      ['user-1'],
+      ['user-1', 'tenant-1'],
     );
   });
 
@@ -81,7 +98,7 @@ describe('WorkspacesRepository', () => {
     ]);
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('JOIN identity.app_users'),
-      ['workspace-1'],
+      ['workspace-1', 'tenant-1'],
     );
   });
 

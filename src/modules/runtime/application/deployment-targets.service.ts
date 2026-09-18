@@ -160,7 +160,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       dto.ownershipMode === 'flowci_managed' &&
       providerPolicy?.managedQuota
     ) {
-      await this.usageQuotaService?.assertManagedFleetCapacity({
+      await this.usageQuotaService?.assertDeploymentGlobalManagedFleetCapacity({
         providerId: dto.provider,
         ...providerPolicy.managedQuota,
       });

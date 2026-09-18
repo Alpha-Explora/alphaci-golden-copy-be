@@ -18,6 +18,11 @@ import type {
   ManagedQuotaDefinition,
   UsageQuotaPort,
 } from '#kernel/ports/usage-quota.port';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import type { UsageLimitCode, UsageMeResponse } from './usage.types';
 
 const DEFAULT_LIMITS: Record<'free' | 'pro', Record<string, number>> = {
@@ -48,6 +53,9 @@ export class UsageQuotaService implements UsageQuotaPort {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
   ) {}
 
   /**
@@ -66,19 +74,21 @@ export class UsageQuotaService implements UsageQuotaPort {
   }
 
   async getUsage(userId: string): Promise<UsageMeResponse> {
+    const tenantId = this.requireTenantId();
     const internal = await this.isInternalUser(userId);
-    return this.buildUsage(userId, internal);
+    return this.buildUsage(userId, internal, tenantId);
   }
 
   private async buildUsage(
     userId: string,
     internal: boolean,
+    tenantId: string,
   ): Promise<UsageMeResponse> {
     // Internal users share the same database as the paid platform but are never
     // quota-limited, so quotas read as disabled and nothing prompts an upgrade.
     const enabled = this.enabled() && !internal;
     const plan = await this.resolvePlan(userId);
-    const counts = await this.loadCounts(userId);
+    const counts = await this.loadCounts(userId, tenantId);
     const limits = this.limitsForPlan(plan);
 
     return {
@@ -99,6 +109,7 @@ export class UsageQuotaService implements UsageQuotaPort {
     limitCode: string,
     increment = 1,
   ): Promise<void> {
+    const tenantId = this.requireTenantId();
     if (!this.enabled()) {
       return;
     }
@@ -112,7 +123,7 @@ export class UsageQuotaService implements UsageQuotaPort {
       return;
     }
 
-    const usage = await this.buildUsage(userId, internal);
+    const usage = await this.buildUsage(userId, internal, tenantId);
     const item = usage.items.find((candidate) => candidate.code === limitCode);
     if (!item) {
       return;
@@ -130,19 +141,22 @@ export class UsageQuotaService implements UsageQuotaPort {
   }
 
   /**
-   * Platform-wide capacity guard for managed provisioning.
+   * Explicit deployment-global capacity guard for managed provisioning.
    *
    * Managed ('flowci_managed') targets all share a single Render/Vercel account,
    * so per-user quotas cannot protect that shared account from the aggregate of
-   * every user. This counts managed targets across ALL users for the provider
+   * every user. This counts managed targets across ALL users and tenants for the provider
    * and refuses new ones once the configured fleet cap is reached, pointing the
    * user at BYO. A cap of 0 (default) means unlimited / disabled.
    *
    * Note: this is a soft cap — the count-then-insert is not atomic, so a burst
    * of concurrent creates may overshoot by a few. That is acceptable for a
    * coarse safety ceiling; the per-user quota remains the hard per-tenant limit.
+   * This is the only deployment-global operation in this service and it
+   * intentionally does not require request tenant context because workers may
+   * call it during reconciliation.
    */
-  async assertManagedFleetCapacity(
+  async assertDeploymentGlobalManagedFleetCapacity(
     fact: ManagedFleetCapacityFact,
   ): Promise<void> {
     if (!this.databaseService.isEnabled()) {
@@ -187,6 +201,17 @@ export class UsageQuotaService implements UsageQuotaPort {
     }
   }
 
+  /**
+   * Compatibility name for existing callers. The delegated operation is still
+   * explicitly deployment-global; request-facing quota methods fail closed
+   * without validated tenant context.
+   */
+  async assertManagedFleetCapacity(
+    fact: ManagedFleetCapacityFact,
+  ): Promise<void> {
+    return this.assertDeploymentGlobalManagedFleetCapacity(fact);
+  }
+
   private enabled(): boolean {
     return (
       this.capabilityResolver?.deployment().has('billing.usage-quotas') ?? false
@@ -209,6 +234,12 @@ export class UsageQuotaService implements UsageQuotaPort {
     return result.rows[0]?.is_internal === true;
   }
 
+  /**
+   * Billing subscriptions are account-level entitlements keyed by user_id in
+   * the current schema. That is intentionally account-global, not
+   * deployment-global: the caller still must establish tenant context and all
+   * resource counters remain tenant-scoped in loadCounts.
+   */
   private async resolvePlan(userId: string): Promise<'free' | 'pro'> {
     const result = await this.databaseService.query<{ plan_code: string }>(
       `
@@ -225,7 +256,10 @@ export class UsageQuotaService implements UsageQuotaPort {
     return planCode === 'pro' || planCode === 'pro_monthly' ? 'pro' : 'free';
   }
 
-  private async loadCounts(userId: string): Promise<Record<string, number>> {
+  private async loadCounts(
+    userId: string,
+    tenantId: string,
+  ): Promise<Record<string, number>> {
     const result = await this.databaseService.query<{
       projects: string | number;
       deployment_targets: string | number;
@@ -239,35 +273,43 @@ export class UsageQuotaService implements UsageQuotaPort {
           SELECT t.provider, COUNT(*) AS count
           FROM env_provisioning.project_deployment_targets t
           JOIN projects.provisioned_projects p ON p.id = t.project_id
-          WHERE p.user_id = $1 AND t.ownership_mode = 'flowci_managed'
+          WHERE p.user_id = $1
+            AND p.tenant_id = $2::uuid
+            AND t.ownership_mode = 'flowci_managed'
           GROUP BY t.provider
         )
         SELECT
-          (SELECT COUNT(*) FROM projects.provisioned_projects WHERE user_id = $1 AND is_example = false) AS projects,
+          (SELECT COUNT(*)
+           FROM projects.provisioned_projects
+           WHERE user_id = $1
+             AND tenant_id = $2::uuid
+             AND is_example = false) AS projects,
           (
             SELECT COUNT(*)
             FROM env_provisioning.project_deployment_targets t
             JOIN projects.provisioned_projects p ON p.id = t.project_id
-            WHERE p.user_id = $1
+            WHERE p.user_id = $1 AND p.tenant_id = $2::uuid
           ) AS deployment_targets,
           (
             SELECT COUNT(*)
             FROM env_provisioning.project_env_var_metadata m
             JOIN projects.provisioned_projects p ON p.id = m.project_id
-            WHERE p.user_id = $1 AND m.removed_at IS NULL
+            WHERE p.user_id = $1
+              AND p.tenant_id = $2::uuid
+              AND m.removed_at IS NULL
           ) AS env_keys,
           (
             SELECT COUNT(*)
             FROM projects.project_workflow_update_requests r
             JOIN projects.provisioned_projects p ON p.id = r.project_id
-            WHERE p.user_id = $1
+            WHERE p.user_id = $1 AND p.tenant_id = $2::uuid
           ) AS workflow_prs,
           managed_counts.provider AS managed_provider,
           managed_counts.count AS managed_count
         FROM (SELECT 1) AS base
         LEFT JOIN managed_counts ON TRUE;
       `,
-      [userId],
+      [userId, tenantId],
     );
     const row = result.rows[0];
     const counts: Record<string, number> = {
@@ -310,5 +352,12 @@ export class UsageQuotaService implements UsageQuotaPort {
 
   private toNumber(value: string | number | null | undefined): number {
     return Number(value ?? 0);
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require().tenantId;
   }
 }

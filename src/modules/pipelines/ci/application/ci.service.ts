@@ -28,6 +28,7 @@ export interface ValidateRunInput {
 export interface ValidateRunResult {
   authorized: true;
   projectId: string;
+  tenantId: string;
   repoFullName: string;
   stage: string;
 }
@@ -68,10 +69,11 @@ export class CiService implements CiProjectPort {
       throw new ForbiddenException('Repository and stage are required');
     }
 
-    const context = await this.ciTokensRepository.findValidationContext(
-      this.hashToken(token),
-      repoFullName,
-    );
+    const context =
+      await this.ciTokensRepository.findDeploymentGlobalValidationContext(
+        this.hashToken(token),
+        repoFullName,
+      );
 
     if (!context || context.token_status !== 'active') {
       throw new ForbiddenException(
@@ -88,6 +90,7 @@ export class CiService implements CiProjectPort {
     return {
       authorized: true,
       projectId: context.project_id,
+      tenantId: context.tenant_id,
       repoFullName: context.repo_full_name,
       stage,
     };

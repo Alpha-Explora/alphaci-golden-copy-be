@@ -1,8 +1,31 @@
 import type { DatabaseService } from '#kernel/db/database.service';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
+
+const TENANT_A = '11111111-1111-4111-8111-111111111111';
+const USER_ID = '22222222-2222-4222-8222-222222222222';
 
 const makeDatabaseService = (query: jest.Mock) =>
   ({ query }) as unknown as DatabaseService;
+
+const makeTenantContext = (tenantId = TENANT_A): TenantContextPort => {
+  const context: TenantContext = {
+    tenantId,
+    userId: USER_ID,
+    membershipRole: 'member',
+    deploymentMode: 'hosted',
+  };
+  return {
+    current: () => context,
+    require: () => context,
+    set: jest.fn(),
+    clear: jest.fn(),
+  };
+};
 
 const makeRow = (overrides = {}) => ({
   id: 'target-1',
@@ -35,10 +58,15 @@ const makeRow = (overrides = {}) => ({
 describe('DeploymentTargetsRepository', () => {
   let query: jest.Mock;
   let repository: DeploymentTargetsRepository;
+  let tenantContext: TenantContextPort;
 
   beforeEach(() => {
     query = jest.fn();
-    repository = new DeploymentTargetsRepository(makeDatabaseService(query));
+    tenantContext = makeTenantContext();
+    repository = new DeploymentTargetsRepository(
+      makeDatabaseService(query),
+      tenantContext,
+    );
   });
 
   it('creates deployment target metadata with JSON defaults', async () => {
@@ -68,6 +96,10 @@ describe('DeploymentTargetsRepository', () => {
       ),
       expect.arrayContaining(['project-1', 'backend', 'byo', 'render']),
     );
+    expect(String(query.mock.calls[0]?.[0] ?? '')).toContain(
+      'project.tenant_id = $23::uuid',
+    );
+    expect(query.mock.calls[0]?.[1]).toContain(TENANT_A);
   });
 
   it('throws when create returns no target row', async () => {
@@ -123,7 +155,7 @@ describe('DeploymentTargetsRepository', () => {
     });
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('SET provider_metadata = $2'),
-      ['target-1', '{"synced":true}', 'active'],
+      ['target-1', '{"synced":true}', 'active', TENANT_A],
     );
   });
 
@@ -162,6 +194,8 @@ describe('DeploymentTargetsRepository', () => {
     expect(queryText).toContain(
       "member.role IN ('admin', 'delegated_lead', 'member')",
     );
+    expect(queryText).toContain('project.tenant_id = $18::uuid');
+    expect(query.mock.calls[0]?.[1]).toContain(TENANT_A);
   });
 
   it('returns null when metadata update does not match a user target', async () => {
@@ -192,6 +226,8 @@ describe('DeploymentTargetsRepository', () => {
     expect(queryText).toContain(
       "member.role IN ('admin', 'delegated_lead', 'member')",
     );
+    expect(queryText).toContain('project.tenant_id = $4::uuid');
+    expect(query.mock.calls[0]?.[1]).toContain(TENANT_A);
   });
 
   it('finds a deployment target for the owning user', async () => {
@@ -208,6 +244,8 @@ describe('DeploymentTargetsRepository', () => {
     expect(queryText).toContain(
       "member.role IN ('admin', 'delegated_lead', 'member')",
     );
+    expect(queryText).toContain('p.tenant_id = $3::uuid');
+    expect(query.mock.calls[0]?.[1]).toContain(TENANT_A);
   });
 
   it('returns null when a target is not visible to the user', async () => {
@@ -216,5 +254,48 @@ describe('DeploymentTargetsRepository', () => {
     await expect(
       repository.findDeploymentTargetForUser('target-1', 'user-2'),
     ).resolves.toBeNull();
+  });
+
+  it('keeps a tenant A context from reading or mutating tenant B targets', async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 0 });
+
+    await expect(
+      repository.listDeploymentTargets('tenant-b-project'),
+    ).resolves.toEqual([]);
+    await expect(
+      repository.deleteDeploymentTargetForUser(
+        'tenant-b-project',
+        'tenant-b-target',
+        USER_ID,
+      ),
+    ).resolves.toBe(false);
+
+    expect(query.mock.calls[0]?.[1]).toEqual(['tenant-b-project', TENANT_A]);
+    expect(query.mock.calls[1]?.[1]).toEqual([
+      'tenant-b-project',
+      'tenant-b-target',
+      USER_ID,
+      TENANT_A,
+    ]);
+  });
+
+  it('fails closed before querying when the validated tenant context is absent', async () => {
+    const noContext: TenantContextPort = {
+      current: () => null,
+      require: () => {
+        throw new TenantContextRequiredError();
+      },
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
+    const noContextRepository = new DeploymentTargetsRepository(
+      makeDatabaseService(query),
+      noContext,
+    );
+
+    await expect(
+      noContextRepository.listDeploymentTargets('project-1'),
+    ).rejects.toThrow(TenantContextRequiredError);
+    expect(query).not.toHaveBeenCalled();
   });
 });

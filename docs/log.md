@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-09-18
+
+- **Creation**: Recorded ADR-0011 for the Golden Copy database boundary: hosted SaaS/EDU remain multi-tenant, while Enterprise is one tenant per dedicated cloud or on-prem database. Added the additive tenancy migration, explicit tenant provisioning/backfill commands, centralized validated tenant context, and workspace/project tenant predicates.
+
 ## 2026-09-15
 
 - **Update**: Added deterministic provenance to the generated `@alphaci/capability-catalog` package. `provenance.json` binds the backend source digest and package identity to a canonical generated-file digest, and the package checker now rejects stale or tampered output.

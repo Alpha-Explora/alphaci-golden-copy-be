@@ -1,4 +1,9 @@
 import type { DatabaseService } from '#kernel/db/database.service';
+import type {
+  TenantContext,
+  TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.repository';
 
 const makeDatabaseService = (query: jest.Mock) =>
@@ -9,11 +14,25 @@ const makeDatabaseService = (query: jest.Mock) =>
 describe('ProjectWorkflowSettingsRepository', () => {
   let query: jest.Mock;
   let repository: ProjectWorkflowSettingsRepository;
+  let tenantContext: TenantContextPort;
 
   beforeEach(() => {
     query = jest.fn();
+    const context: TenantContext = {
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      membershipRole: 'member',
+      deploymentMode: 'hosted',
+    };
+    tenantContext = {
+      current: () => context,
+      require: () => context,
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
     repository = new ProjectWorkflowSettingsRepository(
       makeDatabaseService(query),
+      tenantContext,
     );
   });
 
@@ -39,7 +58,7 @@ describe('ProjectWorkflowSettingsRepository', () => {
 
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('FROM projects.project_workflow_settings'),
-      ['project-1'],
+      ['project-1', 'tenant-1'],
     );
     expect(result).toMatchObject({
       id: 'settings-1',
@@ -49,5 +68,16 @@ describe('ProjectWorkflowSettingsRepository', () => {
         coverageThreshold: 90,
       },
     });
+  });
+
+  it('fails closed when no tenant context is available', async () => {
+    const unscopedRepository = new ProjectWorkflowSettingsRepository(
+      makeDatabaseService(query),
+    );
+
+    await expect(unscopedRepository.findByProject('project-1')).rejects.toThrow(
+      TenantContextRequiredError,
+    );
+    expect(query).not.toHaveBeenCalled();
   });
 });

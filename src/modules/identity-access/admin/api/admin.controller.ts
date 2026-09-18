@@ -15,6 +15,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { SkipTenantContext } from '#kernel/tenancy/skip-tenant-context.decorator.js';
 import type { FeedbackStatus } from '#kernel/ports/feedback.port';
 import { AdminService } from '../application/admin.service';
 import { GrantRoleDto } from './dto/grant-role.dto';
@@ -30,6 +31,7 @@ import { SuperAdminGuard } from './guards/super-admin.guard';
  */
 @Controller('admin')
 @UseGuards(SessionAuthGuard, PlatformAdminGuard)
+@SkipTenantContext()
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 

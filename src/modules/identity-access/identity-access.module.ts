@@ -8,6 +8,7 @@ import { HierarchyProjectLinkModule } from './hierarchy/project-link/hierarchy-p
 import { GithubRoleAccessModule } from './admin/github-role-access.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { ProjectProvisioningModule } from '#modules/projects/project-provisioning.module.js';
+import { TenancyModule } from './tenancy/tenancy.module.js';
 
 /**
  * Bounded-context composition root for identity and access management.
@@ -24,6 +25,7 @@ import { ProjectProvisioningModule } from '#modules/projects/project-provisionin
     HierarchyProjectLinkModule,
     GithubRoleAccessModule,
     ProjectProvisioningModule,
+    TenancyModule,
   ],
   exports: [
     AuthModule,
@@ -34,6 +36,7 @@ import { ProjectProvisioningModule } from '#modules/projects/project-provisionin
     HierarchyProjectLinkModule,
     GithubRoleAccessModule,
     ProjectProvisioningModule,
+    TenancyModule,
   ],
 })
 export class IdentityAccessModule {}

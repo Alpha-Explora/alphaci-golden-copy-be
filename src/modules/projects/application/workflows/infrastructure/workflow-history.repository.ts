@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 
 export interface WorkflowHistoryEntry {
   id: string;
@@ -46,12 +51,19 @@ interface CreateWorkflowHistoryInput {
 
 @Injectable()
 export class WorkflowHistoryRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   async create(input: CreateWorkflowHistoryInput): Promise<void> {
+    const tenantId = this.requireTenantId();
     await this.databaseService.query(
       `
         INSERT INTO workflow_generations (
+          tenant_id,
           user_id,
           template_id,
           template_name,
@@ -65,9 +77,10 @@ export class WorkflowHistoryRepository {
           sha256,
           metadata
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '{}'::jsonb);
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{}'::jsonb);
       `,
       [
+        tenantId,
         input.userId,
         input.templateId,
         input.templateName,
@@ -87,6 +100,7 @@ export class WorkflowHistoryRepository {
     userId: string,
     limit = 25,
   ): Promise<WorkflowHistoryEntry[]> {
+    const tenantId = this.requireTenantId();
     const safeLimit = Number.isFinite(limit)
       ? Math.max(1, Math.min(100, limit))
       : 25;
@@ -107,10 +121,11 @@ export class WorkflowHistoryRepository {
           yaml
         FROM workflow_generations
         WHERE user_id = $1
+          AND tenant_id = $2::uuid
         ORDER BY created_at DESC
-        LIMIT $2;
+        LIMIT $3;
       `,
-      [userId, safeLimit],
+      [userId, tenantId, safeLimit],
     );
 
     return result.rows.map((row) => this.toEntry(row));
@@ -122,6 +137,7 @@ export class WorkflowHistoryRepository {
     templateId: string | null;
     limit?: number;
   }): Promise<WorkflowHistoryEntry[]> {
+    const tenantId = this.requireTenantId();
     const safeLimit = Number.isFinite(input.limit)
       ? Math.max(1, Math.min(100, input.limit ?? 5))
       : 5;
@@ -142,14 +158,15 @@ export class WorkflowHistoryRepository {
           yaml
         FROM workflow_generations
         WHERE user_id = $1
+          AND tenant_id = $4::uuid
           AND (
             service_name = $2
             OR ($3::text IS NOT NULL AND template_id = $3)
           )
         ORDER BY created_at DESC
-        LIMIT $4;
+        LIMIT $5;
       `,
-      [input.userId, input.serviceName, input.templateId, safeLimit],
+      [input.userId, input.serviceName, input.templateId, tenantId, safeLimit],
     );
 
     return result.rows.map((row) => this.toEntry(row));
@@ -169,5 +186,13 @@ export class WorkflowHistoryRepository {
       lineCount: row.line_count,
       yaml: row.yaml,
     };
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+
+    return this.tenantContext.require().tenantId;
   }
 }

@@ -1,7 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContext,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import {
+  InvalidTenantContextError,
+  TenantContextRequiredError,
+} from '#kernel/tenancy/tenant-context.js';
 import type {
   GrantableRole,
   GroupRole,
@@ -108,7 +117,12 @@ interface MemberRow {
 
 @Injectable()
 export class GroupsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   async createGroup(input: {
     name: string;
@@ -116,13 +130,19 @@ export class GroupsRepository {
     businessUnit?: string | null;
     creatorUserId: string;
   }): Promise<GroupRecord> {
+    const context = this.requireTenantContext();
+    this.assertCurrentUser(input.creatorUserId, context, 'Group creator');
     return this.databaseService.withClient(async (client) => {
       await client.query('BEGIN');
       try {
         const result = await client.query<GroupRow>(
           `
-            INSERT INTO orgs.workspaces (owner_user_id, name, kind, description, business_unit, status)
-            VALUES ($1, $2, 'team', $3, $4, 'active')
+            INSERT INTO orgs.workspaces (owner_user_id, name, kind, description, business_unit, status, tenant_id)
+            SELECT $1, $2, 'team', $3, $4, 'active', $5::uuid
+            FROM tenancy.tenant_memberships AS tenant_membership
+            WHERE tenant_membership.tenant_id = $5::uuid
+              AND tenant_membership.user_id = $1
+              AND tenant_membership.status = 'active'
             RETURNING id, name, description, business_unit, status, archived_at, archived_by, created_at;
           `,
           [
@@ -130,6 +150,7 @@ export class GroupsRepository {
             input.name,
             input.description ?? null,
             input.businessUnit ?? null,
+            context.tenantId,
           ],
         );
         const row = result.rows[0];
@@ -139,9 +160,13 @@ export class GroupsRepository {
         await client.query(
           `
             INSERT INTO orgs.workspace_members (workspace_id, user_id, role, member_status)
-            VALUES ($1, $2, 'admin', 'active');
+            SELECT $1, $2, 'admin', 'active'
+            WHERE EXISTS (
+              SELECT 1 FROM orgs.workspaces AS workspace
+              WHERE workspace.id = $1 AND workspace.tenant_id = $3::uuid
+            );
           `,
-          [row.id, input.creatorUserId],
+          [row.id, input.creatorUserId, context.tenantId],
         );
         await client.query('COMMIT');
         return this.toGroup(row, { memberCount: 1, systemCount: 0 });
@@ -156,20 +181,33 @@ export class GroupsRepository {
     groupId: string,
     newLeadUserId: string,
   ): Promise<{ previousRole: GroupRole } | null> {
+    const tenantId = this.requireTenantId();
     return this.databaseService.withClient(async (client) => {
       await client.query('BEGIN');
       try {
         await client.query(
-          `SELECT id FROM orgs.workspace_members WHERE workspace_id = $1 AND member_status = 'active' FOR UPDATE;`,
-          [groupId],
+          `
+            SELECT member.id
+            FROM orgs.workspace_members AS member
+            JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
+            WHERE member.workspace_id = $1
+              AND member.member_status = 'active'
+              AND workspace.tenant_id = $2::uuid
+            FOR UPDATE OF member;
+          `,
+          [groupId, tenantId],
         );
         const targetResult = await client.query<{ role: GroupRole }>(
           `
             SELECT role
-            FROM orgs.workspace_members
-            WHERE workspace_id = $1 AND user_id = $2 AND member_status = 'active';
+            FROM orgs.workspace_members AS member
+            JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
+            WHERE member.workspace_id = $1
+              AND member.user_id = $2
+              AND member.member_status = 'active'
+              AND workspace.tenant_id = $3::uuid;
           `,
-          [groupId, newLeadUserId],
+          [groupId, newLeadUserId, tenantId],
         );
         const target = targetResult.rows[0];
         if (!target) {
@@ -180,13 +218,24 @@ export class GroupsRepository {
           `
             UPDATE orgs.workspace_members
             SET role = CASE WHEN user_id = $2 THEN 'admin' ELSE 'delegated_lead' END
-            WHERE workspace_id = $1 AND member_status = 'active' AND (role = 'admin' OR user_id = $2);
+            WHERE workspace_id = $1
+              AND member_status = 'active'
+              AND (role = 'admin' OR user_id = $2)
+              AND EXISTS (
+                SELECT 1 FROM orgs.workspaces AS workspace
+                WHERE workspace.id = workspace_members.workspace_id
+                  AND workspace.tenant_id = $3::uuid
+              );
           `,
-          [groupId, newLeadUserId],
+          [groupId, newLeadUserId, tenantId],
         );
         await client.query(
-          `UPDATE orgs.workspaces SET owner_user_id = $2, updated_at = NOW() WHERE id = $1 AND kind = 'team';`,
-          [groupId, newLeadUserId],
+          `
+            UPDATE orgs.workspaces
+            SET owner_user_id = $2, updated_at = NOW()
+            WHERE id = $1 AND kind = 'team' AND tenant_id = $3::uuid;
+          `,
+          [groupId, newLeadUserId, tenantId],
         );
         await client.query('COMMIT');
         return { previousRole: target.role };
@@ -198,6 +247,7 @@ export class GroupsRepository {
   }
 
   async listForUser(userId: string): Promise<GroupRecord[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<GroupRow>(
       `
         SELECT
@@ -210,9 +260,10 @@ export class GroupsRepository {
         WHERE member.user_id = $1
           AND member.member_status = 'active'
           AND workspace.kind = 'team'
+          AND workspace.tenant_id = $2::uuid
         ORDER BY workspace.created_at ASC;
       `,
-      [userId],
+      [userId, tenantId],
     );
     const counts = await this.getCountsForGroups(
       result.rows.map((row) => row.id),
@@ -221,14 +272,16 @@ export class GroupsRepository {
   }
 
   async listAllGroups(): Promise<GroupRecord[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<GroupRow>(
       `
         SELECT id, name, description, business_unit, status, archived_at, archived_by, created_at,
           'admin'::text AS role
         FROM orgs.workspaces
-        WHERE kind = 'team'
+        WHERE kind = 'team' AND tenant_id = $1::uuid
         ORDER BY created_at DESC;
       `,
+      [tenantId],
     );
     const counts = await this.getCountsForGroups(
       result.rows.map((row) => row.id),
@@ -237,13 +290,14 @@ export class GroupsRepository {
   }
 
   async findGroupById(groupId: string): Promise<GroupRecord | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<GroupRow>(
       `
         SELECT id, name, description, business_unit, status, archived_at, archived_by, created_at
         FROM orgs.workspaces
-        WHERE id = $1 AND kind = 'team';
+        WHERE id = $1 AND kind = 'team' AND tenant_id = $2::uuid;
       `,
-      [groupId],
+      [groupId, tenantId],
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -259,6 +313,7 @@ export class GroupsRepository {
   private async getCountsForGroups(
     groupIds: string[],
   ): Promise<Map<string, { memberCount: number; systemCount: number }>> {
+    const tenantId = this.requireTenantId();
     if (groupIds.length === 0) return new Map();
     const result = await this.databaseService.query<{
       group_id: string;
@@ -273,9 +328,10 @@ export class GroupsRepository {
           (SELECT count(*)::int FROM hierarchy.systems s
              WHERE s.group_id = workspace.id AND s.status = 'active') AS system_count
         FROM orgs.workspaces AS workspace
-        WHERE workspace.id = ANY($1::uuid[]);
+          WHERE workspace.id = ANY($1::uuid[])
+            AND workspace.tenant_id = $2::uuid;
       `,
-      [groupIds],
+      [groupIds, tenantId],
     );
     return new Map(
       result.rows.map((row) => [
@@ -290,6 +346,7 @@ export class GroupsRepository {
     groupId: string,
     userId: string,
   ): Promise<ActiveMembership | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{
       id: string;
       workspace_id: string;
@@ -309,9 +366,10 @@ export class GroupsRepository {
         WHERE member.workspace_id = $1
           AND member.user_id = $2
           AND member.member_status = 'active'
-          AND workspace.kind = 'team';
+          AND workspace.kind = 'team'
+          AND workspace.tenant_id = $3::uuid;
       `,
-      [groupId, userId],
+      [groupId, userId, tenantId],
     );
     const row = result.rows[0];
     return row
@@ -332,6 +390,7 @@ export class GroupsRepository {
       businessUnit?: string | null;
     },
   ): Promise<GroupRecord | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<GroupRow>(
       `
         UPDATE orgs.workspaces
@@ -340,7 +399,7 @@ export class GroupsRepository {
           description = CASE WHEN $3::boolean THEN $4 ELSE description END,
           business_unit = CASE WHEN $5::boolean THEN $6 ELSE business_unit END,
           updated_at = NOW()
-        WHERE id = $1 AND kind = 'team'
+        WHERE id = $1 AND kind = 'team' AND tenant_id = $7::uuid
         RETURNING id, name, description, business_unit, status, archived_at, archived_by, created_at;
       `,
       [
@@ -350,6 +409,7 @@ export class GroupsRepository {
         input.description ?? null,
         input.businessUnit !== undefined,
         input.businessUnit ?? null,
+        tenantId,
       ],
     );
     const row = result.rows[0];
@@ -363,6 +423,7 @@ export class GroupsRepository {
     status: LifecycleStatus,
     actingUserId: string,
   ): Promise<GroupRecord | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<GroupRow>(
       `
         UPDATE orgs.workspaces
@@ -371,10 +432,10 @@ export class GroupsRepository {
           archived_at = CASE WHEN $2 = 'archived' THEN NOW() ELSE NULL END,
           archived_by = CASE WHEN $2 = 'archived' THEN $3 ELSE NULL END,
           updated_at = NOW()
-        WHERE id = $1 AND kind = 'team'
+        WHERE id = $1 AND kind = 'team' AND tenant_id = $4::uuid
         RETURNING id, name, description, business_unit, status, archived_at, archived_by, created_at;
       `,
-      [groupId, status, actingUserId],
+      [groupId, status, actingUserId, tenantId],
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -383,6 +444,7 @@ export class GroupsRepository {
   }
 
   async listMembers(groupId: string): Promise<GroupMemberRecord[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<MemberRow>(
       `
         SELECT
@@ -393,14 +455,15 @@ export class GroupsRepository {
           member.created_at,
           user_profile.login, user_profile.display_name, user_profile.email, user_profile.avatar_url
         FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
         JOIN identity.app_users AS user_profile ON user_profile.id = member.user_id
-        WHERE member.workspace_id = $1
+        WHERE member.workspace_id = $1 AND workspace.tenant_id = $2::uuid
         ORDER BY
           CASE member.member_status WHEN 'active' THEN 1 WHEN 'invited' THEN 2 ELSE 3 END,
           CASE WHEN user_profile.app_role = 'member' THEN 2 ELSE 1 END,
           lower(user_profile.login) ASC;
       `,
-      [groupId],
+      [groupId, tenantId],
     );
     return result.rows.map((row) => this.toMember(row));
   }
@@ -409,6 +472,7 @@ export class GroupsRepository {
     groupId: string,
     memberId: string,
   ): Promise<GroupMemberRecord | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<MemberRow>(
       `
         SELECT
@@ -417,23 +481,31 @@ export class GroupsRepository {
           member.created_at,
           user_profile.login, user_profile.display_name, user_profile.email, user_profile.avatar_url
         FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
         JOIN identity.app_users AS user_profile ON user_profile.id = member.user_id
-        WHERE member.workspace_id = $1 AND member.id = $2;
+        WHERE member.workspace_id = $1
+          AND member.id = $2
+          AND workspace.tenant_id = $3::uuid;
       `,
-      [groupId, memberId],
+      [groupId, memberId, tenantId],
     );
     const row = result.rows[0];
     return row ? this.toMember(row) : null;
   }
 
   async countActiveOwners(groupId: string): Promise<number> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ count: number }>(
       `
         SELECT count(*)::int AS count
-        FROM orgs.workspace_members
-        WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active';
+        FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
+        WHERE member.workspace_id = $1
+          AND member.role = 'admin'
+          AND member.member_status = 'active'
+          AND workspace.tenant_id = $2::uuid;
       `,
-      [groupId],
+      [groupId, tenantId],
     );
     return Number(result.rows[0]?.count ?? 0);
   }
@@ -443,13 +515,20 @@ export class GroupsRepository {
     memberId: string,
     role: GroupRole,
   ): Promise<GroupMemberRecord | null> {
+    const tenantId = this.requireTenantId();
     await this.databaseService.query(
       `
         UPDATE orgs.workspace_members
         SET role = $3
-        WHERE workspace_id = $1 AND id = $2;
+        WHERE workspace_id = $1
+          AND id = $2
+          AND EXISTS (
+            SELECT 1 FROM orgs.workspaces AS workspace
+            WHERE workspace.id = workspace_members.workspace_id
+              AND workspace.tenant_id = $4::uuid
+          );
       `,
-      [groupId, memberId, role],
+      [groupId, memberId, role, tenantId],
     );
     return this.findMemberById(groupId, memberId);
   }
@@ -461,13 +540,20 @@ export class GroupsRepository {
     removedBy: string,
     reason?: string | null,
   ): Promise<GroupMemberRecord | null> {
+    const tenantId = this.requireTenantId();
     await this.databaseService.query(
       `
         UPDATE orgs.workspace_members
         SET member_status = 'removed', removed_at = NOW(), removed_by = $3, removal_reason = $4
-        WHERE workspace_id = $1 AND id = $2;
+        WHERE workspace_id = $1
+          AND id = $2
+          AND EXISTS (
+            SELECT 1 FROM orgs.workspaces AS workspace
+            WHERE workspace.id = workspace_members.workspace_id
+              AND workspace.tenant_id = $5::uuid
+          );
       `,
-      [groupId, memberId, removedBy, reason ?? null],
+      [groupId, memberId, removedBy, reason ?? null, tenantId],
     );
     return this.findMemberById(groupId, memberId);
   }
@@ -491,16 +577,22 @@ export class GroupsRepository {
     memberId: string,
     role: GroupRole,
   ): Promise<{ member: GroupMemberRecord | null; blockedLastOwner: boolean }> {
+    const tenantId = this.requireTenantId();
     return this.databaseService.withClient(async (client) => {
       await client.query('BEGIN');
       try {
         await client.query(
           `
-            SELECT id FROM orgs.workspace_members
-            WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active'
-            FOR UPDATE;
+            SELECT member.id
+            FROM orgs.workspace_members AS member
+            JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
+            WHERE member.workspace_id = $1
+              AND member.role = 'admin'
+              AND member.member_status = 'active'
+              AND workspace.tenant_id = $4::uuid
+            FOR UPDATE OF member;
           `,
-          [groupId],
+          [groupId, memberId, role, tenantId],
         );
 
         const targetResult = await client.query<MemberRow>(
@@ -511,11 +603,14 @@ export class GroupsRepository {
               member.created_at,
               user_profile.login, user_profile.display_name, user_profile.email, user_profile.avatar_url
             FROM orgs.workspace_members AS member
+            JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
             JOIN identity.app_users AS user_profile ON user_profile.id = member.user_id
-            WHERE member.workspace_id = $1 AND member.id = $2
+            WHERE member.workspace_id = $1
+              AND member.id = $2
+              AND workspace.tenant_id = $4::uuid
             FOR UPDATE OF member;
           `,
-          [groupId, memberId],
+          [groupId, memberId, role, tenantId],
         );
         const target = targetResult.rows[0];
         if (!target) {
@@ -526,10 +621,15 @@ export class GroupsRepository {
         if (target.role === 'admin' && role !== 'admin') {
           const countResult = await client.query<{ count: number }>(
             `
-              SELECT count(*)::int AS count FROM orgs.workspace_members
-              WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active';
+              SELECT count(*)::int AS count
+              FROM orgs.workspace_members AS member
+              JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
+              WHERE member.workspace_id = $1
+                AND member.role = 'admin'
+                AND member.member_status = 'active'
+                AND workspace.tenant_id = $4::uuid;
             `,
-            [groupId],
+            [groupId, memberId, role, tenantId],
           );
           const ownerCount = Number(countResult.rows[0]?.count ?? 0);
           if (ownerCount <= 1) {
@@ -539,8 +639,18 @@ export class GroupsRepository {
         }
 
         await client.query(
-          `UPDATE orgs.workspace_members SET role = $3 WHERE workspace_id = $1 AND id = $2;`,
-          [groupId, memberId, role],
+          `
+            UPDATE orgs.workspace_members
+            SET role = $3
+            WHERE workspace_id = $1
+              AND id = $2
+              AND EXISTS (
+                SELECT 1 FROM orgs.workspaces AS workspace
+                WHERE workspace.id = workspace_members.workspace_id
+                  AND workspace.tenant_id = $4::uuid
+              );
+          `,
+          [groupId, memberId, role, tenantId],
         );
         await client.query('COMMIT');
 
@@ -567,6 +677,7 @@ export class GroupsRepository {
     removedBy: string,
     reason?: string | null,
   ): Promise<{ member: GroupMemberRecord | null; blockedLastOwner: boolean }> {
+    this.requireTenantId();
     return this.databaseService.withTransaction((client) =>
       this.removeMemberGuardedWithClient(
         client,
@@ -590,13 +701,19 @@ export class GroupsRepository {
     removedBy: string,
     reason?: string | null,
   ): Promise<{ member: GroupMemberRecord | null; blockedLastOwner: boolean }> {
+    const tenantId = this.requireTenantId();
     await client.query(
       `
-        SELECT id FROM orgs.workspace_members
-        WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active'
-        FOR UPDATE;
+        SELECT member.id
+        FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
+        WHERE member.workspace_id = $1
+          AND member.role = 'admin'
+          AND member.member_status = 'active'
+          AND workspace.tenant_id = $5::uuid
+        FOR UPDATE OF member;
       `,
-      [groupId],
+      [groupId, memberId, removedBy, reason ?? null, tenantId],
     );
 
     const targetResult = await client.query<MemberRow>(
@@ -607,11 +724,14 @@ export class GroupsRepository {
           member.created_at,
           user_profile.login, user_profile.display_name, user_profile.email, user_profile.avatar_url
         FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
         JOIN identity.app_users AS user_profile ON user_profile.id = member.user_id
-        WHERE member.workspace_id = $1 AND member.id = $2
+        WHERE member.workspace_id = $1
+          AND member.id = $2
+          AND workspace.tenant_id = $5::uuid
         FOR UPDATE OF member;
       `,
-      [groupId, memberId],
+      [groupId, memberId, removedBy, reason ?? null, tenantId],
     );
     const target = targetResult.rows[0];
     if (!target) {
@@ -621,10 +741,15 @@ export class GroupsRepository {
     if (target.role === 'admin') {
       const countResult = await client.query<{ count: number }>(
         `
-          SELECT count(*)::int AS count FROM orgs.workspace_members
-          WHERE workspace_id = $1 AND role = 'admin' AND member_status = 'active';
+          SELECT count(*)::int AS count
+          FROM orgs.workspace_members AS member
+          JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
+          WHERE member.workspace_id = $1
+            AND member.role = 'admin'
+            AND member.member_status = 'active'
+            AND workspace.tenant_id = $5::uuid;
         `,
-        [groupId],
+        [groupId, memberId, removedBy, reason ?? null, tenantId],
       );
       const ownerCount = Number(countResult.rows[0]?.count ?? 0);
       if (ownerCount <= 1) {
@@ -636,9 +761,15 @@ export class GroupsRepository {
       `
         UPDATE orgs.workspace_members
         SET member_status = 'removed', removed_at = NOW(), removed_by = $3, removal_reason = $4
-        WHERE workspace_id = $1 AND id = $2;
+        WHERE workspace_id = $1
+          AND id = $2
+          AND EXISTS (
+            SELECT 1 FROM orgs.workspaces AS workspace
+            WHERE workspace.id = workspace_members.workspace_id
+              AND workspace.tenant_id = $5::uuid
+          );
       `,
-      [groupId, memberId, removedBy, reason ?? null],
+      [groupId, memberId, removedBy, reason ?? null, tenantId],
     );
 
     return {
@@ -662,21 +793,41 @@ export class GroupsRepository {
     role: GrantableRole,
     addedBy: string,
   ): Promise<void> {
+    const context = this.requireTenantContext();
+    this.assertCurrentUser(addedBy, context, 'Member actor');
     await this.databaseService.query(
       `
         INSERT INTO orgs.workspace_members (workspace_id, user_id, role, member_status, invited_by, invited_at)
-        VALUES ($1, $2, $3, 'active', $4, NOW())
+        SELECT $1, $2, $3, 'active', $4, NOW()
+        WHERE EXISTS (
+          SELECT 1 FROM orgs.workspaces AS workspace
+          WHERE workspace.id = $1
+            AND workspace.kind = 'team'
+            AND workspace.tenant_id = $5::uuid
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM tenancy.tenant_memberships AS tenant_membership
+          WHERE tenant_membership.tenant_id = $5::uuid
+            AND tenant_membership.user_id = $2
+            AND tenant_membership.status = 'active'
+        )
         ON CONFLICT (workspace_id, user_id)
         DO UPDATE SET role = EXCLUDED.role, member_status = 'active', removed_at = NULL, removed_by = NULL, removal_reason = NULL;
       `,
-      [groupId, userId, role, addedBy],
+      [groupId, userId, role, addedBy, context.tenantId],
     );
   }
 
-  /** Resolves an internal user by login or email (approved internal directory, approved directory policy). */
+  /**
+   * Resolves an internal user by login or email from the intentionally global
+   * identity directory. The lookup is still tenant-context gated, while the
+   * actual group-membership write enforces active tenancy membership.
+   */
   async findInternalUserByLoginOrEmail(
     loginOrEmail: string,
   ): Promise<{ id: string } | null> {
+    this.requireTenantId();
     const result = await this.databaseService.query<{ id: string }>(
       `
         SELECT id
@@ -690,7 +841,12 @@ export class GroupsRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * The identity directory is intentionally global; tenant membership is
+   * enforced by addMemberDirect rather than by hiding directory candidates.
+   */
   async findInternalUserById(userId: string): Promise<{ id: string } | null> {
+    this.requireTenantId();
     const result = await this.databaseService.query<{ id: string }>(
       `
         SELECT id
@@ -708,6 +864,7 @@ export class GroupsRepository {
     search: string,
     limit = 20,
   ): Promise<InternalUserDirectoryEntry[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{
       id: string;
       login: string;
@@ -727,14 +884,16 @@ export class GroupsRepository {
           AND NOT EXISTS (
             SELECT 1
             FROM orgs.workspace_members AS member
+            JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
             WHERE member.workspace_id = $1
               AND member.user_id = app_user.id
               AND member.member_status = 'active'
+              AND workspace.tenant_id = $4::uuid
           )
         ORDER BY lower(app_user.login) ASC
         LIMIT $3;
       `,
-      [groupId, `%${search}%`, limit],
+      [groupId, `%${search}%`, limit, tenantId],
     );
     return result.rows.map((row) => ({
       id: row.id,
@@ -761,6 +920,7 @@ export class GroupsRepository {
     logins: string[],
   ): Promise<DirectoryAccountRecord[]> {
     if (logins.length === 0) return [];
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{
       id: string;
       login: string;
@@ -775,9 +935,11 @@ export class GroupsRepository {
           app_user.email, app_user.avatar_url,
           EXISTS (
             SELECT 1 FROM orgs.workspace_members AS member
+            JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
             WHERE member.workspace_id = $1
               AND member.user_id = app_user.id
               AND member.member_status = 'active'
+              AND workspace.tenant_id = $3::uuid
           ) AS is_active_member
         FROM identity.app_users AS app_user
         WHERE lower(app_user.login) = ANY($2::text[])
@@ -786,7 +948,7 @@ export class GroupsRepository {
           -- fails the add with a 404 the UI cannot explain.
           AND app_user.is_internal = true;
       `,
-      [groupId, logins.map((login) => login.toLowerCase())],
+      [groupId, logins.map((login) => login.toLowerCase()), tenantId],
     );
     return result.rows.map((row) => ({
       id: row.id,
@@ -845,10 +1007,34 @@ export class GroupsRepository {
    * destroyed. Returns false when no such team workspace existed.
    */
   async deleteGroup(groupId: string): Promise<boolean> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query(
-      `DELETE FROM orgs.workspaces WHERE id = $1 AND kind = 'team';`,
-      [groupId],
+      `DELETE FROM orgs.workspaces WHERE id = $1 AND kind = 'team' AND tenant_id = $2::uuid;`,
+      [groupId, tenantId],
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  private requireTenantId(): string {
+    return this.requireTenantContext().tenantId;
+  }
+
+  private requireTenantContext(): TenantContext {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require();
+  }
+
+  private assertCurrentUser(
+    inputUserId: string,
+    context: TenantContext,
+    label: string,
+  ): void {
+    if (inputUserId !== context.userId) {
+      throw new InvalidTenantContextError(
+        `${label} must match the validated tenant context user`,
+      );
+    }
   }
 }

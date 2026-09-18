@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
+import { TenantContextRequiredError } from '#kernel/tenancy/tenant-context.js';
 
 /**
  * `admin` here is the TOP workspace/group membership tier (product label
@@ -64,9 +69,15 @@ interface WorkspaceMemberRow {
 
 @Injectable()
 export class WorkspacesRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext?: TenantContextPort,
+  ) {}
 
   async listForUser(userId: string): Promise<WorkspaceSummary[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<WorkspaceRow>(
       `
         SELECT
@@ -78,15 +89,17 @@ export class WorkspacesRepository {
         JOIN orgs.workspaces AS workspace
           ON workspace.id = member.workspace_id
         WHERE member.user_id = $1
+          AND workspace.tenant_id = $2::uuid
         ORDER BY workspace.created_at ASC;
       `,
-      [userId],
+      [userId, tenantId],
     );
 
     return result.rows.map((row) => this.toSummary(row));
   }
 
   async listMembers(workspaceId: string): Promise<WorkspaceMemberSummary[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<WorkspaceMemberRow>(
       `
         SELECT
@@ -100,9 +113,12 @@ export class WorkspacesRepository {
           user_profile.email,
           user_profile.avatar_url
         FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace
+          ON workspace.id = member.workspace_id
         JOIN identity.app_users AS user_profile
           ON user_profile.id = member.user_id
         WHERE member.workspace_id = $1
+          AND workspace.tenant_id = $2::uuid
         ORDER BY
           CASE member.role
             WHEN 'admin' THEN 1
@@ -112,7 +128,7 @@ export class WorkspacesRepository {
           END,
           lower(user_profile.login) ASC;
       `,
-      [workspaceId],
+      [workspaceId, tenantId],
     );
 
     return result.rows.map((row) => this.toMemberSummary(row));
@@ -122,6 +138,7 @@ export class WorkspacesRepository {
     workspaceId: string,
     userId: string,
   ): Promise<WorkspaceMembership | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{
       workspace_id: string;
       user_id: string;
@@ -129,11 +146,14 @@ export class WorkspacesRepository {
     }>(
       `
         SELECT workspace_id, user_id, role
-        FROM orgs.workspace_members
-        WHERE workspace_id = $1
-          AND user_id = $2;
+        FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace
+          ON workspace.id = member.workspace_id
+        WHERE member.workspace_id = $1
+          AND member.user_id = $2
+          AND workspace.tenant_id = $3::uuid;
       `,
-      [workspaceId, userId],
+      [workspaceId, userId, tenantId],
     );
 
     return this.toMembership(result.rows[0]);
@@ -143,6 +163,7 @@ export class WorkspacesRepository {
     projectId: string,
     userId: string,
   ): Promise<WorkspaceMembership | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{
       workspace_id: string;
       user_id: string;
@@ -153,10 +174,14 @@ export class WorkspacesRepository {
         FROM projects.provisioned_projects AS project
         JOIN orgs.workspace_members AS member
           ON member.workspace_id = project.workspace_id
+        JOIN orgs.workspaces AS workspace
+          ON workspace.id = project.workspace_id
         WHERE project.id = $1
-          AND member.user_id = $2;
+          AND member.user_id = $2
+          AND project.tenant_id = $3::uuid
+          AND workspace.tenant_id = $3::uuid;
       `,
-      [projectId, userId],
+      [projectId, userId, tenantId],
     );
 
     return this.toMembership(result.rows[0]);
@@ -166,6 +191,7 @@ export class WorkspacesRepository {
     workspaceId: string,
     memberId: string,
   ): Promise<WorkspaceMembership | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{
       workspace_id: string;
       user_id: string;
@@ -173,25 +199,32 @@ export class WorkspacesRepository {
     }>(
       `
         SELECT workspace_id, user_id, role
-        FROM orgs.workspace_members
-        WHERE workspace_id = $1
-          AND id = $2;
+        FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace
+          ON workspace.id = member.workspace_id
+        WHERE member.workspace_id = $1
+          AND member.id = $2
+          AND workspace.tenant_id = $3::uuid;
       `,
-      [workspaceId, memberId],
+      [workspaceId, memberId, tenantId],
     );
 
     return this.toMembership(result.rows[0]);
   }
 
   async countOwners(workspaceId: string): Promise<number> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ count: number | string }>(
       `
         SELECT count(*)::int AS count
-        FROM orgs.workspace_members
-        WHERE workspace_id = $1
-          AND role = 'admin';
+        FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace
+          ON workspace.id = member.workspace_id
+        WHERE member.workspace_id = $1
+          AND member.role = 'admin'
+          AND workspace.tenant_id = $2::uuid;
       `,
-      [workspaceId],
+      [workspaceId, tenantId],
     );
 
     return Number(result.rows[0]?.count ?? 0);
@@ -202,6 +235,7 @@ export class WorkspacesRepository {
     loginOrEmail: string,
     role: WorkspaceRole,
   ): Promise<WorkspaceMemberSummary | null> {
+    const tenantId = this.requireTenantId();
     const userResult = await this.databaseService.query<{ id: string }>(
       `
         SELECT id
@@ -220,11 +254,23 @@ export class WorkspacesRepository {
     await this.databaseService.query(
       `
         INSERT INTO orgs.workspace_members (workspace_id, user_id, role)
-        VALUES ($1, $2, $3)
+        SELECT $1, $2, $3
+        WHERE EXISTS (
+          SELECT 1 FROM orgs.workspaces AS workspace
+          WHERE workspace.id = $1
+            AND workspace.tenant_id = $4::uuid
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM tenancy.tenant_memberships AS tenant_membership
+          WHERE tenant_membership.tenant_id = $4::uuid
+            AND tenant_membership.user_id = $2
+            AND tenant_membership.status = 'active'
+        )
         ON CONFLICT (workspace_id, user_id)
         DO UPDATE SET role = EXCLUDED.role;
       `,
-      [workspaceId, targetUser.id, role],
+      [workspaceId, targetUser.id, role, tenantId],
     );
 
     return this.findMemberByUserId(workspaceId, targetUser.id);
@@ -235,15 +281,21 @@ export class WorkspacesRepository {
     memberId: string,
     role: WorkspaceRole,
   ): Promise<WorkspaceMemberSummary | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ user_id: string }>(
       `
         UPDATE orgs.workspace_members
         SET role = $3
         WHERE workspace_id = $1
           AND id = $2
+          AND EXISTS (
+            SELECT 1 FROM orgs.workspaces AS workspace
+            WHERE workspace.id = $1
+              AND workspace.tenant_id = $4::uuid
+          )
         RETURNING user_id;
       `,
-      [workspaceId, memberId, role],
+      [workspaceId, memberId, role, tenantId],
     );
     const row = result.rows[0];
     return row ? this.findMemberByUserId(workspaceId, row.user_id) : null;
@@ -253,14 +305,20 @@ export class WorkspacesRepository {
     workspaceId: string,
     memberId: string,
   ): Promise<{ id: string } | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<{ id: string }>(
       `
         DELETE FROM orgs.workspace_members
         WHERE workspace_id = $1
           AND id = $2
+          AND EXISTS (
+            SELECT 1 FROM orgs.workspaces AS workspace
+            WHERE workspace.id = $1
+              AND workspace.tenant_id = $3::uuid
+          )
         RETURNING id;
       `,
-      [workspaceId, memberId],
+      [workspaceId, memberId, tenantId],
     );
 
     return result.rows[0] ?? null;
@@ -270,6 +328,7 @@ export class WorkspacesRepository {
     workspaceId: string,
     userId: string,
   ): Promise<WorkspaceMemberSummary | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<WorkspaceMemberRow>(
       `
         SELECT
@@ -283,16 +342,26 @@ export class WorkspacesRepository {
           user_profile.email,
           user_profile.avatar_url
         FROM orgs.workspace_members AS member
+        JOIN orgs.workspaces AS workspace
+          ON workspace.id = member.workspace_id
         JOIN identity.app_users AS user_profile
           ON user_profile.id = member.user_id
         WHERE member.workspace_id = $1
-          AND member.user_id = $2;
+          AND member.user_id = $2
+          AND workspace.tenant_id = $3::uuid;
       `,
-      [workspaceId, userId],
+      [workspaceId, userId, tenantId],
     );
 
     const row = result.rows[0];
     return row ? this.toMemberSummary(row) : null;
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantContext) {
+      throw new TenantContextRequiredError();
+    }
+    return this.tenantContext.require().tenantId;
   }
 
   private toSummary(row: WorkspaceRow): WorkspaceSummary {

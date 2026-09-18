@@ -3,6 +3,7 @@
 * [Local verification](runbook-local-verification.md) - reproducible local checks.
 * [Outbox relay](runbook-outbox-relay.md) - inspect and run the single PostgreSQL outbox relay.
 * [Database migrations](runbook-database-migrations.md) - validate, plan, and apply migrations.
+* [Deployment database boundaries](runbook-deployment-database-boundaries.md) - provision and verify hosted and Enterprise database isolation.
 * [Migration reconciliation](runbook-migration-reconciliation.md) - reconcile migration files and ledger state.
 * [Deployment provisioning](runbook-deployment-provisioning.md) - current provider target provisioning.
 * [Deployment provisioning live smoke](runbook-deployment-provisioning-live-smoke.md) - approved external-resource verification.

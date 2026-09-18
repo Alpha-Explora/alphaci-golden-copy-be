@@ -1,6 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  TENANT_CONTEXT,
+  type TenantContextPort,
+} from '#kernel/tenancy/tenant-context.port.js';
 import type {
   CustomDomainSummary,
   DomainVerificationChallenge,
@@ -45,33 +49,63 @@ export interface UpdateCustomDomainStateInput {
   lastErrorSafeMessage: string | null;
 }
 
+function projectTenantPredicate(
+  projectAlias: string,
+  tenantParam: string,
+): string {
+  return `
+    ${projectAlias}.tenant_id = ${tenantParam}::uuid
+    AND (
+      ${projectAlias}.workspace_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM orgs.workspaces AS tenant_workspace
+        WHERE tenant_workspace.id = ${projectAlias}.workspace_id
+          AND tenant_workspace.tenant_id = ${tenantParam}::uuid
+      )
+    )
+  `;
+}
+
 @Injectable()
 export class CustomDomainsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Inject(TENANT_CONTEXT)
+    private readonly tenantContext: TenantContextPort,
+  ) {}
 
   async listForProject(projectId: string): Promise<CustomDomainSummary[]> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<CustomDomainRow>(
       `
-        SELECT *
-        FROM env_provisioning.project_custom_domains
-        WHERE project_id = $1
-        ORDER BY git_branch NULLS FIRST, hostname;
+        SELECT domain.*
+        FROM env_provisioning.project_custom_domains AS domain
+        JOIN projects.provisioned_projects AS project
+          ON project.id = domain.project_id
+        WHERE domain.project_id = $1
+          AND ${projectTenantPredicate('project', '$2')}
+        ORDER BY domain.git_branch NULLS FIRST, domain.hostname;
       `,
-      [projectId],
+      [projectId, tenantId],
     );
 
     return result.rows.map((row) => this.toSummary(row));
   }
 
   async findById(id: string): Promise<CustomDomainSummary | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<CustomDomainRow>(
       `
-        SELECT *
-        FROM env_provisioning.project_custom_domains
-        WHERE id = $1
+        SELECT domain.*
+        FROM env_provisioning.project_custom_domains AS domain
+        JOIN projects.provisioned_projects AS project
+          ON project.id = domain.project_id
+        WHERE domain.id = $1
+          AND ${projectTenantPredicate('project', '$2')}
         LIMIT 1;
       `,
-      [id],
+      [id, tenantId],
     );
 
     const row = result.rows[0];
@@ -79,6 +113,7 @@ export class CustomDomainsRepository {
   }
 
   async insert(input: InsertCustomDomainInput): Promise<CustomDomainSummary> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<CustomDomainRow>(
       `
         INSERT INTO env_provisioning.project_custom_domains (
@@ -94,7 +129,13 @@ export class CustomDomainsRepository {
           last_checked_at,
           created_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, NOW(), $10)
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, NOW(), $10
+        FROM projects.provisioned_projects AS project
+        JOIN env_provisioning.project_deployment_targets AS target
+          ON target.id = $2
+         AND target.project_id = project.id
+        WHERE project.id = $1
+          AND ${projectTenantPredicate('project', '$11')}
         RETURNING *;
       `,
       [
@@ -108,6 +149,7 @@ export class CustomDomainsRepository {
         JSON.stringify(input.verification),
         input.misconfigured,
         input.createdBy,
+        tenantId,
       ],
     );
 
@@ -123,17 +165,21 @@ export class CustomDomainsRepository {
   async updateState(
     input: UpdateCustomDomainStateInput,
   ): Promise<CustomDomainSummary | null> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query<CustomDomainRow>(
       `
-        UPDATE env_provisioning.project_custom_domains
+        UPDATE env_provisioning.project_custom_domains AS domain
         SET verified = $2,
             verification = $3::jsonb,
             misconfigured = $4,
             last_error_safe_message = $5,
             last_checked_at = NOW(),
             updated_at = NOW()
-        WHERE id = $1
-        RETURNING *;
+        FROM projects.provisioned_projects AS project
+        WHERE domain.id = $1
+          AND project.id = domain.project_id
+          AND ${projectTenantPredicate('project', '$6')}
+        RETURNING domain.*;
       `,
       [
         input.id,
@@ -141,6 +187,7 @@ export class CustomDomainsRepository {
         JSON.stringify(input.verification),
         input.misconfigured,
         input.lastErrorSafeMessage,
+        tenantId,
       ],
     );
 
@@ -149,12 +196,16 @@ export class CustomDomainsRepository {
   }
 
   async deleteById(id: string): Promise<boolean> {
+    const tenantId = this.requireTenantId();
     const result = await this.databaseService.query(
       `
-        DELETE FROM env_provisioning.project_custom_domains
-        WHERE id = $1;
+        DELETE FROM env_provisioning.project_custom_domains AS domain
+        USING projects.provisioned_projects AS project
+        WHERE domain.id = $1
+          AND project.id = domain.project_id
+          AND ${projectTenantPredicate('project', '$2')};
       `,
-      [id],
+      [id, tenantId],
     );
 
     return (result.rowCount ?? 0) > 0;
@@ -177,5 +228,9 @@ export class CustomDomainsRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  private requireTenantId(): string {
+    return this.tenantContext.require().tenantId;
   }
 }

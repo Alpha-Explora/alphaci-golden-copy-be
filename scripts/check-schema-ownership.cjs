@@ -16,7 +16,7 @@ const MIGRATIONS = path.join(ROOT, 'supabase', 'migrations');
 const SOURCE_ROOTS = [path.join(ROOT, 'src'), path.join(ROOT, 'scripts')];
 
 const ALLOWED_SCHEMAS_BY_OWNER = {
-  'identity-access': new Set(['identity', 'orgs', 'hierarchy']),
+  'identity-access': new Set(['identity', 'orgs', 'hierarchy', 'tenancy']),
   projects: new Set(['projects', 'workflow']),
   pipelines: new Set(['github_app', 'ci', 'workflow']),
   runtime: new Set([
@@ -82,6 +82,21 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
   [
     'identity-access/20260824120000_backfill_hierarchy_links.sql',
     pairs(['projects.provisioned_projects']),
+  ],
+  [
+    'identity-access/20260918000000_tenancy_kernel.sql',
+    pairs(['projects.provisioned_projects']),
+  ],
+  [
+    'identity-access/20260918000010_tenant_scope_extensions.sql',
+    pairs([
+      'workflow.workflow_generations',
+      'env_provisioning.provider_connections',
+    ]),
+  ],
+  [
+    'pipelines/20260918000020_ci_run_reports_tenant_scope.sql',
+    pairs(['tenancy.tenants']),
   ],
   [
     'identity-access/20260617000000_enable_rls_exposed_tables.sql',
@@ -201,6 +216,10 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     pairs(['audit.audit_events']),
   ],
   [
+    'src/modules/identity-access/hierarchy/infrastructure/repositories.repository.ts',
+    pairs(['projects.provisioned_projects']),
+  ],
+  [
     'src/modules/identity-access/hierarchy/infrastructure/github-access-sync.repository.ts',
     pairs(['identity.app_users']),
   ],
@@ -213,7 +232,19 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     pairs(['projects.provisioned_projects']),
   ],
   [
+    'src/modules/identity-access/hierarchy/project-link/infrastructure/hierarchy-project-link.repository.ts',
+    pairs(['projects.provisioned_projects']),
+  ],
+  [
+    'src/modules/identity-access/tenancy/infrastructure/tenancy.repository.ts',
+    pairs(['projects.provisioned_projects']),
+  ],
+  [
     'src/modules/pipelines/ci/application/ci-reports.service.ts',
+    pairs(['projects.provisioned_projects']),
+  ],
+  [
+    'src/modules/pipelines/ci/infrastructure/ci-run-reports.repository.ts',
     pairs(['projects.provisioned_projects']),
   ],
   [
@@ -237,6 +268,8 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     pairs([
       'identity.app_users',
       'identity.platform_admins',
+      'tenancy.tenant_memberships',
+      'orgs.workspaces',
       'orgs.workspace_members',
       'hierarchy.repositories',
       'hierarchy.repository_assignments',
@@ -244,15 +277,31 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
   ],
   [
     'src/modules/runtime/infrastructure/repositories/deployment-targets.repository.ts',
-    pairs(['projects.provisioned_projects', 'orgs.workspace_members']),
+    pairs([
+      'projects.provisioned_projects',
+      'orgs.workspace_members',
+      'orgs.workspaces',
+    ]),
   ],
   [
     'src/modules/runtime/infrastructure/repositories/env-vars.repository.ts',
-    pairs(['projects.provisioned_projects', 'orgs.workspace_members']),
+    pairs([
+      'projects.provisioned_projects',
+      'orgs.workspace_members',
+      'orgs.workspaces',
+    ]),
   ],
   [
     'src/modules/runtime/infrastructure/repositories/project-sync-findings.repository.ts',
-    pairs(['projects.project_sync_findings', 'projects.provisioned_projects']),
+    pairs([
+      'projects.project_sync_findings',
+      'projects.provisioned_projects',
+      'orgs.workspaces',
+    ]),
+  ],
+  [
+    'src/modules/runtime/infrastructure/repositories/custom-domains.repository.ts',
+    pairs(['orgs.workspaces', 'projects.provisioned_projects']),
   ],
   [
     'scripts/check-github-team-setup.ts',

@@ -4,6 +4,18 @@ import {
   type GroupActivityRow,
 } from './group-activity.repository';
 
+const tenantContext = {
+  current: jest.fn(),
+  require: jest.fn(() => ({
+    tenantId: 'tenant-1',
+    userId: 'user-1',
+    membershipRole: 'member' as const,
+    deploymentMode: 'hosted' as const,
+  })),
+  set: jest.fn(),
+  clear: jest.fn(),
+};
+
 const makeDatabaseService = () =>
   ({
     query: jest.fn().mockResolvedValue({ rows: [] }),
@@ -31,18 +43,19 @@ function activityRow(
 describe('GroupActivityRepository list', () => {
   it('binds groupId, hierarchy.% prefix, and LIMIT 51 by default', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', {});
 
     expect(db.query).toHaveBeenCalledTimes(1);
     const [sql, params] = queriedCall(db);
     expect(sql).toContain('event.workspace_id = $1');
+    expect(sql).toContain('workspace.tenant_id = $2::uuid');
     expect(sql).toContain("event.event_code LIKE 'hierarchy.%'");
     expect(sql).toContain('FROM audit.audit_events');
     expect(sql).toContain('ORDER BY event.created_at DESC');
-    expect(sql).toContain('LIMIT $2');
-    expect(params).toEqual(['group-1', 51]);
+    expect(sql).toContain('LIMIT $3');
+    expect(params).toEqual(['group-1', 'tenant-1', 51]);
   });
 
   it('sets nextCursor from the last kept created_at when an extra row is returned', async () => {
@@ -53,7 +66,7 @@ describe('GroupActivityRepository list', () => {
       activityRow({ id: 'event-3', created_at: '2026-09-01T00:00:00Z' }),
     ];
     (db.query as jest.Mock).mockResolvedValue({ rows: extraPage });
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     const result = await repo.list('group-1', { limit: 2 });
 
@@ -70,7 +83,7 @@ describe('GroupActivityRepository list', () => {
       activityRow({ id: 'event-2', created_at: '2026-09-02T00:00:00Z' }),
     ];
     (db.query as jest.Mock).mockResolvedValue({ rows: page });
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await expect(repo.list('group-1', { limit: 2 })).resolves.toEqual({
       rows: page,
@@ -80,31 +93,31 @@ describe('GroupActivityRepository list', () => {
 
   it('clamps limit to 1..200 and fetches one extra row', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', { limit: 0 });
     await repo.list('group-1', { limit: 1000 });
 
     const lowParams = (db.query as jest.Mock).mock.calls[0][1] as unknown[];
     const highParams = (db.query as jest.Mock).mock.calls[1][1] as unknown[];
-    expect(lowParams).toEqual(['group-1', 2]);
-    expect(highParams).toEqual(['group-1', 201]);
+    expect(lowParams).toEqual(['group-1', 'tenant-1', 2]);
+    expect(highParams).toEqual(['group-1', 'tenant-1', 201]);
   });
 
   it('binds memberId to actor_user_id', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', { memberId: 'user-9' });
 
     const [sql, params] = queriedCall(db);
-    expect(sql).toContain('event.actor_user_id = $2');
-    expect(params).toEqual(['group-1', 'user-9', 51]);
+    expect(sql).toContain('event.actor_user_id = $3');
+    expect(params).toEqual(['group-1', 'tenant-1', 'user-9', 51]);
   });
 
   it('binds systemId, deliveryProjectId, and repositoryId from metadata_json', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', {
       systemId: 'sys-1',
@@ -113,35 +126,48 @@ describe('GroupActivityRepository list', () => {
     });
 
     const [sql, params] = queriedCall(db);
-    expect(sql).toContain("event.metadata_json ->> 'systemId' = $2");
-    expect(sql).toContain("event.metadata_json ->> 'deliveryProjectId' = $3");
-    expect(sql).toContain("event.metadata_json ->> 'repositoryId' = $4");
-    expect(params).toEqual(['group-1', 'sys-1', 'dp-1', 'repo-1', 51]);
+    expect(sql).toContain("event.metadata_json ->> 'systemId' = $3");
+    expect(sql).toContain("event.metadata_json ->> 'deliveryProjectId' = $4");
+    expect(sql).toContain("event.metadata_json ->> 'repositoryId' = $5");
+    expect(params).toEqual([
+      'group-1',
+      'tenant-1',
+      'sys-1',
+      'dp-1',
+      'repo-1',
+      51,
+    ]);
   });
 
   it('maps activityType assignment to hierarchy.assignment.%', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', { activityType: 'assignment' });
 
     const [sql, params] = queriedCall(db);
-    expect(sql).toContain('event.event_code LIKE $2');
-    expect(params).toEqual(['group-1', 'hierarchy.assignment.%', 51]);
+    expect(sql).toContain('event.event_code LIKE $3');
+    expect(params).toEqual([
+      'group-1',
+      'tenant-1',
+      'hierarchy.assignment.%',
+      51,
+    ]);
   });
 
   it('maps activityType membership to member_ and invitation_ prefixes', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', { activityType: 'membership' });
 
     const [sql, params] = queriedCall(db);
     expect(sql).toContain(
-      '(event.event_code LIKE $2 OR event.event_code LIKE $3)',
+      '(event.event_code LIKE $3 OR event.event_code LIKE $4)',
     );
     expect(params).toEqual([
       'group-1',
+      'tenant-1',
       'hierarchy.group.member_%',
       'hierarchy.group.invitation_%',
       51,
@@ -150,19 +176,19 @@ describe('GroupActivityRepository list', () => {
 
   it('forces FALSE when activityType is github instead of ignoring the filter', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', { activityType: 'github' });
 
     const [sql, params] = queriedCall(db);
     expect(sql).toContain('AND FALSE');
     expect(sql).not.toContain('event.event_code LIKE $2');
-    expect(params).toEqual(['group-1', 51]);
+    expect(params).toEqual(['group-1', 'tenant-1', 51]);
   });
 
   it('filters dateFrom, dateTo, and cursor on created_at', async () => {
     const db = makeDatabaseService();
-    const repo = new GroupActivityRepository(db);
+    const repo = new GroupActivityRepository(db, tenantContext);
 
     await repo.list('group-1', {
       dateFrom: '2026-01-01T00:00:00Z',
@@ -171,11 +197,12 @@ describe('GroupActivityRepository list', () => {
     });
 
     const [sql, params] = queriedCall(db);
-    expect(sql).toContain('event.created_at >= $2');
-    expect(sql).toContain('event.created_at <= $3');
-    expect(sql).toContain('event.created_at < $4');
+    expect(sql).toContain('event.created_at >= $3');
+    expect(sql).toContain('event.created_at <= $4');
+    expect(sql).toContain('event.created_at < $5');
     expect(params).toEqual([
       'group-1',
+      'tenant-1',
       '2026-01-01T00:00:00Z',
       '2026-12-31T23:59:59Z',
       '2026-06-01T00:00:00Z',

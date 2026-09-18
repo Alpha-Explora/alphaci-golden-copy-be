@@ -14,6 +14,7 @@ const makeService = () =>
     validateRun: jest.fn().mockResolvedValue({
       authorized: true,
       projectId: 'project-1',
+      tenantId: '11111111-1111-4111-8111-111111111111',
       repoFullName: 'owner/repo',
       stage: 'quality',
     }),
@@ -21,7 +22,9 @@ const makeService = () =>
 
 const makeReportsService = () =>
   ({
-    ingestReport: jest.fn().mockResolvedValue({ received: true }),
+    ingestDeploymentGlobalReport: jest
+      .fn()
+      .mockResolvedValue({ received: true }),
     getRuns: jest.fn().mockResolvedValue({ runs: [] }),
   }) as unknown as CiReportsService;
 
@@ -93,7 +96,11 @@ describe('CiController', () => {
       repoFullName: 'owner/repo',
       stage: 'quality',
     });
-    expect(reportsService.ingestReport).toHaveBeenCalledWith(body);
+    expect(reportsService.ingestDeploymentGlobalReport).toHaveBeenCalledWith(
+      body,
+      'project-1',
+      '11111111-1111-4111-8111-111111111111',
+    );
     expect(result).toEqual({ received: true });
   });
 
@@ -133,10 +140,13 @@ describe('CiController', () => {
     (service.validateRun as jest.Mock).mockResolvedValueOnce({
       authorized: true,
       projectId: 'p-1',
+      tenantId: '11111111-1111-4111-8111-111111111111',
       repoFullName: 'owner/repo',
       stage: 'access',
     });
-    (reportsService.ingestReport as jest.Mock).mockRejectedValueOnce(
+    (
+      reportsService.ingestDeploymentGlobalReport as jest.Mock
+    ).mockRejectedValueOnce(
       new NotFoundException('No provisioned project found'),
     );
 

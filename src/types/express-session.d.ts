@@ -5,6 +5,7 @@ import type { SessionUser } from '#kernel/auth/session-user.interface';
 declare module 'express-session' {
   interface SessionData {
     userId?: string;
+    /** Selector only; SessionAuthGuard revalidates membership on every request. */
     tenantId?: string;
     user?: SessionUser;
     oauthState?: string;

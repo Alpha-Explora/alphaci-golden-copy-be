@@ -42,7 +42,7 @@ describe('DeploymentTargetsService', () => {
   };
   const usageQuotaService = {
     assertWithinLimit: jest.fn(),
-    assertManagedFleetCapacity: jest.fn(),
+    assertDeploymentGlobalManagedFleetCapacity: jest.fn(),
   };
   const workspaceAccessService = {
     assertProjectRole: jest.fn(),
@@ -148,7 +148,9 @@ describe('DeploymentTargetsService', () => {
     encryptionService.decrypt.mockReturnValue('vercel-token');
     clientRegistry.getClient.mockReturnValue(vercelClient);
     usageQuotaService.assertWithinLimit.mockResolvedValue(undefined);
-    usageQuotaService.assertManagedFleetCapacity.mockResolvedValue(undefined);
+    usageQuotaService.assertDeploymentGlobalManagedFleetCapacity.mockResolvedValue(
+      undefined,
+    );
     workspaceAccessService.assertProjectRole.mockResolvedValue({
       workspaceId: 'workspace-1',
       userId: 'user-1',
