@@ -1355,6 +1355,48 @@ describe('the verify stage', () => {
   });
 
   /*
+   * Provisioning writes each preview branch's variables - the backend URL
+   * among them - scoped to that branch, and `vercel pull` only includes a
+   * branch-scoped variable when it is told the branch. Without this the uat
+   * build pulled nothing and shipped with no API URL.
+   */
+  it('tells a preview deploy which branch to pull variables for', () => {
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate('react'),
+      {
+        templateId: 'fe-react',
+        serviceName: 'orders-web',
+        deploymentTargets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            secretNames: {
+              token: 'VERCEL_FRONTEND_TOKEN',
+              orgId: 'VERCEL_FRONTEND_ORG_ID',
+              projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+            },
+          },
+        ],
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+    const parsed = yaml.load(
+      bundle.workflowFiles.find((candidate) => candidate.stage === 'package')!
+        .yaml,
+    ) as ParsedWorkflow;
+
+    expect(
+      parsed.jobs['deploy-vercel-frontend-uat']?.with?.['git-branch'],
+    ).toBe('uat');
+    // Production variables are not branch-scoped, so main names none.
+    expect(
+      parsed.jobs['deploy-vercel-frontend-main']?.with?.['git-branch'],
+    ).toBeUndefined();
+  });
+
+  /*
    * Every variable a branch needs, checked one per line.
    *
    * These used to be one `case` arm per variable, so a repository with both an

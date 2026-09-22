@@ -568,8 +568,10 @@ describe('ProjectDeploymentProvisioningService', () => {
         request: fullStackRequest(),
       });
 
-      // Render fans out to uat and main; each backend service gets the
-      // frontend origin for CORS.
+      // Render fans out to uat and main; each backend service gets the origin
+      // its own branch's frontend is served on. The pipeline aliases the uat
+      // preview to uat-<project>.vercel.app, so that is the origin uat's
+      // browser traffic comes from - not the production host.
       expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
         'project-1',
         'user-1',
@@ -578,8 +580,14 @@ describe('ProjectDeploymentProvisioningService', () => {
           lane: 'preview',
           gitBranch: 'uat',
           vars: [
-            { key: 'FRONTEND_URL', value: 'https://demo-frontend.vercel.app' },
-            { key: 'CORS_ORIGINS', value: 'https://demo-frontend.vercel.app' },
+            {
+              key: 'FRONTEND_URL',
+              value: 'https://uat-demo-frontend.vercel.app',
+            },
+            {
+              key: 'CORS_ORIGINS',
+              value: 'https://uat-demo-frontend.vercel.app',
+            },
           ],
         },
       );
