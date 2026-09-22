@@ -117,6 +117,66 @@ describe('ProjectDeploymentProvisioningService', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('still writes the Vercel variables when GitHub refuses the deploy secrets', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    deploymentTargetsService.createDeploymentTarget.mockResolvedValue({
+      id: 'vercel-fe',
+      provider: 'vercel',
+      deploymentStrategy: 'vercel_ci_pushed',
+      providerProjectId: 'prj_fe',
+      providerProjectName: 'orders-frontend',
+      providerMetadata: {},
+    });
+    vercelCiSecretsService.installForTarget.mockRejectedValue(
+      new Error('GitHub refused the secret'),
+    );
+    const service = new ProjectDeploymentProvisioningService(
+      deploymentTargetsService as never,
+      envVarsService as never,
+      ciSecretsInstallerRegistry as never,
+      providerPolicyRegistry,
+    );
+
+    const result = await service.provisionForProject({
+      projectId: 'project-fe',
+      userId: 'user-1',
+      repoFullName: 'org/orders-fe',
+      githubAccessToken: 'gh-token',
+      request: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-frontend',
+            env: [
+              {
+                lane: 'preview' as const,
+                vars: [{ key: 'FEATURE_FLAG', value: 'on' }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+      'project-fe',
+      'user-1',
+      {
+        deploymentTargetId: 'vercel-fe',
+        lane: 'preview',
+        gitBranch: 'uat',
+        vars: [{ key: 'FEATURE_FLAG', value: 'on' }],
+      },
+    );
+    // The missing secrets are still reported, so the deploy jobs that need
+    // them do not look healthy.
+    expect(result.status).toBe('failed');
+    expect(result.targets[0]?.errorSummary).toBe('GitHub refused the secret');
+  });
+
   it('fans out variable group env vars and lets target-specific vars override them', async () => {
     const service = new ProjectDeploymentProvisioningService(
       deploymentTargetsService as never,
