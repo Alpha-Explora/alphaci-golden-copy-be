@@ -222,6 +222,22 @@ describe('buildProjectScaffold', () => {
     );
   });
 
+  it('lets the deployed frontend call a NestJS API', () => {
+    // Provisioning writes the frontend's address into CORS_ORIGINS; without
+    // enableCors reading it the browser blocked every call from the frontend.
+    const main = buildProjectScaffold({
+      serviceName: 'orders-api',
+      stack: 'nestjs',
+      includeDocker: false,
+    }).find((file) => file.path === 'src/main.ts')!.content;
+
+    expect(main).toContain('app.enableCors({');
+    expect(main).toContain('process.env.CORS_ORIGINS');
+    expect(main.indexOf('app.enableCors(')).toBeLessThan(
+      main.indexOf('app.listen('),
+    );
+  });
+
   it('uses the Node.js entrypoint in generated Node Dockerfiles', () => {
     const files = buildProjectScaffold({
       serviceName: 'orders-worker',
