@@ -12,6 +12,8 @@ import type {
   ProviderDeployEvent,
   ProviderDeploymentTarget,
   ProviderLogEntry,
+  ProviderLogPage,
+  ProviderLogQuery,
   ProviderLogsInput,
   ProviderProvisionResult,
   ProviderTargetStatus,
@@ -20,9 +22,12 @@ import type {
 } from '../../../application/ports/runtime-env-provider.client';
 import type { DeploymentProvider } from '../../../core/deployment-provider-runtime.contract';
 import {
+  buildRenderLogsQueryParams,
+  mapRenderLogsPage,
   readCreatedService,
   readServiceStatus,
   type RenderCreatedServicePayload,
+  type RenderLogsPayload,
   type RenderServiceStatusPayload,
 } from './render-env.mapping';
 
@@ -315,47 +320,56 @@ export class RenderEnvClient implements DeploymentProvider {
       }));
   }
 
-  async getLogs(input: ProviderLogsInput): Promise<ProviderLogEntry[]> {
+  async queryLogs(input: ProviderLogQuery): Promise<ProviderLogPage> {
     // Render's log API is keyed by workspace owner, not just the service.
-    // Throwing (rather than returning []) matters here: callers must be able
-    // to tell "this target isn't linked yet" apart from "Render genuinely
-    // has zero log lines right now" — collapsing them into the same empty
-    // result would silently misreport an unlinked target as live-but-quiet.
+    // Throwing (rather than returning an empty page) matters here: callers
+    // must be able to tell "this target isn't linked yet" apart from
+    // "Render genuinely has zero log lines right now" — collapsing them into
+    // the same empty result would silently misreport an unlinked target as
+    // live-but-quiet.
     if (!input.renderOwnerId?.trim()) {
       throw new Error(
         'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
       );
     }
 
-    const params = new URLSearchParams({
-      ownerId: input.renderOwnerId,
-      resource: input.targetId,
-      limit: '100',
-    });
-    if (input.type) params.set('type', input.type);
-    if (input.startTime) params.set('startTime', input.startTime);
-    if (input.endTime) params.set('endTime', input.endTime);
-
+    const params = buildRenderLogsQueryParams(
+      input.renderOwnerId,
+      input.targetId,
+      input,
+    );
     const response = await fetchWithRetry(
       `${RENDER_API_URL}/logs?${params.toString()}`,
       { headers: this.headers(input.token) },
       'Render',
     );
     await this.assertOk(response, 'Render logs could not be loaded');
-    const data = (await response.json()) as {
-      logs?: Array<{ timestamp?: string; message?: string; level?: string }>;
-    };
+    const data = (await response.json()) as RenderLogsPayload;
 
-    return (data.logs ?? []).map((l) => ({
-      timestamp: l.timestamp ?? new Date().toISOString(),
-      message: l.message ?? '',
-      level:
-        l.level === 'error' ||
-        l.level === 'warn' ||
-        l.level === 'info' ||
-        l.level === 'system'
-          ? l.level
-          : 'info',
+    // mapRenderLogsPage needs the direction actually requested (defaulting
+    // to 'backward', same as buildRenderLogsQueryParams above) to know
+    // whether the payload arrived newest-first and must be reversed before
+    // its stable sort.
+    return mapRenderLogsPage(data, input.direction ?? 'backward');
+  }
+
+  /**
+   * Thin compatibility wrapper: queryLogs owns the real Render mapping
+   * (including the label -> level/type/instance fix), this just flattens its
+   * richer page shape back to the pre-parity return type for any caller
+   * still on the old operation.
+   */
+  async getLogs(input: ProviderLogsInput): Promise<ProviderLogEntry[]> {
+    const { type, ...rest } = input;
+    const page = await this.queryLogs({
+      ...rest,
+      ...(type ? { type: [type] } : {}),
+    });
+
+    return page.logs.map((line) => ({
+      timestamp: line.timestamp,
+      message: line.message,
+      level: line.level,
     }));
   }
 

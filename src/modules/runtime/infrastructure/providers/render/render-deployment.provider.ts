@@ -59,6 +59,9 @@ export class RenderDeploymentProvider
     this.capabilities = {
       ...LEGACY_PROVIDER_CAPABILITIES,
       previewDeployments: config.previewDeployments ?? false,
+      // Render's /v1/logs accepts all four filters server-side (see
+      // render-env.mapping.ts's buildRenderLogsQueryParams).
+      logFilters: ['level', 'type', 'text', 'instance'] as const,
     };
     this.policy = policy;
   }

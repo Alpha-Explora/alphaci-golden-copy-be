@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added Render-parity deployment logs: `queryLogs` on the provider port (windowed, filterable by level/type/text/instance, paginated), fixing the Render client's old bug of reading a nonexistent top-level `l.level` field instead of the `labels` array. `GET .../deployment-targets/:targetId/logs` now returns `{ source, logs, hasMore, next, filters }`, where `source: 'unavailable'` (with no lines) replaces silently falling back to mock data on a live provider failure — mock data is now reserved for local-mock mode (`deploymentHistory.liveProvidersEnabled=false`). Added `GET .../logs/stream?mode=append` for an SSE live tail that sends one snapshot then only new lines per poll, capped at 5 provider pages per tick.
 - Added the limited Enterprise-only `runtime.client-composition` capability, including the profile-keyed `src/packs/enterprise` client-policy pack, backend-owned `clientComposition` projection, and frontend artifact-symbol exclusion contract.
 - Added focused pack-loader, static-import boundary, API projection, and profile artifact tests proving hosted compilation/runtime do not include the Enterprise implementation while Enterprise does.
 - Added deterministic `provenance.json` generation for `@alphaci/capability-catalog`, including the catalog source digest and canonical package artifact digest, with checker coverage for stale and tampered output.
