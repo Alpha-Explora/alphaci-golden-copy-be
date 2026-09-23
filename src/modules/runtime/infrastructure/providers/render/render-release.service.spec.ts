@@ -1,3 +1,4 @@
+import { BadGatewayException, BadRequestException } from '@nestjs/common';
 import { RenderReleaseService } from './render-release.service';
 import type { DeploymentTargetSummary } from '../../../core/deployments.types';
 
@@ -23,6 +24,7 @@ function target(
     providerMetadata: {
       renderServiceUrl: 'https://demo-uat.onrender.com',
       imageUrl: 'ghcr.io/org/alphaci-backend-uat-demo:uat',
+      bootstrapImage: 'docker.io/library/nginx:alpine',
     },
     status: 'active',
     ...overrides,
@@ -73,7 +75,7 @@ describe('RenderReleaseService', () => {
     expect(releaser.supports(target({ provider: 'vercel' }))).toBe(false);
   });
 
-  it('asks Render to deploy the tag the pipeline just pushed', async () => {
+  it('asks Render to deploy the tag the pipeline just pushed without PATCH when repository matches', async () => {
     const fetchMock = stubFetch();
 
     const handle = await service().start({
@@ -83,6 +85,7 @@ describe('RenderReleaseService', () => {
       artifact: 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234',
     });
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.render.com/v1/services/srv-abc/deploys');
     expect(init.method).toBe('POST');
@@ -96,19 +99,53 @@ describe('RenderReleaseService', () => {
     });
   });
 
-  it('refuses an artifact from a different image repository', async () => {
-    // Render accepts another tag, never another image. Refusing here names the
-    // disagreement; Render's own error would only say the image was invalid.
-    stubFetch();
+  it('patches the service image when transitioning from bootstrap or a different repository', async () => {
+    const fetchMock = stubFetch();
 
-    await expect(
-      service().start({
-        target: target(),
-        branch: 'uat',
-        commitSha: 'abc1234',
-        artifact: 'ghcr.io/org/some-other-image:sha-abc1234',
-      }),
-    ).rejects.toThrow(/only accepts a different tag of the same image/);
+    const bootstrapTarget = target({
+      providerMetadata: {
+        renderServiceUrl: 'https://demo-uat.onrender.com',
+        imageUrl: 'docker.io/library/nginx:alpine',
+        bootstrapImage: 'docker.io/library/nginx:alpine',
+      },
+    });
+
+    const handle = await service().start({
+      target: bootstrapTarget,
+      branch: 'uat',
+      commitSha: 'abc1234',
+      artifact: 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Call 1: PATCH service image
+    const [patchUrl, patchInit] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(patchUrl).toBe('https://api.render.com/v1/services/srv-abc');
+    expect(patchInit.method).toBe('PATCH');
+    expect(JSON.parse(String(patchInit.body))).toEqual({
+      image: {
+        imagePath: 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234',
+      },
+    });
+
+    // Call 2: POST deploy
+    const [deployUrl, deployInit] = fetchMock.mock.calls[1] as [
+      string,
+      RequestInit,
+    ];
+    expect(deployUrl).toBe(
+      'https://api.render.com/v1/services/srv-abc/deploys',
+    );
+    expect(deployInit.method).toBe('POST');
+    expect(JSON.parse(String(deployInit.body))).toEqual({
+      imageUrl: 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234',
+    });
+
+    expect(handle.providerReleaseId).toBe('dep-1');
   });
 
   it('falls back to the image the service was created with', async () => {
@@ -158,19 +195,20 @@ describe('RenderReleaseService', () => {
     expect(handle.message).toMatch(/Events tab/);
   });
 
-  it('reports what Render said when it refuses the deploy', async () => {
+  it('reports what Render said when it refuses the deploy with BadGatewayException', async () => {
     stubFetch({ ok: false, status: 402, text: 'workspace over quota' });
 
-    await expect(
-      service().start({
-        target: target(),
-        branch: 'uat',
-        commitSha: 'abc1234',
-      }),
-    ).rejects.toThrow(/HTTP 402.*workspace over quota/s);
+    const promise = service().start({
+      target: target(),
+      branch: 'uat',
+      commitSha: 'abc1234',
+    });
+
+    await expect(promise).rejects.toThrow(BadGatewayException);
+    await expect(promise).rejects.toThrow(/HTTP 402.*workspace over quota/s);
   });
 
-  it('refuses to release without a configured Render key', async () => {
+  it('throws BadRequestException without a configured Render key', async () => {
     stubFetch();
     const releaser = new RenderReleaseService({
       getOrThrow: () => ({
@@ -178,8 +216,26 @@ describe('RenderReleaseService', () => {
       }),
     } as never);
 
-    await expect(
-      releaser.start({ target: target(), branch: 'uat', commitSha: 'abc1234' }),
-    ).rejects.toThrow(/ALPHACI_RENDER_API_KEY/);
+    const promise = releaser.start({
+      target: target(),
+      branch: 'uat',
+      commitSha: 'abc1234',
+    });
+
+    await expect(promise).rejects.toThrow(BadRequestException);
+    await expect(promise).rejects.toThrow(/ALPHACI_RENDER_API_KEY/);
+  });
+
+  it('throws BadRequestException when target has no service ID', async () => {
+    stubFetch();
+
+    const promise = service().start({
+      target: target({ providerProjectId: '' }),
+      branch: 'uat',
+      commitSha: 'abc1234',
+    });
+
+    await expect(promise).rejects.toThrow(BadRequestException);
+    await expect(promise).rejects.toThrow(/no Render service ID/);
   });
 });
