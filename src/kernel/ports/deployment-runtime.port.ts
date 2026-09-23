@@ -186,6 +186,8 @@ export interface DeploymentHistoryItem {
   targetId: string;
   targetName: string;
   provider: DeploymentProvider;
+  /** The target's role, so a reader (e.g. the previews surface rule) can tell a backend deploy from a frontend one without asking Runtime. */
+  slot: DeploymentSlot;
   environment: string | null;
   branch: string | null;
   commitSha: string | null;
@@ -227,6 +229,8 @@ export interface DeploymentEnvironment {
   targetId: string;
   targetName: string;
   provider: DeploymentProvider;
+  /** The target's role, carried through for the same reason as on DeploymentHistoryItem. */
+  slot: DeploymentSlot;
   /** The branch that releases to it. */
   branch: string;
   /** 'production' for the production tier, otherwise the branch's lane. */

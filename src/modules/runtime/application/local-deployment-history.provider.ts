@@ -43,6 +43,7 @@ export class LocalDeploymentHistoryProvider {
         targetId: target.id,
         targetName: target.providerProjectName,
         provider: target.provider,
+        slot: target.slot,
         environment: target.renderEnvironmentName ?? null,
         branch: target.branchName,
         commitSha: null,

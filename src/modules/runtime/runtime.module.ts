@@ -340,6 +340,14 @@ import {
     PROVIDER_CLIENT_REGISTRY,
     PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
     WorkflowFragmentRegistry,
+    // Nest can only re-export a bare token when it was also provided in this
+    // module; DEPLOYMENT_PROVIDER_CATALOG is only ever provided inside
+    // RuntimeCoreModule, so the whole module has to be re-exported instead.
+    // This is what lets Projects read provider capability data (e.g. whether
+    // a provider offers logs) through the RuntimeModule import it already
+    // uses for deployment history, instead of importing RuntimeCoreModule a
+    // second time.
+    RuntimeCoreModule,
   ],
 })
 export class RuntimeModule {}

@@ -1,7 +1,9 @@
 import type {
   DeploymentHistoryStatus,
+  DeploymentSlot,
   EnvProvider,
 } from '#kernel/ports/deployment-runtime.port';
+import type { PreviewSurface } from '../../domain/preview-surface.rule';
 
 /**
  * One branch's current deployment.
@@ -32,6 +34,20 @@ export interface ProjectBranchPreview {
   targetId: string;
   targetName: string;
   provider: EnvProvider;
+  /** The target's role. Null only for an older/degraded source that cannot report it. */
+  slot: DeploymentSlot | null;
+  /** What the card renders: a live log tail for a backend target, the page thumbnail otherwise. */
+  surface: PreviewSurface;
+  /** Host-neutral display name for `provider`, falling back to the id when the provider is not in the catalog. */
+  providerLabel: string;
+  /** Whether this provider both declares and implements log retrieval. */
+  logsAvailable: boolean;
+  /**
+   * The window a 'logs' surface should tail: from the current deployment's
+   * start to now (`endTime: null` means live). Null when nothing is deployed
+   * yet, so there is no window to tail.
+   */
+  logWindow: { startTime: string; endTime: string | null } | null;
   status: ProjectBranchPreviewStatus;
   commitSha: string | null;
   commitMessage: string | null;
