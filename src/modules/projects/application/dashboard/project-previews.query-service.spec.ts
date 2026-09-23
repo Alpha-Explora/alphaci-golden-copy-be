@@ -236,6 +236,64 @@ describe('ProjectPreviewsService', () => {
     expect(result.branches[0]?.isProduction).toBe(true);
   });
 
+  // Vercel labels every deployment made with the production target as
+  // production, and the platform deploys every branch that way. A failed
+  // feature-branch build came back as production and drew a second
+  // Production Deployment card on the Overview.
+  it('calls only the production environment’s branch production, whatever the provider labels', async () => {
+    deploymentsService.listDeployments.mockResolvedValue({
+      enabled: true,
+      mode: 'live',
+      liveProvidersEnabled: true,
+      deployments: [
+        deployment({
+          id: 'dpl_main',
+          branch: 'main',
+          environment: 'production',
+          createdAt: '2026-07-12T09:00:00.000Z',
+        }),
+        deployment({
+          id: 'dpl_feature',
+          branch: 'feat/cicd-system-validation',
+          environment: 'production',
+          status: 'failed',
+          createdAt: '2026-07-12T12:00:00.000Z',
+        }),
+      ],
+    });
+    deploymentsService.listEnvironments.mockResolvedValue([
+      { ...environment('main', 'target-vercel'), provider: 'vercel' as const },
+    ]);
+
+    const result = await createService().listPreviews(projectReference);
+
+    expect(
+      result.branches.map((b) => [b.branch, b.isProduction] as const),
+    ).toEqual([
+      ['main', true],
+      ['feat/cicd-system-validation', false],
+    ]);
+  });
+
+  it('keeps the provider’s production label for a target with no listed environment', async () => {
+    deploymentsService.listDeployments.mockResolvedValue({
+      enabled: true,
+      mode: 'live',
+      liveProvidersEnabled: true,
+      deployments: [deployment({ branch: 'main', environment: 'production' })],
+    });
+    // An environment for another target says nothing about this one.
+    deploymentsService.listEnvironments.mockResolvedValue([
+      environment('main', 'target-render'),
+    ]);
+
+    const result = await createService().listPreviews(projectReference);
+
+    expect(
+      result.branches.find((b) => b.targetId === 'target-vercel')?.isProduction,
+    ).toBe(true);
+  });
+
   it('sorts non-production branches newest first', async () => {
     deploymentsService.listDeployments.mockResolvedValue({
       enabled: true,
