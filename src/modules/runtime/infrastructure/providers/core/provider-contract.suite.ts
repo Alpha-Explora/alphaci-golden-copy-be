@@ -43,7 +43,11 @@ function assertStructuralContract(provider: RuntimeEnvProviderClient): void {
   }
 
   // Optional operations, when present, must still be functions.
-  const optionalOperations = ['getDeployHistory', 'getLogs'] as const;
+  const optionalOperations = [
+    'getDeployHistory',
+    'getLogs',
+    'queryLogs',
+  ] as const;
   for (const operation of optionalOperations) {
     if (
       provider[operation] !== undefined &&

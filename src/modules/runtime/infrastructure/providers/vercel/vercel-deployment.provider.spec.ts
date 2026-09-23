@@ -71,4 +71,14 @@ describe('VercelDeploymentProvider', () => {
     });
     expect(validateTeamAccess).toHaveBeenCalledWith('token', 'team-1');
   });
+
+  it('declares no instance filter, unlike Render', () => {
+    const provider = new VercelDeploymentProvider(
+      { label: 'Vercel', enabled: true, supportedSlots: ['frontend'] },
+      new DeploymentProviderRegistry(),
+      testPolicy,
+    );
+
+    expect(provider.capabilities.logFilters).toEqual(['level', 'type', 'text']);
+  });
 });

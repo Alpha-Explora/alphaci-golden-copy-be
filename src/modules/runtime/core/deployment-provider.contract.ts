@@ -1,6 +1,7 @@
 import type { RenderServiceType } from './deployment-target.types';
 import type { DeploymentProviderPolicy } from '../domain/deployment-provider.policy';
 import type { DeploymentProviderId } from './deployment-provider-id';
+import type { LogFilterKey } from './deployment-logs.types';
 
 export type { DeploymentProviderId } from './deployment-provider-id';
 
@@ -18,6 +19,12 @@ export interface ProviderCapabilities {
   envProvisioning?: boolean;
   /** Whether this provider exposes a branch-scoped preview lane. */
   previewDeployments?: boolean;
+  /**
+   * Which log query filters this provider actually honors. The logs endpoint
+   * always reports back whatever the provider declares here so the frontend
+   * renders only the controls that do something.
+   */
+  logFilters?: readonly LogFilterKey[];
 }
 
 export interface ProviderFormField {

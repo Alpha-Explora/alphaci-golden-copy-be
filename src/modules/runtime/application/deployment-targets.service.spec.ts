@@ -59,6 +59,9 @@ describe('DeploymentTargetsService', () => {
         return {
           label: 'Render',
           supportedSlots: ['backend', 'standalone'],
+          capabilities: {
+            logFilters: ['level', 'type', 'text', 'instance'],
+          },
           policy: renderPolicy,
           presentation: {
             publicUrl: (target: {
@@ -84,6 +87,9 @@ describe('DeploymentTargetsService', () => {
         return {
           label: 'Vercel',
           supportedSlots: ['frontend'],
+          capabilities: {
+            logFilters: ['level', 'type', 'text'],
+          },
           policy: vercelPolicy,
           presentation: {
             publicUrl: (target: { providerProjectName: string }) =>
@@ -1091,6 +1097,17 @@ describe('DeploymentTargetsService', () => {
   });
 
   describe('getDeploymentTargetLogs', () => {
+    const line = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      id: 'log-1',
+      timestamp: '2026-07-12T00:00:00.000Z',
+      message: 'hello',
+      level: 'info',
+      type: null,
+      instance: null,
+      labels: {},
+      ...overrides,
+    });
+
     it('returns live logs, including a genuinely empty result, when the provider call succeeds', async () => {
       deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
         {
@@ -1103,13 +1120,23 @@ describe('DeploymentTargetsService', () => {
           providerMetadata: {},
         },
       );
-      const client = { getLogs: jest.fn().mockResolvedValue([]) };
+      const client = {
+        queryLogs: jest
+          .fn()
+          .mockResolvedValue({ logs: [], hasMore: false, next: null }),
+      };
       clientRegistry.getClient.mockReturnValue(client);
 
       await expect(
         service.getDeploymentTargetLogs('project-1', 'target-1', 'user-1'),
-      ).resolves.toEqual({ source: 'live', logs: [] });
-      expect(client.getLogs).toHaveBeenCalledWith(
+      ).resolves.toEqual({
+        source: 'live',
+        logs: [],
+        hasMore: false,
+        next: null,
+        filters: ['level', 'type', 'text'],
+      });
+      expect(client.queryLogs).toHaveBeenCalledWith(
         expect.objectContaining({ token: 'vercel-token', targetId: 'prj_1' }),
       );
     });
@@ -1127,41 +1154,42 @@ describe('DeploymentTargetsService', () => {
         },
       );
       const client = {
-        getLogs: jest.fn().mockResolvedValue([
-          {
-            timestamp: '2026-07-12T00:00:00.000Z',
-            message: 'hello',
-            level: 'info',
+        queryLogs: jest.fn().mockResolvedValue({
+          logs: [line()],
+          hasMore: true,
+          next: {
+            startTime: '2026-07-12T00:00:00.000Z',
+            endTime: '2026-07-13T00:00:00.000Z',
           },
-        ]),
+        }),
       };
       clientRegistry.getClient.mockReturnValue(client);
 
       await expect(
         service.getDeploymentTargetLogs('project-1', 'target-1', 'user-1', {
-          type: 'build',
+          type: ['build'],
           startTime: '2026-07-11T00:00:00.000Z',
         }),
       ).resolves.toEqual({
         source: 'live',
-        logs: [
-          {
-            timestamp: '2026-07-12T00:00:00.000Z',
-            message: 'hello',
-            level: 'info',
-          },
-        ],
+        logs: [line()],
+        hasMore: true,
+        next: {
+          startTime: '2026-07-12T00:00:00.000Z',
+          endTime: '2026-07-13T00:00:00.000Z',
+        },
+        filters: ['level', 'type', 'text', 'instance'],
       });
-      expect(client.getLogs).toHaveBeenCalledWith({
+      expect(client.queryLogs).toHaveBeenCalledWith({
         token: 'render-token',
         targetId: 'srv-1',
-        type: 'build',
+        type: ['build'],
         startTime: '2026-07-11T00:00:00.000Z',
         renderOwnerId: 'owner-1',
       });
     });
 
-    it('reports simulated with the client error as the reason when the provider call fails', async () => {
+    it('reports unavailable with no lines when the provider call fails', async () => {
       deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
         {
           id: 'target-1',
@@ -1174,7 +1202,7 @@ describe('DeploymentTargetsService', () => {
         },
       );
       const client = {
-        getLogs: jest
+        queryLogs: jest
           .fn()
           .mockRejectedValue(
             new Error(
@@ -1189,14 +1217,18 @@ describe('DeploymentTargetsService', () => {
         'target-1',
         'user-1',
       );
-      expect(result.source).toBe('simulated');
-      expect(result.reason).toBe(
-        'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
-      );
-      expect(result.logs.length).toBeGreaterThan(0);
+      expect(result).toEqual({
+        source: 'unavailable',
+        reason:
+          'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
+        logs: [],
+        hasMore: false,
+        next: null,
+        filters: ['level', 'type', 'text', 'instance'],
+      });
     });
 
-    it('reports simulated when the provider client does not support live logs', async () => {
+    it('reports unavailable when the provider client does not support live logs', async () => {
       deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
         {
           id: 'target-1',
@@ -1215,8 +1247,49 @@ describe('DeploymentTargetsService', () => {
         'target-1',
         'user-1',
       );
-      expect(result.source).toBe('simulated');
+      expect(result.source).toBe('unavailable');
       expect(result.reason).toContain('not supported');
+      expect(result.logs).toEqual([]);
+    });
+
+    it('reports simulated mock logs, without touching the provider, when live providers are disabled', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        },
+      );
+      const client = { queryLogs: jest.fn() };
+      clientRegistry.getClient.mockReturnValue(client);
+      configService.getOrThrow.mockReturnValue({
+        envProvisioning: { flowciManaged: {} },
+        deploymentHistory: { liveProvidersEnabled: false },
+      });
+
+      const result = await service.getDeploymentTargetLogs(
+        'project-1',
+        'target-1',
+        'user-1',
+      );
+      expect(result.source).toBe('simulated');
+      expect(result.hasMore).toBe(false);
+      expect(result.next).toBeNull();
+      expect(result.logs.length).toBeGreaterThan(0);
+      // Every mock line must already be normalised to the response shape.
+      for (const entry of result.logs) {
+        expect(entry).toMatchObject({
+          id: expect.any(String),
+          timestamp: expect.any(String),
+          message: expect.any(String),
+          level: expect.stringMatching(/^(error|warn|info|debug)$/),
+        });
+      }
+      expect(client.queryLogs).not.toHaveBeenCalled();
     });
   });
 });
