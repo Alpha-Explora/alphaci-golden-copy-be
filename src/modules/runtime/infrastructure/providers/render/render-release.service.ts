@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
@@ -67,15 +71,28 @@ export class RenderReleaseService implements ProviderReleaser {
   async start(request: ProviderReleaseRequest): Promise<ProviderReleaseHandle> {
     const token = this.managedToken();
     const serviceId = request.target.providerProjectId;
+    if (!serviceId) {
+      throw new BadRequestException(
+        'Deployment target has no Render service ID',
+      );
+    }
+
+    const artifact = request.artifact?.trim();
+    const configured = this.stringMetadata(request.target, 'imageUrl');
+    const bootstrap = this.stringMetadata(request.target, 'bootstrapImage');
 
     /*
-     * Render accepts a different tag, but the host, repository and image name
-     * must match what the service was configured with. Sending an artifact
-     * from elsewhere would be refused by Render with a message about the image
-     * rather than about the mismatch, so it is refused here where the reason
-     * can be stated.
+     * Render's deploy endpoint accepts a different tag of the SAME image repository.
+     * When transitioning from the initial bootstrap image (e.g. nginx:alpine) to the
+     * pipeline's built container image (e.g. ghcr.io/org/repo:sha-xyz), or switching
+     * image repositories, the backing image must first be updated via PATCH /services.
      */
-    const imageUrl = this.resolveImageUrl(request);
+    if (artifact && this.requiresImagePatch(artifact, configured, bootstrap)) {
+      await this.patchServiceImage(serviceId, artifact, token);
+      request.target.providerMetadata['imageUrl'] = artifact;
+    }
+
+    const imageUrl = artifact || configured;
     const response = await fetch(
       `${RENDER_API_URL}/services/${serviceId}/deploys`,
       {
@@ -91,7 +108,9 @@ export class RenderReleaseService implements ProviderReleaser {
     );
     const deployId = payload.id;
     if (!deployId) {
-      throw new Error('Render accepted the deploy but returned no deploy id');
+      throw new BadGatewayException(
+        'Render accepted the deploy but returned no deploy id',
+      );
     }
 
     return this.toHandle(deployId, payload.status, request.target);
@@ -103,6 +122,11 @@ export class RenderReleaseService implements ProviderReleaser {
   }): Promise<ProviderReleaseHandle> {
     const token = this.managedToken();
     const serviceId = input.target.providerProjectId;
+    if (!serviceId) {
+      throw new BadRequestException(
+        'Deployment target has no Render service ID',
+      );
+    }
     const response = await fetch(
       `${RENDER_API_URL}/services/${serviceId}/deploys/${input.providerReleaseId}`,
       { headers: this.headers(token) },
@@ -135,32 +159,44 @@ export class RenderReleaseService implements ProviderReleaser {
     };
   }
 
-  /**
-   * The image to deploy: the commit-tagged artifact the pipeline just pushed,
-   * falling back to the image the service was created with.
-   */
-  private resolveImageUrl(request: ProviderReleaseRequest): string | null {
-    const artifact = request.artifact?.trim();
-    const configured = this.stringMetadata(request.target, 'imageUrl');
-
-    if (!artifact) {
-      return configured;
-    }
+  private requiresImagePatch(
+    artifact: string,
+    configured: string | null,
+    bootstrap: string | null,
+  ): boolean {
     if (!configured) {
-      return artifact;
+      return true;
     }
 
     const repositoryOf = (reference: string) =>
       reference.split('@')[0]!.replace(/:[^:/]+$/, '');
-    if (repositoryOf(artifact) !== repositoryOf(configured)) {
-      throw new Error(
-        `The pipeline built ${artifact}, but this service deploys ${configured}. ` +
-          'Render only accepts a different tag of the same image, so the target ' +
-          'and the pipeline disagree about what this service runs.',
-      );
+
+    if (bootstrap && repositoryOf(configured) === repositoryOf(bootstrap)) {
+      return true;
     }
 
-    return artifact;
+    return repositoryOf(artifact) !== repositoryOf(configured);
+  }
+
+  private async patchServiceImage(
+    serviceId: string,
+    imagePath: string,
+    token: string,
+  ): Promise<void> {
+    const response = await fetch(`${RENDER_API_URL}/services/${serviceId}`, {
+      method: 'PATCH',
+      headers: this.headers(token),
+      body: JSON.stringify({
+        image: {
+          imagePath,
+        },
+      }),
+    });
+
+    await this.readPayload(
+      response,
+      'Render refused to update the service image',
+    );
   }
 
   private serviceUrl(target: DeploymentTargetSummary): string | null {
@@ -183,7 +219,7 @@ export class RenderReleaseService implements ProviderReleaser {
     const config = this.configService.getOrThrow<AppConfig>('app');
     const token = config.envProvisioning.flowciManaged.renderToken.trim();
     if (!token) {
-      throw new Error(
+      throw new BadRequestException(
         'ALPHACI_RENDER_API_KEY is required to release an ALPHACI-managed Render service',
       );
     }
@@ -204,10 +240,9 @@ export class RenderReleaseService implements ProviderReleaser {
   ): Promise<RenderDeployPayload> {
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      // The body is Render's, and it can carry the service id; the key never
-      // appears in it. Truncated because a Render error page is not a log line.
-      throw new Error(
-        `${message} (HTTP ${String(response.status)}). ${body.slice(0, 300)}`.trim(),
+      const detail = body ? body.slice(0, 300) : '';
+      throw new BadGatewayException(
+        `${message} (HTTP ${String(response.status)}). ${detail}`.trim(),
       );
     }
 

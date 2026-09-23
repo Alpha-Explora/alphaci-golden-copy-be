@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
+import {
+  vercelAliasHost,
+  vercelBranchAlias,
+} from '#kernel/ports/workflow-fragment.port';
+
 import type {
   DeploymentProviderConnectionScopeInput,
   DeploymentProviderPolicy,
@@ -56,20 +61,23 @@ export class VercelDeploymentPolicy implements DeploymentProviderPolicy {
       };
     },
     resolveCrossLinkLane: () => null,
-    resolvePublicUrl: ({
-      providerProjectName,
-      providerMetadata,
-      branchName,
-      lane,
-    }) => {
+    /*
+     * The address each branch is actually served on, which is what a backend
+     * has to allow in CORS_ORIGINS.
+     *
+     * This built the `<project>-git-<branch>-<team>` form, which Vercel only
+     * assigns to builds from its own Git integration. The pipeline deploys with
+     * the CLI and aliases each preview to `<branch>-<project>.vercel.app`, so
+     * the uat backend was told to allow an origin its frontend never used, and
+     * no origin at all once a project was created without the Git link.
+     * vercelBranchAlias is the derivation the deploy job and the verify stage
+     * use, so the three cannot disagree.
+     */
+    resolvePublicUrl: ({ providerProjectName, branchName, lane }) => {
       if (!providerProjectName) return null;
-      const productionUrl = `https://${providerProjectName}.vercel.app`;
-      if (lane === 'production') return productionUrl;
-      const teamSlug = stringValue(providerMetadata['vercelTeamSlug']);
-      const branch = branchName?.trim();
-      return teamSlug && branch
-        ? `https://${providerProjectName}-git-${vercelBranchSlug(branch)}-${teamSlug}.vercel.app`
-        : productionUrl;
+      const aliasHost = vercelAliasHost(providerProjectName);
+      const branch = lane === 'production' ? null : branchName?.trim();
+      return `https://${branch ? vercelBranchAlias(branch, aliasHost) : aliasHost}`;
     },
     normalizeTarget: (target) => {
       if (target.branchName !== 'test') return target;
@@ -219,13 +227,6 @@ function vercelProjectNameForBranch(
   if (!raw) return undefined;
   const base = raw.replace(/-(test|uat|main|production)$/i, '');
   return `${base}-${branchName}`;
-}
-
-function vercelBranchSlug(branch: string): string {
-  return branch
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
 }
 
 function stringValue(value: unknown): string {

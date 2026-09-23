@@ -44,6 +44,21 @@ import type { DeploymentProvider } from '../core/deployment-provider.contract';
 const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{1,127}$/;
 const MAX_ENV_VALUE_LENGTH = 16_384;
 
+/**
+ * The target's Git link state, passed to the provider only when it was
+ * actually recorded.
+ *
+ * Omitted rather than defaulted when absent: targets created before the flag
+ * existed have no value for it, and sending `false` for them would refuse to
+ * write variables to linked projects that have been working all along.
+ */
+function gitConnectedFlag(
+  providerMetadata: Record<string, unknown> | undefined,
+): { gitConnected?: boolean } {
+  const gitConnected = providerMetadata?.['gitConnected'];
+  return typeof gitConnected === 'boolean' ? { gitConnected } : {};
+}
+
 export interface ValidateEnvTextInput {
   deploymentTargetId: string;
   lane: EnvLane;
@@ -163,6 +178,7 @@ export class EnvVarsService {
         targetId: target.providerProjectId,
         ...scope,
         vars: dto.vars,
+        ...gitConnectedFlag(target.providerMetadata),
       });
 
     await this.envVarsRepository.upsertEnvMetadataBatch({

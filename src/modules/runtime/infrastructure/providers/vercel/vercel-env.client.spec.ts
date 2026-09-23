@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 import { VercelEnvClient } from './vercel-env.client';
 
 const makeConfigService = (
@@ -95,6 +97,76 @@ describe('VercelEnvClient', () => {
 
     const body = (jest.mocked(fetch).mock.calls[0]?.[1]?.body ?? '') as string;
     expect(body).not.toContain('gitBranch');
+  });
+
+  /*
+   * Vercel rejects a branch-scoped variable on a project with no repository
+   * connected, one 400 per variable. Reported against the keys instead of
+   * thrown, so provisioning goes on to write the repository's VERCEL_*
+   * secrets and VERCEL_ALIAS rather than abandoning them.
+   */
+  it('reports branch-scoped variables as failed when the project has no Git link', async () => {
+    global.fetch = jest.fn();
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await new VercelEnvClient().upsertEnvironmentVariables({
+      token: 'vercel',
+      targetId: 'prj-1',
+      lane: 'preview',
+      gitBranch: 'uat',
+      gitConnected: false,
+      vars: [
+        { key: 'API_URL', value: 'https://api.example.com' },
+        { key: 'TEST', value: '1' },
+      ],
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result.provisioned).toEqual([]);
+    expect(result.failed.map((entry) => entry.key)).toEqual([
+      'API_URL',
+      'TEST',
+    ]);
+    expect(result.failed[0]?.errorSummary).toMatch(/Login Connections/);
+  });
+
+  /* Production variables carry no branch, so an unlinked project takes them. */
+  it('still writes production variables when the project has no Git link', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    const result = await new VercelEnvClient().upsertEnvironmentVariables({
+      token: 'vercel',
+      targetId: 'prj-1',
+      lane: 'production',
+      gitBranch: null,
+      gitConnected: false,
+      vars: [{ key: 'API_URL', value: 'https://api.example.com' }],
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.failed).toEqual([]);
+  });
+
+  /* Targets created before the flag was recorded have no value for it, and
+   * they are overwhelmingly linked ones. */
+  it('writes branch-scoped variables when the link state is unknown', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await new VercelEnvClient().upsertEnvironmentVariables({
+      token: 'vercel',
+      targetId: 'prj-1',
+      lane: 'preview',
+      gitBranch: 'uat',
+      vars: [{ key: 'API_URL', value: 'https://api.example.com' }],
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('scopes env upserts to the configured Vercel team id', async () => {
@@ -996,8 +1068,265 @@ describe('VercelEnvClient', () => {
         branchName: 'test',
       }),
     ).rejects.toThrow(
-      'Vercel GitHub integration is not installed or does not have access to cicd-external-project/test123. Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.',
+      'Vercel would not link cicd-external-project/test123. Install the Vercel GitHub App for that GitHub owner and grant it access to the repository, then retry.',
     );
+  });
+
+  it('names the other link refusal by its own remedy', async () => {
+    // Observed on a real create. The GitHub App being absent and the Vercel
+    // account having no GitHub login are different failures in different
+    // places, and sending someone to the wrong one costs them the afternoon.
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            error: {
+              code: 'bad_request',
+              message:
+                'Failed to link Alphaexplora-Sandbox/alphatest-12345-fe. You need to add a Login Connection to your GitHub account first.',
+              action: 'Add a Login Connection',
+              repo: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+            },
+          }),
+        ),
+    });
+
+    await expect(
+      new VercelEnvClient().createTarget({
+        token: 'vercel-secret',
+        repoFullName: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+        projectName: 'alphatest-12345-frontend',
+        branchName: 'uat',
+      }),
+    ).rejects.toThrow(
+      'Vercel would not link Alphaexplora-Sandbox/alphatest-12345-fe. Connect a GitHub account to the Vercel account the platform token belongs to (Vercel → Account Settings → Login Connections), then retry.',
+    );
+  });
+
+  describe('recoverable refusals on project creation', () => {
+    const nameTaken = {
+      ok: false,
+      status: 409,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            error: { code: 'conflict', message: 'Project already exists' },
+          }),
+        ),
+    };
+    const gitLinkRefused = {
+      ok: false,
+      status: 400,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            error: {
+              code: 'bad_request',
+              message:
+                'To link a GitHub repository, you need to install the GitHub integration first.',
+              action: 'Install GitHub App',
+              repo: 'owner/web-app',
+            },
+          }),
+        ),
+    };
+    const created = (name: string) => ({
+      ok: true,
+      json: () => Promise.resolve({ id: 'prj_1', name }),
+    });
+    const managedInput = {
+      token: 'flowci-vercel-token',
+      repoFullName: 'owner/web-app',
+      projectName: 'web-app-frontend',
+      branchName: 'uat',
+      deploymentStrategy: 'vercel_ci_pushed',
+      vercelOrgId: 'team_flowci',
+      vercelTeamId: 'team_flowci',
+    };
+    const requestedBodies = () =>
+      (fetch as jest.Mock).mock.calls.map(
+        ([, init]) =>
+          JSON.parse((init as { body: string }).body) as {
+            name: string;
+            gitRepository?: unknown;
+          },
+      );
+
+    beforeEach(() => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    });
+
+    it('takes the next free name when the one asked for is taken', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(nameTaken)
+        .mockResolvedValueOnce(created('web-app-frontend-2'));
+
+      const target = await new VercelEnvClient().createTarget(managedInput);
+
+      expect(requestedBodies().map((body) => body.name)).toEqual([
+        'web-app-frontend',
+        'web-app-frontend-2',
+      ]);
+      // Everything downstream derives from the name Vercel returned.
+      expect(target.name).toBe('web-app-frontend-2');
+    });
+
+    it('stops after five names and reports the refusal', async () => {
+      global.fetch = jest.fn().mockResolvedValue(nameTaken);
+
+      await expect(
+        new VercelEnvClient().createTarget(managedInput),
+      ).rejects.toThrow('Vercel project could not be created: 409');
+      expect(requestedBodies().map((body) => body.name)).toEqual([
+        'web-app-frontend',
+        'web-app-frontend-2',
+        'web-app-frontend-3',
+        'web-app-frontend-4',
+        'web-app-frontend-5',
+      ]);
+    });
+
+    it('keeps a suffixed name inside the Vercel length limit', async () => {
+      const longName = 'a'.repeat(100);
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(nameTaken)
+        .mockResolvedValueOnce(created('shortened'));
+
+      await new VercelEnvClient().createTarget({
+        ...managedInput,
+        projectName: longName,
+      });
+
+      const retried = requestedBodies()[1]?.name ?? '';
+      expect(retried).toHaveLength(100);
+      expect(retried.endsWith('-2')).toBe(true);
+    });
+
+    it('creates a CI-pushed project unlinked when the Vercel account has no GitHub login', async () => {
+      // The refusal that reached a real project: the platform's Vercel account
+      // had no Login Connection, so linking failed — for a project the
+      // pipeline deploys with the CLI and never needed the link for.
+      //
+      // On `main`, whose variables carry no branch, so an unlinked project can
+      // still hold them.
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 400,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                error: {
+                  code: 'bad_request',
+                  message:
+                    'Failed to link Alphaexplora-Sandbox/alphatest-12345-fe. You need to add a Login Connection to your GitHub account first.',
+                  action: 'Add a Login Connection',
+                  repo: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+                },
+              }),
+            ),
+        })
+        .mockResolvedValueOnce(created('alphatest-12345-frontend'));
+
+      const target = await new VercelEnvClient().createTarget({
+        ...managedInput,
+        branchName: 'main',
+        repoFullName: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+        projectName: 'alphatest-12345-frontend',
+      });
+
+      expect(requestedBodies()[1]?.gitRepository).toBeUndefined();
+      expect(target.metadata).toEqual(
+        expect.objectContaining({ gitConnected: false }),
+      );
+    });
+
+    it('creates a CI-pushed project unlinked when Vercel cannot link the repository', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(gitLinkRefused)
+        .mockResolvedValueOnce(created('web-app-frontend'));
+
+      const target = await new VercelEnvClient().createTarget({
+        ...managedInput,
+        branchName: 'main',
+      });
+
+      const [linked, unlinked] = requestedBodies();
+      expect(linked?.gitRepository).toBeDefined();
+      expect(unlinked?.gitRepository).toBeUndefined();
+      expect(target.metadata).toEqual(
+        expect.objectContaining({ gitConnected: false }),
+      );
+    });
+
+    it('recovers from both refusals in one creation', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(gitLinkRefused)
+        .mockResolvedValueOnce(nameTaken)
+        .mockResolvedValueOnce(created('web-app-frontend-2'));
+
+      const target = await new VercelEnvClient().createTarget({
+        ...managedInput,
+        branchName: 'main',
+      });
+
+      expect(target.name).toBe('web-app-frontend-2');
+      expect(requestedBodies()[2]?.gitRepository).toBeUndefined();
+    });
+
+    /*
+     * The combination that produced a created-but-useless project: Vercel
+     * refused the link, the project was created unlinked anyway, and every
+     * variable scoped to the tracked branch was then rejected — taking the CI
+     * secrets down with it. An unlinked project cannot serve this target, so
+     * it is not created.
+     */
+    it('refuses to create an unlinked project when the target tracks a branch', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce(gitLinkRefused);
+
+      await expect(
+        new VercelEnvClient().createTarget(managedInput),
+      ).rejects.toThrow(/tracks uat/);
+
+      expect((fetch as jest.Mock).mock.calls).toHaveLength(1);
+    });
+
+    it('names both the remedy and the reason the branch needs the link', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce(gitLinkRefused);
+
+      await expect(
+        new VercelEnvClient().createTarget(managedInput),
+      ).rejects.toThrow(/Install the Vercel GitHub App.*branch-scoped/s);
+    });
+
+    it('does not retry any other refusal', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              error: {
+                code: 'forbidden',
+                action: 'create',
+                resource: 'project',
+              },
+            }),
+          ),
+      });
+
+      await expect(
+        new VercelEnvClient().createTarget(managedInput),
+      ).rejects.toThrow('Vercel refused to create a project (403)');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
   });
 
   /*

@@ -227,6 +227,26 @@ describe('dotnet scaffold — the seam both tools need to mean anything', () => 
     expect(program).not.toContain('new HealthResponse("ok"');
   });
 
+  it('lets the deployed frontend call the API', () => {
+    // Provisioning writes the frontend's address into CORS_ORIGINS on every
+    // backend service. Without a policy that reads it, the browser blocked
+    // every call from the frontend and the variable changed nothing.
+    const program = contentOf('src/StPeterApi/Program.cs');
+
+    expect(program).toContain('builder.Configuration["CORS_ORIGINS"]');
+    expect(program).toContain('policy.WithOrigins(corsOrigins)');
+    // The middleware has to run before the endpoints it covers.
+    expect(program.indexOf('app.UseCors();')).toBeGreaterThan(
+      program.indexOf('var app = builder.Build();'),
+    );
+    expect(program.indexOf('app.UseCors();')).toBeLessThan(
+      program.indexOf('app.MapGet('),
+    );
+    expect(contentOf('.env.example')).toContain(
+      'CORS_ORIGINS=http://localhost:3000',
+    );
+  });
+
   it('demonstrates substitution through the real DI container', () => {
     const test = contentOf('tests/StPeterApi.Tests/ServiceStatusTests.cs');
 

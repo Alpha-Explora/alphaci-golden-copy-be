@@ -148,6 +148,7 @@ exports[`post-consolidation public contract snapshots records the staged workflo
         "branch-alias": "uat-\${{ vars.VERCEL_ALIAS }}",
         "checkout-ref": "\${{ needs.pipeline-context.outputs.sha }}",
         "environment": "preview",
+        "git-branch": "uat",
         "system-name": "orders-api",
         "working-directory": "frontend",
       },

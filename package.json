@@ -69,7 +69,8 @@
     "check:documentation": "node scripts/check-documentation.cjs",
     "test:documentation": "node --test tests/architecture/check-okf-bundle.test.cjs",
     "process:outbox": "npm run build && node scripts/process-outbox.cjs",
-    "routes:inventory": "npm run build && node scripts/route-inventory.cjs"
+    "routes:inventory": "npm run build && node scripts/route-inventory.cjs",
+    "check:vercel": "node -r ts-node/register scripts/check-vercel-managed-setup.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

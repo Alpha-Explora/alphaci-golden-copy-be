@@ -2,6 +2,7 @@ import { Logger, UnprocessableEntityException } from '@nestjs/common';
 
 import {
   withDefaultCreateDeploymentProvisioning,
+  withDefaultFrontendDeploymentProvisioning,
   withRepoShapeRootDirectory,
 } from '../../domain/deployment-provisioning.policy';
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
@@ -38,11 +39,18 @@ export class MultiRepositoryProjectProvisioner {
     const { backend, frontend } = dto.multiRepoConfig;
     const { beRepoName, feRepoName } = deriveMultiRepoNames(dto.repoName);
     const effectiveDeploymentProvisioning = withRepoShapeRootDirectory(
-      withDefaultCreateDeploymentProvisioning({
-        request: dto.deploymentProvisioning,
-        projectTypeId: backend.projectTypeId,
-        serviceName: backend.serviceName,
-        repoName: beRepoName,
+      withDefaultFrontendDeploymentProvisioning({
+        request: withDefaultCreateDeploymentProvisioning({
+          request: dto.deploymentProvisioning,
+          projectTypeId: backend.projectTypeId,
+          serviceName: backend.serviceName,
+          repoName: beRepoName,
+          servicePath: '.',
+          deploymentProvisioningDefaults:
+            this.support.deploymentProvisioningDefaults,
+        }),
+        serviceName: frontend.serviceName,
+        repoName: feRepoName,
         servicePath: '.',
         deploymentProvisioningDefaults:
           this.support.deploymentProvisioningDefaults,

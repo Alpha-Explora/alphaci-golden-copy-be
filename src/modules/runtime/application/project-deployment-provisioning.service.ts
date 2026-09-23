@@ -102,19 +102,23 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
             input.userId,
             targetRequest,
           );
-        const providerMetadata = await this.installCiSecretsIfSupported({
-          githubAccessToken: input.githubAccessToken,
-          repoFullName: input.repoFullName,
-          userId: input.userId,
-          providerConnectionId: requestedTarget.providerConnectionId,
-          target,
-        });
+        // Variables first: they go to the provider project that now exists,
+        // while the secrets go to GitHub. With the secrets first, any GitHub
+        // refusal left a live Vercel or Render project with none of the
+        // variables the user asked for, and nothing retried them.
         const env = await this.provisionEnvForTarget({
           projectId: input.projectId,
           userId: input.userId,
           request: input.request,
           requestedTarget,
           targetId: target.id,
+        });
+        const providerMetadata = await this.installCiSecretsIfSupported({
+          githubAccessToken: input.githubAccessToken,
+          repoFullName: input.repoFullName,
+          userId: input.userId,
+          providerConnectionId: requestedTarget.providerConnectionId,
+          target,
         });
 
         targets.push({
@@ -287,25 +291,66 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
       input.requestedTarget,
       input.requestedTarget.env,
     )) {
+      env.push(await this.provisionEnvSet(input, envSet));
+    }
+    return env;
+  }
+
+  /**
+   * One scope's variables, with a refusal recorded against the keys rather
+   * than thrown.
+   *
+   * The provider project exists by this point. Letting the write escape
+   * abandoned the two steps after it — the CI secrets that the pipeline
+   * deploys with, and the cross-link pass — so a provider that would not take
+   * one variable left a live project with no secrets, no VERCEL_ALIAS, and a
+   * target the result reported as `failed` with a null id, which is how a
+   * created project ended up orphaned from the platform that created it.
+   *
+   * The reason reaches the same places a partial provider failure already
+   * does: the env metadata, and one line per key in the setup panel.
+   */
+  private async provisionEnvSet(
+    input: {
+      projectId: string;
+      userId: string;
+      targetId: string;
+    },
+    envSet: EnvVarScope & { vars: Array<{ key: string; value: string }> },
+  ): Promise<ProvisionedTarget['env'][number]> {
+    const scope = { lane: envSet.lane, gitBranch: envSet.gitBranch };
+    try {
       const result = await this.envVarsService.provisionEnvVars(
         input.projectId,
         input.userId,
         {
           deploymentTargetId: input.targetId,
-          lane: envSet.lane,
-          gitBranch: envSet.gitBranch,
+          ...scope,
           vars: envSet.vars,
         },
       );
 
-      env.push({
-        lane: envSet.lane,
-        gitBranch: envSet.gitBranch,
+      return {
+        ...scope,
         provisioned: result.provisioned,
         failed: result.failed,
-      });
+      };
+    } catch (error) {
+      const reason = this.sanitizeError(error);
+      this.logger.warn(
+        `Environment variables for target ${input.targetId} (${envSet.lane}${envSet.gitBranch ? `/${envSet.gitBranch}` : ''}) could not be written: ${String(error)}`,
+      );
+
+      return {
+        ...scope,
+        provisioned: [],
+        failed: envSet.vars.map((variable) => ({
+          key: variable.key,
+          status: 'failed' as const,
+          errorSummary: reason,
+        })),
+      };
     }
-    return env;
   }
 
   /**
@@ -720,7 +765,18 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
       (target) => target.status === 'failed',
     ).length;
     if (failedCount === 0) {
-      return 'completed';
+      /*
+       * A variable the provider refused no longer fails its whole target, so
+       * every target can be created and the run still not be what was asked
+       * for. Reported as partial rather than completed, because 'completed'
+       * over a project missing the variables it was given is the kind of
+       * green tick someone acts on and finds out about days later.
+       */
+      return targets.some((target) =>
+        target.env.some((envSet) => envSet.failed.length > 0),
+      )
+        ? 'partial'
+        : 'completed';
     }
 
     return failedCount === targets.length ? 'failed' : 'partial';

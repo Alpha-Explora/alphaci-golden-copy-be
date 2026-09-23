@@ -62,6 +62,10 @@ function buildVercelFragment(
                   branch,
                   `\${{ vars.${VERCEL_ALIAS_VARIABLE} }}`,
                 ),
+                // Provisioning writes each preview branch's variables (the
+                // API URL among them) scoped to that branch, and `vercel pull`
+                // only includes them when told which branch it is building.
+                'git-branch': branch,
               }),
           'checkout-ref': HEAD_SHA_EXPR,
         },

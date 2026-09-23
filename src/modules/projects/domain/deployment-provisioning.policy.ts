@@ -137,6 +137,52 @@ export function withDefaultCreateDeploymentProvisioning(input: {
 }
 
 /**
+ * The frontend half's default, for shapes that have two halves.
+ *
+ * withDefaultCreateDeploymentProvisioning resolves one role from one project
+ * type, and the multi-repo and microservices provisioners hand it the
+ * backend's. So a two-repository project created without the wizard's hosting
+ * step got Render for its backend and nothing for its frontend: no Vercel
+ * project, no Vercel variables, and a frontend pipeline that deployed nowhere.
+ *
+ * The role is known here, so it is passed rather than guessed from the project
+ * type. A frontend target the caller configured wins, whatever its provider.
+ */
+export function withDefaultFrontendDeploymentProvisioning(input: {
+  request: DeploymentProvisioningRequestDto | undefined;
+  serviceName: string;
+  repoName: string;
+  servicePath?: string | undefined;
+  deploymentProvisioningDefaults?:
+    | DeploymentProvisioningDefaultsPort
+    | undefined;
+}): DeploymentProvisioningRequestDto | undefined {
+  const existingTargets = input.request?.targets ?? [];
+  if (existingTargets.some((target) => target.slot === 'frontend')) {
+    return input.request;
+  }
+
+  const defaultTarget =
+    input.deploymentProvisioningDefaults?.resolveDefaultCreateTarget({
+      role: 'frontend',
+      serviceName: input.serviceName,
+      repoName: input.repoName,
+      servicePath: input.servicePath,
+    });
+  // Anything but a frontend target would be provisioned as a second backend
+  // service, not as this half's hosting.
+  if (defaultTarget?.slot !== 'frontend') {
+    return input.request;
+  }
+
+  return {
+    ...input.request,
+    enabled: true,
+    targets: [...existingTargets, defaultTarget],
+  };
+}
+
+/**
  * BYO hosting is archived: every deployment target is forced onto the
  * platform's centralized Render/Vercel credentials regardless of what the
  * client sent, and any BYO provider-connection reference is dropped.
