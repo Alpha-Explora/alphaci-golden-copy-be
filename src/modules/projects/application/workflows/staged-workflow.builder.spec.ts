@@ -1260,6 +1260,93 @@ describe('the verify stage', () => {
   });
 
   /*
+   * The browser suite reported the way every other test job is.
+   *
+   * A Playwright run that executed forty tests and failed three used to leave
+   * the verify stage posting `results: {}` — the counts and the failing names
+   * existed only inside an uploaded artifact nothing reads, so the product
+   * could say the stage was red and nothing else.
+   */
+  describe('browser-suite results', () => {
+    const uiVerify = () => {
+      const bundle = buildStagedWorkflowBundle(
+        makeTemplate('react'),
+        {
+          templateId: 'fe-react',
+          serviceName: 'orders-web',
+          deploymentTargets: [
+            {
+              slot: 'standalone',
+              provider: 'vercel',
+              deploymentStrategy: 'vercel_ci_pushed',
+              secretNames: {
+                token: 'VERCEL_TOKEN_STANDALONE',
+                orgId: 'VERCEL_ORG_ID_STANDALONE',
+                projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+              },
+            },
+          ],
+        } as never,
+        workflowFragmentRegistry,
+      );
+      return yaml.load(
+        bundle.workflowFiles.find((file) => file.stage === 'verify')!.yaml,
+      ) as ParsedWorkflow;
+    };
+
+    const reportStep = (parsed: ParsedWorkflow) =>
+      (parsed.jobs['report-results']?.steps ?? []).find(
+        (step) => step.env?.['E2E_TOTAL_0'] !== undefined,
+      );
+
+    it('reads the counts from both branch jobs', () => {
+      const env = reportStep(uiVerify())?.env ?? {};
+
+      // One slot per branch job, because only the branch's own job runs and
+      // the other is skipped.
+      expect(env['E2E_TOTAL_0']).toBe(
+        '${{ needs.ui-tests-uat.outputs.tests-total }}',
+      );
+      expect(env['E2E_FAILURES_0']).toBe(
+        '${{ needs.ui-tests-uat.outputs.tests-failures }}',
+      );
+      expect(env['E2E_TOTAL_1']).toBe(
+        '${{ needs.ui-tests-main.outputs.tests-total }}',
+      );
+    });
+
+    it('puts the browser counts on results.tests, where every other tool reports', () => {
+      const run = reportStep(uiVerify())?.run ?? '';
+
+      expect(run).toContain('{tests:$tests}');
+      expect(run).toContain('E2E_FAILURES_');
+    });
+
+    /*
+     * "No tests failed" and "we could not tell" must not look the same: a
+     * suite whose project has not enabled the json reporter publishes an
+     * empty string, and `tests` is left out rather than posted as zeros.
+     */
+    it('omits the counts rather than posting zeros when none were published', () => {
+      const run = reportStep(uiVerify())?.run ?? '';
+
+      expect(run).toContain("grep -qE '^[0-9]+$'");
+      expect(run).toContain('-eq 0 ]; then continue');
+    });
+
+    /*
+     * A backend has no browser suite, and reading outputs off a job that is
+     * not in `needs` evaluates to empty — which would post a count of nothing
+     * as though it were a count of zero.
+     */
+    it('reads nothing for a stack with no browser suite', () => {
+      const parsed = verifyOf([renderTarget('uat')])!;
+
+      expect(reportStep(parsed)).toBeUndefined();
+    });
+  });
+
+  /*
    * The stack has to supply the suite, not just the provider a URL.
    *
    * A React bundle on a CDN has no /health to poll and no JSON to assert, and
