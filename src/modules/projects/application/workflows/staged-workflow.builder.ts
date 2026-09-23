@@ -936,6 +936,15 @@ function buildVerifyWorkflowFile(
              * earn.
              */
             workJobIds,
+            /*
+             * Named only when this stack has a browser suite. A stack with no
+             * UI has no such jobs, and reading outputs off a job that is not
+             * in `needs` evaluates to empty — which would post a count of
+             * nothing as though it were a count of zero.
+             */
+            ...(verification.ui
+              ? { uiTestJobIds: ['ui-tests-uat', 'ui-tests-main'] }
+              : {}),
           },
         ),
       }),
@@ -1690,12 +1699,24 @@ function promotionJob(
 function reportingJob(
   stage: WorkflowStage,
   needs: string[],
-  opts?: { testJobId?: string; workJobIds?: string[] },
+  opts?: {
+    testJobId?: string;
+    workJobIds?: string[];
+    /**
+     * The browser-suite jobs, whose counts the verify stage reports.
+     *
+     * A list rather than one id because uat and main each have their own job
+     * and only the branch's own runs; the other is skipped and publishes
+     * nothing, so the script takes whichever answered.
+     */
+    uiTestJobIds?: string[];
+  },
 ) {
   // Only the chained stages have a context job to read from.
   const chained = stage !== 'access';
   const isQuality = stage === 'quality';
   const testJobId = opts?.testJobId;
+  const uiTestJobIds = opts?.uiTestJobIds ?? [];
 
   /*
    * The jobs that ARE the stage, as opposed to the ones that let it start.
@@ -1848,6 +1869,30 @@ function reportingJob(
     stepEnv['SONAR_MEASURES'] = '${{ needs.sonar.outputs.measures }}';
   }
 
+  /*
+   * The browser suite's counts and failing test names.
+   *
+   * The verify stage used to publish `results: {}`, so a Playwright run that
+   * executed forty tests and failed three reported one word — and the three
+   * names existed only inside an uploaded artifact nothing reads. These are
+   * the same four outputs a unit-test workflow publishes, so the browser suite
+   * arrives through `results.tests` and renders beside every other tool rather
+   * than needing a surface of its own.
+   *
+   * One set per branch job, because only the branch's own job runs and the
+   * other is skipped; the script below takes whichever answered.
+   */
+  uiTestJobIds.forEach((jobId, index) => {
+    const slot = String(index);
+    stepEnv[`E2E_TOTAL_${slot}`] = `\${{ needs.${jobId}.outputs.tests-total }}`;
+    stepEnv[`E2E_PASSED_${slot}`] =
+      `\${{ needs.${jobId}.outputs.tests-passed }}`;
+    stepEnv[`E2E_FAILED_${slot}`] =
+      `\${{ needs.${jobId}.outputs.tests-failed }}`;
+    stepEnv[`E2E_FAILURES_${slot}`] =
+      `\${{ needs.${jobId}.outputs.tests-failures }}`;
+  });
+
   const scriptLines = [
     "# Put this stage's verdict on the commit, where branch protection can",
     '# require it.',
@@ -1984,8 +2029,38 @@ function reportingJob(
     '  ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.path and (.path | startswith(".github") | not))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
     'done',
     '',
-    '# Build results sub-object (quality stage only — reads from job outputs)',
+    '# Build results sub-object (reads from job outputs)',
     'RESULTS="{}"',
+    ...(uiTestJobIds.length > 0
+      ? [
+          '',
+          '# The browser suite, reported the way every other test job is.',
+          '#',
+          '# Only one branch job runs, so the first slot carrying a number is',
+          '# the one that answered. A suite whose project has not enabled the',
+          '# json reporter publishes nothing, and `tests` is left out entirely',
+          '# rather than posted as zeros - "no tests failed" and "we could not',
+          '# tell" must not look the same.',
+          'for slot in ' +
+            uiTestJobIds.map((_, index) => String(index)).join(' ') +
+            '; do',
+          '  eval "e2e_total=\\${E2E_TOTAL_${slot}:-}"',
+          '  if ! echo "$e2e_total" | grep -qE \'^[0-9]+$\'; then continue; fi',
+          '  if [ "$e2e_total" -eq 0 ]; then continue; fi',
+          '  eval "e2e_passed=\\${E2E_PASSED_${slot}:-0}"',
+          '  eval "e2e_failed=\\${E2E_FAILED_${slot}:-0}"',
+          '  eval "e2e_failures=\\${E2E_FAILURES_${slot}:-[]}"',
+          '  E2E_TESTS=$(jq -n \\',
+          '    --argjson total "$e2e_total" \\',
+          '    --argjson passed "${e2e_passed:-0}" \\',
+          '    --argjson failed "${e2e_failed:-0}" \\',
+          '    --argjson failures "${e2e_failures:-[]}" \\',
+          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures}')",
+          '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson tests "$E2E_TESTS" \'. + {tests:$tests}\')',
+          '  break',
+          'done',
+        ]
+      : []),
     ...(isQuality && testJobId
       ? [
           '',
