@@ -23,7 +23,9 @@
  *   npm run check:vercel                  # read-only
  *   npm run check:vercel -- --probe-write # also creates and deletes a project
  *
- * Run it wherever the backend runs, so it reads the same environment:
+ * Run it from the backend repository. It reads `.env.local` and `.env` the way
+ * the backend does, and an exported variable still wins — so run it in the same
+ * shell you start the backend in when the configuration lives there:
  *   ALPHACI_VERCEL_TOKEN     (or FLOWCI_VERCEL_TOKEN)     — required
  *   ALPHACI_VERCEL_TEAM_ID   (or FLOWCI_VERCEL_TEAM_ID)   — required
  *   ALPHACI_VERCEL_TEAM_SLUG (optional, for preview URLs)
@@ -31,6 +33,22 @@
  *
  * Prints no secret: the token is used, never echoed.
  */
+
+/*
+ * The same files, in the same order, that the backend's ConfigModule reads —
+ * so running this in the repository answers for the backend started from that
+ * repository. A shell that exports the values wins over both, exactly as it
+ * does for the running service.
+ *
+ * Without this the script would report "not configured" for a deployment whose
+ * configuration lives in a file, which is the one wrong answer it must never
+ * give.
+ */
+import * as dotenv from 'dotenv';
+
+for (const file of ['.env', '.env.local']) {
+  dotenv.config({ path: file, quiet: true });
+}
 
 const API = 'https://api.vercel.com';
 
