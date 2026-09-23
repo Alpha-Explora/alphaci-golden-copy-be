@@ -40,6 +40,33 @@ interface CreateProjectAttempt {
   linkGit: boolean;
 }
 
+/** Vercel's production lane. Every other branch is a scoped preview. */
+const VERCEL_PRODUCTION_BRANCH = 'main';
+
+/**
+ * Whether this target's variables will be scoped to a Git branch.
+ *
+ * Vercel accepts `gitBranch` on an environment variable only for a project
+ * with a connected repository, and provisioning scopes every non-production
+ * branch's variables that way so two branches cannot overwrite each other.
+ * `main` takes the branchless production lane, so it is the one branch whose
+ * variables an unlinked project can still hold.
+ */
+function needsBranchScopedEnv(branchName: string): boolean {
+  return branchName.trim() !== VERCEL_PRODUCTION_BRANCH;
+}
+
+/**
+ * Said to whoever has to fix it, in the place they will see it: on the
+ * variable that could not be written.
+ */
+const UNLINKED_PROJECT_REASON =
+  'This Vercel project has no connected Git repository, and a variable scoped ' +
+  'to a branch needs one. Connect GitHub to the Vercel account the platform ' +
+  'token belongs to (Vercel > Account Settings > Login Connections), install ' +
+  'the Vercel GitHub App for the repository owner, link the project under its ' +
+  'Settings > Git, then provision again.';
+
 /**
  * The name to ask Vercel for on a given attempt: the requested name first, then
  * the same name with a numeric suffix, cut to stay inside Vercel's limit.
@@ -196,6 +223,7 @@ export class VercelEnvClient implements DeploymentProvider {
           response.status,
           body,
           'Vercel project could not be created',
+          this.gitLinkContext(input, body),
         );
       }
       attempt = next;
@@ -221,6 +249,13 @@ export class VercelEnvClient implements DeploymentProvider {
    *   Vercel's GitHub integration yet. The project is created unlinked rather
    *   than not at all. A Git-connected project deploys through that link, so
    *   for it the refusal still stands.
+   *
+   *   That fallback holds only while the target's variables are branchless.
+   *   Once they are scoped to a branch the link stops being a convenience:
+   *   Vercel rejects a branch-scoped variable on an unlinked project, so
+   *   creating it unlinked bought a project that exists, holds none of its
+   *   variables, and never reaches the step that writes its CI secrets. The
+   *   refusal is reported instead, naming the branch that needs the link.
    */
   private recoverCreateAttempt(
     input: CreateProviderTargetInput,
@@ -236,6 +271,13 @@ export class VercelEnvClient implements DeploymentProvider {
       error &&
       this.isGitLinkRefusal(error)
     ) {
+      if (needsBranchScopedEnv(input.branchName)) {
+        this.logger.warn(
+          `Vercel could not link ${input.repoFullName}, and ${input.projectName} tracks ${input.branchName}, whose variables are scoped to that branch. An unlinked project cannot hold them, so it is not created.`,
+        );
+        return null;
+      }
+
       this.logger.warn(
         `Vercel could not link ${input.repoFullName}; creating ${input.projectName} without a Git link. The pipeline deploys it with the CLI.`,
       );
@@ -285,6 +327,35 @@ export class VercelEnvClient implements DeploymentProvider {
   async upsertEnvironmentVariables(
     input: UpsertProviderEnvInput,
   ): Promise<ProviderProvisionResult> {
+    /*
+     * An unlinked project cannot hold these, and no amount of retrying the
+     * write changes that — the remedy is on the Vercel account.
+     *
+     * Reported as failed variables rather than thrown, because throwing here
+     * abandoned the rest of provisioning: the caller never reached the step
+     * that writes VERCEL_*_TOKEN, VERCEL_*_ORG_ID, VERCEL_*_PROJECT_ID and
+     * VERCEL_ALIAS to the repository, so one refused variable also cost the
+     * pipeline every secret it deploys with. The reason travels with each key
+     * to the env metadata and the setup panel.
+     */
+    if (
+      input.lane === 'preview' &&
+      input.gitBranch &&
+      input.gitConnected === false
+    ) {
+      this.logger.warn(
+        `Vercel project ${input.targetId} has no Git link, so ${String(input.vars.length)} variable(s) scoped to ${input.gitBranch} were not written.`,
+      );
+      return {
+        provisioned: [],
+        failed: input.vars.map((variable) => ({
+          key: variable.key,
+          status: 'failed' as const,
+          errorSummary: UNLINKED_PROJECT_REASON,
+        })),
+      };
+    }
+
     for (const variable of input.vars) {
       const response = await fetch(
         this.withScope(
@@ -794,14 +865,47 @@ export class VercelEnvClient implements DeploymentProvider {
     }
   }
 
-  private responseError(status: number, body: string, message: string): Error {
+  private responseError(
+    status: number,
+    body: string,
+    message: string,
+    context?: string,
+  ): Error {
     const actionableError = this.toActionableError(body);
     if (actionableError) {
-      return new Error(actionableError);
+      return new Error(`${actionableError}${context ?? ''}`);
     }
 
     const summary = body ? ` ${body.slice(0, 300)}` : '';
     return new Error(`${message}: ${status}${summary}`);
+  }
+
+  /**
+   * Why a link refusal is fatal for this target rather than something the
+   * platform works around, appended to the remedy the refusal already names.
+   *
+   * Only said when it is true: a target on the production branch is still
+   * created unlinked, and telling its owner about branch scoping would be
+   * describing a problem they do not have.
+   */
+  private gitLinkContext(
+    input: CreateProviderTargetInput,
+    body: string,
+  ): string | undefined {
+    const error = this.parseErrorBody(body);
+    if (
+      !error ||
+      !this.isGitLinkRefusal(error) ||
+      !needsBranchScopedEnv(input.branchName)
+    ) {
+      return undefined;
+    }
+
+    return (
+      ` This project tracks ${input.branchName}, whose variables are scoped to that ` +
+      'branch, and Vercel accepts a branch-scoped variable only on a project with a ' +
+      'connected repository — so it was not created unlinked.'
+    );
   }
 
   private parseErrorBody(body: string): VercelErrorBody | null {

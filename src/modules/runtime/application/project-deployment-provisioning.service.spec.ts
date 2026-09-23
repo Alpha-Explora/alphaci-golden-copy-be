@@ -177,6 +177,74 @@ describe('ProjectDeploymentProvisioningService', () => {
     expect(result.targets[0]?.errorSummary).toBe('GitHub refused the secret');
   });
 
+  /*
+   * The converse of the case above, and the one that reached a real project:
+   * Vercel refused the variables, and because the refusal escaped, the target
+   * never reached the step that writes VERCEL_*_TOKEN, VERCEL_*_ORG_ID,
+   * VERCEL_*_PROJECT_ID and VERCEL_ALIAS. The repository ended up with a live
+   * Vercel project, no variables and no secrets, reported as a failed target
+   * with a null id — orphaned from the platform that had just created it.
+   */
+  it('still installs the deploy secrets when the provider refuses the variables', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    deploymentTargetsService.createDeploymentTarget.mockResolvedValue({
+      id: 'vercel-fe',
+      provider: 'vercel',
+      deploymentStrategy: 'vercel_ci_pushed',
+      providerProjectId: 'prj_fe',
+      providerProjectName: 'orders-frontend',
+      providerMetadata: {},
+    });
+    envVarsService.provisionEnvVars.mockRejectedValue(
+      new Error('Vercel env var could not be updated: 400'),
+    );
+    const service = new ProjectDeploymentProvisioningService(
+      deploymentTargetsService as never,
+      envVarsService as never,
+      ciSecretsInstallerRegistry as never,
+      providerPolicyRegistry,
+    );
+
+    const result = await service.provisionForProject({
+      projectId: 'project-fe',
+      userId: 'user-1',
+      repoFullName: 'org/orders-fe',
+      githubAccessToken: 'gh-token',
+      request: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-frontend',
+            env: [
+              {
+                lane: 'preview' as const,
+                vars: [{ key: 'TEST', value: '1' }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(vercelCiSecretsService.installForTarget).toHaveBeenCalled();
+
+    // The project keeps the identity it was created with, so it can be found
+    // and retried rather than left behind.
+    const target = result.targets[0];
+    expect(target?.status).toBe('created');
+    expect(target?.deploymentTargetId).toBe('vercel-fe');
+    expect(target?.providerProjectId).toBe('prj_fe');
+
+    // And the refusal is still reported, against the key it refused.
+    expect(target?.env[0]?.failed).toEqual([
+      expect.objectContaining({ key: 'TEST', status: 'failed' }),
+    ]);
+    expect(result.status).toBe('partial');
+  });
+
   it('fans out variable group env vars and lets target-specific vars override them', async () => {
     const service = new ProjectDeploymentProvisioningService(
       deploymentTargetsService as never,
