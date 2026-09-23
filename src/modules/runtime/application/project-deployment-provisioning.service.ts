@@ -102,19 +102,23 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
             input.userId,
             targetRequest,
           );
-        const providerMetadata = await this.installCiSecretsIfSupported({
-          githubAccessToken: input.githubAccessToken,
-          repoFullName: input.repoFullName,
-          userId: input.userId,
-          providerConnectionId: requestedTarget.providerConnectionId,
-          target,
-        });
+        // Variables first: they go to the provider project that now exists,
+        // while the secrets go to GitHub. With the secrets first, any GitHub
+        // refusal left a live Vercel or Render project with none of the
+        // variables the user asked for, and nothing retried them.
         const env = await this.provisionEnvForTarget({
           projectId: input.projectId,
           userId: input.userId,
           request: input.request,
           requestedTarget,
           targetId: target.id,
+        });
+        const providerMetadata = await this.installCiSecretsIfSupported({
+          githubAccessToken: input.githubAccessToken,
+          repoFullName: input.repoFullName,
+          userId: input.userId,
+          providerConnectionId: requestedTarget.providerConnectionId,
+          target,
         });
 
         targets.push({

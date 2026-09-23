@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
@@ -29,6 +29,30 @@ import {
 
 const VERCEL_API_URL = 'https://api.vercel.com';
 
+/** The requested name plus this many suffixed alternatives, at most. */
+const VERCEL_PROJECT_NAME_ATTEMPTS = 5;
+
+const VERCEL_PROJECT_NAME_MAX_LENGTH = 100;
+
+interface CreateProjectAttempt {
+  /** 1 asks for the requested name; each later attempt adds `-<n>`. */
+  nameAttempt: number;
+  linkGit: boolean;
+}
+
+/**
+ * The name to ask Vercel for on a given attempt: the requested name first, then
+ * the same name with a numeric suffix, cut to stay inside Vercel's limit.
+ */
+function vercelProjectNameCandidate(requested: string, attempt: number) {
+  if (attempt <= 1) {
+    return requested;
+  }
+
+  const suffix = `-${String(attempt)}`;
+  return `${requested.slice(0, VERCEL_PROJECT_NAME_MAX_LENGTH - suffix.length)}${suffix}`;
+}
+
 /**
  * The part of Vercel's error envelope the client reasons about. Vercel sends
  * more than this; these are the fields that decide which remedy to name.
@@ -45,6 +69,7 @@ interface VercelErrorBody {
 @Injectable()
 export class VercelEnvClient implements DeploymentProvider {
   readonly provider = 'vercel' as const;
+  private readonly logger = new Logger(VercelEnvClient.name);
 
   constructor(private readonly configService?: ConfigService) {}
 
@@ -120,29 +145,121 @@ export class VercelEnvClient implements DeploymentProvider {
   ): Promise<ProviderDeploymentTarget> {
     const [owner, repo] = input.repoFullName.split('/');
     const rootDirectory = this.normalizeRootDirectory(input.rootDirectory);
-    const shouldConnectGit = Boolean(owner && repo);
     const vercelOrgId = this.resolveVercelOrgId(input);
-    const response = await fetch(
-      this.withTargetScope(`${VERCEL_API_URL}/v11/projects`, input),
-      {
-        method: 'POST',
-        headers: this.headers(input.token),
-        body: JSON.stringify({
-          name: input.projectName,
-          ...(shouldConnectGit
-            ? {
-                gitRepository: {
-                  type: 'github',
-                  repo: input.repoFullName,
-                },
-              }
-            : {}),
-          rootDirectory,
-          buildCommand: input.buildCommand,
-        }),
-      },
-    );
-    await this.assertOk(response, 'Vercel project could not be created');
+    let attempt: CreateProjectAttempt = {
+      nameAttempt: 1,
+      linkGit: Boolean(owner && repo),
+    };
+
+    for (;;) {
+      const response = await fetch(
+        this.withTargetScope(`${VERCEL_API_URL}/v11/projects`, input),
+        {
+          method: 'POST',
+          headers: this.headers(input.token),
+          body: JSON.stringify({
+            name: vercelProjectNameCandidate(
+              input.projectName,
+              attempt.nameAttempt,
+            ),
+            ...(attempt.linkGit
+              ? {
+                  gitRepository: {
+                    type: 'github',
+                    repo: input.repoFullName,
+                  },
+                }
+              : {}),
+            rootDirectory,
+            buildCommand: input.buildCommand,
+          }),
+        },
+      );
+      if (response.ok) {
+        return this.createdTarget(
+          response,
+          input,
+          vercelOrgId,
+          attempt.linkGit,
+        );
+      }
+
+      const body = await response.text().catch(() => '');
+      const next = this.recoverCreateAttempt(
+        input,
+        attempt,
+        response.status,
+        body,
+      );
+      if (!next) {
+        throw this.responseError(
+          response.status,
+          body,
+          'Vercel project could not be created',
+        );
+      }
+      attempt = next;
+    }
+  }
+
+  /**
+   * The attempt to make after a refusal the platform can get past on its own,
+   * or null when the refusal has to reach the user.
+   *
+   * Two refusals are recoverable, and both used to fail the whole target — no
+   * Vercel project, no secrets, no variables — while the rest of the project
+   * reported itself provisioned:
+   *
+   * - The name is taken. Managed projects share one Vercel team across every
+   *   customer, so `shop-frontend` from one GitHub owner blocks the same name
+   *   from any other, and a project re-created after a delete meets its own
+   *   leftover. The next free suffix is used instead; the alias variable and
+   *   public URLs are derived from the name Vercel returns, so they follow it.
+   * - Vercel will not link the repository. A CI-pushed project is deployed by
+   *   the pipeline with the CLI, so the Git link is a convenience it does not
+   *   need, and a repository created seconds earlier is not always visible to
+   *   Vercel's GitHub integration yet. The project is created unlinked rather
+   *   than not at all. A Git-connected project deploys through that link, so
+   *   for it the refusal still stands.
+   */
+  private recoverCreateAttempt(
+    input: CreateProviderTargetInput,
+    attempt: CreateProjectAttempt,
+    status: number,
+    body: string,
+  ): CreateProjectAttempt | null {
+    const error = this.parseErrorBody(body);
+
+    if (
+      attempt.linkGit &&
+      input.deploymentStrategy === 'vercel_ci_pushed' &&
+      error &&
+      this.isGitHubIntegrationRefusal(error)
+    ) {
+      this.logger.warn(
+        `Vercel could not link ${input.repoFullName}; creating ${input.projectName} without a Git link. The pipeline deploys it with the CLI.`,
+      );
+      return { ...attempt, linkGit: false };
+    }
+
+    const nameTaken = status === 409 || error?.code === 'conflict';
+    if (nameTaken && attempt.nameAttempt < VERCEL_PROJECT_NAME_ATTEMPTS) {
+      const nextAttempt = attempt.nameAttempt + 1;
+      this.logger.warn(
+        `Vercel project name ${vercelProjectNameCandidate(input.projectName, attempt.nameAttempt)} is taken; trying ${vercelProjectNameCandidate(input.projectName, nextAttempt)}.`,
+      );
+      return { ...attempt, nameAttempt: nextAttempt };
+    }
+
+    return null;
+  }
+
+  private async createdTarget(
+    response: Response,
+    input: CreateProviderTargetInput,
+    vercelOrgId: string,
+    gitConnected: boolean,
+  ): Promise<ProviderDeploymentTarget> {
     const payload = (await response.json()) as { id?: string; name?: string };
     if (!payload.id || !payload.name) {
       throw new Error('Vercel project creation returned an invalid response');
@@ -160,7 +277,7 @@ export class VercelEnvClient implements DeploymentProvider {
         ...(input.vercelTeamSlug
           ? { vercelTeamSlug: input.vercelTeamSlug }
           : {}),
-        gitConnected: shouldConnectGit,
+        gitConnected,
       },
     };
   }
@@ -673,29 +790,35 @@ export class VercelEnvClient implements DeploymentProvider {
   private async assertOk(response: Response, message: string): Promise<void> {
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      const actionableError = this.toActionableError(body);
-      if (actionableError) {
-        throw new Error(actionableError);
-      }
-
-      const summary = body ? ` ${body.slice(0, 300)}` : '';
-      throw new Error(`${message}: ${response.status}${summary}`);
+      throw this.responseError(response.status, body, message);
     }
   }
 
-  private toActionableError(body: string): string | null {
+  private responseError(status: number, body: string, message: string): Error {
+    const actionableError = this.toActionableError(body);
+    if (actionableError) {
+      return new Error(actionableError);
+    }
+
+    const summary = body ? ` ${body.slice(0, 300)}` : '';
+    return new Error(`${message}: ${status}${summary}`);
+  }
+
+  private parseErrorBody(body: string): VercelErrorBody | null {
     if (!body) {
       return null;
     }
 
-    let payload: { error?: VercelErrorBody };
     try {
-      payload = JSON.parse(body) as typeof payload;
+      const payload = JSON.parse(body) as { error?: VercelErrorBody };
+      return payload.error ?? null;
     } catch {
       return null;
     }
+  }
 
-    const error = payload.error;
+  private toActionableError(body: string): string | null {
+    const error = this.parseErrorBody(body);
     if (!error) {
       return null;
     }
@@ -703,11 +826,15 @@ export class VercelEnvClient implements DeploymentProvider {
     return this.gitHubIntegrationMessage(error) ?? this.forbiddenMessage(error);
   }
 
+  private isGitHubIntegrationRefusal(error: VercelErrorBody): boolean {
+    return (
+      error.action === 'Install GitHub App' &&
+      Boolean(error.message?.includes('install the GitHub integration'))
+    );
+  }
+
   private gitHubIntegrationMessage(error: VercelErrorBody): string | null {
-    if (
-      error.action !== 'Install GitHub App' ||
-      !error.message?.includes('install the GitHub integration')
-    ) {
+    if (!this.isGitHubIntegrationRefusal(error)) {
       return null;
     }
 

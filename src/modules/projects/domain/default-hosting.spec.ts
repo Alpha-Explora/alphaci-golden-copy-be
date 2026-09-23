@@ -14,6 +14,7 @@ import {
   forceManagedProvisioning,
   resolveSingleRepoDeploymentSlots,
   withDefaultCreateDeploymentProvisioning,
+  withDefaultFrontendDeploymentProvisioning,
 } from './deployment-provisioning.policy';
 
 /**
@@ -125,6 +126,110 @@ describe('default hosting when none was configured', () => {
 
     expect(result?.targets).toHaveLength(1);
     expect(result?.targets[0]?.projectName).toBe('chosen-by-the-user');
+  });
+});
+
+describe('default hosting for a project with two halves', () => {
+  // The multi-repo and microservices provisioners resolve the default from the
+  // backend's project type, so a two-repository project created without the
+  // hosting step got Render for its backend and nothing for its frontend.
+  function twoHalves(
+    request?: Parameters<
+      typeof withDefaultCreateDeploymentProvisioning
+    >[0]['request'],
+  ) {
+    return withDefaultFrontendDeploymentProvisioning({
+      request: withDefaultCreateDeploymentProvisioning({
+        request,
+        projectTypeId: 'nestjs',
+        serviceName: 'orders-backend',
+        repoName: 'orders-be',
+        servicePath: '.',
+        deploymentProvisioningDefaults: defaults,
+      }),
+      serviceName: 'orders-frontend',
+      repoName: 'orders-fe',
+      servicePath: '.',
+      deploymentProvisioningDefaults: defaults,
+    });
+  }
+
+  it('gives the frontend half a Vercel target beside the backend Render one', () => {
+    const result = twoHalves();
+
+    expect(
+      result?.targets.map((target) => `${target.slot}/${target.provider}`),
+    ).toEqual(['backend/render', 'frontend/vercel']);
+    expect(result?.enabled).toBe(true);
+    expect(
+      result?.targets.find((target) => target.slot === 'frontend')?.projectName,
+    ).toBe('orders-frontend');
+  });
+
+  it('produces deploy jobs for the frontend repository', () => {
+    const request = filterDeploymentProvisioningRequest(
+      forceManagedProvisioning(twoHalves()),
+      ['frontend'],
+    );
+
+    const targets = resolveDeploymentWorkflowTargets(
+      request,
+      ['frontend'],
+      '.',
+      registry,
+    );
+
+    expect(targets).toHaveLength(1);
+    expect(targets[0]?.provider).toBe('vercel');
+  });
+
+  it('keeps a frontend target the caller configured, whatever its provider', () => {
+    const result = twoHalves({
+      enabled: true,
+      targets: [
+        {
+          slot: 'frontend',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          projectName: 'chosen-by-the-user',
+        },
+      ],
+    });
+
+    const frontends = (result?.targets ?? []).filter(
+      (target) => target.slot === 'frontend',
+    );
+    expect(frontends).toHaveLength(1);
+    expect(frontends[0]?.projectName).toBe('chosen-by-the-user');
+  });
+
+  it('adds nothing when the frontend default is not a frontend target', () => {
+    const backendOnlyDefaults = {
+      resolveDefaultCreateTarget: () => ({
+        slot: 'backend' as const,
+        provider: 'render',
+        ownershipMode: 'flowci_managed' as const,
+      }),
+    };
+
+    const result = withDefaultFrontendDeploymentProvisioning({
+      request: undefined,
+      serviceName: 'orders-frontend',
+      repoName: 'orders-fe',
+      deploymentProvisioningDefaults: backendOnlyDefaults,
+    });
+
+    expect(result).toBeUndefined();
+  });
+
+  it('keeps the caller variables when it adds the frontend default', () => {
+    const sharedEnv = [
+      { lane: 'production' as const, vars: [{ key: 'A', value: 'b' }] },
+    ];
+
+    const result = twoHalves({ enabled: true, sharedEnv, targets: [] });
+
+    expect(result?.sharedEnv).toEqual(sharedEnv);
   });
 });
 
