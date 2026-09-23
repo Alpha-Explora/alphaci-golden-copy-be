@@ -161,6 +161,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
           targetId: target.id,
           targetName: target.providerProjectName,
           provider: target.provider,
+          slot: target.slot,
           branch,
           environment: branch === 'main' ? 'production' : branch,
           url:
@@ -274,6 +275,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         targetId: target.id,
         targetName: target.providerProjectName,
         provider: target.provider,
+        slot: target.slot,
         // The provider's own lane wins when it reports one; the target's
         // configured Render environment is the fallback for providers that
         // don't distinguish production from preview.

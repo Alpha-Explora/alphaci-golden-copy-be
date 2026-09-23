@@ -213,6 +213,7 @@ describe('ProjectDeploymentsService', () => {
         {
           id: 'target-render',
           provider: 'render',
+          slot: 'backend',
           ownershipMode: 'flowci_managed',
           providerProjectId: 'srv-1',
           providerProjectName: 'orders-api-test',
@@ -251,6 +252,9 @@ describe('ProjectDeploymentsService', () => {
             id: 'dep-1',
             targetId: 'target-render',
             provider: 'render',
+            // Carried straight from the target, so the previews surface rule
+            // can tell a backend deploy from a frontend one.
+            slot: 'backend',
             status: 'ready',
             commitSha: 'ea73844',
             commitMessage: 'feat: add logs endpoint',
@@ -521,6 +525,11 @@ describe('ProjectDeploymentsService', () => {
         ['uat', 'target-render-uat', 'uat'],
         ['main', 'target-render-main', 'production'],
       ]);
+      // Carried straight from the target, for the same reason as on deploy
+      // history items.
+      expect(
+        environments.every((environment) => environment.slot === 'backend'),
+      ).toBe(true);
     });
 
     it('serves every hosted branch from a slot with one target', async () => {
@@ -539,6 +548,9 @@ describe('ProjectDeploymentsService', () => {
         environments.every(
           (environment) => environment.targetId === 'target-vercel',
         ),
+      ).toBe(true);
+      expect(
+        environments.every((environment) => environment.slot === 'frontend'),
       ).toBe(true);
     });
 

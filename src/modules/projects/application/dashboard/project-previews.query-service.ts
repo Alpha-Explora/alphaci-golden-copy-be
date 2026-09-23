@@ -11,6 +11,12 @@ import {
   type DeploymentHistoryQuery,
   type DeploymentProjectReference,
 } from '#kernel/ports/deployment-runtime.port';
+import {
+  DEPLOYMENT_PROVIDER_CATALOG,
+  type DeploymentProviderCatalogEntry,
+  type DeploymentProviderCatalogPort,
+} from '#kernel/ports/deployment-provider-catalog.port';
+import { resolvePreviewSurface } from '../../domain/preview-surface.rule';
 import type {
   ProjectBranchPreview,
   ProjectPreviewsResponse,
@@ -26,6 +32,13 @@ export class ProjectPreviewsService {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    // Optional so a composition root that has not wired the catalog (e.g. an
+    // older test harness) still gets a working service - every branch just
+    // falls back to the page surface, which is what happened before this
+    // port field existed.
+    @Optional()
+    @Inject(DEPLOYMENT_PROVIDER_CATALOG)
+    private readonly providerCatalog?: DeploymentProviderCatalogPort,
   ) {}
 
   /**
@@ -97,7 +110,13 @@ export class ProjectPreviewsService {
         (environment) =>
           !deployed.has(`${environment.targetId}::${environment.branch}`),
       )
-      .map((environment) => toPendingPreview(environment));
+      .map((environment) =>
+        toPendingPreview(
+          environment,
+          this.logsAvailable(environment.provider),
+          this.providerLabel(environment.provider),
+        ),
+      );
 
     return {
       enabled: true,
@@ -154,13 +173,13 @@ export class ProjectPreviewsService {
     isProduction: boolean,
   ): Promise<ProjectBranchPreview> {
     const previewUrl = stableUrl ?? deployment.deploymentUrl;
-    // Only probe something worth framing. A build that failed or is still
-    // running has no page to show yet, and probing it would spend a request
-    // to learn nothing.
-    const verdict =
-      deployment.status === 'ready'
-        ? await this.embeddabilityProbe.check(previewUrl)
-        : { embeddable: null, reason: null };
+    const logsAvailable = this.logsAvailable(deployment.provider);
+    const surface = resolvePreviewSurface(deployment.slot, logsAvailable);
+    const verdict = await this.resolveEmbedVerdict(
+      surface,
+      deployment.status,
+      previewUrl,
+    );
 
     return {
       branch: deployment.branch as string,
@@ -169,6 +188,14 @@ export class ProjectPreviewsService {
       targetId: deployment.targetId,
       targetName: deployment.targetName,
       provider: deployment.provider,
+      slot: deployment.slot,
+      surface,
+      providerLabel: this.providerLabel(deployment.provider),
+      logsAvailable,
+      // The current deployment IS the branch's newest one (see newestPerBranch
+      // above), so its window is always open-ended: tail from when it started
+      // to now.
+      logWindow: { startTime: deployment.createdAt, endTime: null },
       status: deployment.status,
       commitSha: deployment.commitSha,
       commitMessage: deployment.commitMessage,
@@ -182,6 +209,40 @@ export class ProjectPreviewsService {
       embeddable: verdict.embeddable,
       embedBlockedReason: verdict.reason,
     };
+  }
+
+  /**
+   * A 'logs' surface never frames a page, so it never probes one either -
+   * probing would spend a provider request (and, on Render's free tier, wake
+   * a sleeping instance) to learn something the card will not use. Framing
+   * otherwise only makes sense for something that finished building.
+   */
+  private async resolveEmbedVerdict(
+    surface: ReturnType<typeof resolvePreviewSurface>,
+    status: DeploymentHistoryItem['status'],
+    previewUrl: string | null,
+  ): Promise<{ embeddable: boolean | null; reason: string | null }> {
+    if (surface === 'logs') {
+      return { embeddable: false, reason: null };
+    }
+    if (status !== 'ready') {
+      return { embeddable: null, reason: null };
+    }
+    return this.embeddabilityProbe.check(previewUrl);
+  }
+
+  private catalogEntry(
+    provider: string,
+  ): DeploymentProviderCatalogEntry | undefined {
+    return this.providerCatalog?.list().find((entry) => entry.id === provider);
+  }
+
+  private providerLabel(provider: string): string {
+    return this.catalogEntry(provider)?.label ?? provider;
+  }
+
+  private logsAvailable(provider: string): boolean {
+    return this.catalogEntry(provider)?.logs ?? false;
   }
 
   private enabled(): boolean {
@@ -234,6 +295,8 @@ function isNewer(
 /** An environment that exists but has never been released to. */
 function toPendingPreview(
   environment: DeploymentEnvironment,
+  logsAvailable: boolean,
+  providerLabel: string,
 ): ProjectBranchPreview {
   return {
     branch: environment.branch,
@@ -242,6 +305,12 @@ function toPendingPreview(
     targetId: environment.targetId,
     targetName: environment.targetName,
     provider: environment.provider,
+    slot: environment.slot,
+    surface: resolvePreviewSurface(environment.slot, logsAvailable),
+    providerLabel,
+    logsAvailable,
+    // Nothing has been released here yet, so there is no deploy to tail.
+    logWindow: null,
     status: 'not_deployed',
     commitSha: null,
     commitMessage: null,

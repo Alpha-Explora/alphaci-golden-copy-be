@@ -18,6 +18,7 @@ function deployment(
     targetId: 'target-vercel',
     targetName: 'web-app',
     provider: 'vercel',
+    slot: 'frontend',
     environment: 'preview',
     branch: 'feat/checkout',
     commitSha: 'ea73844',
@@ -42,6 +43,7 @@ describe('ProjectPreviewsService', () => {
   };
   const embeddabilityProbe = { check: jest.fn() };
   const capabilityResolver = { deployment: jest.fn() };
+  const providerCatalog = { list: jest.fn() };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -59,12 +61,34 @@ describe('ProjectPreviewsService', () => {
       deployments: [],
     });
     deploymentsService.listEnvironments.mockResolvedValue([]);
+    // Neither provider declares logs by default, so most tests exercise the
+    // pre-existing page-surface behaviour; the logs-specific tests below
+    // override this per case.
+    providerCatalog.list.mockReturnValue([
+      {
+        id: 'render',
+        label: 'Render',
+        enabled: true,
+        envProvisioning: true,
+        previewDeployments: false,
+        logs: false,
+      },
+      {
+        id: 'vercel',
+        label: 'Vercel',
+        enabled: true,
+        envProvisioning: true,
+        previewDeployments: true,
+        logs: false,
+      },
+    ]);
   });
 
   const environment = (branch: 'uat' | 'main', targetId = 'target-render') => ({
     targetId,
     targetName: `orders-api-${branch}`,
     provider: 'render' as const,
+    slot: 'backend' as const,
     branch,
     environment: branch === 'main' ? 'production' : branch,
     url: `https://orders-api-${branch}.onrender.com`,
@@ -76,6 +100,7 @@ describe('ProjectPreviewsService', () => {
       deploymentsService,
       embeddabilityProbe as never,
       capabilityResolver as never,
+      providerCatalog as never,
     );
   }
 
@@ -445,5 +470,141 @@ describe('ProjectPreviewsService', () => {
     await expect(
       createService().listPreviews(projectReference),
     ).resolves.toMatchObject({ liveProvidersEnabled: false });
+  });
+
+  /*
+   * Scope v1: only a backend target on a provider that actually offers log
+   * retrieval gets the log surface. Everything else - including a backend
+   * target on a provider with no log capability - keeps the page thumbnail.
+   */
+  describe('preview surface', () => {
+    it('shows logs for a ready backend deployment on a provider with log capability, and never probes it', async () => {
+      providerCatalog.list.mockReturnValue([
+        {
+          id: 'render',
+          label: 'Render',
+          enabled: true,
+          envProvisioning: true,
+          previewDeployments: false,
+          logs: true,
+        },
+      ]);
+      deploymentsService.listDeployments.mockResolvedValue({
+        enabled: true,
+        mode: 'live',
+        liveProvidersEnabled: true,
+        deployments: [
+          deployment({
+            provider: 'render',
+            slot: 'backend',
+            targetId: 'target-render',
+            branch: 'main',
+            createdAt: '2026-07-12T11:45:00.000Z',
+          }),
+        ],
+      });
+
+      const result = await createService().listPreviews(projectReference);
+
+      expect(result.branches[0]).toMatchObject({
+        slot: 'backend',
+        surface: 'logs',
+        providerLabel: 'Render',
+        logsAvailable: true,
+        logWindow: { startTime: '2026-07-12T11:45:00.000Z', endTime: null },
+        embeddable: false,
+        embedBlockedReason: null,
+      });
+      expect(embeddabilityProbe.check).not.toHaveBeenCalled();
+    });
+
+    it('keeps the page surface and still probes a ready deployment when the provider has no log capability', async () => {
+      deploymentsService.listDeployments.mockResolvedValue({
+        enabled: true,
+        mode: 'live',
+        liveProvidersEnabled: true,
+        deployments: [deployment({ provider: 'render', slot: 'backend' })],
+      });
+
+      const result = await createService().listPreviews(projectReference);
+
+      expect(result.branches[0]).toMatchObject({
+        slot: 'backend',
+        surface: 'page',
+        logsAvailable: false,
+      });
+      expect(embeddabilityProbe.check).toHaveBeenCalled();
+    });
+
+    it('keeps the page surface for a frontend deployment even when its provider has log capability', async () => {
+      providerCatalog.list.mockReturnValue([
+        {
+          id: 'vercel',
+          label: 'Vercel',
+          enabled: true,
+          envProvisioning: true,
+          previewDeployments: true,
+          logs: true,
+        },
+      ]);
+      deploymentsService.listDeployments.mockResolvedValue({
+        enabled: true,
+        mode: 'live',
+        liveProvidersEnabled: true,
+        deployments: [deployment({ provider: 'vercel', slot: 'frontend' })],
+      });
+
+      const result = await createService().listPreviews(projectReference);
+
+      expect(result.branches[0]).toMatchObject({
+        slot: 'frontend',
+        surface: 'page',
+        logsAvailable: true,
+      });
+      expect(embeddabilityProbe.check).toHaveBeenCalled();
+    });
+
+    it('carries no log window for an environment that has never been deployed to', async () => {
+      providerCatalog.list.mockReturnValue([
+        {
+          id: 'render',
+          label: 'Render',
+          enabled: true,
+          envProvisioning: true,
+          previewDeployments: false,
+          logs: true,
+        },
+      ]);
+      deploymentsService.listEnvironments.mockResolvedValue([
+        environment('uat'),
+      ]);
+
+      const result = await createService().listPreviews(projectReference);
+
+      expect(result.branches[0]).toMatchObject({
+        slot: 'backend',
+        surface: 'logs',
+        logWindow: null,
+        status: 'not_deployed',
+      });
+    });
+
+    it('falls back to the provider id when the catalog has no entry for it', async () => {
+      providerCatalog.list.mockReturnValue([]);
+      deploymentsService.listDeployments.mockResolvedValue({
+        enabled: true,
+        mode: 'live',
+        liveProvidersEnabled: true,
+        deployments: [deployment({ provider: 'render', slot: 'backend' })],
+      });
+
+      const result = await createService().listPreviews(projectReference);
+
+      expect(result.branches[0]).toMatchObject({
+        providerLabel: 'render',
+        logsAvailable: false,
+        surface: 'page',
+      });
+    });
   });
 });

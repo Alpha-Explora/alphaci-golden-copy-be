@@ -128,9 +128,11 @@ describe('provider plugin composition', () => {
     expect(catalog.list()).toEqual([
       {
         id: 'fake-cloud',
+        label: 'Fake Cloud',
         enabled: true,
         envProvisioning: true,
         previewDeployments: false,
+        logs: false,
       },
     ]);
     expect(policies.get('fake-cloud')).toBe(policy);

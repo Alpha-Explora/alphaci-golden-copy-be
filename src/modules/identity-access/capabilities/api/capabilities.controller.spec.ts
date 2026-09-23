@@ -78,15 +78,19 @@ const makeProviderCatalog = () => ({
   list: (): readonly DeploymentProviderCatalogEntry[] => [
     {
       id: 'render',
+      label: 'Render',
       enabled: true,
       envProvisioning: true,
       previewDeployments: false,
+      logs: true,
     },
     {
       id: 'vercel',
+      label: 'Vercel',
       enabled: true,
       envProvisioning: true,
       previewDeployments: true,
+      logs: true,
     },
   ],
 });

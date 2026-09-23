@@ -5,9 +5,13 @@
  */
 export interface DeploymentProviderCatalogEntry {
   id: string;
+  /** Host-neutral display name; consumers must never hard-code a vendor label. */
+  label: string;
   enabled: boolean;
   envProvisioning: boolean;
   previewDeployments: boolean;
+  /** Whether this provider exposes runtime log retrieval. */
+  logs: boolean;
 }
 
 export interface DeploymentProviderCatalogPort {
