@@ -766,8 +766,14 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       projectId: input.projectId,
       eventCode: 'deployment_target_failed',
       title: 'Deployment target could not be provisioned',
+      // "Could not be provisioned", not "was not created": the provider
+      // project is created before its variables and secrets are written, so a
+      // failure after that point leaves one behind. Saying it was never
+      // created sent people looking for a project that was sitting in the
+      // provider account the whole time.
       body:
-        `${input.provider} (${input.slot}) was not created: ${input.reason}. ` +
+        `${input.provider} (${input.slot}) could not be provisioned: ${input.reason}. ` +
+        `Any project already created at the provider is left in place. ` +
         `The pipeline still contains deploy jobs for it, and they will run ` +
         `with nothing to deploy to.`,
       metadata: {

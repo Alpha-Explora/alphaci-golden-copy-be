@@ -53,6 +53,15 @@ export interface UpsertProviderEnvInput extends EnvVarScope {
   token: string;
   targetId: string;
   vars: EnvVarInput[];
+  /**
+   * Whether the provider project is linked to its Git repository, as recorded
+   * when the target was created. Vercel accepts a branch-scoped variable only
+   * on a linked project, so the client needs to know before it writes rather
+   * than learning it from a 400 per variable. Undefined means unknown, which
+   * is treated as linked — the pre-existing targets created before the flag
+   * was recorded are overwhelmingly linked ones.
+   */
+  gitConnected?: boolean;
 }
 
 export interface DeleteProviderEnvInput extends EnvVarScope {
