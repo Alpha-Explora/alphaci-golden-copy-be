@@ -33,6 +33,8 @@ GET /api/v1/ci/runs
 GET /api/v1/delivery-projects/{deliveryProjectId}
 GET /api/v1/delivery-projects/{deliveryProjectId}/repositories
 GET /api/v1/deployment-providers
+GET /api/v1/directory
+GET /api/v1/directory/members
 GET /api/v1/feedback/me
 GET /api/v1/github/app/install-url
 GET /api/v1/github/installations/accounts

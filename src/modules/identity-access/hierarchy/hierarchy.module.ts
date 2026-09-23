@@ -8,6 +8,7 @@ import { AuditModule } from '#modules/platform-ops/audit/audit.module.js';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { AuthIdentityModule } from '#modules/identity-access/auth/auth-identity.module.js';
+import { DirectoryModule } from '#modules/identity-access/directory/directory.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
 
 import { AssignmentsController } from './api/assignments.controller';
@@ -50,6 +51,7 @@ import { SystemsService } from './application/systems.service';
     AuditModule,
     GithubModule, // GithubService (repo creation, installation tokens, Actions secrets)
     AdminModule, // PlatformAdminsRepository, PlatformAdminGuard (global-role overrides, transfer endpoint)
+    DirectoryModule, // MemberDirectoryService: who may join a Group
   ],
   controllers: [
     GroupsController,

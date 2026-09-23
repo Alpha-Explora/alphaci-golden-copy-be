@@ -112,6 +112,7 @@ const appConfig: AppConfig = {
     storeDriver: 'memory',
   },
   archivedAccountRetentionDays: 30,
+  directory: { source: 'github_org', organization: '' },
   projectTargetManagement: { enabled: false },
   ciRunTracking: { enabled: false, liveGithubEnabled: false },
   deploymentHistory: { enabled: false, liveProvidersEnabled: false },
@@ -237,6 +238,147 @@ describe('GithubService', () => {
       fetchMock.mockResolvedValueOnce(okJson({ workflow_runs: [] }));
       await service.listWorkflowRuns('token', 'o/r', 'dev');
       expect(String(fetchMock.mock.calls[1]?.[0])).toContain('branch=dev');
+    });
+  });
+
+  /*
+   * The member directory reads the org roster through here. It used to try
+   * only the caller's App installation; a database with no installation rows
+   * (a fresh or rebuilt one) therefore listed nobody, for every user.
+   */
+  describe('readOrganizationMembers', () => {
+    const roster = (logins: string[]) => ({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve(
+          logins.map((login) => ({ login, avatar_url: `https://a/${login}` })),
+        ),
+    });
+    const refused = { ok: false, status: 403, json: () => Promise.resolve({}) };
+    const authHeader = (call: number) =>
+      (fetchMock.mock.calls[call]?.[1] as { headers: Record<string, string> })
+        .headers['Authorization'];
+
+    it("reads with the caller's own token first", async () => {
+      fetchMock.mockResolvedValueOnce(roster(['lloydlim1', 'bpramos-ae']));
+
+      await expect(
+        service.readOrganizationMembers({
+          org: 'Alpha-Explora',
+          userId: 'user-1',
+          userToken: 'gho_user',
+        }),
+      ).resolves.toEqual([
+        { login: 'lloydlim1', avatarUrl: 'https://a/lloydlim1' },
+        { login: 'bpramos-ae', avatarUrl: 'https://a/bpramos-ae' },
+      ]);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        'https://api.github.com/orgs/Alpha-Explora/members?per_page=100&page=1',
+      );
+      expect(authHeader(0)).toBe('Bearer gho_user');
+      expect(installationsRepository.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the caller's App installation when the token is refused", async () => {
+      fetchMock
+        .mockResolvedValueOnce(refused)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ token: 'installation-token' }),
+        })
+        .mockResolvedValueOnce(roster(['lloydlim1']));
+
+      await expect(
+        service.readOrganizationMembers({
+          org: 'Alpha-Explora',
+          userId: 'user-1',
+          userToken: 'gho_user',
+        }),
+      ).resolves.toEqual([
+        { login: 'lloydlim1', avatarUrl: 'https://a/lloydlim1' },
+      ]);
+      expect(authHeader(2)).toBe('Bearer installation-token');
+    });
+
+    it("falls back to the org's App installation when the caller has neither", async () => {
+      (installationsRepository.findByUserId as jest.Mock).mockResolvedValueOnce(
+        [],
+      );
+      const findInstallationIdByAccountLogin = jest.fn().mockResolvedValue(777);
+      Object.assign(installationsRepository, {
+        findInstallationIdByAccountLogin,
+      });
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ token: 'org-installation-token' }),
+        })
+        .mockResolvedValueOnce(roster(['bpramos-ae']));
+
+      await expect(
+        service.readOrganizationMembers({
+          org: 'Alpha-Explora',
+          userId: 'user-1',
+          userToken: null,
+        }),
+      ).resolves.toEqual([
+        { login: 'bpramos-ae', avatarUrl: 'https://a/bpramos-ae' },
+      ]);
+      expect(findInstallationIdByAccountLogin).toHaveBeenCalledWith(
+        'Alpha-Explora',
+      );
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        'https://api.github.com/app/installations/777/access_tokens',
+      );
+    });
+
+    it('returns null, not an empty roster, when nothing can read it', async () => {
+      (installationsRepository.findByUserId as jest.Mock).mockResolvedValueOnce(
+        [],
+      );
+      Object.assign(installationsRepository, {
+        findInstallationIdByAccountLogin: jest.fn().mockResolvedValue(null),
+      });
+      fetchMock.mockResolvedValueOnce(refused);
+
+      await expect(
+        service.readOrganizationMembers({
+          org: 'Alpha-Explora',
+          userId: 'user-1',
+          userToken: 'gho_user',
+        }),
+      ).resolves.toBeNull();
+    });
+
+    it('reads every page of a large org', async () => {
+      const page1 = Array.from(
+        { length: 100 },
+        (_, i) => `member-${String(i)}`,
+      );
+      fetchMock
+        .mockResolvedValueOnce(roster(page1))
+        .mockResolvedValueOnce(roster(['last-member']));
+
+      const members = await service.readOrganizationMembers({
+        org: 'Alpha-Explora',
+        userId: 'user-1',
+        userToken: 'gho_user',
+      });
+
+      expect(members).toHaveLength(101);
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain('page=2');
+    });
+
+    it('reads nothing for a blank org', async () => {
+      await expect(
+        service.readOrganizationMembers({
+          org: '  ',
+          userId: 'user-1',
+          userToken: 'gho_user',
+        }),
+      ).resolves.toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 

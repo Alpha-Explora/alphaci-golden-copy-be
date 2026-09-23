@@ -238,6 +238,26 @@ export interface AppConfig {
     cookieDomain?: string;
   };
   archivedAccountRetentionDays: number;
+  /**
+   * Where this deployment's people come from: the pool a workspace lead picks
+   * members from, served by GET /api/v1/directory/members. Deployment
+   * configuration, not a client policy (ADR-0011): each client deployment
+   * points it at its own organization.
+   */
+  directory: {
+    /**
+     * MEMBER_DIRECTORY_SOURCE. 'github_org' (default): members of
+     * `organization` on GitHub. 'accounts': every active AlphaCI account on
+     * this deployment, for installations with no GitHub organization.
+     */
+    source: 'github_org' | 'accounts';
+    /**
+     * MEMBER_DIRECTORY_ORG. The GitHub organization behind 'github_org';
+     * defaults to GITHUB_ENFORCED_ORG, the org this deployment already
+     * provisions into. Empty leaves the directory unavailable, not open.
+     */
+    organization: string;
+  };
   hierarchy: {
     enabled: boolean;
     /**

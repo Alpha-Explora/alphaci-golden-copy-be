@@ -15,6 +15,7 @@ import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { PlatformAdminGuard } from '#modules/identity-access/admin/index.js';
+import { directoryCallerFrom } from '#modules/identity-access/directory/index.js';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { QueryActivityDto } from './dto/query-activity.dto';
 import { RemoveMemberDto } from './dto/remove-member.dto';
@@ -130,21 +131,22 @@ export class GroupsController {
     @Param('groupId') groupId: string,
     @Body() body: AddGroupMemberDto,
   ) {
-    return this.membersService.addMember(groupId, this.requireUserId(req), {
+    return this.membersService.addMember(groupId, directoryCallerFrom(req), {
       userId: body.userId,
       ...(body.role !== undefined && { role: body.role }),
     });
   }
 
+  /** The member picker: the deployment's member directory minus this Group. */
   @Get(':groupId/eligible-users')
   searchEligibleUsers(
     @Req() req: Request,
     @Param('groupId') groupId: string,
     @Query('search') search = '',
   ) {
-    return this.groupsService.searchEligibleInternalUsers(
+    return this.groupsService.searchEligibleMembers(
       groupId,
-      this.requireUserId(req),
+      directoryCallerFrom(req),
       search,
     );
   }

@@ -390,14 +390,29 @@ export interface GithubTeamMembershipChangedEvent {
   installationId: number;
 }
 
+export interface GithubOrganizationMember {
+  login: string;
+  avatarUrl: string | null;
+}
+
 export interface GithubOrganizationPort {
   getEnforcedOrg(): string;
   onTeamMembershipChanged(
     listener: (event: GithubTeamMembershipChangedEvent) => void,
   ): void;
-  listOrganizationMembers(
-    userId: string,
-  ): Promise<Array<{ login: string; avatarUrl: string | null }>>;
+  /**
+   * Every member of `org`, read with the first credential GitHub accepts:
+   * the caller's own OAuth token (read:org), then the caller's App
+   * installation, then the org's App installation.
+   *
+   * Returns null when no credential could read the roster. Null means
+   * "unknown", never "nobody": callers must not treat it as an empty org.
+   */
+  readOrganizationMembers(input: {
+    org: string;
+    userId: string;
+    userToken: string | null;
+  }): Promise<GithubOrganizationMember[] | null>;
   getTeamMembership(
     teamSlug: string,
     login: string,
