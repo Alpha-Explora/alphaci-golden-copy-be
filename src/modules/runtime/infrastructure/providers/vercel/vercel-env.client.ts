@@ -234,7 +234,7 @@ export class VercelEnvClient implements DeploymentProvider {
       attempt.linkGit &&
       input.deploymentStrategy === 'vercel_ci_pushed' &&
       error &&
-      this.isGitHubIntegrationRefusal(error)
+      this.isGitLinkRefusal(error)
     ) {
       this.logger.warn(
         `Vercel could not link ${input.repoFullName}; creating ${input.projectName} without a Git link. The pipeline deploys it with the CLI.`,
@@ -823,26 +823,52 @@ export class VercelEnvClient implements DeploymentProvider {
       return null;
     }
 
-    return this.gitHubIntegrationMessage(error) ?? this.forbiddenMessage(error);
+    return this.gitLinkMessage(error) ?? this.forbiddenMessage(error);
   }
 
-  private isGitHubIntegrationRefusal(error: VercelErrorBody): boolean {
+  /**
+   * Vercel refusing to LINK the repository, which is not the same as refusing
+   * to create the project.
+   *
+   * There is more than one of these and they read nothing alike. The GitHub App
+   * not being installed for the owner says "install the GitHub integration";
+   * the Vercel account having no GitHub login says "You need to add a Login
+   * Connection to your GitHub account first" — observed on a real create, where
+   * only the first was recognised, so a project that needed no Git link at all
+   * failed for want of one.
+   *
+   * Matched on what they have in common — the link is what failed — rather than
+   * on one phrasing, because the next variant will read differently again.
+   */
+  private isGitLinkRefusal(error: VercelErrorBody): boolean {
+    const message = error.message ?? '';
     return (
-      error.action === 'Install GitHub App' &&
-      Boolean(error.message?.includes('install the GitHub integration'))
+      error.action === 'Install GitHub App' ||
+      error.action === 'Add a Login Connection' ||
+      /failed to link|install the github integration|login connection/i.test(
+        message,
+      )
     );
   }
 
-  private gitHubIntegrationMessage(error: VercelErrorBody): string | null {
-    if (!this.isGitHubIntegrationRefusal(error)) {
+  private gitLinkMessage(error: VercelErrorBody): string | null {
+    if (!this.isGitLinkRefusal(error)) {
       return null;
     }
 
     const repo = error.repo?.trim() || 'the GitHub repository';
-    return (
-      `Vercel GitHub integration is not installed or does not have access to ${repo}. ` +
-      'Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.'
-    );
+    const needsLoginConnection =
+      error.action === 'Add a Login Connection' ||
+      /login connection/i.test(error.message ?? '');
+
+    // Named from Vercel's own `action`, because the two have different
+    // remedies in different places and sending someone to the wrong one costs
+    // them the afternoon.
+    const remedy = needsLoginConnection
+      ? 'Connect a GitHub account to the Vercel account the platform token belongs to (Vercel → Account Settings → Login Connections), then retry.'
+      : 'Install the Vercel GitHub App for that GitHub owner and grant it access to the repository, then retry.';
+
+    return `Vercel would not link ${repo}. ${remedy}`;
   }
 
   /**

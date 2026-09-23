@@ -998,7 +998,40 @@ describe('VercelEnvClient', () => {
         branchName: 'test',
       }),
     ).rejects.toThrow(
-      'Vercel GitHub integration is not installed or does not have access to cicd-external-project/test123. Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.',
+      'Vercel would not link cicd-external-project/test123. Install the Vercel GitHub App for that GitHub owner and grant it access to the repository, then retry.',
+    );
+  });
+
+  it('names the other link refusal by its own remedy', async () => {
+    // Observed on a real create. The GitHub App being absent and the Vercel
+    // account having no GitHub login are different failures in different
+    // places, and sending someone to the wrong one costs them the afternoon.
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            error: {
+              code: 'bad_request',
+              message:
+                'Failed to link Alphaexplora-Sandbox/alphatest-12345-fe. You need to add a Login Connection to your GitHub account first.',
+              action: 'Add a Login Connection',
+              repo: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+            },
+          }),
+        ),
+    });
+
+    await expect(
+      new VercelEnvClient().createTarget({
+        token: 'vercel-secret',
+        repoFullName: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+        projectName: 'alphatest-12345-frontend',
+        branchName: 'uat',
+      }),
+    ).rejects.toThrow(
+      'Vercel would not link Alphaexplora-Sandbox/alphatest-12345-fe. Connect a GitHub account to the Vercel account the platform token belongs to (Vercel → Account Settings → Login Connections), then retry.',
     );
   });
 
@@ -1101,6 +1134,42 @@ describe('VercelEnvClient', () => {
       const retried = requestedBodies()[1]?.name ?? '';
       expect(retried).toHaveLength(100);
       expect(retried.endsWith('-2')).toBe(true);
+    });
+
+    it('creates a CI-pushed project unlinked when the Vercel account has no GitHub login', async () => {
+      // The refusal that reached a real project: the platform's Vercel account
+      // had no Login Connection, so linking failed — for a project the
+      // pipeline deploys with the CLI and never needed the link for.
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 400,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                error: {
+                  code: 'bad_request',
+                  message:
+                    'Failed to link Alphaexplora-Sandbox/alphatest-12345-fe. You need to add a Login Connection to your GitHub account first.',
+                  action: 'Add a Login Connection',
+                  repo: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+                },
+              }),
+            ),
+        })
+        .mockResolvedValueOnce(created('alphatest-12345-frontend'));
+
+      const target = await new VercelEnvClient().createTarget({
+        ...managedInput,
+        repoFullName: 'Alphaexplora-Sandbox/alphatest-12345-fe',
+        projectName: 'alphatest-12345-frontend',
+      });
+
+      expect(requestedBodies()[1]?.gitRepository).toBeUndefined();
+      expect(target.metadata).toEqual(
+        expect.objectContaining({ gitConnected: false }),
+      );
     });
 
     it('creates a CI-pushed project unlinked when Vercel cannot link the repository', async () => {
