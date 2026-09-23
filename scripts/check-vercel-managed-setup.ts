@@ -98,6 +98,44 @@ function headers(): Record<string, string> {
   };
 }
 
+/**
+ * Whether this environment is the backend's at all.
+ *
+ * "ALPHACI_VERCEL_TOKEN is not set" means two very different things: the
+ * deployment is missing its Vercel credentials, or the check was run in a shell
+ * that was never given any configuration. Without this the reader cannot tell
+ * them apart, and the second one reads like a diagnosis.
+ */
+function reportEnvironmentContext(): void {
+  const siblings = [
+    'ALPHACI_RENDER_API_KEY',
+    'FLOWCI_RENDER_API_KEY',
+    'GITHUB_APP_ID',
+    'SUPABASE_URL',
+    'SUPABASE_DB_URL',
+    'SESSION_SECRET',
+  ];
+  const present = siblings.filter((name) => (process.env[name] ?? '').trim());
+
+  console.log('Environment');
+  if (present.length === 0) {
+    console.log(
+      '  ! none of the backend\'s other settings are here either (Render, GitHub, Supabase, session).',
+    );
+    console.log(
+      '      → This shell is probably not the one the backend starts from, so the result below',
+    );
+    console.log(
+      '        describes this shell rather than the deployment. Re-run it where the backend runs.',
+    );
+  } else {
+    console.log(
+      `  ✓ this looks like the backend's environment (${String(present.length)} of its other settings are present)`,
+    );
+  }
+  console.log('');
+}
+
 function reportConfiguration(): boolean {
   console.log('Configuration');
   if (token) {
@@ -228,6 +266,7 @@ async function probeCreateAndDelete(): Promise<void> {
 async function main(): Promise<void> {
   console.log('ALPHACI managed Vercel preflight\n');
 
+  reportEnvironmentContext();
   const configured = reportConfiguration();
   if (!configured) {
     console.log(
