@@ -1,11 +1,11 @@
 {
-  "routeCount": 151,
+  "routeCount": 153,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "4422c7ca631f77388871859f92b860ec481f0c514d64c4d5df8f507864efa6f6",
+  "referenceSha256": "eb14c63b03e9b51a24a206378ef2ea91fd2aec3cef19198f52cb54f8744be2f2",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "4422c7ca631f77388871859f92b860ec481f0c514d64c4d5df8f507864efa6f6",
+  "baselineSha256": "eb14c63b03e9b51a24a206378ef2ea91fd2aec3cef19198f52cb54f8744be2f2",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -14,6 +14,13 @@
       "routes": [
         "GET /api/v1/ci/releases/{releaseId}",
         "POST /api/v1/ci/releases"
+      ]
+    },
+    {
+      "reason": "Member directory: who may join a workspace on this deployment, readable by the people in it, for the member picker and client systems (ADR-0011).",
+      "routes": [
+        "GET /api/v1/directory",
+        "GET /api/v1/directory/members"
       ]
     }
   ]

@@ -275,6 +275,44 @@ describe('appConfig factory', () => {
     });
   });
 
+  describe('member directory (MEMBER_DIRECTORY_*)', () => {
+    beforeEach(() => {
+      delete process.env['MEMBER_DIRECTORY_SOURCE'];
+      delete process.env['MEMBER_DIRECTORY_ORG'];
+      delete process.env['GITHUB_ENFORCED_ORG'];
+    });
+
+    it('defaults to the GitHub org this deployment already provisions into', () => {
+      process.env['GITHUB_ENFORCED_ORG'] = 'Alpha-Explora';
+
+      expect(appConfig().directory).toEqual({
+        source: 'github_org',
+        organization: 'Alpha-Explora',
+      });
+    });
+
+    it('lets a deployment point its directory at another org', () => {
+      process.env['GITHUB_ENFORCED_ORG'] = 'Alpha-Explora';
+      process.env['MEMBER_DIRECTORY_ORG'] = ' st-peter-org ';
+
+      expect(appConfig().directory.organization).toBe('st-peter-org');
+    });
+
+    it('selects the accounts source, case-insensitively', () => {
+      process.env['MEMBER_DIRECTORY_SOURCE'] = 'Accounts';
+
+      expect(appConfig().directory.source).toBe('accounts');
+    });
+
+    it('rejects an unknown source instead of widening the directory', () => {
+      process.env['MEMBER_DIRECTORY_SOURCE'] = 'everyone';
+
+      expect(() => appConfig()).toThrow(
+        /MEMBER_DIRECTORY_SOURCE must be one of/,
+      );
+    });
+  });
+
   describe('TRUST_PROXY_HOPS', () => {
     beforeEach(() => {
       delete process.env['TRUST_PROXY_HOPS'];

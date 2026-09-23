@@ -10,3 +10,4 @@
 * [ADR-0008: Build profiles and artifact exclusion](adr-0008-build-profiles-and-artifact-exclusion.md) - pack sets per artifact and excluded source.
 * [ADR-0009: Client capability policies](adr-0009-client-capability-policies.md) - deny-only per-client narrowing within an edition.
 * [ADR-0010: Single authoring source for composition](adr-0010-single-authoring-source-for-composition.md) - one capability record, generated registry, manifests, and pack rows.
+* [ADR-0011: Member directory sources](adr-0011-member-directory-sources.md) - one per-deployment directory decides who may join a workspace, served by a public API.

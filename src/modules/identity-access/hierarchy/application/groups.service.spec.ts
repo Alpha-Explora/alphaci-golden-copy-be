@@ -6,7 +6,7 @@ import type { AuditEventPublisher } from '#kernel/events/platform-event-publishe
 import type { PlatformAdminAccessService } from '#modules/identity-access/admin/application/platform-admin-access.service';
 import type { AssignmentsRepository } from '../infrastructure/assignments.repository';
 import type { DeliveryProjectsRepository } from '../infrastructure/delivery-projects.repository';
-import type { GithubService } from '#modules/pipelines/github/infrastructure/github.service';
+import type { MemberDirectoryService } from '#modules/identity-access/directory/index.js';
 import type { GithubSyncService } from './github-sync.service';
 import { HierarchyAccessService } from './hierarchy-access.service';
 import type { RepositoriesRepository } from '../infrastructure/repositories.repository';
@@ -60,6 +60,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
   let githubSyncService: jest.Mocked<GithubSyncService>;
   let auditEventsService: jest.Mocked<AuditEventPublisher>;
   let databaseService: jest.Mocked<DatabaseService>;
+  let directory: jest.Mocked<MemberDirectoryService>;
   let service: GroupsService;
 
   beforeEach(() => {
@@ -105,9 +106,9 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       record: jest.fn(),
       recordProjectEvent: jest.fn(),
     } as unknown as jest.Mocked<AuditEventPublisher>;
-    const githubService = {
-      listOrganizationMembers: jest.fn().mockResolvedValue([]),
-    } as unknown as jest.Mocked<GithubService>;
+    directory = {
+      listEligible: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<MemberDirectoryService>;
     const transactionClient = { query: jest.fn() };
     databaseService = {
       withTransaction: jest.fn(
@@ -121,10 +122,55 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       accessService,
       assignmentsRepository,
       githubSyncService,
-      githubService,
+      directory,
       auditEventsService,
       databaseService,
     );
+  });
+
+  describe('searchEligibleMembers (member picker)', () => {
+    const caller = { userId: 'dev-1', githubToken: 'gho_caller' };
+
+    it('refuses a plain member before the directory is read', async () => {
+      groupsRepository.findActiveMembership.mockResolvedValue({
+        workspaceId: 'group-1',
+        userId: 'dev-1',
+        role: 'member',
+        memberId: developer.id,
+      });
+
+      await expect(
+        service.searchEligibleMembers('group-1', caller, ''),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(directory.listEligible).not.toHaveBeenCalled();
+    });
+
+    it('lists the directory for a lead, leaving out this Group', async () => {
+      groupsRepository.findActiveMembership.mockResolvedValue({
+        workspaceId: 'group-1',
+        userId: 'owner-1',
+        role: 'admin',
+        memberId: owner.id,
+      });
+      const entry = {
+        id: 'u-2',
+        login: 'bpramos-ae',
+        name: 'B Ramos',
+        email: null,
+        avatarUrl: null,
+        hasAccount: true,
+      };
+      directory.listEligible.mockResolvedValue([entry]);
+      const lead = { userId: 'owner-1', githubToken: 'gho_lead' };
+
+      await expect(
+        service.searchEligibleMembers('group-1', lead, 'ramos'),
+      ).resolves.toEqual([entry]);
+      expect(directory.listEligible).toHaveBeenCalledWith(lead, {
+        search: 'ramos',
+        workspaceId: 'group-1',
+      });
+    });
   });
 
   it('blocks a developer from updating group settings with 403', async () => {

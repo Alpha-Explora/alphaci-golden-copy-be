@@ -216,15 +216,40 @@ function hierarchyConfig(env: NodeJS.ProcessEnv): AppConfig['hierarchy'] {
   };
 }
 
+const DIRECTORY_SOURCES = ['github_org', 'accounts'] as const;
+
+function directoryConfig(
+  env: NodeJS.ProcessEnv,
+  enforcedOrg: string,
+): AppConfig['directory'] {
+  const raw = env['MEMBER_DIRECTORY_SOURCE']?.trim().toLowerCase();
+  const source = raw
+    ? DIRECTORY_SOURCES.find((value) => value === raw)
+    : 'github_org';
+  // Fail closed: a typo must not silently switch a deployment to a wider
+  // directory than the one its operator chose.
+  if (!source) {
+    throw new Error(
+      `[config] MEMBER_DIRECTORY_SOURCE must be one of ${DIRECTORY_SOURCES.join(', ')} (got "${raw ?? ''}").`,
+    );
+  }
+  return {
+    source,
+    organization: env['MEMBER_DIRECTORY_ORG']?.trim() || enforcedOrg,
+  };
+}
+
 export const appConfig = registerAs('app', (): AppConfig => {
   const env = process.env;
+  const github = githubConfig(env);
 
   return {
     frontendUrl: env['FRONTEND_URL'] ?? 'http://localhost:3000',
     trustProxyHops: trustProxyHops(env),
     auth: authConfig(env),
     composition: parseCompositionConfig(env),
-    github: githubConfig(env),
+    github,
+    directory: directoryConfig(env, github.enforcedOrg),
     templates: templatesConfig(env),
     subscription: subscriptionConfig(env),
     envProvisioning: provisioningConfig(env),
