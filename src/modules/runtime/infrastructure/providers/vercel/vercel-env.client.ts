@@ -12,6 +12,8 @@ import type {
   ProviderDeployEvent,
   ProviderDeploymentTarget,
   ProviderLogEntry,
+  ProviderLogPage,
+  ProviderLogQuery,
   ProviderLogsInput,
   ProviderProvisionResult,
   ProviderTargetStatus,
@@ -22,9 +24,15 @@ import type {
   ProviderDomainResult,
 } from '../../../application/ports/runtime-env-provider.client';
 import type { DeploymentProvider } from '../../../core/deployment-provider-runtime.contract';
+import type { DeploymentLogLine } from '../../../core/deployment-logs.types';
 import {
+  filterVercelLogLines,
+  mapVercelBuildEventLine,
   mapVercelDeployHistory,
+  mapVercelRuntimeLogLine,
+  type VercelBuildEventEntry,
   type VercelDeploymentRow,
+  type VercelRuntimeLogEntry,
 } from './vercel-env.mapping';
 
 const VERCEL_API_URL = 'https://api.vercel.com';
@@ -506,7 +514,7 @@ export class VercelEnvClient implements DeploymentProvider {
     return mapVercelDeployHistory(payload.deployments);
   }
 
-  async getLogs(input: ProviderLogsInput): Promise<ProviderLogEntry[]> {
+  async queryLogs(input: ProviderLogQuery): Promise<ProviderLogPage> {
     const deploymentsUrl = this.withInputScope(
       `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&limit=1`,
       input,
@@ -522,17 +530,68 @@ export class VercelEnvClient implements DeploymentProvider {
     };
     const latestDeploymentId = depData.deployments?.[0]?.uid;
     if (!latestDeploymentId) {
-      return [];
+      return { logs: [], hasMore: false, next: null };
     }
 
-    if (input.type === 'build') {
-      return this.getBuildLogs(input, latestDeploymentId);
-    }
+    // Vercel exposes build and runtime lines as two separate endpoints with
+    // no combined query; a `type` filter asking only for 'build' reads the
+    // build events, anything else (including no filter at all) reads the
+    // runtime log stream. Unlike Render, there is no single call that can
+    // return both in one page.
+    const types = input.type ?? [];
+    const wantsBuildOnly =
+      types.length > 0 && types.every((t) => t === 'build');
+    const rawLines = wantsBuildOnly
+      ? await this.fetchVercelBuildLogLines(input, latestDeploymentId)
+      : await this.fetchVercelRuntimeLogLines(input, latestDeploymentId);
 
+    // Unlike Render's /v1/logs, neither Vercel endpoint this client calls
+    // returns newest-first: the build-events endpoint's own `direction`
+    // parameter defaults to 'forward' (oldest-first) and this client never
+    // overrides it, and the runtime-logs endpoint is an undirected
+    // "stream of logs" with no direction/order parameter at all — i.e.
+    // already emission order. So, unlike mapRenderLogsPage, there is no
+    // newest-first payload to reverse before this stable sort; the sort
+    // below is purely the same out-of-order-line guard Render's mapping
+    // has, and ties correctly fall back to the order Vercel sent them in.
+    const logs = filterVercelLogLines(rawLines, {
+      ...(input.level ? { level: input.level } : {}),
+      ...(input.text ? { text: input.text } : {}),
+    }).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+    // Vercel's runtime-logs and build-events endpoints are each a single
+    // bounded fetch (limit=100) with no cursor of their own, so there is
+    // nothing further to page through from this client's point of view.
+    return { logs, hasMore: false, next: null };
+  }
+
+  /**
+   * Thin compatibility wrapper: queryLogs owns the real Vercel mapping, this
+   * just flattens its richer page shape back to the pre-parity return type
+   * for any caller still on the old operation.
+   */
+  async getLogs(input: ProviderLogsInput): Promise<ProviderLogEntry[]> {
+    const { type, ...rest } = input;
+    const page = await this.queryLogs({
+      ...rest,
+      ...(type ? { type: [type] } : {}),
+    });
+
+    return page.logs.map((line) => ({
+      timestamp: line.timestamp,
+      message: line.message,
+      level: line.level,
+    }));
+  }
+
+  private async fetchVercelRuntimeLogLines(
+    input: ProviderLogQuery,
+    deploymentId: string,
+  ): Promise<DeploymentLogLine[]> {
     const logsUrl = this.withInputScope(
       `${VERCEL_API_URL}/v1/projects/${encodeURIComponent(
         input.targetId,
-      )}/deployments/${encodeURIComponent(latestDeploymentId)}/runtime-logs?limit=100`,
+      )}/deployments/${encodeURIComponent(deploymentId)}/runtime-logs?limit=100`,
       input,
     );
     const logsResponse = await fetchWithRetry(
@@ -544,36 +603,18 @@ export class VercelEnvClient implements DeploymentProvider {
       logsResponse,
       'Vercel runtime logs could not be loaded',
     );
-    interface VercelRuntimeLogEntry {
-      timestamp: number;
-      text?: string;
-      message?: string;
-      type?: string;
-      level?: string;
-    }
     const logsData = (await logsResponse.json()) as
       | VercelRuntimeLogEntry[]
       | { logs?: VercelRuntimeLogEntry[] };
     const logsList = Array.isArray(logsData) ? logsData : (logsData.logs ?? []);
 
-    return logsList.map((l) => ({
-      timestamp: l.timestamp
-        ? new Date(Number(l.timestamp)).toISOString()
-        : new Date().toISOString(),
-      message: l.text || l.message || '',
-      level:
-        l.type === 'err' || l.level === 'error'
-          ? 'error'
-          : l.type === 'warning' || l.level === 'warn'
-            ? 'warn'
-            : 'info',
-    }));
+    return logsList.map((line, index) => mapVercelRuntimeLogLine(line, index));
   }
 
-  private async getBuildLogs(
-    input: ProviderLogsInput,
+  private async fetchVercelBuildLogLines(
+    input: ProviderLogQuery,
     deploymentId: string,
-  ): Promise<ProviderLogEntry[]> {
+  ): Promise<DeploymentLogLine[]> {
     const eventsUrl = this.withInputScope(
       `${VERCEL_API_URL}/v2/deployments/${encodeURIComponent(deploymentId)}/events?limit=100`,
       input,
@@ -584,22 +625,11 @@ export class VercelEnvClient implements DeploymentProvider {
       'Vercel',
     );
     await this.assertOk(response, 'Vercel build logs could not be loaded');
-    interface VercelBuildEvent {
-      created?: number;
-      type?: string;
-      payload?: { text?: string };
-    }
-    const events = (await response.json()) as VercelBuildEvent[];
+    const events = (await response.json()) as VercelBuildEventEntry[];
 
     return events
-      .filter((event) => typeof event.payload?.text === 'string')
-      .map((event) => ({
-        timestamp: event.created
-          ? new Date(event.created).toISOString()
-          : new Date().toISOString(),
-        message: event.payload?.text ?? '',
-        level: event.type === 'stderr' ? 'error' : 'info',
-      }));
+      .map((event, index) => mapVercelBuildEventLine(event, index))
+      .filter((line): line is DeploymentLogLine => line !== null);
   }
 
   async addDomain(

@@ -1,4 +1,8 @@
 import type { ProviderDeployEvent } from '../../../application/ports/runtime-env-provider.client';
+import {
+  normalizeLogLevel,
+  type DeploymentLogLine,
+} from '../../../core/deployment-logs.types';
 
 export type VercelDeploymentRow = {
   uid?: string;
@@ -93,4 +97,112 @@ export function mapVercelDeployHistory(
   return (deployments ?? [])
     .map(mapVercelDeployEvent)
     .filter((event): event is ProviderDeployEvent => event !== null);
+}
+
+export interface VercelRuntimeLogEntry {
+  timestamp?: number;
+  text?: string;
+  message?: string;
+  type?: string;
+  level?: string;
+  id?: string;
+  requestId?: string;
+}
+
+export interface VercelBuildEventEntry {
+  id?: string;
+  created?: number;
+  type?: string;
+  payload?: { text?: string };
+}
+
+function vercelLineId(
+  prefix: string,
+  timestamp: string,
+  index: number,
+  providedId?: string,
+): string {
+  return providedId?.trim() || `${prefix}-${timestamp}-${index}`;
+}
+
+/** Vercel's runtime-log `type` is a stream name, not a level word; only these two carry one. */
+function vercelRuntimeLogLevel(
+  entry: VercelRuntimeLogEntry,
+): string | undefined {
+  if (entry.level) return entry.level;
+  if (entry.type === 'err') return 'error';
+  if (entry.type === 'warning') return 'warn';
+  return undefined;
+}
+
+/**
+ * Vercel's runtime-logs entries carry their own `type` ('stdout'/'stderr'/
+ * a lambda lifecycle event) rather than a level word; only `err`/`error`
+ * clearly means error, so anything else routes through normalizeLogLevel to
+ * land on the shared vocabulary rather than inventing a second one here.
+ */
+export function mapVercelRuntimeLogLine(
+  entry: VercelRuntimeLogEntry,
+  index: number,
+): DeploymentLogLine {
+  const timestamp = entry.timestamp
+    ? new Date(Number(entry.timestamp)).toISOString()
+    : new Date().toISOString();
+
+  return {
+    id: vercelLineId('runtime', timestamp, index, entry.id ?? entry.requestId),
+    timestamp,
+    message: entry.text || entry.message || '',
+    level: normalizeLogLevel(vercelRuntimeLogLevel(entry)),
+    type: 'app',
+    instance: null,
+    labels: entry.type ? { type: entry.type } : {},
+  };
+}
+
+/** A build event with no `payload.text` is a structural/lifecycle event, not a log line. */
+export function mapVercelBuildEventLine(
+  event: VercelBuildEventEntry,
+  index: number,
+): DeploymentLogLine | null {
+  if (typeof event.payload?.text !== 'string') {
+    return null;
+  }
+  const timestamp = event.created
+    ? new Date(event.created).toISOString()
+    : new Date().toISOString();
+
+  return {
+    id: vercelLineId('build', timestamp, index, event.id),
+    timestamp,
+    message: event.payload.text,
+    level: normalizeLogLevel(event.type === 'stderr' ? 'error' : undefined),
+    type: 'build',
+    instance: null,
+    labels: event.type ? { stream: event.type } : {},
+  };
+}
+
+/**
+ * Vercel's log APIs don't take `level`/`text` as server-side query params the
+ * way Render's do, so those two filters are applied here instead — the page
+ * shape the caller gets back is identical either way.
+ */
+export function filterVercelLogLines(
+  lines: readonly DeploymentLogLine[],
+  filters: { level?: readonly string[]; text?: string },
+): DeploymentLogLine[] {
+  let result = [...lines];
+  if (filters.level?.length) {
+    const wanted = new Set(filters.level.map((level) => level.toLowerCase()));
+    result = result.filter((line) => wanted.has(line.level));
+  }
+  if (filters.text?.trim()) {
+    const needle = filters.text.trim().toLowerCase();
+    result = result.filter((line) =>
+      line.message.toLowerCase().includes(needle),
+    );
+  }
+
+  return result;
 }

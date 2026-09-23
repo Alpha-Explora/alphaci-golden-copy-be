@@ -49,4 +49,19 @@ describe('RenderDeploymentProvider', () => {
       provider.validateConfig({ providerProjectId: 'srv-1' }),
     ).not.toThrow();
   });
+
+  it('declares every filter Render honors server-side', () => {
+    const provider = new RenderDeploymentProvider(
+      { label: 'Render', enabled: true, supportedSlots: ['backend'] },
+      new DeploymentProviderRegistry(),
+      testPolicy,
+    );
+
+    expect(provider.capabilities.logFilters).toEqual([
+      'level',
+      'type',
+      'text',
+      'instance',
+    ]);
+  });
 });

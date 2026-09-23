@@ -8,6 +8,11 @@ import type {
   RenderServiceType,
   DomainVerificationChallenge,
 } from '../../core/deployments.types';
+import type {
+  DeploymentLogLine,
+  DeploymentLogsWindow,
+  LogDirection,
+} from '../../core/deployment-logs.types';
 
 export interface ProviderAccountSummary {
   id: string;
@@ -155,6 +160,36 @@ export interface ProviderLogsInput extends ProviderTargetStatusInput {
   renderOwnerId?: string;
 }
 
+/**
+ * The windowed, filterable log query behind the Render-parity logs endpoint.
+ * Supersedes ProviderLogsInput's single `type` string with arrays, and adds
+ * direction/limit/level/instance so a provider can honor the full filter set
+ * Render itself exposes. `type`/`level`/`instance` are arrays because the API
+ * accepts a comma list (e.g. `type=build,app`); a provider that cannot filter
+ * server-side may do it client-side (see the Vercel client) as long as it
+ * still returns this same page shape.
+ */
+export interface ProviderLogQuery extends ProviderTargetStatusInput {
+  startTime?: string;
+  endTime?: string;
+  direction?: LogDirection;
+  limit?: number;
+  type?: string[];
+  level?: string[];
+  text?: string;
+  instance?: string[];
+  // Render's log API requires the workspace owner id, which lives on the
+  // target's providerMetadata (see deployment-targets.service.ts).
+  renderOwnerId?: string;
+}
+
+export interface ProviderLogPage {
+  /** Always oldest -> newest, whatever direction was queried. */
+  logs: DeploymentLogLine[];
+  hasMore: boolean;
+  next: DeploymentLogsWindow | null;
+}
+
 export interface AddProviderDomainInput extends ProviderTargetStatusInput {
   hostname: string;
   /** Pins the hostname to one branch. Omitted means the production domain. */
@@ -206,8 +241,13 @@ export interface RuntimeEnvProviderClient {
     input: ProviderTargetStatusInput,
   ): Promise<ProviderDeployEvent[]>;
   // Optional: not every client can fetch runtime logs. Callers must check
-  // for its presence before calling.
+  // for its presence before calling. Kept as a thin compatibility wrapper
+  // around queryLogs on providers that implement both.
   getLogs?(input: ProviderLogsInput): Promise<ProviderLogEntry[]>;
+  // Optional: the windowed/filterable/paginated logs operation behind the
+  // Render-parity logs endpoint. Callers must check for its presence before
+  // calling; a provider with no log API at all omits both operations.
+  queryLogs?(input: ProviderLogQuery): Promise<ProviderLogPage>;
 
   /*
    * Custom domains. Optional as a group: a provider that cannot attach a

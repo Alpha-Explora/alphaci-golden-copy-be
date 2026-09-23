@@ -74,6 +74,10 @@ export class VercelDeploymentProvider
     this.capabilities = {
       ...LEGACY_PROVIDER_CAPABILITIES,
       previewDeployments: config.previewDeployments ?? false,
+      // Vercel has no `instance` concept in the runtime-logs/build-events
+      // APIs this client uses, and filters level/text client-side rather
+      // than server-side (see vercel-env.mapping.ts's filterVercelLogLines).
+      logFilters: ['level', 'type', 'text'] as const,
     };
     this.policy = policy;
   }

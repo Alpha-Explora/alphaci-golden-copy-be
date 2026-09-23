@@ -1427,4 +1427,231 @@ describe('VercelEnvClient', () => {
       }),
     ).rejects.toThrow('Vercel project could not be created: 500');
   });
+
+  describe('queryLogs', () => {
+    it('returns an empty page rather than erroring when there is no deployment yet', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ deployments: [] }),
+      });
+
+      await expect(
+        new VercelEnvClient().queryLogs({
+          token: 'vercel',
+          targetId: 'prj_1',
+        }),
+      ).resolves.toEqual({ logs: [], hasMore: false, next: null });
+    });
+
+    it('fetches runtime logs by default and satisfies the shared page shape', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ deployments: [{ uid: 'dpl_1' }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                timestamp: 1752313500000,
+                text: 'listening on 3000',
+                type: 'stdout',
+                requestId: 'req-1',
+              },
+            ]),
+        });
+
+      const page = await new VercelEnvClient().queryLogs({
+        token: 'vercel',
+        targetId: 'prj_1',
+      });
+
+      expect(page).toEqual({
+        logs: [
+          {
+            id: 'req-1',
+            timestamp: new Date(1752313500000).toISOString(),
+            message: 'listening on 3000',
+            level: 'info',
+            type: 'app',
+            instance: null,
+            labels: { type: 'stdout' },
+          },
+        ],
+        // Vercel's runtime-logs/build-events endpoints are each a single
+        // bounded fetch with no cursor of their own.
+        hasMore: false,
+        next: null,
+      });
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('/runtime-logs?limit=100'),
+        expect.anything(),
+      );
+    });
+
+    it('fetches build events when type is exactly ["build"]', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ deployments: [{ uid: 'dpl_1' }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                created: 1752313500000,
+                type: 'stdout',
+                payload: { text: 'Building...' },
+              },
+            ]),
+        });
+
+      const page = await new VercelEnvClient().queryLogs({
+        token: 'vercel',
+        targetId: 'prj_1',
+        type: ['build'],
+      });
+
+      expect(page.logs).toEqual([
+        expect.objectContaining({ message: 'Building...', type: 'build' }),
+      ]);
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('/events?limit=100'),
+        expect.anything(),
+      );
+    });
+
+    it('filters by level client-side since Vercel has no server-side level param', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ deployments: [{ uid: 'dpl_1' }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              { timestamp: 1, text: 'fine', type: 'stdout' },
+              { timestamp: 2, text: 'broken', type: 'err' },
+            ]),
+        });
+
+      const page = await new VercelEnvClient().queryLogs({
+        token: 'vercel',
+        targetId: 'prj_1',
+        level: ['error'],
+      });
+
+      expect(page.logs).toEqual([
+        expect.objectContaining({ message: 'broken', level: 'error' }),
+      ]);
+    });
+
+    it('leaves runtime-log lines tied at the same millisecond in emission order (no reversal, unlike Render)', async () => {
+      // The runtime-logs endpoint has no direction/order parameter and is
+      // documented as "a stream of logs" — i.e. already emission order —
+      // so three lines sharing one timestamp must come out in the order
+      // Vercel sent them, not reversed the way a Render backward page is.
+      const tiedTimestamp = 1752313500000;
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ deployments: [{ uid: 'dpl_1' }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              { timestamp: tiedTimestamp, text: 'first', requestId: 'a' },
+              { timestamp: tiedTimestamp, text: 'second', requestId: 'b' },
+              { timestamp: tiedTimestamp, text: 'third', requestId: 'c' },
+            ]),
+        });
+
+      const page = await new VercelEnvClient().queryLogs({
+        token: 'vercel',
+        targetId: 'prj_1',
+      });
+
+      expect(page.logs.map((line) => line.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('leaves build-event lines tied at the same millisecond in emission order (direction defaults to forward)', async () => {
+      const tiedTimestamp = 1752313500000;
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ deployments: [{ uid: 'dpl_1' }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                id: 'a',
+                created: tiedTimestamp,
+                type: 'stdout',
+                payload: { text: 'first' },
+              },
+              {
+                id: 'b',
+                created: tiedTimestamp,
+                type: 'stdout',
+                payload: { text: 'second' },
+              },
+              {
+                id: 'c',
+                created: tiedTimestamp,
+                type: 'stdout',
+                payload: { text: 'third' },
+              },
+            ]),
+        });
+
+      const page = await new VercelEnvClient().queryLogs({
+        token: 'vercel',
+        targetId: 'prj_1',
+        type: ['build'],
+      });
+
+      expect(page.logs.map((line) => line.id)).toEqual(['a', 'b', 'c']);
+    });
+  });
+
+  describe('getLogs (compatibility wrapper over queryLogs)', () => {
+    it('flattens the page shape back to the old flat log entry list', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ deployments: [{ uid: 'dpl_1' }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              { timestamp: 1752313500000, text: 'hello', type: 'stdout' },
+            ]),
+        });
+
+      await expect(
+        new VercelEnvClient().getLogs({ token: 'vercel', targetId: 'prj_1' }),
+      ).resolves.toEqual([
+        {
+          timestamp: new Date(1752313500000).toISOString(),
+          message: 'hello',
+          level: 'info',
+        },
+      ]);
+    });
+  });
 });

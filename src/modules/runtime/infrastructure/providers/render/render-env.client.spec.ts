@@ -834,6 +834,142 @@ describe('RenderEnvClient', () => {
     });
   });
 
+  describe('queryLogs', () => {
+    it('throws when no Render owner ID is linked, rather than returning an empty page', async () => {
+      global.fetch = jest.fn();
+
+      await expect(
+        new RenderEnvClient().queryLogs({ token: 'rnd', targetId: 'srv-1' }),
+      ).rejects.toThrow(
+        'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('sends the owner-scoped query and maps labels into level/type/instance', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce(
+        jsonResponse({
+          hasMore: true,
+          nextStartTime: '2026-07-12T00:00:05.000Z',
+          nextEndTime: '2026-07-12T01:00:00.000Z',
+          logs: [
+            {
+              id: 'log-1',
+              timestamp: '2026-07-12T00:00:00.000Z',
+              message: 'listening on 10000',
+              labels: [
+                { name: 'level', value: 'info' },
+                { name: 'type', value: 'app' },
+                { name: 'instance', value: 'srv-abc123' },
+              ],
+            },
+          ],
+        }),
+      );
+
+      const page = await new RenderEnvClient().queryLogs({
+        token: 'rnd',
+        targetId: 'srv-1',
+        renderOwnerId: 'owner-1',
+        type: ['app'],
+        level: ['info'],
+        direction: 'forward',
+      });
+
+      expect(page).toEqual({
+        logs: [
+          {
+            id: 'log-1',
+            timestamp: '2026-07-12T00:00:00.000Z',
+            message: 'listening on 10000',
+            level: 'info',
+            type: 'app',
+            instance: 'srv-abc123',
+            labels: { level: 'info', type: 'app', instance: 'srv-abc123' },
+          },
+        ],
+        hasMore: true,
+        next: {
+          startTime: '2026-07-12T00:00:05.000Z',
+          endTime: '2026-07-12T01:00:00.000Z',
+        },
+      });
+
+      const [url, init] = (fetch as jest.Mock).mock.calls[0] as [
+        string,
+        { headers: Record<string, string> },
+      ];
+      const requested = new URL(url);
+      expect(requested.origin + requested.pathname).toBe(
+        'https://api.render.com/v1/logs',
+      );
+      expect(requested.searchParams.get('ownerId')).toBe('owner-1');
+      expect(requested.searchParams.getAll('resource')).toEqual(['srv-1']);
+      expect(requested.searchParams.getAll('type')).toEqual(['app']);
+      expect(requested.searchParams.getAll('level')).toEqual(['info']);
+      expect(requested.searchParams.get('direction')).toBe('forward');
+      expect(init.headers['Authorization']).toBe('Bearer rnd');
+    });
+
+    it('reverses a default (backward) page so lines tied at the same millisecond come out in emission order', async () => {
+      // Render's direction defaults to backward (newest first) when the
+      // caller doesn't specify one — queryLogs must pass that through to
+      // mapRenderLogsPage so it knows to reverse before its stable sort.
+      const tiedTimestamp = '2026-07-12T00:00:00.123Z';
+      global.fetch = jest.fn().mockResolvedValueOnce(
+        jsonResponse({
+          logs: [
+            { id: 'c', timestamp: tiedTimestamp, message: 'at inner' },
+            { id: 'b', timestamp: tiedTimestamp, message: 'at outer' },
+            { id: 'a', timestamp: tiedTimestamp, message: 'TypeError: boom' },
+          ],
+        }),
+      );
+
+      const page = await new RenderEnvClient().queryLogs({
+        token: 'rnd',
+        targetId: 'srv-1',
+        renderOwnerId: 'owner-1',
+      });
+
+      expect(page.logs.map((line) => line.id)).toEqual(['a', 'b', 'c']);
+    });
+  });
+
+  describe('getLogs (compatibility wrapper over queryLogs)', () => {
+    it('flattens the page shape back to the old flat log entry list', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce(
+        jsonResponse({
+          logs: [
+            {
+              id: 'log-1',
+              timestamp: '2026-07-12T00:00:00.000Z',
+              message: 'hello',
+              labels: [{ name: 'level', value: 'error' }],
+            },
+          ],
+        }),
+      );
+
+      await expect(
+        new RenderEnvClient().getLogs({
+          token: 'rnd',
+          targetId: 'srv-1',
+          renderOwnerId: 'owner-1',
+          type: 'build',
+        }),
+      ).resolves.toEqual([
+        {
+          timestamp: '2026-07-12T00:00:00.000Z',
+          message: 'hello',
+          level: 'error',
+        },
+      ]);
+      const [url] = (fetch as jest.Mock).mock.calls[0] as [string];
+      expect(new URL(url).searchParams.getAll('type')).toEqual(['build']);
+    });
+  });
+
   describe('deleteTarget', () => {
     it('deletes the Render service', async () => {
       global.fetch = jest.fn().mockResolvedValueOnce({

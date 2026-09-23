@@ -62,12 +62,16 @@ import {
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import type {
-  DeploymentProviderLogEntry,
   DeploymentProviderPolicy,
   DeploymentProviderTargetPolicyResult,
 } from '../domain/deployment-provider.policy';
-
-export type DeploymentTargetLogEntry = DeploymentProviderLogEntry;
+import {
+  normalizeLogLevel,
+  type DeploymentLogLine,
+  type DeploymentLogsQuery,
+  type DeploymentLogsResponse,
+  type LogFilterKey,
+} from '../core/deployment-logs.types';
 
 const EMPTY_PROVIDER_TARGET_POLICY: DeploymentProviderTargetPolicyResult = {
   storage: {},
@@ -1004,12 +1008,8 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     projectId: string,
     targetId: string,
     userId: string,
-    filters?: { type?: string; startTime?: string; endTime?: string },
-  ): Promise<{
-    logs: DeploymentTargetLogEntry[];
-    source: 'live' | 'simulated';
-    reason?: string;
-  }> {
+    query?: DeploymentLogsQuery,
+  ): Promise<DeploymentLogsResponse> {
     const target =
       await this.deploymentTargetsRepository.findDeploymentTargetForUser(
         targetId,
@@ -1019,12 +1019,31 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       throw new NotFoundException('Deployment target not found');
     }
 
-    const client = this.clientRegistry.getClient(target.provider);
-    if (!client.getLogs) {
+    const filters = this.supportedLogFilters(target.provider);
+
+    // Local-mock mode is a platform-wide switch, not a per-request fallback:
+    // a live provider failure below reports 'unavailable' with no lines
+    // instead of quietly substituting sample data — see resolveMockLogs's
+    // callers for why that distinction matters to the caller.
+    if (!this.liveProvidersEnabled()) {
       return {
         source: 'simulated',
-        reason: `Live log fetching is not supported for ${target.provider}.`,
         logs: this.getMockLogs(target),
+        hasMore: false,
+        next: null,
+        filters,
+      };
+    }
+
+    const client = this.clientRegistry.getClient(target.provider);
+    if (!client.queryLogs) {
+      return {
+        source: 'unavailable',
+        reason: `Live log fetching is not supported for ${target.provider}.`,
+        logs: [],
+        hasMore: false,
+        next: null,
+        filters,
       };
     }
 
@@ -1039,27 +1058,46 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
             : {}),
         },
       );
-      const logs = await client.getLogs({
+      const page = await client.queryLogs({
         token,
         targetId: target.providerProjectId,
-        ...filters,
+        ...query,
         ...this.providerOperationInput(target),
       });
-      // An empty array here is a legitimate live result (a quiet deployment
-      // with no recent log lines) — getLogs() throws instead of returning []
-      // for cases that aren't actually "live", like a missing Render owner
-      // ID, so reaching this point at all means the fetch succeeded.
-      return { source: 'live', logs };
+      // An empty page here is a legitimate live result (a quiet deployment
+      // with no recent log lines) — queryLogs() throws instead of returning
+      // one for cases that aren't actually "live", like a missing Render
+      // owner ID, so reaching this point at all means the fetch succeeded.
+      return {
+        source: 'live',
+        logs: page.logs,
+        hasMore: page.hasMore,
+        next: page.next,
+        filters,
+      };
     } catch (err) {
       this.logger.warn(
         `Failed to retrieve ${target.provider} logs: ${(err as Error).message}`,
       );
       return {
-        source: 'simulated',
+        source: 'unavailable',
         reason: (err as Error).message,
-        logs: this.getMockLogs(target),
+        logs: [],
+        hasMore: false,
+        next: null,
+        filters,
       };
     }
+  }
+
+  private liveProvidersEnabled(): boolean {
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    return config?.deploymentHistory?.liveProvidersEnabled ?? true;
+  }
+
+  private supportedLogFilters(provider: EnvProvider): LogFilterKey[] {
+    const capabilities = this.providerRegistry?.find(provider)?.capabilities;
+    return capabilities?.logFilters ? [...capabilities.logFilters] : [];
   }
 
   /**
@@ -1112,23 +1150,35 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     });
   }
 
-  private getMockLogs(
-    target: DeploymentTargetSummary,
-  ): DeploymentTargetLogEntry[] {
+  private getMockLogs(target: DeploymentTargetSummary): DeploymentLogLine[] {
     const providerLogs = this.providerPolicy(
       target.provider,
     )?.resolveMockLogs?.({
       providerProjectName: target.providerProjectName || null,
       now: new Date(),
     });
-    if (providerLogs) return [...providerLogs];
+    const entries = providerLogs
+      ? [...providerLogs]
+      : [
+          {
+            timestamp: new Date().toISOString(),
+            message: `Live logs are not available for ${target.provider}.`,
+            level: 'info',
+          },
+        ];
 
-    return [
-      {
-        timestamp: new Date().toISOString(),
-        message: `Live logs are not available for ${target.provider}.`,
-        level: 'info',
-      },
-    ];
+    // Mock fixtures use the old flat {timestamp, message, level} shape (and
+    // Render's own fixture even uses 'system' as a level, which predates the
+    // fixed vocabulary) — wrap them into the real response line shape rather
+    // than changing every resolveMockLogs implementation.
+    return entries.map((entry, index) => ({
+      id: `mock-${index}-${entry.timestamp}`,
+      timestamp: entry.timestamp,
+      message: entry.message,
+      level: normalizeLogLevel(entry.level),
+      type: null,
+      instance: null,
+      labels: {},
+    }));
   }
 }
