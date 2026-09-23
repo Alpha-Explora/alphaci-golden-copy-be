@@ -9,6 +9,14 @@ export type GithubTeamRoleSyncMode = 'off' | 'seed' | 'enforce';
 
 export interface AppConfig {
   frontendUrl: string;
+  /**
+   * TRUST_PROXY_HOPS — how many reverse proxies sit in front of Express. 1 is
+   * Render's edge alone. Set 2 while the FE's Vercel rewrite proxies the API,
+   * otherwise req.ip is Vercel's egress IP and every user shares one
+   * ThrottlerGuard bucket. Each extra hop trusts one more X-Forwarded-For
+   * entry, so never set it higher than the real chain.
+   */
+  trustProxyHops: number;
   auth: {
     /**
      * Enables the local-only development fixture session endpoint. This is
@@ -215,6 +223,12 @@ export interface AppConfig {
     maxAgeMs: number;
     secure: boolean;
     storeDriver: 'postgres' | 'memory';
+    // SESSION_COOKIE_SAMESITE. Unset keeps the split-domain default: 'none'
+    // when secure (FE and BE on different sites need a cross-site cookie),
+    // 'lax' otherwise. Set 'lax' once the browser only ever talks to one site —
+    // the FE rewrite proxy or shared subdomains — so the cookie is first-party
+    // and no longer rides along on cross-site requests.
+    sameSite: 'lax' | 'strict' | 'none';
     // Optional cookie Domain attribute. Leave UNSET for the current split-domain
     // setup (host-only cookie, today's behavior). When FE + BE move under one
     // parent domain (e.g. app.example.com + api.example.com), set this to

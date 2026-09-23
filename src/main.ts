@@ -33,16 +33,16 @@ export async function createHttpApplication(): Promise<NestExpressApplication> {
     bodyParser: false,
   });
 
+  const configService = app.get(ConfigService);
+  const appCfg = configService.getOrThrow<AppConfig>('app');
+
   // Required for Render (and any reverse-proxy deployment).
   // Render terminates TLS at the edge and sets X-Forwarded-Proto.
   // Without this, Express ignores the header, treats every request as plain
-  // HTTP, and the secure:true + sameSite:none cookie combination silently
-  // breaks all sessions in production.
-  // Value 1 = trust exactly one hop — prevents X-Forwarded-For spoofing.
-  app.set('trust proxy', 1);
-
-  const configService = app.get(ConfigService);
-  const appCfg = configService.getOrThrow<AppConfig>('app');
+  // HTTP, and the secure session cookie silently breaks in production.
+  // Trust exactly TRUST_PROXY_HOPS hops (default 1, Render's edge) — one more
+  // than the real chain would let clients spoof X-Forwarded-For.
+  app.set('trust proxy', appCfg.trustProxyHops);
 
   const enableSwagger = configService.get<string>('ENABLE_SWAGGER') === 'true';
 
@@ -95,10 +95,10 @@ export async function createHttpApplication(): Promise<NestExpressApplication> {
       cookie: {
         httpOnly: true,
         secure: appCfg.session.secure,
-        // 'none' is required when the FE and BE are on different origins
-        // (e.g. Vercel FE + Render BE). sameSite:'none' requires secure:true —
-        // the conditional prevents the invalid none+insecure combination in dev.
-        sameSite: appCfg.session.secure ? 'none' : 'lax',
+        // SESSION_COOKIE_SAMESITE; the default ('none' when secure) keeps the
+        // split Vercel FE + Render BE setup working. The config rejects
+        // none+insecure, which browsers would silently drop.
+        sameSite: appCfg.session.sameSite,
         maxAge: appCfg.session.maxAgeMs,
         // When SESSION_COOKIE_DOMAIN is set (FE + BE on one parent domain), the
         // cookie is shared first-party across subdomains — required for Safari/iOS
