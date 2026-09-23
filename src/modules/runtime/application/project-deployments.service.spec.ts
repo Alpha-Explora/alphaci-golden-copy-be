@@ -465,4 +465,106 @@ describe('ProjectDeploymentsService', () => {
       expect(provider.listDeployments).toHaveBeenCalled();
     });
   });
+  /*
+   * Environments exist before anything is deployed to them, and the panel that
+   * shows where a deployment lives has to say so. Derived from the targets
+   * rather than asked of the provider: a target that names a branch describes
+   * that branch, and a slot with a single target serves every hosted branch -
+   * which covers a service per branch and one project serving all of them
+   * without this file knowing which provider is which.
+   */
+  describe('configured environments', () => {
+    const target = (overrides: Record<string, unknown> = {}) => ({
+      id: 'target-render-uat',
+      slot: 'backend',
+      provider: 'render',
+      providerProjectId: 'srv-1',
+      providerProjectName: 'orders-api-uat',
+      branchName: 'uat',
+      providerMetadata: {},
+      ...overrides,
+    });
+
+    function withRegistry() {
+      return new ProjectDeploymentsService(
+        deploymentTargetsRepository as never,
+        provider as never,
+        configService as never,
+        undefined,
+        undefined,
+        undefined,
+        providerRegistry as never,
+        capabilityResolver as never,
+      );
+    }
+
+    it('names one environment per branch for a per-branch target', async () => {
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([
+        target(),
+        target({
+          id: 'target-render-main',
+          providerProjectName: 'orders-api-main',
+          branchName: 'main',
+        }),
+      ]);
+
+      const environments =
+        await withRegistry().listEnvironments(projectReference);
+
+      expect(
+        environments.map((environment) => [
+          environment.branch,
+          environment.targetId,
+          environment.environment,
+        ]),
+      ).toEqual([
+        ['uat', 'target-render-uat', 'uat'],
+        ['main', 'target-render-main', 'production'],
+      ]);
+    });
+
+    it('serves every hosted branch from a slot with one target', async () => {
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([
+        target({ id: 'target-vercel', slot: 'frontend' }),
+      ]);
+
+      const environments =
+        await withRegistry().listEnvironments(projectReference);
+
+      expect(environments.map((environment) => environment.branch)).toEqual([
+        'uat',
+        'main',
+      ]);
+      expect(
+        environments.every(
+          (environment) => environment.targetId === 'target-vercel',
+        ),
+      ).toBe(true);
+    });
+
+    // dev is local: it has no service, so it is not an environment.
+    it('never names the working branch', async () => {
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([
+        target(),
+      ]);
+
+      const environments =
+        await withRegistry().listEnvironments(projectReference);
+
+      expect(
+        environments.some((environment) => environment.branch === 'dev'),
+      ).toBe(false);
+    });
+
+    it('reports none when the capability is off', async () => {
+      capabilityResolver.deployment.mockReturnValue(new Set());
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([
+        target(),
+      ]);
+
+      await expect(
+        withRegistry().listEnvironments(projectReference),
+      ).resolves.toEqual([]);
+    });
+  });
 });

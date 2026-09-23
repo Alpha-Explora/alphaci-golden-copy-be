@@ -52,12 +52,16 @@ describe('appConfig factory', () => {
     expect(config.workflowUpdatePr.enabled).toBe(false);
     expect(config.projectTargetManagement.enabled).toBe(false);
     expect(config.ciRunTracking.enabled).toBe(false);
-    // liveGithubEnabled/liveProvidersEnabled default to true (opt-out via
-    // an explicit 'false'), unlike every other flag in this block which
-    // defaults to false (opt-in via an explicit 'true').
+    // These default to true (opt-out via an explicit 'false'). Deployment
+    // history and previews joined them: they answer "where is my deployment",
+    // and a flag defaulting to false shipped that answer to every deployment
+    // switched off - a project with live deployments read "Branch previews are
+    // not enabled", which looks like a product without the feature rather than
+    // one nobody turned on. The rest of this block stays opt-in.
     expect(config.ciRunTracking.liveGithubEnabled).toBe(true);
-    expect(config.deploymentHistory.enabled).toBe(false);
+    expect(config.deploymentHistory.enabled).toBe(true);
     expect(config.deploymentHistory.liveProvidersEnabled).toBe(true);
+    expect(config.previewDeployments.enabled).toBe(true);
     expect(config.driftDetection.enabled).toBe(false);
     expect(config.driftRepair.enabled).toBe(false);
     expect(config.driftRepair.liveRepairEnabled).toBe(false);

@@ -15,10 +15,12 @@ import {
 } from './ports/provider-client-registry.port';
 import { ProviderConnectionsRepository } from '../infrastructure/repositories/provider-connections.repository';
 import {
+  type DeploymentEnvironment,
   type DeploymentHistoryQuery,
   type DeploymentHistoryResponse,
   type DeploymentProjectReference,
 } from '../core/deployment-provisioning.contract';
+import { HOSTED_BRANCHES } from '#kernel/config/pipeline-branches';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
@@ -109,6 +111,71 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
       deployments: live.items,
       providerError,
     };
+  }
+
+  /**
+   * The environments this project is configured to have, deployed or not.
+   *
+   * A project provisioned an hour ago has a uat and a main environment with
+   * real addresses and nothing released to either. Answering only from history
+   * made that project look like it had no environments at all - the opposite
+   * of what provisioning had just done - so the one screen meant to show where
+   * a deployment lives was empty exactly when someone first goes looking.
+   *
+   * Which branches a slot answers on is derived rather than asked of the
+   * provider: a target that names a branch describes that branch, and a slot
+   * with a single target serves every hosted branch from it. That covers both
+   * shapes in use - a service per branch, and one project serving all of them -
+   * without this file knowing which provider is which, and
+   * check:provider-encapsulation would reject it if it did.
+   */
+  async listEnvironments(
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentEnvironment[]> {
+    if (!this.enabled()) {
+      return [];
+    }
+
+    const targets =
+      await this.deploymentTargetsRepository.listDeploymentTargets(
+        project.projectId,
+      );
+
+    const bySlot = new Map<string, DeploymentTargetSummary[]>();
+    for (const target of targets) {
+      bySlot.set(target.slot, [...(bySlot.get(target.slot) ?? []), target]);
+    }
+
+    const environments: DeploymentEnvironment[] = [];
+    for (const slotTargets of bySlot.values()) {
+      for (const branch of HOSTED_BRANCHES) {
+        const target =
+          slotTargets.find((candidate) => candidate.branchName === branch) ??
+          (slotTargets.length === 1 ? slotTargets[0] : undefined);
+        if (!target) {
+          continue;
+        }
+
+        const lane = branch === 'main' ? 'production' : 'preview';
+        environments.push({
+          targetId: target.id,
+          targetName: target.providerProjectName,
+          provider: target.provider,
+          branch,
+          environment: branch === 'main' ? 'production' : branch,
+          url:
+            this.providerRegistry
+              ?.find(target.provider)
+              ?.presentation?.publicUrl(
+                { ...this.presentationTarget(target), branchName: branch },
+                lane,
+              ) ?? null,
+          dashboardUrl: this.provider.dashboardUrl(target),
+        });
+      }
+    }
+
+    return environments;
   }
 
   /**
@@ -216,6 +283,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         branch: event.commitRef ?? target.branchName,
         commitSha: event.commitSha,
         commitMessage: event.commitMessage,
+        createdBy: event.createdBy,
         status: this.provider.normalizeStatus(event.status),
         createdAt: event.createdAt,
         readyAt: event.readyAt,

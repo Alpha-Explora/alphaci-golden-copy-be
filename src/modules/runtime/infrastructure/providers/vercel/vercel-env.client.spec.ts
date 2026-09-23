@@ -784,6 +784,7 @@ describe('VercelEnvClient', () => {
               inspectorUrl: 'https://vercel.com/tone/web-app/dpl_2',
               readyState: 'READY',
               source: 'git',
+              creator: { username: 'tone-vercel', githubLogin: 'tone' },
               createdAt: 1752313500000,
               ready: 1752313620000,
               meta: {
@@ -795,6 +796,7 @@ describe('VercelEnvClient', () => {
             {
               uid: 'dpl_1',
               state: 'ERROR',
+              creator: { username: 'tone-vercel' },
               createdAt: 1752313000000,
             },
           ],
@@ -814,6 +816,8 @@ describe('VercelEnvClient', () => {
         readyAt: new Date(1752313620000).toISOString(),
         commitSha: 'ea73844',
         commitMessage: 'feat: add logs endpoint',
+        // The GitHub login wins over the Vercel username, as on Vercel's page.
+        createdBy: 'tone',
         trigger: 'git',
         deploymentUrl: 'https://web-app-git-main-tone.vercel.app',
         environment: 'production',
@@ -828,6 +832,8 @@ describe('VercelEnvClient', () => {
         readyAt: null,
         commitSha: null,
         commitMessage: null,
+        // No GitHub account linked: the Vercel username stands in.
+        createdBy: 'tone-vercel',
         trigger: null,
         deploymentUrl: null,
         // A deployment with no `target` is a preview as far as Vercel's own

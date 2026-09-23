@@ -6,6 +6,7 @@ import {
 } from '#kernel/composition/capability-resolver.port.js';
 import {
   DEPLOYMENT_HISTORY_QUERY,
+  type DeploymentEnvironment,
   type DeploymentHistoryItem,
   type DeploymentHistoryQuery,
   type DeploymentProjectReference,
@@ -47,21 +48,75 @@ export class ProjectPreviewsService {
       };
     }
 
-    const history = await this.deploymentsService.listDeployments(project);
+    const [history, environments] = await Promise.all([
+      this.deploymentsService.listDeployments(project),
+      this.listEnvironments(project),
+    ]);
+
+    // A branch's stable address, where its environment has one. It is what
+    // the provider lists as the branch's domain and what stays reachable: on
+    // Vercel a deployment's own hostname sits behind deployment protection,
+    // while the production domain is public.
+    const stableUrls = new Map(
+      environments.map((environment) => [
+        `${environment.targetId}::${environment.branch}`,
+        environment.url,
+      ]),
+    );
 
     const newestPerBranch = this.newestPerBranch(history.deployments);
     const branches = await Promise.all(
-      newestPerBranch.map((deployment) => this.toBranchPreview(deployment)),
+      newestPerBranch.map((deployment) =>
+        this.toBranchPreview(
+          deployment,
+          stableUrls.get(`${deployment.targetId}::${deployment.branch}`) ??
+            null,
+        ),
+      ),
     );
+
+    /*
+     * Environments with nothing deployed to them yet.
+     *
+     * Without these, a project provisioned an hour ago shows an empty panel
+     * and the words "no branch has been deployed" - true, and useless. Its uat
+     * and main environments already exist, with addresses provisioning chose,
+     * and the reader wants to see them before the first release rather than
+     * after. Shown alongside the deployed ones, marked for what they are.
+     *
+     * Deployments win where both exist: a branch that HAS a deployment is
+     * described by it, and only the leftovers are filled in.
+     */
+    const deployed = new Set(
+      branches.map((preview) => `${preview.targetId}::${preview.branch}`),
+    );
+    const pending = environments
+      .filter(
+        (environment) =>
+          !deployed.has(`${environment.targetId}::${environment.branch}`),
+      )
+      .map((environment) => toPendingPreview(environment));
 
     return {
       enabled: true,
       liveProvidersEnabled: history.liveProvidersEnabled,
       // Production first, then the most recently deployed branch, so the
-      // branch someone just pushed surfaces near the top.
-      branches: branches.sort(comparePreviews),
+      // branch someone just pushed surfaces near the top. Environments with no
+      // deployment sort last within their tier - they have no date to rank by
+      // and nothing has happened to them.
+      branches: [...branches, ...pending].sort(comparePreviews),
       providerError: history.providerError,
     };
+  }
+
+  /**
+   * Optional on the port, so an implementation that cannot enumerate
+   * environments simply contributes none and the panel falls back to history.
+   */
+  private async listEnvironments(
+    project: DeploymentProjectReference,
+  ): Promise<DeploymentEnvironment[]> {
+    return (await this.deploymentsService.listEnvironments?.(project)) ?? [];
   }
 
   /**
@@ -93,13 +148,15 @@ export class ProjectPreviewsService {
 
   private async toBranchPreview(
     deployment: DeploymentHistoryItem,
+    stableUrl: string | null,
   ): Promise<ProjectBranchPreview> {
+    const previewUrl = stableUrl ?? deployment.deploymentUrl;
     // Only probe something worth framing. A build that failed or is still
     // running has no page to show yet, and probing it would spend a request
     // to learn nothing.
     const verdict =
       deployment.status === 'ready'
-        ? await this.embeddabilityProbe.check(deployment.deploymentUrl)
+        ? await this.embeddabilityProbe.check(previewUrl)
         : { embeddable: null, reason: null };
 
     return {
@@ -113,7 +170,9 @@ export class ProjectPreviewsService {
       commitSha: deployment.commitSha,
       commitMessage: deployment.commitMessage,
       pullRequestNumber: deployment.pullRequestNumber,
-      previewUrl: deployment.deploymentUrl,
+      createdBy: deployment.createdBy,
+      previewUrl,
+      deploymentUrl: deployment.deploymentUrl,
       inspectorUrl: deployment.inspectorUrl,
       createdAt: deployment.createdAt,
       readyAt: deployment.readyAt,
@@ -138,12 +197,52 @@ function isNewer(
   return Date.parse(candidate.createdAt) > Date.parse(incumbent.createdAt);
 }
 
+/** An environment that exists but has never been released to. */
+function toPendingPreview(
+  environment: DeploymentEnvironment,
+): ProjectBranchPreview {
+  return {
+    branch: environment.branch,
+    isProduction: environment.environment === 'production',
+    deploymentId: null,
+    targetId: environment.targetId,
+    targetName: environment.targetName,
+    provider: environment.provider,
+    status: 'not_deployed',
+    commitSha: null,
+    commitMessage: null,
+    pullRequestNumber: null,
+    createdBy: null,
+    deploymentUrl: null,
+    // The address it will answer on. Shown, not linked: until something is
+    // released there it resolves to nothing, and a link that 404s reads as a
+    // broken deployment rather than an empty one.
+    previewUrl: environment.url,
+    inspectorUrl:
+      environment.dashboardUrl === '' ? null : environment.dashboardUrl,
+    createdAt: null,
+    readyAt: null,
+    // Never framed: there is nothing to frame, and probing an address with no
+    // deployment behind it would spend a request to learn that.
+    embeddable: false,
+    embedBlockedReason: null,
+  };
+}
+
 function comparePreviews(
   a: ProjectBranchPreview,
   b: ProjectBranchPreview,
 ): number {
   if (a.isProduction !== b.isProduction) {
     return a.isProduction ? -1 : 1;
+  }
+  // An environment with no deployment has no date to rank by, so it sorts
+  // after the ones that do rather than to an arbitrary place among them.
+  if ((a.createdAt === null) !== (b.createdAt === null)) {
+    return a.createdAt === null ? 1 : -1;
+  }
+  if (a.createdAt === null || b.createdAt === null) {
+    return 0;
   }
   return Date.parse(b.createdAt) - Date.parse(a.createdAt);
 }

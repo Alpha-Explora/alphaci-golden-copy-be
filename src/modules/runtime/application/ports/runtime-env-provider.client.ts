@@ -116,6 +116,11 @@ export interface ProviderDeployEvent {
   readyAt: string | null;
   commitSha: string | null;
   commitMessage: string | null;
+  /**
+   * Who started the deployment, by the login the provider shows for them.
+   * Null where the provider does not say.
+   */
+  createdBy: string | null;
   trigger: string | null;
   // The URL this one deployment answers on, for providers that give every
   // deployment its own hostname. Render reuses a single stable service URL

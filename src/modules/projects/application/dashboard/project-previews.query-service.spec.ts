@@ -22,6 +22,7 @@ function deployment(
     branch: 'feat/checkout',
     commitSha: 'ea73844',
     commitMessage: 'feat: checkout',
+    createdBy: 'tone',
     status: 'ready',
     createdAt: '2026-07-12T11:45:00.000Z',
     readyAt: '2026-07-12T11:48:00.000Z',
@@ -35,7 +36,10 @@ function deployment(
 }
 
 describe('ProjectPreviewsService', () => {
-  const deploymentsService = { listDeployments: jest.fn() };
+  const deploymentsService = {
+    listDeployments: jest.fn(),
+    listEnvironments: jest.fn(),
+  };
   const embeddabilityProbe = { check: jest.fn() };
   const capabilityResolver = { deployment: jest.fn() };
 
@@ -54,6 +58,17 @@ describe('ProjectPreviewsService', () => {
       liveProvidersEnabled: true,
       deployments: [],
     });
+    deploymentsService.listEnvironments.mockResolvedValue([]);
+  });
+
+  const environment = (branch: 'uat' | 'main', targetId = 'target-render') => ({
+    targetId,
+    targetName: `orders-api-${branch}`,
+    provider: 'render' as const,
+    branch,
+    environment: branch === 'main' ? 'production' : branch,
+    url: `https://orders-api-${branch}.onrender.com`,
+    dashboardUrl: 'https://dashboard.render.com/web/srv-1',
   });
 
   function createService() {
@@ -102,6 +117,44 @@ describe('ProjectPreviewsService', () => {
         },
       ],
     });
+  });
+
+  it('frames the environment’s stable address and keeps the deployment’s own beside it', async () => {
+    // Vercel's per-deployment hostname sits behind deployment protection; the
+    // production domain does not, and it is the one the provider lists.
+    deploymentsService.listDeployments.mockResolvedValue({
+      enabled: true,
+      mode: 'live',
+      liveProvidersEnabled: true,
+      deployments: [
+        deployment({
+          branch: 'main',
+          environment: 'production',
+          deploymentUrl: 'https://web-app-abc123-tone.vercel.app',
+        }),
+      ],
+    });
+    deploymentsService.listEnvironments.mockResolvedValue([
+      {
+        ...environment('main', 'target-vercel'),
+        provider: 'vercel' as const,
+        url: 'https://web-app.vercel.app',
+      },
+    ]);
+
+    const response = await createService().listPreviews(projectReference);
+
+    expect(response.branches).toEqual([
+      expect.objectContaining({
+        branch: 'main',
+        previewUrl: 'https://web-app.vercel.app',
+        deploymentUrl: 'https://web-app-abc123-tone.vercel.app',
+        createdBy: 'tone',
+      }),
+    ]);
+    expect(embeddabilityProbe.check).toHaveBeenCalledWith(
+      'https://web-app.vercel.app',
+    );
   });
 
   it('keeps only the newest deployment per branch', async () => {
@@ -250,6 +303,77 @@ describe('ProjectPreviewsService', () => {
       embeddable: false,
       embedBlockedReason: 'The site sends X-Frame-Options: DENY.',
     });
+  });
+
+  /*
+   * A project provisioned an hour ago has environments and no deployments.
+   * Reporting only history showed it as having neither, which is the opposite
+   * of what provisioning had just done - and the one screen meant to show
+   * where a deployment lives was empty exactly when someone first looks.
+   */
+  it('lists an environment that has never been deployed to', async () => {
+    deploymentsService.listEnvironments.mockResolvedValue([
+      environment('uat'),
+      environment('main', 'target-render-main'),
+    ]);
+
+    const result = await createService().listPreviews(projectReference);
+
+    expect(result.branches).toHaveLength(2);
+    expect(result.branches.map((branch) => branch.branch)).toEqual([
+      'main',
+      'uat',
+    ]);
+    expect(result.branches[0]).toMatchObject({
+      branch: 'main',
+      isProduction: true,
+      status: 'not_deployed',
+      deploymentId: null,
+      createdAt: null,
+      previewUrl: 'https://orders-api-main.onrender.com',
+      embeddable: false,
+    });
+    // Nothing to frame, so nothing is probed.
+    expect(embeddabilityProbe.check).not.toHaveBeenCalled();
+  });
+
+  it('lets a real deployment describe a branch rather than the placeholder', async () => {
+    deploymentsService.listDeployments.mockResolvedValue({
+      enabled: true,
+      mode: 'live',
+      liveProvidersEnabled: true,
+      deployments: [
+        deployment({ targetId: 'target-render', branch: 'uat', id: 'dpl_uat' }),
+      ],
+    });
+    deploymentsService.listEnvironments.mockResolvedValue([
+      environment('uat'),
+      environment('main', 'target-render-main'),
+    ]);
+
+    const result = await createService().listPreviews(projectReference);
+
+    const uat = result.branches.find((branch) => branch.branch === 'uat');
+    expect(uat).toMatchObject({ deploymentId: 'dpl_uat', status: 'ready' });
+    expect(
+      result.branches.filter((branch) => branch.branch === 'uat'),
+    ).toHaveLength(1);
+  });
+
+  /*
+   * Optional on the port, so an implementation that cannot enumerate
+   * environments contributes none rather than failing the panel.
+   */
+  it('falls back to history alone when the port cannot list environments', async () => {
+    const service = new ProjectPreviewsService(
+      { listDeployments: deploymentsService.listDeployments } as never,
+      embeddabilityProbe as never,
+      capabilityResolver as never,
+    );
+
+    await expect(service.listPreviews(projectReference)).resolves.toMatchObject(
+      { branches: [] },
+    );
   });
 
   it('reports liveProvidersEnabled from the underlying history', async () => {
