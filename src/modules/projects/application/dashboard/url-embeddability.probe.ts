@@ -27,6 +27,23 @@ export interface EmbeddabilityVerdict {
  */
 const PROBEABLE_HOST_SUFFIXES = ['.vercel.app', '.onrender.com'] as const;
 
+/**
+ * Hosts a deployment redirects to when it is behind deployment protection.
+ *
+ * Vercel Authentication answers an unauthenticated visitor with a redirect to
+ * vercel.com/sso-api. That redirect also carries X-Frame-Options: DENY, so
+ * reading its headers as the site's own blamed the site for a sign-in wall
+ * the provider put in front of it.
+ */
+const SIGN_IN_REDIRECT_HOSTS = ['vercel.com'] as const;
+
+/**
+ * Same-host hops followed before giving up. A production site commonly
+ * redirects `/` to `/login` or a locale path, and the page that finally
+ * answers is the one that decides whether it can be framed.
+ */
+const MAX_SAME_HOST_REDIRECTS = 3;
+
 const PROBE_TIMEOUT_MS = 4_000;
 const CACHE_TTL_MS = 5 * 60 * 1_000;
 /** Bounded so a project churning through preview URLs cannot grow this without limit. */
@@ -87,19 +104,28 @@ export class UrlEmbeddabilityProbe {
 
   private async probe(url: string): Promise<EmbeddabilityVerdict> {
     try {
-      const response = await fetch(url, {
-        method: 'HEAD',
-        // A redirect could land somewhere off the allowlist, which would
-        // defeat the check above, so a redirect is a non-answer rather than
-        // something to follow.
-        redirect: 'manual',
-        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-      });
+      let current = url;
+      for (let hop = 0; hop <= MAX_SAME_HOST_REDIRECTS; hop += 1) {
+        const response = await fetch(current, {
+          method: 'HEAD',
+          // Redirects are read here rather than followed by fetch: an
+          // automatic follow could land off the allowlist, which would defeat
+          // the check above. Only a same-host hop is taken.
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        });
 
-      return this.verdictFromHeaders(
-        response.headers.get('x-frame-options'),
-        response.headers.get('content-security-policy'),
-      );
+        const next = this.sameHostRedirect(current, response);
+        if (!next) {
+          return this.verdictFromResponse(current, response);
+        }
+        current = next.href;
+      }
+
+      return {
+        embeddable: null,
+        reason: 'The deployment redirects too many times to check.',
+      };
     } catch {
       // Timeouts and DNS failures are expected while a preview is still
       // building, so this is debug-level rather than a warning.
@@ -109,6 +135,60 @@ export class UrlEmbeddabilityProbe {
         reason: 'Could not reach the deployment to check embedding support.',
       };
     }
+  }
+
+  /** The next URL when this response is a redirect that stays on the host. */
+  private sameHostRedirect(current: string, response: Response): URL | null {
+    const target = this.redirectTarget(current, response);
+    return target && target.host === new URL(current).host ? target : null;
+  }
+
+  private redirectTarget(current: string, response: Response): URL | null {
+    const location = response.headers.get('location');
+    if (response.status < 300 || response.status >= 400 || !location) {
+      return null;
+    }
+    try {
+      return new URL(location, current);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The verdict for the response that finally answered.
+   *
+   * A sign-in wall is checked before the framing headers: it is the reason
+   * the page cannot be shown, and its own headers describe the wall rather
+   * than the site behind it.
+   */
+  private verdictFromResponse(
+    current: string,
+    response: Response,
+  ): EmbeddabilityVerdict {
+    const target = this.redirectTarget(current, response);
+    const signInRedirect =
+      target !== null &&
+      SIGN_IN_REDIRECT_HOSTS.some((host) => target.hostname === host);
+    if (signInRedirect || response.status === 401 || response.status === 403) {
+      return {
+        embeddable: false,
+        reason:
+          'This deployment is behind deployment protection, so it cannot be shown inline. Open it in a new tab while signed in to the provider.',
+      };
+    }
+    if (target) {
+      return {
+        embeddable: null,
+        reason:
+          'The deployment redirects to another site, so embedding support was not checked.',
+      };
+    }
+
+    return this.verdictFromHeaders(
+      response.headers.get('x-frame-options'),
+      response.headers.get('content-security-policy'),
+    );
   }
 
   private verdictFromHeaders(

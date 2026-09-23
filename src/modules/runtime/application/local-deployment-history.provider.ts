@@ -47,6 +47,7 @@ export class LocalDeploymentHistoryProvider {
         branch: target.branchName,
         commitSha: null,
         commitMessage: null,
+        createdBy: null,
         status: 'ready' as const,
         createdAt: now,
         readyAt: now,

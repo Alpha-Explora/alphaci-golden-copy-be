@@ -190,6 +190,8 @@ export interface DeploymentHistoryItem {
   branch: string | null;
   commitSha: string | null;
   commitMessage: string | null;
+  /** Who started the deployment, when the provider says. */
+  createdBy: string | null;
   status: DeploymentHistoryStatus;
   createdAt: string;
   readyAt: string | null;

@@ -781,6 +781,7 @@ describe('RenderEnvClient', () => {
           readyAt: '2026-07-12T11:48:00.000Z',
           commitSha: 'ea73844',
           commitMessage: 'feat: add logs endpoint',
+          createdBy: null,
           trigger: 'auto_deploy',
           // Render serves every deploy from one stable service URL and
           // reports no lane, PR, or per-deploy console link, so callers fall
@@ -798,6 +799,7 @@ describe('RenderEnvClient', () => {
           readyAt: null,
           commitSha: null,
           commitMessage: null,
+          createdBy: null,
           trigger: null,
           deploymentUrl: null,
           environment: null,

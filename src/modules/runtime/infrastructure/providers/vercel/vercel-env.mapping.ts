@@ -10,6 +10,10 @@ export type VercelDeploymentRow = {
   source?: string;
   createdAt?: number;
   ready?: number;
+  creator?: {
+    username?: string;
+    githubLogin?: string;
+  };
   meta?: {
     githubCommitSha?: string;
     githubCommitMessage?: string;
@@ -63,6 +67,10 @@ export function mapVercelDeployEvent(
     readyAt: deployment.ready ? new Date(deployment.ready).toISOString() : null,
     commitSha: deployment.meta?.githubCommitSha ?? null,
     commitMessage: deployment.meta?.githubCommitMessage ?? null,
+    // The GitHub login first, as Vercel's own deployment page shows it; the
+    // Vercel username covers a creator with no GitHub account linked.
+    createdBy:
+      deployment.creator?.githubLogin ?? deployment.creator?.username ?? null,
     trigger: deployment.source ?? null,
     deploymentUrl: normalizeDeploymentUrl(deployment.url),
     // Anything that is not the production lane is a preview as far as

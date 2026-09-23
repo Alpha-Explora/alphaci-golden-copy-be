@@ -283,6 +283,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         branch: event.commitRef ?? target.branchName,
         commitSha: event.commitSha,
         commitMessage: event.commitMessage,
+        createdBy: event.createdBy,
         status: this.provider.normalizeStatus(event.status),
         createdAt: event.createdAt,
         readyAt: event.readyAt,

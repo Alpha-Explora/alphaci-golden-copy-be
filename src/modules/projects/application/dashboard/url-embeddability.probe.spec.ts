@@ -1,11 +1,16 @@
 import { UrlEmbeddabilityProbe } from './url-embeddability.probe';
 
-function headResponse(headers: Record<string, string>) {
+function headResponse(headers: Record<string, string>, status = 200) {
   return {
+    status,
     headers: {
       get: (name: string) => headers[name.toLowerCase()] ?? null,
     },
   };
+}
+
+function redirectTo(location: string, headers: Record<string, string> = {}) {
+  return headResponse({ ...headers, location }, 302);
 }
 
 describe('UrlEmbeddabilityProbe', () => {
@@ -43,6 +48,87 @@ describe('UrlEmbeddabilityProbe', () => {
       url,
       expect.objectContaining({ method: 'HEAD', redirect: 'manual' }),
     );
+  });
+
+  describe('redirects', () => {
+    it('reports a deployment-protection sign-in wall, not the wall’s own headers', async () => {
+      // What Vercel Authentication actually answers with: a redirect to its
+      // SSO endpoint that itself carries X-Frame-Options: DENY.
+      global.fetch = jest.fn().mockResolvedValueOnce(
+        redirectTo('https://vercel.com/sso-api?url=x', {
+          'x-frame-options': 'DENY',
+        }),
+      );
+
+      const verdict = await new UrlEmbeddabilityProbe().check(url);
+
+      expect(verdict.embeddable).toBe(false);
+      expect(verdict.reason).toContain('deployment protection');
+      expect(verdict.reason).not.toContain('X-Frame-Options');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([401, 403])(
+      'reports a %s answer as a sign-in wall',
+      async (status) => {
+        global.fetch = jest
+          .fn()
+          .mockResolvedValueOnce(headResponse({}, status));
+
+        const verdict = await new UrlEmbeddabilityProbe().check(url);
+
+        expect(verdict.embeddable).toBe(false);
+        expect(verdict.reason).toContain('deployment protection');
+      },
+    );
+
+    it('follows a same-host redirect and judges the page that answers', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(redirectTo('/login'))
+        .mockResolvedValueOnce(headResponse({}));
+
+      await expect(new UrlEmbeddabilityProbe().check(url)).resolves.toEqual({
+        embeddable: true,
+        reason: null,
+      });
+      expect(fetch).toHaveBeenLastCalledWith(
+        `${url}/login`,
+        expect.objectContaining({ method: 'HEAD', redirect: 'manual' }),
+      );
+    });
+
+    it('reports framing headers on the page a same-host redirect lands on', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(redirectTo('/login'))
+        .mockResolvedValueOnce(headResponse({ 'x-frame-options': 'DENY' }));
+
+      const verdict = await new UrlEmbeddabilityProbe().check(url);
+
+      expect(verdict.embeddable).toBe(false);
+      expect(verdict.reason).toContain('X-Frame-Options: DENY');
+    });
+
+    it('never follows a redirect to another host', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(redirectTo('https://example.com/landing'));
+
+      const verdict = await new UrlEmbeddabilityProbe().check(url);
+
+      expect(verdict.embeddable).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up after a bounded number of same-host hops', async () => {
+      global.fetch = jest.fn().mockResolvedValue(redirectTo('/again'));
+
+      const verdict = await new UrlEmbeddabilityProbe().check(url);
+
+      expect(verdict.embeddable).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(4);
+    });
   });
 
   it.each([

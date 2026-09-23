@@ -22,6 +22,7 @@ function deployment(
     branch: 'feat/checkout',
     commitSha: 'ea73844',
     commitMessage: 'feat: checkout',
+    createdBy: 'tone',
     status: 'ready',
     createdAt: '2026-07-12T11:45:00.000Z',
     readyAt: '2026-07-12T11:48:00.000Z',
@@ -116,6 +117,44 @@ describe('ProjectPreviewsService', () => {
         },
       ],
     });
+  });
+
+  it('frames the environment’s stable address and keeps the deployment’s own beside it', async () => {
+    // Vercel's per-deployment hostname sits behind deployment protection; the
+    // production domain does not, and it is the one the provider lists.
+    deploymentsService.listDeployments.mockResolvedValue({
+      enabled: true,
+      mode: 'live',
+      liveProvidersEnabled: true,
+      deployments: [
+        deployment({
+          branch: 'main',
+          environment: 'production',
+          deploymentUrl: 'https://web-app-abc123-tone.vercel.app',
+        }),
+      ],
+    });
+    deploymentsService.listEnvironments.mockResolvedValue([
+      {
+        ...environment('main', 'target-vercel'),
+        provider: 'vercel' as const,
+        url: 'https://web-app.vercel.app',
+      },
+    ]);
+
+    const response = await createService().listPreviews(projectReference);
+
+    expect(response.branches).toEqual([
+      expect.objectContaining({
+        branch: 'main',
+        previewUrl: 'https://web-app.vercel.app',
+        deploymentUrl: 'https://web-app-abc123-tone.vercel.app',
+        createdBy: 'tone',
+      }),
+    ]);
+    expect(embeddabilityProbe.check).toHaveBeenCalledWith(
+      'https://web-app.vercel.app',
+    );
   });
 
   it('keeps only the newest deployment per branch', async () => {

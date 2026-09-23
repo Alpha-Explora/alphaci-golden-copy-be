@@ -37,8 +37,20 @@ export interface ProjectBranchPreview {
   commitMessage: string | null;
   /** Set when the branch's newest deployment was built for a pull request. */
   pullRequestNumber: number | null;
-  /** The URL to open, and to frame when `embeddable` is true. */
+  /** Who started the newest deployment, when the provider says. */
+  createdBy: string | null;
+  /**
+   * The URL to open, and to frame when `embeddable` is true: the
+   * environment's stable address where it has one, which is what the provider
+   * lists as the branch's domain and keeps pointing at its newest release.
+   * Falls back to the deployment's own address.
+   */
   previewUrl: string | null;
+  /**
+   * This one deployment's own address. On Vercel it is unique per deployment
+   * and sits behind deployment protection, so it is linked, never framed.
+   */
+  deploymentUrl: string | null;
   inspectorUrl: string | null;
   /** Null for an environment with no deployment to date. */
   createdAt: string | null;

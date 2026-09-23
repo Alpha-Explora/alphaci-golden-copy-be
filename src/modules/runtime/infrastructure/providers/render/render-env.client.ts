@@ -299,6 +299,8 @@ export class RenderEnvClient implements DeploymentProvider {
         readyAt: deploy.finishedAt ?? null,
         commitSha: deploy.commit?.id ?? null,
         commitMessage: deploy.commit?.message ?? null,
+        // Render's deploy payload names the trigger, not a person.
+        createdBy: null,
         trigger: deploy.trigger ?? null,
         // Render serves every deploy of a service from one stable URL, and
         // its deploy payload carries no lane, PR, or per-deploy console

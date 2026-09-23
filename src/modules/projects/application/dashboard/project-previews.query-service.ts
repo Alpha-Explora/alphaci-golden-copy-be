@@ -48,11 +48,31 @@ export class ProjectPreviewsService {
       };
     }
 
-    const history = await this.deploymentsService.listDeployments(project);
+    const [history, environments] = await Promise.all([
+      this.deploymentsService.listDeployments(project),
+      this.listEnvironments(project),
+    ]);
+
+    // A branch's stable address, where its environment has one. It is what
+    // the provider lists as the branch's domain and what stays reachable: on
+    // Vercel a deployment's own hostname sits behind deployment protection,
+    // while the production domain is public.
+    const stableUrls = new Map(
+      environments.map((environment) => [
+        `${environment.targetId}::${environment.branch}`,
+        environment.url,
+      ]),
+    );
 
     const newestPerBranch = this.newestPerBranch(history.deployments);
     const branches = await Promise.all(
-      newestPerBranch.map((deployment) => this.toBranchPreview(deployment)),
+      newestPerBranch.map((deployment) =>
+        this.toBranchPreview(
+          deployment,
+          stableUrls.get(`${deployment.targetId}::${deployment.branch}`) ??
+            null,
+        ),
+      ),
     );
 
     /*
@@ -70,7 +90,7 @@ export class ProjectPreviewsService {
     const deployed = new Set(
       branches.map((preview) => `${preview.targetId}::${preview.branch}`),
     );
-    const pending = (await this.listEnvironments(project))
+    const pending = environments
       .filter(
         (environment) =>
           !deployed.has(`${environment.targetId}::${environment.branch}`),
@@ -128,13 +148,15 @@ export class ProjectPreviewsService {
 
   private async toBranchPreview(
     deployment: DeploymentHistoryItem,
+    stableUrl: string | null,
   ): Promise<ProjectBranchPreview> {
+    const previewUrl = stableUrl ?? deployment.deploymentUrl;
     // Only probe something worth framing. A build that failed or is still
     // running has no page to show yet, and probing it would spend a request
     // to learn nothing.
     const verdict =
       deployment.status === 'ready'
-        ? await this.embeddabilityProbe.check(deployment.deploymentUrl)
+        ? await this.embeddabilityProbe.check(previewUrl)
         : { embeddable: null, reason: null };
 
     return {
@@ -148,7 +170,9 @@ export class ProjectPreviewsService {
       commitSha: deployment.commitSha,
       commitMessage: deployment.commitMessage,
       pullRequestNumber: deployment.pullRequestNumber,
-      previewUrl: deployment.deploymentUrl,
+      createdBy: deployment.createdBy,
+      previewUrl,
+      deploymentUrl: deployment.deploymentUrl,
       inspectorUrl: deployment.inspectorUrl,
       createdAt: deployment.createdAt,
       readyAt: deployment.readyAt,
@@ -188,6 +212,8 @@ function toPendingPreview(
     commitSha: null,
     commitMessage: null,
     pullRequestNumber: null,
+    createdBy: null,
+    deploymentUrl: null,
     // The address it will answer on. Shown, not linked: until something is
     // released there it resolves to nothing, and a link that 404s reads as a
     // broken deployment rather than an empty one.
