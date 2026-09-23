@@ -239,6 +239,64 @@ describe('appConfig factory', () => {
     expect(appConfig().github.appSlug).toBe('');
   });
 
+  describe('session cookie SameSite (SESSION_COOKIE_SAMESITE)', () => {
+    beforeEach(() => {
+      delete process.env['SESSION_COOKIE_SAMESITE'];
+      delete process.env['SESSION_SECURE'];
+    });
+
+    it.each([
+      ['true', 'none'],
+      ['false', 'lax'],
+    ])(
+      'defaults by SESSION_SECURE=%s to %s (split-domain behaviour)',
+      (secure, expected) => {
+        process.env['SESSION_SECURE'] = secure;
+        expect(appConfig().session.sameSite).toBe(expected);
+      },
+    );
+
+    it('honours an explicit value, case-insensitively', () => {
+      process.env['SESSION_SECURE'] = 'true';
+      process.env['SESSION_COOKIE_SAMESITE'] = ' Lax ';
+      expect(appConfig().session.sameSite).toBe('lax');
+    });
+
+    it('rejects an unknown value', () => {
+      process.env['SESSION_COOKIE_SAMESITE'] = 'loose';
+      expect(() => appConfig()).toThrow(
+        /SESSION_COOKIE_SAMESITE must be one of/,
+      );
+    });
+
+    it('rejects none without a secure cookie, which browsers drop', () => {
+      process.env['SESSION_COOKIE_SAMESITE'] = 'none';
+      expect(() => appConfig()).toThrow(/requires SESSION_SECURE=true/);
+    });
+  });
+
+  describe('TRUST_PROXY_HOPS', () => {
+    beforeEach(() => {
+      delete process.env['TRUST_PROXY_HOPS'];
+    });
+
+    it("defaults to 1 (Render's edge only)", () => {
+      expect(appConfig().trustProxyHops).toBe(1);
+    });
+
+    it('reads 2 for the Vercel rewrite bridge', () => {
+      process.env['TRUST_PROXY_HOPS'] = '2';
+      expect(appConfig().trustProxyHops).toBe(2);
+    });
+
+    it.each(['0', '-1', '1.5', 'two'])('rejects %s', (value) => {
+      process.env['TRUST_PROXY_HOPS'] = value;
+      expect(() => appConfig()).toThrow(
+        /TRUST_PROXY_HOPS must be a positive integer/,
+      );
+    });
+  });
+
   it('uses storeDriver memory when SESSION_STORE_DRIVER is not postgres', () => {
     process.env['SESSION_STORE_DRIVER'] = 'redis';
 

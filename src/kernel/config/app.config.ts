@@ -144,17 +144,59 @@ function sessionSecret(env: NodeJS.ProcessEnv): string {
   return raw.trim();
 }
 
+const SAME_SITE_VALUES = ['lax', 'strict', 'none'] as const;
+
+function sessionSameSite(
+  env: NodeJS.ProcessEnv,
+  secure: boolean,
+): AppConfig['session']['sameSite'] {
+  const raw = env['SESSION_COOKIE_SAMESITE']?.trim().toLowerCase();
+  if (!raw) {
+    return secure ? 'none' : 'lax';
+  }
+  const sameSite = SAME_SITE_VALUES.find((value) => value === raw);
+  if (!sameSite) {
+    throw new Error(
+      `[config] SESSION_COOKIE_SAMESITE must be one of ${SAME_SITE_VALUES.join(', ')} (got "${raw}").`,
+    );
+  }
+  // Browsers silently drop a SameSite=None cookie that is not Secure, which
+  // would surface as "Sign in did not complete" rather than a config error.
+  if (sameSite === 'none' && !secure) {
+    throw new Error(
+      '[config] SESSION_COOKIE_SAMESITE=none requires SESSION_SECURE=true.',
+    );
+  }
+  return sameSite;
+}
+
 function sessionConfig(env: NodeJS.ProcessEnv): AppConfig['session'] {
   const cookieDomain = env['SESSION_COOKIE_DOMAIN']?.trim();
+  const secure = env['SESSION_SECURE'] === 'true';
   return {
     secret: sessionSecret(env),
     name: env['SESSION_NAME'] ?? 'cicd_workflow_sid',
     maxAgeMs: Number(env['SESSION_MAX_AGE_MS'] ?? 604_800_000),
-    secure: env['SESSION_SECURE'] === 'true',
+    secure,
+    sameSite: sessionSameSite(env, secure),
     storeDriver:
       env['SESSION_STORE_DRIVER'] === 'postgres' ? 'postgres' : 'memory',
     ...(cookieDomain ? { cookieDomain } : {}),
   };
+}
+
+function trustProxyHops(env: NodeJS.ProcessEnv): number {
+  const raw = env['TRUST_PROXY_HOPS']?.trim();
+  if (!raw) {
+    return 1;
+  }
+  const hops = Number(raw);
+  if (!Number.isInteger(hops) || hops < 1) {
+    throw new Error(
+      `[config] TRUST_PROXY_HOPS must be a positive integer (got "${raw}").`,
+    );
+  }
+  return hops;
 }
 
 function hierarchyConfig(env: NodeJS.ProcessEnv): AppConfig['hierarchy'] {
@@ -179,6 +221,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
 
   return {
     frontendUrl: env['FRONTEND_URL'] ?? 'http://localhost:3000',
+    trustProxyHops: trustProxyHops(env),
     auth: authConfig(env),
     composition: parseCompositionConfig(env),
     github: githubConfig(env),

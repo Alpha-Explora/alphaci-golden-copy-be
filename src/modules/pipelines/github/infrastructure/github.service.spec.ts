@@ -29,6 +29,7 @@ const testPrivateKey = privateKey.export({
 
 const appConfig: AppConfig = {
   frontendUrl: 'http://localhost:3000',
+  trustProxyHops: 1,
   auth: {
     devQuickLoginEnabled: false,
   },
@@ -107,6 +108,7 @@ const appConfig: AppConfig = {
     name: 'sid',
     maxAgeMs: 60_000,
     secure: false,
+    sameSite: 'lax',
     storeDriver: 'memory',
   },
   archivedAccountRetentionDays: 30,
