@@ -64,6 +64,7 @@ export class ProjectPreviewsService {
       ]),
     );
 
+    const isProduction = productionBranchRule(environments);
     const newestPerBranch = this.newestPerBranch(history.deployments);
     const branches = await Promise.all(
       newestPerBranch.map((deployment) =>
@@ -71,6 +72,7 @@ export class ProjectPreviewsService {
           deployment,
           stableUrls.get(`${deployment.targetId}::${deployment.branch}`) ??
             null,
+          isProduction(deployment),
         ),
       ),
     );
@@ -149,6 +151,7 @@ export class ProjectPreviewsService {
   private async toBranchPreview(
     deployment: DeploymentHistoryItem,
     stableUrl: string | null,
+    isProduction: boolean,
   ): Promise<ProjectBranchPreview> {
     const previewUrl = stableUrl ?? deployment.deploymentUrl;
     // Only probe something worth framing. A build that failed or is still
@@ -161,7 +164,7 @@ export class ProjectPreviewsService {
 
     return {
       branch: deployment.branch as string,
-      isProduction: deployment.environment === 'production',
+      isProduction,
       deploymentId: deployment.id,
       targetId: deployment.targetId,
       targetName: deployment.targetName,
@@ -188,6 +191,37 @@ export class ProjectPreviewsService {
         .has('runtime.preview-deployments') ?? false
     );
   }
+}
+
+/**
+ * Whether a deployment is its target's production environment.
+ *
+ * The provider's own label is not enough: Vercel reports the deploy target,
+ * and the platform deploys every branch through the production target, so a
+ * failed build of a feature branch came back as production and the Overview
+ * drew it as a second Production Deployment card. A target whose production
+ * environment is known answers by branch - only a deployment of that
+ * environment's branch is production. A target with no environment listed
+ * (a provider that cannot enumerate them) keeps the label, the one signal
+ * there is.
+ */
+function productionBranchRule(
+  environments: DeploymentEnvironment[],
+): (deployment: DeploymentHistoryItem) => boolean {
+  const productionBranches = new Map<string, Set<string>>();
+  for (const environment of environments) {
+    if (environment.environment !== 'production') continue;
+    const branches =
+      productionBranches.get(environment.targetId) ?? new Set<string>();
+    branches.add(environment.branch);
+    productionBranches.set(environment.targetId, branches);
+  }
+
+  return (deployment) => {
+    const branches = productionBranches.get(deployment.targetId);
+    if (!branches) return deployment.environment === 'production';
+    return deployment.branch !== null && branches.has(deployment.branch);
+  };
 }
 
 function isNewer(
