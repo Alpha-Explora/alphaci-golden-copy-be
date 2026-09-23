@@ -116,6 +116,15 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       reason: 'capability compatibility metadata endpoint',
       routes: [{ handler: 'getCapabilities', method: 'GET' }],
     },
+    'src/modules/identity-access/directory/api/directory.controller.ts': {
+      // Serves the ungated hierarchy member picker and client systems alike;
+      // readable only by people in the directory (ADR-0011).
+      reason: 'identity member directory surface',
+      routes: [
+        { handler: 'describe', method: 'GET' },
+        { handler: 'listMembers', method: 'GET' },
+      ],
+    },
     'src/modules/identity-access/hierarchy/api/assignments.controller.ts': {
       reason: 'identity hierarchy surface',
       routes: [

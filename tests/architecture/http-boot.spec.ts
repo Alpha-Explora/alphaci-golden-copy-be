@@ -31,6 +31,8 @@ const { DeploymentStrategyResolver } =
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { PROVIDER_RELEASER_REGISTRY } =
   require('../../src/modules/runtime/application/ports/provider-releaser.port.js') as typeof import('../../src/modules/runtime/application/ports/provider-releaser.port.js');
+const { MemberDirectoryService, MemberDirectorySource } =
+  require('../../src/modules/identity-access/directory/index.js') as typeof import('../../src/modules/identity-access/directory/index.js');
 
 describe('HTTP application boot', () => {
   it('initializes the real Express middleware and serves health without a DB', async () => {
@@ -126,6 +128,26 @@ describe('HTTP application boot', () => {
       expect(releasers.get('render')).toBeDefined();
       // Vercel deploys from the pipeline itself, so it contributes none.
       expect(releasers.get('vercel')).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  /*
+   * The directory source is chosen by a factory, the wiring that once cost
+   * every managed target its secrets. Only the booted app shows the service
+   * actually received a source, and that the default is the GitHub org.
+   */
+  it('composes the member directory with the GitHub org source by default', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const source = app.get(MemberDirectorySource, { strict: false });
+      const service = app.get(MemberDirectoryService, { strict: false });
+
+      expect(source.constructor.name).toBe('GithubOrgDirectorySource');
+      expect(service.describe().source).toBe('github_org');
     } finally {
       await app.close();
     }

@@ -17,6 +17,7 @@ import sodium from 'libsodium-wrappers';
 import type { AppConfig } from '#kernel/config/app.config';
 import {
   GithubRepoDeleteError,
+  type GithubOrganizationMember,
   type GithubOrganizationPort,
   type GithubProjectPort,
   type GithubRepositoryDeletedEvent,
@@ -268,28 +269,80 @@ export class GithubService
   }
 
   /**
-   * Lists the login + avatar of every member of the enforced GitHub
-   * organization, using the acting user's installation token. Powers the
-   * Group invite picker (members list is sourced from the GitHub org, not the
-   * local directory). Returns [] when no installation token is available —
-   * e.g. the acting user has no installation, or the App lacks org
-   * `Members: Read` — so callers can fall back gracefully rather than error.
+   * Every member of `org`, read with the first credential GitHub accepts.
+   *
+   * The caller's own OAuth token comes first because it is the one credential
+   * every deployment has: login requests read:org, and a workspace lead is an
+   * org member. An App installation needs a recorded install, which a fresh or
+   * rebuilt database does not have, and relying on it alone left the member
+   * picker empty for every user. The installations remain as fallbacks for
+   * callers whose session carries no token.
+   *
+   * Null when nothing could read the roster. A refused credential hands over
+   * to the next; only a roster that was actually read is returned.
    */
-  async listOrganizationMembers(
-    userId: string,
-  ): Promise<Array<{ login: string; avatarUrl: string | null }>> {
-    const org = this.getEnforcedOrg();
-    if (!org) {
-      this.logger.warn(
-        'Cannot list organization members: no GITHUB_ENFORCED_ORG is configured.',
-      );
-      return [];
-    }
-    const token = await this.getInstallationAccessTokenForUser(userId);
-    if (!token) return [];
+  async readOrganizationMembers(input: {
+    org: string;
+    userId: string;
+    userToken: string | null;
+  }): Promise<GithubOrganizationMember[] | null> {
+    const org = input.org.trim();
+    if (!org) return null;
 
-    const members: Array<{ login: string; avatarUrl: string | null }> = [];
-    const maxPages = 5; // cap at 500 members — more than enough for this org
+    const credentials: Array<{
+      label: string;
+      token: () => Promise<string | null>;
+    }> = [
+      { label: 'user token', token: () => Promise.resolve(input.userToken) },
+      {
+        label: "user's App installation",
+        token: () => this.getInstallationAccessTokenForUser(input.userId),
+      },
+      {
+        label: "org's App installation",
+        token: () => this.getOrganizationInstallationToken(org),
+      },
+    ];
+
+    for (const credential of credentials) {
+      const token = await credential.token();
+      if (!token) continue;
+      const members = await this.fetchOrganizationMembers(org, token);
+      if (members) return members;
+      this.logger.warn(
+        `Organization ${org} roster unreadable with the ${credential.label}; trying the next credential.`,
+      );
+    }
+    return null;
+  }
+
+  private async getOrganizationInstallationToken(
+    org: string,
+  ): Promise<string | null> {
+    if (!this.githubInstallationsRepository) return null;
+    try {
+      const installationId =
+        await this.githubInstallationsRepository.findInstallationIdByAccountLogin(
+          org,
+        );
+      return installationId === null
+        ? null
+        : await this.createInstallationAccessToken(installationId);
+    } catch (error) {
+      this.logger.warn(
+        `Could not mint an installation token for org ${org}: ${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /** Null when GitHub refuses the token for this roster, on any page. */
+  private async fetchOrganizationMembers(
+    org: string,
+    token: string,
+  ): Promise<GithubOrganizationMember[] | null> {
+    const members: GithubOrganizationMember[] = [];
+    const maxPages = 5; // caps the roster at 500 members per request
     for (let page = 1; page <= maxPages; page += 1) {
       const response = await this.http.fetchWithRetry(
         `https://api.github.com/orgs/${encodeURIComponent(org)}/members?per_page=100&page=${String(page)}`,
@@ -303,9 +356,9 @@ export class GithubService
       );
       if (!response.ok) {
         this.logger.warn(
-          `Could not list members for org ${org} (${String(response.status)}) — check the App has org Members:Read`,
+          `Listing members of org ${org} returned ${String(response.status)}. A user token needs read:org and the org's approval of this OAuth app; an installation needs org Members:Read.`,
         );
-        break;
+        return null;
       }
       const batch = (await response.json()) as Array<{
         login: string;
@@ -377,7 +430,7 @@ export class GithubService
   /**
    * Every active member login of `teamSlug` in the enforced org, using the
    * acting user's installation token. Returns [] when no token is available or
-   * the read fails, matching listOrganizationMembers' graceful-degradation
+   * the read fails, the graceful-degradation
    * contract — callers reconciling roles must treat [] as "could not read"
    * rather than "the team is empty".
    */
@@ -399,7 +452,7 @@ export class GithubService
     if (!org || !teamSlug || !token) return [];
 
     const logins: string[] = [];
-    const maxPages = 5; // cap at 500 members, same bound as listOrganizationMembers
+    const maxPages = 5; // cap at 500 members, same bound as the org roster
     for (let page = 1; page <= maxPages; page += 1) {
       const response = await this.http.fetchWithRetry(
         `https://api.github.com/orgs/${encodeURIComponent(org)}/teams/${encodeURIComponent(teamSlug)}/members?per_page=100&page=${String(page)}`,

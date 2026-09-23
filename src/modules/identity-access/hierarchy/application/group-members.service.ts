@@ -1,10 +1,10 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  MemberDirectoryService,
+  type DirectoryCaller,
+} from '#modules/identity-access/directory/index.js';
 import { HierarchyAccessService } from './hierarchy-access.service';
 import {
   HIERARCHY_EVENT_CODES,
@@ -23,9 +23,9 @@ import {
  * member the moment the lead adds them (product decision 2026-08-18, replacing
  * the previous invite/accept/decline flow).
  *
- * The person must already have an AlphaCI account in the approved internal
- * directory. That gate is unchanged: a GitHub org member who has never signed
- * in has no row to attach a membership to, so they must sign in once first.
+ * The person must be in the deployment's member directory and have an
+ * AlphaCI account: a directory member who has never signed in has no row to
+ * attach a membership to, so they must sign in once first.
  */
 @Injectable()
 export class GroupMembersService {
@@ -33,13 +33,15 @@ export class GroupMembersService {
     private readonly groupsRepository: GroupsRepository,
     private readonly accessService: HierarchyAccessService,
     private readonly auditEventsService: AuditEventPublisher,
+    private readonly directory: MemberDirectoryService,
   ) {}
 
   async addMember(
     groupId: string,
-    actorUserId: string,
+    actor: DirectoryCaller,
     input: { userId: string; role?: GrantableRole },
   ): Promise<GroupMemberRecord> {
+    const actorUserId = actor.userId;
     await this.accessService.assertGroupManagerOrPlatformAdmin(
       groupId,
       actorUserId,
@@ -49,14 +51,9 @@ export class GroupMembersService {
     // the same rule the invitation flow enforced.
     const role: GrantableRole = input.role ?? 'member';
 
-    const target = await this.groupsRepository.findInternalUserById(
-      input.userId,
-    );
-    if (!target) {
-      throw new NotFoundException(
-        'User not found in the approved internal directory',
-      );
-    }
+    // The same directory the picker lists from, so a person offered there is
+    // never refused here, and a crafted request cannot add someone outside it.
+    await this.directory.assertEligible(actor, input.userId);
 
     const existing = await this.groupsRepository.findActiveMembership(
       groupId,

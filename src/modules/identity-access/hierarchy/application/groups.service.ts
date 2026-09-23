@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ForbiddenException,
-  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,9 +8,10 @@ import {
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { DatabaseService } from '#kernel/db/database.service';
 import {
-  GITHUB_ORGANIZATION_PORT,
-  type GithubOrganizationPort,
-} from '#kernel/ports/github.port';
+  MemberDirectoryService,
+  type DirectoryCaller,
+  type DirectoryEntry,
+} from '#modules/identity-access/directory/index.js';
 import { AssignmentsRepository } from '../infrastructure/assignments.repository';
 import { GithubSyncService } from './github-sync.service';
 import { HierarchyAccessService } from './hierarchy-access.service';
@@ -20,7 +20,6 @@ import {
   GroupsRepository,
   type GroupMemberRecord,
   type GroupRecord,
-  type InternalUserDirectoryEntry,
 } from '../infrastructure/groups.repository';
 import type { UpdateGroupDto } from '../api/dto/update-group.dto';
 import type { UpdateMemberRoleDto } from '../api/dto/update-member-role.dto';
@@ -32,8 +31,7 @@ export class GroupsService {
     private readonly accessService: HierarchyAccessService,
     private readonly assignmentsRepository: AssignmentsRepository,
     private readonly githubSyncService: GithubSyncService,
-    @Inject(GITHUB_ORGANIZATION_PORT)
-    private readonly githubService: GithubOrganizationPort,
+    private readonly directory: MemberDirectoryService,
     private readonly auditEventsService: AuditEventPublisher,
     private readonly databaseService: DatabaseService,
   ) {}
@@ -272,69 +270,24 @@ export class GroupsService {
   }
 
   /**
-   * Roster for the invite picker, sourced from the enforced GitHub
-   * organization (Alpha-Explora). Every org member is returned; those without
-   * an AlphaCI account are flagged `hasAccount: false` so the UI can show them
-   * disabled ("hasn't signed in yet"). Members already active in the Group are
-   * omitted. Falls back to the local internal directory when the org roster is
-   * unavailable (stub mode / no installation token / missing Members:Read).
+   * The member picker's list: people in the deployment's member directory
+   * who are not already active in this Group. Directory members who have not
+   * signed in yet come back with `hasAccount: false`, so the picker can show
+   * them as not-yet-addable instead of hiding them.
    */
-  async searchEligibleInternalUsers(
+  async searchEligibleMembers(
     groupId: string,
-    userId: string,
+    caller: DirectoryCaller,
     search: string,
-  ): Promise<InternalUserDirectoryEntry[]> {
-    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId);
-    const normalized = search.trim();
-
-    const orgMembers = await this.githubService.listOrganizationMembers(userId);
-    if (orgMembers.length === 0) {
-      // Graceful fallback: no org roster available (stub mode / no token /
-      // missing Members:Read) — use the local account directory. An empty
-      // search returns the full directory so the picker is pre-populated
-      // with existing members rather than blank until the user types.
-      return this.groupsRepository.searchEligibleInternalUsers(
-        groupId,
-        normalized,
-      );
-    }
-
-    const accounts = await this.groupsRepository.findAccountsByLogins(
+  ): Promise<DirectoryEntry[]> {
+    await this.accessService.assertGroupManagerOrPlatformAdmin(
       groupId,
-      orgMembers.map((member) => member.login),
+      caller.userId,
     );
-    const accountByLogin = new Map(
-      accounts.map((account) => [account.login.toLowerCase(), account]),
-    );
-    const term = normalized.toLowerCase();
-
-    return (
-      orgMembers
-        .map((member): InternalUserDirectoryEntry => {
-          const account = accountByLogin.get(member.login.toLowerCase());
-          return {
-            id: account?.id ?? null,
-            login: member.login,
-            name: account?.name ?? member.login,
-            email: account?.email ?? null,
-            avatarUrl: account?.avatarUrl ?? member.avatarUrl,
-            hasAccount: account !== undefined,
-          };
-        })
-        // Drop people already active in this Group.
-        .filter(
-          (entry) =>
-            !accountByLogin.get(entry.login.toLowerCase())?.isActiveMember,
-        )
-        // Apply the narrowing search over login + display name.
-        .filter(
-          (entry) =>
-            term.length === 0 ||
-            entry.login.toLowerCase().includes(term) ||
-            (entry.name ?? '').toLowerCase().includes(term),
-        )
-        .slice(0, 50)
-    );
+    return this.directory.listEligible(caller, {
+      search,
+      workspaceId: groupId,
+    });
   }
 
   async updateMemberRole(
