@@ -1828,4 +1828,156 @@ describe('GithubService', () => {
       ).resolves.toBeUndefined();
     });
   });
+
+  describe('pull request authoring', () => {
+    const respond = (
+      status: number,
+      body: unknown,
+      headers: Record<string, string> = {},
+    ) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: () => Promise.resolve(body),
+      text: () => Promise.resolve(JSON.stringify(body)),
+      headers: new Headers(headers),
+    });
+
+    it('compares with the three-dot form and keeps nested branch names intact', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(200, { status: 'ahead', ahead_by: 1, files: [] }),
+      );
+
+      const result = await service.compareBranches(
+        'token',
+        'o/r',
+        'main',
+        'feature/login',
+      );
+
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        'https://api.github.com/repos/o/r/compare/main...feature/login',
+      );
+      expect(result?.aheadBy).toBe(1);
+    });
+
+    it('reports a missing branch as null rather than a gateway error', async () => {
+      fetchMock.mockResolvedValueOnce(respond(404, { message: 'Not Found' }));
+      await expect(
+        service.compareBranches('token', 'o/r', 'main', 'gone'),
+      ).resolves.toBeNull();
+    });
+
+    it('filters the open pull request lookup by owner:branch, as GitHub requires', async () => {
+      fetchMock.mockResolvedValueOnce(respond(200, []));
+
+      await service.findOpenPullRequest('token', 'org/repo', 'feature', 'main');
+
+      const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+      expect(url.searchParams.get('head')).toBe('org:feature');
+      expect(url.searchParams.get('base')).toBe('main');
+      expect(url.searchParams.get('state')).toBe('open');
+    });
+
+    it('opens a pull request and maps it to a summary', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(201, {
+          number: 7,
+          title: 'Add login',
+          state: 'open',
+          html_url: 'https://github.com/o/r/pull/7',
+          head: { ref: 'feature' },
+          base: { ref: 'main' },
+          user: { login: 'lloydlim1' },
+        }),
+      );
+
+      const result = await service.openPullRequest('user-token', 'o/r', {
+        title: 'Add login',
+        head: 'feature',
+        base: 'main',
+        draft: true,
+      });
+
+      expect(result).toMatchObject({
+        created: true,
+        pullRequest: { number: 7, author: 'lloydlim1', headRef: 'feature' },
+      });
+      const init = fetchMock.mock.calls[0]?.[1] as {
+        method: string;
+        body: string;
+        headers: Record<string, string>;
+      };
+      expect(init.method).toBe('POST');
+      expect(init.headers['Authorization']).toBe('Bearer user-token');
+      expect(JSON.parse(init.body)).toEqual({
+        title: 'Add login',
+        head: 'feature',
+        base: 'main',
+        draft: true,
+      });
+    });
+
+    it("returns GitHub's validation sentence as a refusal, not an error", async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(422, {
+          message: 'Validation Failed',
+          errors: [{ message: 'No commits between main and feature' }],
+        }),
+      );
+
+      await expect(
+        service.openPullRequest('t', 'o/r', {
+          title: 'x',
+          head: 'feature',
+          base: 'main',
+        }),
+      ).resolves.toEqual({
+        created: false,
+        message: 'No commits between main and feature',
+      });
+    });
+
+    it('explains a permission refusal in terms of the person, not the endpoint', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(
+          403,
+          { message: 'Resource not accessible' },
+          { 'x-ratelimit-remaining': '4000' },
+        ),
+      );
+
+      const result = await service.openPullRequest('t', 'o/r', {
+        title: 'x',
+        head: 'feature',
+        base: 'main',
+      });
+
+      expect(result.created).toBe(false);
+      expect(!result.created && result.message).toContain(
+        'does not have write access to o/r',
+      );
+    });
+
+    it('does not blame the person for a rate limit that outlasted the retries', async () => {
+      fetchMock.mockResolvedValue(
+        respond(
+          403,
+          { message: 'API rate limit exceeded' },
+          {
+            'x-ratelimit-remaining': '0',
+            // Far enough out that fetchWithRetry gives up at once.
+            'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+          },
+        ),
+      );
+
+      await expect(
+        service.openPullRequest('t', 'o/r', {
+          title: 'x',
+          head: 'feature',
+          base: 'main',
+        }),
+      ).rejects.toThrow('GitHub pull request creation failed (403)');
+    });
+  });
 });

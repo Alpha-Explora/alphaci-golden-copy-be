@@ -1,12 +1,16 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 
+import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import type {
+  GitHubBranchComparison,
   GitHubBranchSummary,
   GitHubContentListing,
   GitHubPullRequestCheck,
@@ -47,17 +51,19 @@ export interface ProjectJobLogResponse {
 }
 
 /**
- * The read-only GitHub views behind a project's Code, Pull requests and
- * Pipeline runs tabs.
+ * The GitHub views behind a project's Code, Pull requests and Pipeline runs
+ * tabs, and the pull-request actions taken from them.
  *
  * Everything here answers for ONE project and is scoped by the same ownership
  * check the rest of the project API uses: `findByIdAndUser` returns nothing for
  * a project the caller cannot see, which becomes a 404 rather than a 403 — a
  * project you may not read should not confirm its own existence.
  *
- * No writes. Creating branches, opening pull requests and merging all remain
- * GitHub's job; this exists so that reading a project does not require leaving
- * the product, not so that ALPHACI becomes a second GitHub.
+ * ALPHACI is where people work; GitHub is where the work is stored. Pull
+ * requests are opened here, but they are real GitHub pull requests, because a
+ * branch protection rule only counts reviews and merges GitHub knows about.
+ * Reads and writes resolve their token differently — see `context` and
+ * `writeContext`.
  */
 
 /**
@@ -105,6 +111,33 @@ export interface ProjectPullRequestMergeResponse {
   sha: string | null;
 }
 
+/**
+ * Everything the compose screen shows before a pull request exists.
+ *
+ * `existingPullRequest` is here so the screen can say "this is already open as
+ * #12" before someone writes a description GitHub would then refuse.
+ */
+export interface ProjectBranchComparisonResponse {
+  repoFullName: string;
+  base: string;
+  head: string;
+  comparison: GitHubBranchComparison;
+  existingPullRequest: GitHubPullRequestSummary | null;
+}
+
+export interface ProjectPullRequestCreateInput {
+  base: string;
+  head: string;
+  title: string;
+  body?: string;
+  draft?: boolean;
+}
+
+/** A refusal is `created: false` with GitHub's sentence, not an error. */
+export type ProjectPullRequestCreateResponse =
+  | { created: true; pullRequest: GitHubPullRequestSummary }
+  | { created: false; message: string };
+
 @Injectable()
 export class ProjectWorkspaceService {
   private readonly logger = new Logger(ProjectWorkspaceService.name);
@@ -113,6 +146,8 @@ export class ProjectWorkspaceService {
     private readonly projectsRepository: ProjectsRepository,
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService: GithubProjectPort,
+    @Optional()
+    private readonly auditEventPublisher?: AuditEventPublisher,
   ) {}
 
   async listBranches(
@@ -396,6 +431,99 @@ export class ProjectWorkspaceService {
     );
   }
 
+  /**
+   * What a pull request from `head` into `base` would contain.
+   *
+   * Read with the same token as every other workspace read: nothing is written
+   * yet, so there is no author to get right. Reached only when someone opens
+   * the compose screen or changes a branch in it, never polled.
+   */
+  async compareBranches(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+    base: string,
+    head: string,
+  ): Promise<ProjectBranchComparisonResponse> {
+    this.requireDistinctBranches(base, head);
+    const { repoFullName, token } = await this.context(
+      projectId,
+      userId,
+      oauthToken,
+    );
+
+    const [comparison, existingPullRequest] = await Promise.all([
+      this.githubService.compareBranches(token, repoFullName, base, head),
+      this.githubService.findOpenPullRequest(token, repoFullName, head, base),
+    ]);
+
+    if (!comparison) {
+      throw new NotFoundException(
+        `Branch '${base}' or '${head}' does not exist in ${repoFullName}.`,
+      );
+    }
+
+    return { repoFullName, base, head, comparison, existingPullRequest };
+  }
+
+  /**
+   * Open a pull request as the person asking.
+   *
+   * Uses the caller's own GitHub token, never the App's: the pull request must
+   * be authored by the person, or GitHub would list the bot as its author and
+   * let that person approve their own change. It also makes GitHub the judge
+   * of who may open one — a caller without write access to the repository is
+   * refused by GitHub, and that refusal is passed back as its sentence.
+   */
+  async createPullRequest(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+    input: ProjectPullRequestCreateInput,
+  ): Promise<ProjectPullRequestCreateResponse> {
+    const title = input.title.trim();
+    if (!title) {
+      throw new BadRequestException('A pull request needs a title.');
+    }
+    this.requireDistinctBranches(input.base, input.head);
+
+    const { repoFullName, token } = await this.writeContext(
+      projectId,
+      userId,
+      oauthToken,
+    );
+
+    const result = await this.githubService.openPullRequest(
+      token,
+      repoFullName,
+      {
+        title,
+        base: input.base,
+        head: input.head,
+        ...(input.body?.trim() ? { body: input.body } : {}),
+        draft: input.draft === true,
+      },
+    );
+
+    if (result.created) {
+      await this.auditEventPublisher?.recordProjectEvent({
+        actorUserId: userId,
+        projectId,
+        eventCode: 'pull_request_created',
+        message: `Pull request #${String(result.pullRequest.number)} opened: ${input.head} → ${input.base}`,
+        metadata: {
+          pullRequestNumber: result.pullRequest.number,
+          pullRequestUrl: result.pullRequest.htmlUrl,
+          base: input.base,
+          head: input.head,
+          draft: input.draft === true,
+        },
+      });
+    }
+
+    return result;
+  }
+
   async listPullRequests(
     projectId: string,
     userId: string,
@@ -483,6 +611,49 @@ export class ProjectWorkspaceService {
     }
 
     return { repoFullName: row.repo_full_name, token };
+  }
+
+  /**
+   * Resolve the project and the CALLER'S OWN token, for anything that writes.
+   *
+   * Deliberately no installation-token fallback. `context` prefers the App
+   * token because it is the better credential for reading; for writing it is
+   * the wrong one, because GitHub records whoever holds the token as the
+   * author. A write that silently fell back to the App would be attributed to
+   * the bot, which is worse than refusing.
+   */
+  private async writeContext(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+  ): Promise<{ repoFullName: string; token: string }> {
+    const row = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!row) {
+      throw new NotFoundException('Project not found');
+    }
+
+    if (!oauthToken) {
+      throw new UnauthorizedException(
+        'Your GitHub sign-in has expired. Sign in again to open pull requests.',
+      );
+    }
+
+    return { repoFullName: row.repo_full_name, token: oauthToken };
+  }
+
+  /**
+   * A pull request from a branch into itself is empty by definition. Refused
+   * before any GitHub call so the answer does not cost rate limit.
+   */
+  private requireDistinctBranches(base: string, head: string): void {
+    if (base === head) {
+      throw new BadRequestException(
+        'Choose two different branches to compare.',
+      );
+    }
   }
 
   /**

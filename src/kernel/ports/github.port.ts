@@ -194,6 +194,55 @@ export interface GitHubPullRequestFile {
   patch: string | null;
 }
 
+/** One commit a branch comparison would bring into the base. */
+export interface GitHubComparisonCommit {
+  sha: string;
+  /** The first line of the commit message only. */
+  headline: string;
+  author: string | null;
+  authoredAt: string | null;
+}
+
+/**
+ * What a pull request from `head` into `base` would contain, before one exists.
+ *
+ * `status` is GitHub's own word for how the two branches relate: `identical`
+ * and `behind` both mean there is nothing to merge, which is the answer the
+ * compose screen has to give before anyone types a title.
+ */
+export interface GitHubBranchComparison {
+  status: 'ahead' | 'behind' | 'diverged' | 'identical';
+  aheadBy: number;
+  behindBy: number;
+  totalCommits: number;
+  commits: GitHubComparisonCommit[];
+  files: GitHubPullRequestFile[];
+  /**
+   * GitHub stops listing files at 300 in a comparison. True means the list is
+   * a prefix, so the UI must not present it as the whole change.
+   */
+  filesTruncated: boolean;
+}
+
+export interface GitHubOpenPullRequestInput {
+  title: string;
+  head: string;
+  base: string;
+  body?: string;
+  draft?: boolean;
+}
+
+/**
+ * The outcome of asking GitHub to open a pull request.
+ *
+ * A refusal is an answer, not a failure: "No commits between main and x" and
+ * "A pull request already exists" are GitHub's validation sentences, and the
+ * point of opening pull requests in the product is to repeat them.
+ */
+export type GitHubOpenPullRequestResult =
+  | { created: true; pullRequest: GitHubPullRequestSummary }
+  | { created: false; message: string };
+
 export interface GithubProjectPort {
   getEnforcedOrg(): string;
   /**
@@ -381,6 +430,32 @@ export interface GithubProjectPort {
     pullNumber: number,
     options?: { method?: 'merge' | 'squash' | 'rebase'; sha?: string },
   ): Promise<GitHubMergeResult>;
+  /** Null when either ref does not exist in the repository. */
+  compareBranches(
+    accessToken: string,
+    repoFullName: string,
+    base: string,
+    head: string,
+  ): Promise<GitHubBranchComparison | null>;
+  /** The open pull request from `head` into `base`, if there is one. */
+  findOpenPullRequest(
+    accessToken: string,
+    repoFullName: string,
+    head: string,
+    base: string,
+  ): Promise<GitHubPullRequestSummary | null>;
+  /**
+   * Open a pull request on a person's behalf.
+   *
+   * Distinct from `createPullRequest`, which the provisioning flows use and
+   * which throws on every refusal: here GitHub's validation message is the
+   * answer the person needs, so it is returned rather than thrown.
+   */
+  openPullRequest(
+    accessToken: string,
+    repoFullName: string,
+    input: GitHubOpenPullRequestInput,
+  ): Promise<GitHubOpenPullRequestResult>;
 }
 
 export interface GithubTeamMembershipChangedEvent {

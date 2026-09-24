@@ -6,6 +6,10 @@ import type {
   GitHubPullRequestDetail,
   GitHubPullRequestSummary,
 } from './github-workspace.types';
+import type {
+  GitHubBranchComparison,
+  GitHubComparisonCommit,
+} from '#kernel/ports/github.port';
 
 /** Max bytes of a blob we will decode and send to a browser. */
 export const MAX_FILE_BYTES = 512 * 1024;
@@ -185,4 +189,113 @@ export function toPullRequestFile(
     changes: file.changes ?? 0,
     patch: file.patch ?? null,
   };
+}
+
+/** GitHub stops listing files in a comparison at this many. */
+export const COMPARE_FILE_LIMIT = 300;
+
+export interface GitHubCompareRow {
+  status?: string;
+  ahead_by?: number;
+  behind_by?: number;
+  total_commits?: number;
+  commits?: {
+    sha?: string;
+    commit?: {
+      message?: string;
+      author?: { name?: string; date?: string } | null;
+    };
+    author?: { login?: string } | null;
+  }[];
+  files?: GitHubPullRequestFileRow[];
+}
+
+const COMPARE_STATUSES: ReadonlyArray<GitHubBranchComparison['status']> = [
+  'ahead',
+  'behind',
+  'diverged',
+  'identical',
+];
+
+/**
+ * A comparison of two branches, shaped like the pull request it would become.
+ *
+ * Files reuse the pull-request file mapping so one diff renderer serves both
+ * the preview before a pull request exists and the pull request after.
+ */
+export function toBranchComparison(
+  row: GitHubCompareRow,
+): GitHubBranchComparison {
+  const files = (row.files ?? []).map((file) => toPullRequestFile(file));
+  const status = COMPARE_STATUSES.find((value) => value === row.status);
+
+  return {
+    // An unrecognised status is treated as diverged: it still has commits to
+    // show, and claiming 'identical' would hide a real change.
+    status: status ?? 'diverged',
+    aheadBy: row.ahead_by ?? 0,
+    behindBy: row.behind_by ?? 0,
+    totalCommits: row.total_commits ?? 0,
+    commits: (row.commits ?? []).map((commit) => toComparisonCommit(commit)),
+    files,
+    filesTruncated: files.length >= COMPARE_FILE_LIMIT,
+  };
+}
+
+function toComparisonCommit(
+  commit: NonNullable<GitHubCompareRow['commits']>[number],
+): GitHubComparisonCommit {
+  return {
+    sha: commit.sha ?? '',
+    headline: (commit.commit?.message ?? '').split('\n')[0] ?? '',
+    // The GitHub login when the commit is linked to an account, otherwise the
+    // name git recorded, so an unlinked author is still named.
+    author: commit.author?.login ?? commit.commit?.author?.name ?? null,
+    authoredAt: commit.commit?.author?.date ?? null,
+  };
+}
+
+/**
+ * A branch name made safe for a URL path segment.
+ *
+ * Slashes are kept: `feature/login` is one ref, and GitHub's compare endpoint
+ * resolves it unencoded, while `%2F` is read as a literal and 404s. Everything
+ * else that could break the path (`#`, `?`, spaces) is encoded.
+ */
+export function encodeRef(ref: string): string {
+  return encodeURIComponent(ref).replace(/%2F/gi, '/');
+}
+
+interface GitHubValidationBody {
+  message?: string;
+  errors?: { message?: string; field?: string; code?: string }[];
+}
+
+/**
+ * GitHub's 422 as one sentence a person can act on.
+ *
+ * The top-level message is always "Validation Failed", which says nothing; the
+ * useful sentence ("A pull request already exists for …", "No commits between
+ * main and feature") is inside `errors`. A field error with no message is
+ * spelled out rather than dropped, because "head invalid" still names the
+ * branch that is wrong.
+ */
+export function validationMessage(text: string): string {
+  let parsed: GitHubValidationBody;
+  try {
+    parsed = JSON.parse(text) as GitHubValidationBody;
+  } catch {
+    return text.slice(0, 300) || 'GitHub rejected the request.';
+  }
+
+  const details = (parsed.errors ?? [])
+    .map(
+      (error) =>
+        error.message ??
+        (error.field ? `${error.field} is ${error.code ?? 'invalid'}` : ''),
+    )
+    .filter((sentence) => sentence.length > 0);
+
+  if (details.length > 0) return details.join(' ');
+  return parsed.message ?? 'GitHub rejected the request.';
 }

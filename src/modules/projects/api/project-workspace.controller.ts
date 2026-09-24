@@ -14,10 +14,11 @@ import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { ProjectWorkspaceService } from '../application/workspace/project-workspace.service';
+import { CreatePullRequestDto } from './dto/create-pull-request.dto';
 
 /**
- * GET-only views of a project's repository: Code, Pull requests and Pipeline
- * runs.
+ * Views of a project's repository — Code, Pull requests and Pipeline runs —
+ * and the pull-request actions taken from them (open, merge).
  *
  * Split from ProjectsController rather than added to it because these are the
  * only routes in the product that read GitHub live on every request. Keeping
@@ -29,6 +30,7 @@ import { ProjectWorkspaceService } from '../application/workspace/project-worksp
  *   GET runs/:runId/jobs      — on open only
  *   GET jobs/:jobId/logs      — on open only, never polled
  *   GET runs/:runId/failure-log — on open only, never polled
+ *   GET compare               — on open only, never polled
  */
 @Controller('projects/:projectId/workspace')
 @UseGuards(SessionAuthGuard)
@@ -144,6 +146,47 @@ export class ProjectWorkspaceController {
     );
   }
 
+  /**
+   * What a pull request from `head` into `base` would contain, before one
+   * exists. On open only, never polled: a comparison carries every diff.
+   */
+  @Get('compare')
+  compareBranches(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Query('base') base?: string,
+    @Query('head') head?: string,
+  ) {
+    return this.workspaceService.compareBranches(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+      this.requireBranch(base, 'base'),
+      this.requireBranch(head, 'head'),
+    );
+  }
+
+  /**
+   * Open a pull request as the signed-in person.
+   *
+   * A refusal is a 200 with `created: false` and GitHub's own sentence, for
+   * the same reason as merge: "No commits between main and feature" is an
+   * answer rather than a failure of this endpoint.
+   */
+  @Post('pull-requests')
+  createPullRequest(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Body() body: CreatePullRequestDto,
+  ) {
+    return this.workspaceService.createPullRequest(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+      body,
+    );
+  }
+
   @Get('pull-requests/:number/files')
   getPullRequestFiles(
     @Req() req: Request,
@@ -228,6 +271,15 @@ export class ProjectWorkspaceController {
    */
   private viewerLogin(req: Request): string | null {
     return req.session.user?.login ?? null;
+  }
+
+  /** A query-string branch name, trimmed; a missing one is a 400. */
+  private requireBranch(value: string | undefined, what: string): string {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      throw new BadRequestException(`A ${what} branch is required.`);
+    }
+    return trimmed;
   }
 
   /**

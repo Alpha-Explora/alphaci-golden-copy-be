@@ -17,6 +17,9 @@ import sodium from 'libsodium-wrappers';
 import type { AppConfig } from '#kernel/config/app.config';
 import {
   GithubRepoDeleteError,
+  type GitHubBranchComparison,
+  type GitHubOpenPullRequestInput,
+  type GitHubOpenPullRequestResult,
   type GithubOrganizationMember,
   type GithubOrganizationPort,
   type GithubProjectPort,
@@ -40,14 +43,18 @@ import {
   TEAM_MEMBERSHIP_CHANGED_EVENT,
 } from './github-webhook.processor';
 import {
+  encodeRef,
   mapContentEntries,
+  toBranchComparison,
   toFileListing,
   toPullRequestDetail,
   toPullRequestFile,
   toPullRequestSummary,
+  type GitHubCompareRow,
   type GitHubContentsRow,
   type GitHubPullRequestFileRow,
   type GitHubPullRequestRow,
+  validationMessage,
 } from './github-workspace.mapping';
 import type {
   GitHubBranchSummary,
@@ -1915,6 +1922,118 @@ export class GithubService
       merged: parsed.merged === true,
       message: parsed.message ?? 'Merged.',
       sha: parsed.sha ?? null,
+    };
+  }
+
+  /**
+   * What a pull request from `head` into `base` would contain.
+   *
+   * One read answers the compose screen: ahead/behind, the commits, and the
+   * per-file diffs. A missing ref is GitHub's 404, which comes back as null so
+   * the caller can say which branch is gone instead of reporting a 502.
+   */
+  async compareBranches(
+    accessToken: string,
+    repoFullName: string,
+    base: string,
+    head: string,
+  ): Promise<GitHubBranchComparison | null> {
+    const payload = await this.http.workspaceGet<GitHubCompareRow>(
+      `https://api.github.com/repos/${repoFullName}/compare/${encodeRef(base)}...${encodeRef(head)}`,
+      accessToken,
+      'branch comparison',
+    );
+
+    return payload ? toBranchComparison(payload) : null;
+  }
+
+  async findOpenPullRequest(
+    accessToken: string,
+    repoFullName: string,
+    head: string,
+    base: string,
+  ): Promise<GitHubPullRequestSummary | null> {
+    // GitHub's `head` filter wants `owner:branch`, even inside the same
+    // repository; a bare branch name is silently ignored and matches every
+    // open pull request.
+    const owner = repoFullName.split('/')[0] ?? '';
+    const params = new URLSearchParams({
+      state: 'open',
+      head: `${owner}:${head}`,
+      base,
+      per_page: '1',
+    });
+
+    const payload = await this.http.workspaceGet<GitHubPullRequestRow[]>(
+      `https://api.github.com/repos/${repoFullName}/pulls?${params.toString()}`,
+      accessToken,
+      'open pull request lookup',
+    );
+
+    const first = payload?.[0];
+    return first ? toPullRequestSummary(first) : null;
+  }
+
+  /**
+   * Open a pull request on a person's behalf.
+   *
+   * 422 is GitHub's validation refusal — no commits between the branches, a
+   * pull request that already exists, a missing branch — and is returned with
+   * GitHub's own sentence. 403 and 404 are the token's owner lacking write
+   * access (GitHub answers 404 for a private repository it will not reveal),
+   * which is also an answer for that person. Anything else is a transport
+   * failure and throws.
+   */
+  async openPullRequest(
+    accessToken: string,
+    repoFullName: string,
+    input: GitHubOpenPullRequestInput,
+  ): Promise<GitHubOpenPullRequestResult> {
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${repoFullName}/pulls`,
+      {
+        method: 'POST',
+        headers: {
+          ...this.http.workspaceHeaders(accessToken),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: input.title,
+          head: input.head,
+          base: input.base,
+          ...(input.body ? { body: input.body } : {}),
+          draft: input.draft === true,
+        }),
+      },
+    );
+
+    const text = await response.text();
+
+    if (response.status === 422) {
+      return { created: false, message: validationMessage(text) };
+    }
+
+    // A rate-limit 403 that outlasted fetchWithRetry is GitHub being busy, not
+    // the person lacking access, and must not be reported as the latter.
+    const rateLimited = response.headers?.get('x-ratelimit-remaining') === '0';
+    if ((response.status === 403 && !rateLimited) || response.status === 404) {
+      return {
+        created: false,
+        message: `Your GitHub account does not have write access to ${repoFullName}. Ask a repository admin to grant it.`,
+      };
+    }
+
+    if (!response.ok) {
+      throw new BadGatewayException(
+        `GitHub pull request creation failed (${String(response.status)}): ${text.slice(0, 300)}`,
+      );
+    }
+
+    return {
+      created: true,
+      pullRequest: toPullRequestSummary(
+        JSON.parse(text) as GitHubPullRequestRow,
+      ),
     };
   }
 

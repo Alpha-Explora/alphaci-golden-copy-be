@@ -1,8 +1,13 @@
-import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 
 import { ProjectWorkspaceService } from './project-workspace.service';
 import type { GithubService } from '#modules/pipelines/github/infrastructure/github.service';
 import type { ProjectsRepository } from '../../infrastructure/projects.repository';
+import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher';
 
 const ROW = { repo_full_name: 'Alpha-Explora/orders-api' };
 
@@ -56,10 +61,13 @@ function build(
   } as unknown as GithubService;
 
   const repository = { findByIdAndUser } as unknown as ProjectsRepository;
+  const recordProjectEvent = jest.fn(() => Promise.resolve());
+  const audit = { recordProjectEvent } as unknown as AuditEventPublisher;
 
   return {
-    service: new ProjectWorkspaceService(repository, github),
+    service: new ProjectWorkspaceService(repository, github, audit),
     github,
+    recordProjectEvent,
     findByIdAndUser,
     getInstallationAccessTokenForUserRepo,
   };
@@ -267,6 +275,189 @@ describe('ProjectWorkspaceService', () => {
           pullsUrl: 'https://github.com/Alpha-Explora/orders-api/pulls',
         }),
       );
+    });
+  });
+
+  describe('compare branches', () => {
+    const comparison = {
+      status: 'ahead',
+      aheadBy: 1,
+      behindBy: 0,
+      totalCommits: 1,
+      commits: [],
+      files: [],
+      filesTruncated: false,
+    };
+
+    it('refuses a branch compared with itself before spending a GitHub call', async () => {
+      const compareBranches = jest.fn();
+      const { service, findByIdAndUser } = build({
+        github: { compareBranches } as Partial<GithubService>,
+      });
+
+      await expect(
+        service.compareBranches('p1', 'u1', 'gho_x', 'main', 'main'),
+      ).rejects.toThrow(BadRequestException);
+      expect(findByIdAndUser).not.toHaveBeenCalled();
+      expect(compareBranches).not.toHaveBeenCalled();
+    });
+
+    it('returns the comparison with any pull request already open for the pair', async () => {
+      const open = { number: 12, headRef: 'feature', baseRef: 'main' };
+      const { service, github } = build({
+        github: {
+          compareBranches: jest.fn(() => Promise.resolve(comparison)),
+          findOpenPullRequest: jest.fn(() => Promise.resolve(open)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      const result = await service.compareBranches(
+        'p1',
+        'u1',
+        'gho_x',
+        'main',
+        'feature',
+      );
+
+      expect(result).toEqual({
+        repoFullName: 'Alpha-Explora/orders-api',
+        base: 'main',
+        head: 'feature',
+        comparison,
+        existingPullRequest: open,
+      });
+      // A read: the App token, same as every other workspace read.
+      expect(github.compareBranches).toHaveBeenCalledWith(
+        'ghs_install',
+        'Alpha-Explora/orders-api',
+        'main',
+        'feature',
+      );
+    });
+
+    it('is a 404 naming the branches when either does not exist', async () => {
+      const { service } = build({
+        github: {
+          compareBranches: jest.fn(() => Promise.resolve(null)),
+          findOpenPullRequest: jest.fn(() => Promise.resolve(null)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.compareBranches('p1', 'u1', 'gho_x', 'main', 'gone'),
+      ).rejects.toThrow("Branch 'main' or 'gone' does not exist");
+    });
+  });
+
+  describe('create pull request', () => {
+    const INPUT = { base: 'main', head: 'feature', title: '  Add login  ' };
+    const CREATED = {
+      created: true as const,
+      pullRequest: { number: 7, htmlUrl: 'https://github.com/o/r/pull/7' },
+    };
+
+    it("writes with the caller's own token even when an App token exists, so the person is the author", async () => {
+      const openPullRequest = jest.fn(() => Promise.resolve(CREATED));
+      const { service, getInstallationAccessTokenForUserRepo } = build({
+        github: { openPullRequest } as unknown as Partial<GithubService>,
+      });
+
+      await service.createPullRequest('p1', 'u1', 'gho_user', INPUT);
+
+      expect(openPullRequest).toHaveBeenCalledWith(
+        'gho_user',
+        'Alpha-Explora/orders-api',
+        { title: 'Add login', base: 'main', head: 'feature', draft: false },
+      );
+      expect(getInstallationAccessTokenForUserRepo).not.toHaveBeenCalled();
+    });
+
+    it('refuses rather than falling back to the App when the sign-in has lapsed', async () => {
+      const openPullRequest = jest.fn();
+      const { service } = build({
+        github: { openPullRequest } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.createPullRequest('p1', 'u1', null, INPUT),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(openPullRequest).not.toHaveBeenCalled();
+    });
+
+    it('is a 404 for a project the caller cannot see, before any token is used', async () => {
+      const openPullRequest = jest.fn();
+      const { service } = build({
+        row: null,
+        github: { openPullRequest } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.createPullRequest('p1', 'u1', 'gho_user', INPUT),
+      ).rejects.toThrow(NotFoundException);
+      expect(openPullRequest).not.toHaveBeenCalled();
+    });
+
+    it('rejects a title that is only whitespace', async () => {
+      const { service } = build();
+      await expect(
+        service.createPullRequest('p1', 'u1', 'gho_user', {
+          ...INPUT,
+          title: '   ',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('drops a whitespace-only body instead of sending it', async () => {
+      const openPullRequest = jest.fn(() => Promise.resolve(CREATED));
+      const { service } = build({
+        github: { openPullRequest } as unknown as Partial<GithubService>,
+      });
+
+      await service.createPullRequest('p1', 'u1', 'gho_user', {
+        ...INPUT,
+        body: '  \n ',
+      });
+
+      expect(openPullRequest).toHaveBeenCalledWith(
+        'gho_user',
+        'Alpha-Explora/orders-api',
+        expect.not.objectContaining({ body: expect.anything() }),
+      );
+    });
+
+    it('audits a created pull request', async () => {
+      const { service, recordProjectEvent } = build({
+        github: {
+          openPullRequest: jest.fn(() => Promise.resolve(CREATED)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await service.createPullRequest('p1', 'u1', 'gho_user', INPUT);
+
+      expect(recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'u1',
+          projectId: 'p1',
+          eventCode: 'pull_request_created',
+        }),
+      );
+    });
+
+    it("passes GitHub's refusal back unchanged and audits nothing", async () => {
+      const refusal = {
+        created: false as const,
+        message: 'No commits between main and feature',
+      };
+      const { service, recordProjectEvent } = build({
+        github: {
+          openPullRequest: jest.fn(() => Promise.resolve(refusal)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.createPullRequest('p1', 'u1', 'gho_user', INPUT),
+      ).resolves.toEqual(refusal);
+      expect(recordProjectEvent).not.toHaveBeenCalled();
     });
   });
 });
