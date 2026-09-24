@@ -54,6 +54,7 @@ import {
   type GitHubContentsRow,
   type GitHubPullRequestFileRow,
   type GitHubPullRequestRow,
+  userWriteRefusal,
   validationMessage,
 } from './github-workspace.mapping';
 import type {
@@ -1906,6 +1907,17 @@ export class GithubService
       return { merged: false, message, sha: null };
     }
 
+    // The merge is made with the person's own token, so a revoked sign-in or
+    // missing write access is theirs to act on, not a gateway failure.
+    const refusal = userWriteRefusal(
+      response.status,
+      response.headers?.get('x-ratelimit-remaining') === '0',
+      repoFullName,
+    );
+    if (refusal) {
+      return { merged: false, message: refusal, sha: null };
+    }
+
     if (!response.ok) {
       throw new BadGatewayException(
         `GitHub merge failed (${String(response.status)}): ${text.slice(0, 300)}`,
@@ -2014,27 +2026,13 @@ export class GithubService
       return { created: false, message: validationMessage(text) };
     }
 
-    // 401 means GitHub no longer accepts the token itself. The token comes
-    // from the session and is stored once at sign-in, so a session can outlive
-    // it: GitHub keeps ten tokens per user and OAuth app, and an eleventh
-    // sign-in anywhere (another browser, local development) revokes the
-    // oldest. Only a new sign-in mints a fresh one, so that is the answer.
-    if (response.status === 401) {
-      return {
-        created: false,
-        message:
-          'GitHub no longer accepts your sign-in, which happens when it has been revoked or replaced by a newer one. Sign out and sign in again, then retry.',
-      };
-    }
-
-    // A rate-limit 403 that outlasted fetchWithRetry is GitHub being busy, not
-    // the person lacking access, and must not be reported as the latter.
-    const rateLimited = response.headers?.get('x-ratelimit-remaining') === '0';
-    if ((response.status === 403 && !rateLimited) || response.status === 404) {
-      return {
-        created: false,
-        message: `Your GitHub account does not have write access to ${repoFullName}. Ask a repository admin to grant it.`,
-      };
+    const refusal = userWriteRefusal(
+      response.status,
+      response.headers?.get('x-ratelimit-remaining') === '0',
+      repoFullName,
+    );
+    if (refusal) {
+      return { created: false, message: refusal };
     }
 
     if (!response.ok) {

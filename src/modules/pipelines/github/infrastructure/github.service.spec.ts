@@ -1975,6 +1975,37 @@ describe('GithubService', () => {
       );
     });
 
+    it('answers a merge with a revoked sign-in as a refusal, not a gateway error', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(401, { message: 'Bad credentials' }),
+      );
+
+      await expect(
+        service.mergePullRequest('revoked', 'o/r', 1),
+      ).resolves.toEqual({
+        merged: false,
+        message: expect.stringContaining(
+          'Sign out and sign in again',
+        ) as string,
+        sha: null,
+      });
+    });
+
+    it('answers a merge without write access in terms of the person', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(
+          403,
+          { message: 'Must have push access' },
+          { 'x-ratelimit-remaining': '4000' },
+        ),
+      );
+
+      const result = await service.mergePullRequest('t', 'o/r', 1);
+
+      expect(result.merged).toBe(false);
+      expect(result.message).toContain('does not have write access to o/r');
+    });
+
     it('does not blame the person for a rate limit that outlasted the retries', async () => {
       fetchMock.mockResolvedValue(
         respond(

@@ -460,4 +460,73 @@ describe('ProjectWorkspaceService', () => {
       expect(recordProjectEvent).not.toHaveBeenCalled();
     });
   });
+
+  describe('merge pull request', () => {
+    const MERGED = { merged: true, message: 'Merged.', sha: 'abc123' };
+
+    it("merges with the caller's own token, so GitHub records the person and checks their access", async () => {
+      const mergePullRequest = jest.fn(() => Promise.resolve(MERGED));
+      const { service, getInstallationAccessTokenForUserRepo } = build({
+        github: { mergePullRequest } as unknown as Partial<GithubService>,
+      });
+
+      await service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'squash');
+
+      expect(mergePullRequest).toHaveBeenCalledWith(
+        'gho_user',
+        'Alpha-Explora/orders-api',
+        7,
+        { method: 'squash' },
+      );
+      expect(getInstallationAccessTokenForUserRepo).not.toHaveBeenCalled();
+    });
+
+    it('refuses rather than merging as the App when the sign-in has lapsed', async () => {
+      const mergePullRequest = jest.fn();
+      const { service } = build({
+        github: { mergePullRequest } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.mergePullRequest('p1', 'u1', null, 7, 'merge'),
+      ).rejects.toThrow('Sign in again to merge pull requests.');
+      expect(mergePullRequest).not.toHaveBeenCalled();
+    });
+
+    it('audits a merge that happened', async () => {
+      const { service, recordProjectEvent } = build({
+        github: {
+          mergePullRequest: jest.fn(() => Promise.resolve(MERGED)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge');
+
+      expect(recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'u1',
+          projectId: 'p1',
+          eventCode: 'pull_request_merged',
+        }),
+      );
+    });
+
+    it("passes GitHub's refusal back and audits nothing", async () => {
+      const refusal = {
+        merged: false,
+        message: 'Pull Request is not mergeable',
+        sha: null,
+      };
+      const { service, recordProjectEvent } = build({
+        github: {
+          mergePullRequest: jest.fn(() => Promise.resolve(refusal)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge'),
+      ).resolves.toEqual(refusal);
+      expect(recordProjectEvent).not.toHaveBeenCalled();
+    });
+  });
 });
