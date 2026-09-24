@@ -1979,7 +1979,8 @@ export class GithubService
    *
    * 422 is GitHub's validation refusal — no commits between the branches, a
    * pull request that already exists, a missing branch — and is returned with
-   * GitHub's own sentence. 403 and 404 are the token's owner lacking write
+   * GitHub's own sentence. 401 is a revoked or replaced sign-in, answered
+   * with "sign in again". 403 and 404 are the token's owner lacking write
    * access (GitHub answers 404 for a private repository it will not reveal),
    * which is also an answer for that person. Anything else is a transport
    * failure and throws.
@@ -2011,6 +2012,19 @@ export class GithubService
 
     if (response.status === 422) {
       return { created: false, message: validationMessage(text) };
+    }
+
+    // 401 means GitHub no longer accepts the token itself. The token comes
+    // from the session and is stored once at sign-in, so a session can outlive
+    // it: GitHub keeps ten tokens per user and OAuth app, and an eleventh
+    // sign-in anywhere (another browser, local development) revokes the
+    // oldest. Only a new sign-in mints a fresh one, so that is the answer.
+    if (response.status === 401) {
+      return {
+        created: false,
+        message:
+          'GitHub no longer accepts your sign-in, which happens when it has been revoked or replaced by a newer one. Sign out and sign in again, then retry.',
+      };
     }
 
     // A rate-limit 403 that outlasted fetchWithRetry is GitHub being busy, not

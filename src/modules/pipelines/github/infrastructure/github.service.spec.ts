@@ -1937,6 +1937,23 @@ describe('GithubService', () => {
       });
     });
 
+    it('answers a rejected token with "sign in again" instead of a gateway error', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(401, { message: 'Bad credentials', status: '401' }),
+      );
+
+      const result = await service.openPullRequest('revoked', 'o/r', {
+        title: 'x',
+        head: 'feature',
+        base: 'main',
+      });
+
+      expect(result.created).toBe(false);
+      expect(!result.created && result.message).toContain(
+        'Sign out and sign in again',
+      );
+    });
+
     it('explains a permission refusal in terms of the person, not the endpoint', async () => {
       fetchMock.mockResolvedValueOnce(
         respond(
