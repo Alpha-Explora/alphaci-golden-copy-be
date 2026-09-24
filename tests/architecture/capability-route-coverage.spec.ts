@@ -273,6 +273,8 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'getPullRequestFiles', method: 'GET' },
         { handler: 'getPullRequestDetail', method: 'GET' },
         { handler: 'mergePullRequest', method: 'POST' },
+        { handler: 'compareBranches', method: 'GET' },
+        { handler: 'createPullRequest', method: 'POST' },
       ],
     },
     'src/modules/projects/api/projects.controller.ts': {
