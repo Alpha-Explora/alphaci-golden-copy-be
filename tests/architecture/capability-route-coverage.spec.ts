@@ -302,7 +302,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       ],
     },
     'src/modules/projects/api/project-environments.controller.ts': {
-      reason: 'project membership and mutation-role checks in ProjectEnvironmentsService',
+      reason: 'project membership and mutation roles checked by the service',
       routes: [
         { handler: 'list', method: 'GET' },
         { handler: 'add', method: 'POST' },
