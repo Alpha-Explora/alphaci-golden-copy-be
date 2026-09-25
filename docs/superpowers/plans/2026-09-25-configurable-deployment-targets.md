@@ -70,11 +70,11 @@ to the customer host.
   `dev` is a working branch without hosted infrastructure. Render can fan out
   to a `main` service. Provider packs for on-prem are not registered.
 
-## Worktrees and pull requests
+## Parallel implementation and pull requests
 
-One Luna agent owns one PR in one Codex-managed worktree. Run up to three
-implementation agents concurrently while the root agent reviews contracts and
-diffs. A dependent PR initially targets the preceding branch in its own
+One Luna agent owns one PR in one Codex-managed isolated Git checkout. Run up
+to three implementation agents concurrently while the root agent reviews
+contracts and diffs. A dependent PR initially targets the preceding branch in its own
 repository; retarget it to `main` after the lower PR merges. Independent PRs
 target `main`. Link cross-repository dependencies in PR descriptions; Git
 cannot stack branches across repositories. Keep incomplete capabilities gated.
@@ -86,8 +86,8 @@ frontend `main` to `572a8fe`, and fast-forwarded central workflow `main` to
 local commits must be integrated separately before opening implementation PRs
 so E1 does not carry unrelated history. The frontend's prior
 `codex/golden-copy-trunk` commits remain on that branch; its untracked pnpm
-files and backend `artifacts/` remain untouched. Two earlier backend worktrees
-for target routing and the React image were clean at `cdb78ae` when inspected;
+files and backend `artifacts/` remain untouched. Two earlier backend isolated
+checkouts for target routing and the React image were clean at `cdb78ae` when inspected;
 check their ownership and base again before reusing them. Fetch and confirm
 all three remote heads again when implementation begins.
 
@@ -111,8 +111,8 @@ merged, and the mixed deployment acceptance run passes.
 - [x] Reconcile local branch bases and update ADR-0012 and the host guide.
   Evidence: plan commit `b8923df`, backend merge `acb0f04`, and matching local
   and remote `main` tips in frontend and central workflow on 2026-09-25.
-- [ ] Integrate the backend's local governance and deployment-planning commits
-  into remote `main` as separate reviewed changes before implementation PRs.
+- [ ] Integrate this deployment-target plan, ADR-0012, and host guide into
+  remote `main` through reviewed PR #100 before implementation PRs.
 - [x] Freeze the E1 environment API, E2 target identity, C1 release manifest,
   and W1 reusable-workflow inputs below. Copy these contracts into the first
   implementation PR descriptions; open those PRs as drafts when their diffs
