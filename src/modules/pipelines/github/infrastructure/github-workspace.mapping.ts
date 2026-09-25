@@ -299,3 +299,29 @@ export function validationMessage(text: string): string {
   if (details.length > 0) return details.join(' ');
   return parsed.message ?? 'GitHub rejected the request.';
 }
+
+/**
+ * Why GitHub refused a write made with a PERSON's token, in words for that
+ * person, or null when the status is not one of these refusals.
+ *
+ * - 401: GitHub no longer accepts the token. The session stores it once at
+ *   sign-in and can outlive it: GitHub keeps ten tokens per user and OAuth
+ *   app, and an eleventh sign-in anywhere revokes the oldest. Only a new
+ *   sign-in mints a fresh one.
+ * - 403 / 404: the person lacks write access (GitHub answers 404 for a private
+ *   repository it will not reveal). A rate-limit 403 that outlasted the
+ *   retries is GitHub being busy, so it is NOT reported as missing access.
+ */
+export function userWriteRefusal(
+  status: number,
+  rateLimited: boolean,
+  repoFullName: string,
+): string | null {
+  if (status === 401) {
+    return 'GitHub no longer accepts your sign-in, which happens when it has been revoked or replaced by a newer one. Sign out and sign in again, then retry.';
+  }
+  if ((status === 403 && !rateLimited) || status === 404) {
+    return `Your GitHub account does not have write access to ${repoFullName}. Ask a repository admin to grant it.`;
+  }
+  return null;
+}

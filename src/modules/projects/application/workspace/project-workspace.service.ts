@@ -407,6 +407,12 @@ export class ProjectWorkspaceService {
    * than as an error: "at least 1 approving review is required" is an answer,
    * and the point of merging here instead of on GitHub is that the product
    * repeats what GitHub said rather than a shrug.
+   *
+   * Merged with the caller's own token, like opening one. It used to go
+   * through the App token, which had two faults: GitHub recorded the bot as
+   * the person who merged, and anyone who could merely SEE the project could
+   * merge into its protected branches through the App's write access. With
+   * the person's token, GitHub checks their own permission on the repository.
    */
   async mergePullRequest(
     projectId: string,
@@ -415,20 +421,31 @@ export class ProjectWorkspaceService {
     pullNumber: number,
     method: 'merge' | 'squash' | 'rebase',
   ): Promise<ProjectPullRequestMergeResponse> {
-    const { repoFullName, token } = await this.context(
+    const { repoFullName, token } = await this.writeContext(
       projectId,
       userId,
       oauthToken,
+      'merge pull requests',
     );
 
-    return this.githubService.mergePullRequest(
+    const result = await this.githubService.mergePullRequest(
       token,
       repoFullName,
       pullNumber,
-      {
-        method,
-      },
+      { method },
     );
+
+    if (result.merged) {
+      await this.auditEventPublisher?.recordProjectEvent({
+        actorUserId: userId,
+        projectId,
+        eventCode: 'pull_request_merged',
+        message: `Pull request #${String(pullNumber)} merged (${method})`,
+        metadata: { pullRequestNumber: pullNumber, method, sha: result.sha },
+      });
+    }
+
+    return result;
   }
 
   /**
@@ -626,6 +643,8 @@ export class ProjectWorkspaceService {
     projectId: string,
     userId: string,
     oauthToken: string | null,
+    /** What the caller was trying to do, for the sign-in-expired sentence. */
+    action = 'open pull requests',
   ): Promise<{ repoFullName: string; token: string }> {
     const row = await this.projectsRepository.findByIdAndUser(
       projectId,
@@ -637,7 +656,7 @@ export class ProjectWorkspaceService {
 
     if (!oauthToken) {
       throw new UnauthorizedException(
-        'Your GitHub sign-in has expired. Sign in again to open pull requests.',
+        `Your GitHub sign-in has expired. Sign in again to ${action}.`,
       );
     }
 
