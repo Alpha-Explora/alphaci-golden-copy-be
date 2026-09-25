@@ -862,7 +862,7 @@ function buildReactPublishWorkflow(context = '.'): string {
     '          scan-type: image',
     '          image-ref: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}',
     '          format: table',
-    '          exit-code: \'1\'',
+    "          exit-code: '1'",
     '          severity: HIGH,CRITICAL',
     '          vuln-type: os,library',
     '          ignore-unfixed: false',
