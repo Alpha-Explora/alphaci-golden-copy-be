@@ -23,6 +23,7 @@ import type {
   QaVerificationRunRow,
 } from '../../infrastructure/qa-runs.repository';
 import type { QaAccessService } from '../qa-checklists/qa-access.service';
+import type { QaAutomationService } from './qa-automation.service';
 import type { QaCommitResolutionService } from './qa-commit-resolution.service';
 import { QaRunsService, type QaRunActorContext } from './qa-runs.service';
 
@@ -199,11 +200,21 @@ const makeCommitResolution = (
     ...overrides,
   }) as unknown as jest.Mocked<QaCommitResolutionService>;
 
+/** Defaults to "nothing has reported yet" — every item's automated resolves via matchAutomatedResult from this. */
+const makeAutomation = (
+  overrides: Partial<jest.Mocked<QaAutomationService>> = {},
+) =>
+  ({
+    forRun: jest.fn().mockResolvedValue({ verify: null, quality: null }),
+    ...overrides,
+  }) as unknown as jest.Mocked<QaAutomationService>;
+
 interface ServiceOverrides {
   repository?: jest.Mocked<QaRunsRepository>;
   checklists?: jest.Mocked<QaChecklistsRepository>;
   access?: jest.Mocked<QaAccessService>;
   commitResolution?: jest.Mocked<QaCommitResolutionService>;
+  automation?: jest.Mocked<QaAutomationService>;
   audit?: { recordProjectEvent: jest.Mock };
   notifications?: { record: jest.Mock };
 }
@@ -213,6 +224,7 @@ function makeService(overrides: ServiceOverrides = {}) {
   const checklists = overrides.checklists ?? makeChecklistsRepository();
   const access = overrides.access ?? makeAccess();
   const commitResolution = overrides.commitResolution ?? makeCommitResolution();
+  const automation = overrides.automation ?? makeAutomation();
 
   return {
     service: new QaRunsService(
@@ -220,6 +232,7 @@ function makeService(overrides: ServiceOverrides = {}) {
       checklists,
       access,
       commitResolution,
+      automation,
       overrides.audit,
       overrides.notifications,
     ),
@@ -227,6 +240,7 @@ function makeService(overrides: ServiceOverrides = {}) {
     checklists,
     access,
     commitResolution,
+    automation,
   };
 }
 
@@ -1081,5 +1095,161 @@ describe('QaRunsService.listReturnedItems', () => {
       checklistName: 'Release checklist',
     });
     expect(result.items[0]?.item.status).toBe('returned_to_dev');
+  });
+
+  it('dedupes the automation lookup across rows that share a (branch, commitSha), one per distinct run', async () => {
+    const sameRunItemA = itemRow({ id: 'item-a', status: 'returned_to_dev' });
+    const sameRunItemB = itemRow({ id: 'item-b', status: 'returned_to_dev' });
+    const otherRunItem = itemRow({ id: 'item-c', status: 'returned_to_dev' });
+    const forRun = jest.fn().mockResolvedValue({ verify: null, quality: null });
+    const { service } = makeService({
+      repository: makeRepository({
+        listReturnedItemsForProject: jest.fn().mockResolvedValue([
+          {
+            item: sameRunItemA,
+            runBranch: 'main',
+            runCommitSha: 'sha-a',
+            runChecklistName: 'c',
+          },
+          {
+            item: sameRunItemB,
+            runBranch: 'main',
+            runCommitSha: 'sha-a',
+            runChecklistName: 'c',
+          },
+          {
+            item: otherRunItem,
+            runBranch: 'dev',
+            runCommitSha: 'sha-b',
+            runChecklistName: 'c',
+          },
+        ]),
+      }),
+      automation: makeAutomation({ forRun }),
+    });
+
+    const result = await service.listReturnedItems('project-1', actor.userId);
+
+    expect(result.items).toHaveLength(3);
+    expect(forRun).toHaveBeenCalledTimes(2);
+    expect(forRun).toHaveBeenCalledWith('org/repo', 'main', 'sha-a');
+    expect(forRun).toHaveBeenCalledWith('org/repo', 'dev', 'sha-b');
+  });
+});
+
+/**
+ * assembleRun's automation wiring (used by getById, create, current,
+ * updateItem, requestRetest, signoff, reopen) -- verified once here on
+ * getById rather than duplicated per method, since they all share the
+ * private assembleRun implementation.
+ */
+describe('QaRunsService — assembleRun automation wiring', () => {
+  it('getById asks QaAutomationService for the run own (repo, branch, commitSha) and threads the result onto QaRun.automation', async () => {
+    const forRun = jest.fn().mockResolvedValue({ verify: null, quality: null });
+    const { service } = makeService({
+      access: makeAccess({
+        findVisibleProject: jest
+          .fn()
+          .mockResolvedValue(projectRow({ repo_full_name: 'acme/orders-api' })),
+      }),
+      repository: makeRepository({
+        findRunForProject: jest
+          .fn()
+          .mockResolvedValue(
+            runRow({ branch: 'uat', commit_sha: 'c'.repeat(40) }),
+          ),
+      }),
+      automation: makeAutomation({ forRun }),
+    });
+
+    const run = await service.getById('project-1', actor.userId, 'run-1');
+
+    expect(forRun).toHaveBeenCalledWith(
+      'acme/orders-api',
+      'uat',
+      'c'.repeat(40),
+    );
+    expect(run.automation).toEqual({ verify: null, quality: null });
+  });
+
+  it('threads QaRunAutomation into each item.automated through the real matcher, not a stub', async () => {
+    const verifyReport = {
+      stage: 'verify' as const,
+      status: 'failure' as const,
+      runId: 99,
+      runUrl: 'https://github.com/acme/orders-api/actions/runs/99',
+      reportedAt: '2026-09-25T00:00:00.000Z',
+      tests: {
+        total: 1,
+        passed: 0,
+        failed: 1,
+        failures: [
+          {
+            name: 'e2e/checkout.spec.ts > Checkout > pays',
+            message: 'timeout',
+          },
+        ],
+        failuresTruncated: false,
+      },
+    };
+    const { service } = makeService({
+      repository: makeRepository({
+        listItemsByRunId: jest.fn().mockResolvedValue([
+          itemRow({
+            verification_type: 'playwright',
+            test_identifier: 'e2e/checkout.spec.ts › Checkout › pays',
+          }),
+        ]),
+      }),
+      automation: makeAutomation({
+        forRun: jest
+          .fn()
+          .mockResolvedValue({ verify: verifyReport, quality: null }),
+      }),
+    });
+
+    const run = await service.getById('project-1', actor.userId, 'run-1');
+
+    expect(run.items[0]?.automated).toEqual({
+      source: 'playwright',
+      stage: 'verify',
+      status: 'failed',
+      scope: 'spec',
+      matchedSpec: 'e2e/checkout.spec.ts',
+      failure: {
+        name: 'e2e/checkout.spec.ts > Checkout > pays',
+        message: 'timeout',
+      },
+      runId: 99,
+      runUrl: verifyReport.runUrl,
+      reportedAt: verifyReport.reportedAt,
+    });
+  });
+
+  it('is null on a manual item even when the run has automation for other items', async () => {
+    const { service } = makeService({
+      repository: makeRepository({
+        listItemsByRunId: jest
+          .fn()
+          .mockResolvedValue([itemRow({ verification_type: 'manual' })]),
+      }),
+      automation: makeAutomation({
+        forRun: jest.fn().mockResolvedValue({
+          verify: {
+            stage: 'verify',
+            status: 'success',
+            runId: 1,
+            runUrl: 'https://github.com/acme/orders-api/actions/runs/1',
+            reportedAt: '2026-09-25T00:00:00.000Z',
+            tests: null,
+          },
+          quality: null,
+        }),
+      }),
+    });
+
+    const run = await service.getById('project-1', actor.userId, 'run-1');
+
+    expect(run.items[0]?.automated).toBeNull();
   });
 });

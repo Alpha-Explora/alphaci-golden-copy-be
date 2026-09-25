@@ -11,6 +11,7 @@ import {
   CI_PROJECT_PORT,
   CI_RUN_VALIDATION,
 } from '#kernel/ports/ci-project.port';
+import { CI_STAGE_RESULTS_LOOKUP } from '#kernel/ports/ci-stage-results.port';
 import { CiTokensRepository } from './infrastructure/ci-tokens.repository';
 
 @Module({
@@ -27,6 +28,10 @@ import { CiTokensRepository } from './infrastructure/ci-tokens.repository';
     },
     CiReportsService,
     CiRunReportsRepository,
+    {
+      provide: CI_STAGE_RESULTS_LOOKUP,
+      useExisting: CiRunReportsRepository,
+    },
     SessionAuthGuard,
   ],
   exports: [
@@ -35,6 +40,7 @@ import { CiTokensRepository } from './infrastructure/ci-tokens.repository';
     CI_RUN_VALIDATION,
     CiTokensRepository,
     CI_TOKEN_STATUS_LOOKUP,
+    CI_STAGE_RESULTS_LOOKUP,
   ],
 })
 export class CiModule {}

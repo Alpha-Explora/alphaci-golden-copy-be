@@ -2,6 +2,7 @@ import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import type { QaChecklistTargetPersona } from '../application/qa-checklists/qa-checklists.contracts';
 import {
   canCreateRun,
+  canDispatchAutomation,
   canReopenRun,
   canRequestRetest,
   canSetReturnedToDev,
@@ -75,5 +76,14 @@ describe('canReopenRun', () => {
     expect(canReopenRun('admin')).toBe(true);
     expect(canReopenRun('qa')).toBe(false);
     expect(canReopenRun('member')).toBe(false);
+  });
+});
+
+describe('canDispatchAutomation', () => {
+  it('allows qa, lead, admin; forbids member', () => {
+    expect(canDispatchAutomation('qa')).toBe(true);
+    expect(canDispatchAutomation('lead')).toBe(true);
+    expect(canDispatchAutomation('admin')).toBe(true);
+    expect(canDispatchAutomation('member')).toBe(false);
   });
 });

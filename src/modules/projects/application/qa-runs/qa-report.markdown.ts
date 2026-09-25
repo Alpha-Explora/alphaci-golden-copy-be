@@ -10,12 +10,16 @@ import type {
   QaChecklistVerificationType,
 } from '../qa-checklists/qa-checklists.contracts';
 import type {
+  QaAutomationItemStatus,
+  QaAutomationRunStatus,
   QaCommitSource,
   QaDefectSeverity,
+  QaRunAutomation,
   QaRunItem,
   QaRunItemFixRequest,
   QaRunItemStatus,
   QaRunStatus,
+  QaStageAutomation,
 } from './qa-runs.contracts';
 import type {
   QaReport,
@@ -120,6 +124,25 @@ const STATUS_LABELS: Record<QaRunItemStatus, string> = {
   returned_to_dev: 'Returned to dev',
 };
 
+const AUTOMATION_STAGE_LABELS: Record<QaStageAutomation['stage'], string> = {
+  verify: 'Verify',
+  quality: 'Quality',
+};
+
+const AUTOMATION_RUN_STATUS_LABELS: Record<QaAutomationRunStatus, string> = {
+  success: 'Success',
+  failure: 'Failure',
+  running: 'Running',
+  cancelled: 'Cancelled',
+};
+
+const AUTOMATION_ITEM_STATUS_LABELS: Record<QaAutomationItemStatus, string> = {
+  passed: 'passed',
+  failed: 'failed',
+  unknown: 'unknown',
+  not_run: 'not run',
+};
+
 const SEVERITY_LABELS: Record<'blocker' | 'major' | 'minor', string> = {
   blocker: 'Blocker',
   major: 'Major',
@@ -179,6 +202,15 @@ function renderExecutiveSummary(summary: QaReportSummary): string {
   return `## Executive summary\n\n${lines.join('\n')}`;
 }
 
+/** "Passed (auto: passed)" — the checklist table's only automation-related change. */
+function statusCellWithAutomation(item: QaRunItem): string {
+  const status = STATUS_LABELS[item.status];
+  if (!item.automated) {
+    return status;
+  }
+  return `${status} (auto: ${AUTOMATION_ITEM_STATUS_LABELS[item.automated.status]})`;
+}
+
 function renderChecklist(items: readonly QaRunItem[]): string {
   // Defensive re-sort: the renderer must be deterministic on its own, not
   // merely trust that its caller already ordered `run.items` by position.
@@ -190,7 +222,7 @@ function renderChecklist(items: readonly QaRunItem[]): string {
     escapeTableCell(item.title),
     PERSONA_LABELS[item.targetPersona],
     VERIFICATION_LABELS[item.verificationType],
-    STATUS_LABELS[item.status],
+    statusCellWithAutomation(item),
     renderNotesCell(item.notes),
   ]);
   return `## Checklist\n\n${renderTable(
@@ -199,8 +231,56 @@ function renderChecklist(items: readonly QaRunItem[]): string {
   )}`;
 }
 
-function renderAutomatedResults(): string {
-  return '## Automated results\n\nNot available yet.';
+function automationStageRow(stage: QaStageAutomation): string[] {
+  return [
+    AUTOMATION_STAGE_LABELS[stage.stage],
+    AUTOMATION_RUN_STATUS_LABELS[stage.status],
+    stage.tests ? `${stage.tests.passed}/${stage.tests.total}` : EM_DASH,
+    `[#${String(stage.runId)}](${stage.runUrl})`,
+  ];
+}
+
+function renderAutomationFailures(
+  stages: readonly QaStageAutomation[],
+): string {
+  const lines = stages.flatMap((stageReport) =>
+    (stageReport.tests?.failures ?? []).map(
+      (failure) =>
+        `- **${AUTOMATION_STAGE_LABELS[stageReport.stage]}:** ${escapeInline(failure.name)} ${EM_DASH} ${escapeInline(failure.message)}`,
+    ),
+  );
+  if (lines.length === 0) {
+    return '### Failures\n\nNone.';
+  }
+
+  const truncatedStages = stages
+    .filter((stageReport) => stageReport.tests?.failuresTruncated === true)
+    .map((stageReport) => AUTOMATION_STAGE_LABELS[stageReport.stage]);
+  const note =
+    truncatedStages.length > 0
+      ? `\n\n_Only the first 20 failures are shown for: ${truncatedStages.join(', ')}._`
+      : '';
+
+  return `### Failures\n\n${lines.join('\n')}${note}`;
+}
+
+function renderAutomatedResults(automation: QaRunAutomation | null): string {
+  const stages = automation
+    ? [automation.verify, automation.quality].filter(
+        (stageReport): stageReport is QaStageAutomation => stageReport !== null,
+      )
+    : [];
+
+  if (stages.length === 0) {
+    return '## Automated results\n\nNot available yet.';
+  }
+
+  const table = renderTable(
+    ['Stage', 'Status', 'Tests', 'Run'],
+    stages.map(automationStageRow),
+  );
+
+  return `## Automated results\n\n${table}\n\n${renderAutomationFailures(stages)}`;
 }
 
 function renderFixRequest(fixRequest: QaRunItemFixRequest): string {
@@ -288,7 +368,7 @@ export function renderQaReportMarkdown(report: QaReport): string {
     renderHeader(report),
     renderExecutiveSummary(report.summary),
     renderChecklist(report.run.items),
-    renderAutomatedResults(),
+    renderAutomatedResults(report.automatedResults),
     renderDefects(report.defects),
     renderSignoff(report),
   ];

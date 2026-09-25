@@ -98,6 +98,7 @@ const frozenQaRun: QaRun = {
     canSignOff: false,
     canReopen: true,
   },
+  automation: { verify: null, quality: null },
 };
 
 const signoffRow = (
@@ -153,6 +154,7 @@ const openQaRun: QaRun = {
     canSignOff: true,
     canReopen: false,
   },
+  automation: { verify: null, quality: null },
 };
 
 function makeAccess(

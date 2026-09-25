@@ -56,3 +56,8 @@ export function canSignOff(role: PlatformAppRole): boolean {
 export function canReopenRun(role: PlatformAppRole): boolean {
   return role === 'lead' || role === 'admin';
 }
+
+/** Dispatching the verify workflow's Playwright run: same set as creating a run and signing off. */
+export function canDispatchAutomation(role: PlatformAppRole): boolean {
+  return role === 'qa' || role === 'lead' || role === 'admin';
+}

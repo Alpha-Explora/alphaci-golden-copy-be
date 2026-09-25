@@ -18,6 +18,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import {
   GithubRepoDeleteError,
   type GitHubBranchComparison,
+  type GitHubDispatchWorkflowResult,
   type GitHubOpenPullRequestInput,
   type GitHubOpenPullRequestResult,
   type GithubOrganizationMember,
@@ -2047,6 +2048,69 @@ export class GithubService
         JSON.parse(text) as GitHubPullRequestRow,
       ),
     };
+  }
+
+  /**
+   * Dispatch a workflow_dispatch run on a person's behalf — the first
+   * caller of this GitHub endpoint. Used to re-run the verify (Playwright)
+   * workflow for a QA run's branch, attributed to the person who asked for
+   * it rather than a service token. GitHub answers 204 with no body on
+   * success; `workflowFile` is the filename (e.g.
+   * "30-alphaci-verify.yml"), not a path.
+   */
+  async dispatchWorkflow(
+    accessToken: string,
+    repoFullName: string,
+    workflowFile: string,
+    ref: string,
+  ): Promise<GitHubDispatchWorkflowResult> {
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${repoFullName}/actions/workflows/${encodeURIComponent(workflowFile)}/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          ...this.http.workspaceHeaders(accessToken),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref }),
+      },
+    );
+
+    if (response.status === 401) {
+      return {
+        dispatched: false,
+        reason: 'unauthorized',
+        message:
+          userWriteRefusal(401, false, repoFullName) ??
+          'GitHub no longer accepts your sign-in.',
+      };
+    }
+
+    if (response.status === 404) {
+      return {
+        dispatched: false,
+        reason: 'not_found',
+        message: `No workflow named "${workflowFile}" was found on ${ref} in ${repoFullName}.`,
+      };
+    }
+
+    if (response.status === 403) {
+      const text = await response.text();
+      return {
+        dispatched: false,
+        reason: 'forbidden',
+        message: validationMessage(text),
+      };
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new BadGatewayException(
+        `GitHub workflow dispatch failed (${String(response.status)}): ${text.slice(0, 300)}`,
+      );
+    }
+
+    return { dispatched: true };
   }
 
   async setActionsSecret(

@@ -1,11 +1,16 @@
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  PROJECT_VISIBILITY_LOOKUP,
+  type ProjectVisibilityLookup,
+} from '#kernel/ports/project-visibility.port';
 import { CiRunReportsRepository } from '../infrastructure/ci-run-reports.repository';
 import { translateResults } from './translate-results';
 import {
@@ -125,6 +130,8 @@ export class CiReportsService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly ciRunReportsRepository: CiRunReportsRepository,
+    @Inject(PROJECT_VISIBILITY_LOOKUP)
+    private readonly projectVisibility: ProjectVisibilityLookup,
   ) {}
 
   /**
@@ -257,22 +264,25 @@ export class CiReportsService {
     return row.user_id;
   }
 
+  /**
+   * Was owner-only (pp.user_id = caller), which answered 403 for a team
+   * member or QA tester who can see the project everywhere else in the
+   * product. Now the same role-aware visibility rule as the rest of the
+   * project (global admin, owner, active workspace member, or an assigned
+   * hierarchy repository) — see PROJECT_VISIBILITY_LOOKUP's doc comment for
+   * why this crosses the Pipelines/Projects boundary through a port instead
+   * of a repository query here.
+   */
   private async assertOwnership(
     userId: string,
     repoFullName: string,
   ): Promise<void> {
-    const result = await this.databaseService.query<OwnershipRow>(
-      `
-        SELECT user_id
-        FROM projects.provisioned_projects
-        WHERE repo_full_name = $1
-          AND user_id = $2
-        LIMIT 1;
-      `,
-      [repoFullName, userId],
+    const visible = await this.projectVisibility.isRepoVisibleToUser(
+      repoFullName,
+      userId,
     );
 
-    if (!result.rows[0]) {
+    if (!visible) {
       throw new ForbiddenException(
         `You do not have access to reports for repository '${repoFullName}'.`,
       );

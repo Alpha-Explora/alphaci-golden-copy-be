@@ -27,6 +27,7 @@ const item = (overrides: Partial<QaRunItem> = {}): QaRunItem => ({
   rowVersion: 1,
   canUpdate: true,
   previous: null,
+  automated: null,
   ...overrides,
 });
 
@@ -81,6 +82,7 @@ const run = (overrides: Partial<QaRun> = {}): QaRun => {
       canSignOff: true,
       canReopen: false,
     },
+    automation: { verify: null, quality: null },
     ...overrides,
   };
 };
@@ -294,7 +296,7 @@ describe('toSignoffHistoryEntry', () => {
 });
 
 describe('buildQaReport', () => {
-  it('assembles schemaVersion, frozen, project, run, and a null automatedResults verbatim', () => {
+  it('assembles schemaVersion, frozen, project, run, and automatedResults from run.automation', () => {
     const theRun = run();
     const report = buildQaReport({
       generatedAt: '2026-09-25T03:00:00.000Z',
@@ -313,6 +315,55 @@ describe('buildQaReport', () => {
       name: 'repo',
     });
     expect(report.run).toBe(theRun);
+    // The default run() fixture has automation: { verify: null, quality: null }.
+    expect(report.automatedResults).toEqual({ verify: null, quality: null });
+  });
+
+  it('passes a populated run.automation through to automatedResults verbatim', () => {
+    const verifyStage = {
+      stage: 'verify' as const,
+      status: 'success' as const,
+      runId: 42,
+      runUrl: 'https://github.com/org/repo/actions/runs/42',
+      reportedAt: '2026-09-25T02:30:00.000Z',
+      tests: {
+        total: 3,
+        passed: 3,
+        failed: 0,
+        failures: [],
+        failuresTruncated: false,
+      },
+    };
+    const theRun = run({ automation: { verify: verifyStage, quality: null } });
+    const report = buildQaReport({
+      generatedAt: '2026-09-25T03:00:00.000Z',
+      frozen: false,
+      project: { id: 'project-1', repoFullName: 'org/repo', name: 'repo' },
+      run: theRun,
+      signoffHistory: [],
+    });
+
+    expect(report.automatedResults).toEqual({
+      verify: verifyStage,
+      quality: null,
+    });
+  });
+
+  it('tolerates a frozen run with no automation key at all (pre-Slice-5 report_json), reading it as null', () => {
+    // A signed-off run's report_json cast straight to QaRun can predate this
+    // slice and simply have no `automation` key -- `?? null` in the mapper
+    // must not throw on `undefined`.
+    const preSliceRun = run();
+    delete (preSliceRun as { automation?: unknown }).automation;
+
+    const report = buildQaReport({
+      generatedAt: '2026-09-25T03:00:00.000Z',
+      frozen: true,
+      project: { id: 'project-1', repoFullName: 'org/repo', name: 'repo' },
+      run: preSliceRun,
+      signoffHistory: [],
+    });
+
     expect(report.automatedResults).toBeNull();
   });
 });

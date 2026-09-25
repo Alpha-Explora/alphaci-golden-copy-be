@@ -1,6 +1,13 @@
 import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import type {
+  CiStageId,
+  CiStageResult,
+  CiStageResultsLookup,
+  CiStageResultsLookupInput,
+  CiStageTestResults,
+} from '#kernel/ports/ci-stage-results.port';
 import type { FriendlyMessage } from '../application/translate-results';
 import type { StageId } from '../application/stages';
 
@@ -35,9 +42,103 @@ export interface CiRunReportRow {
   updated_at: string;
 }
 
+/**
+ * Pull `results.tests` back out of the stored jsonb blob, the same
+ * defensive shape as ci-reports.service.ts's readChecks: nothing the
+ * database hands back is trusted, since `results` predates per-tool/test
+ * reporting and an older row simply has no `tests` key.
+ */
+function readTestResults(
+  results: Record<string, unknown>,
+): CiStageTestResults | null {
+  const raw = results['tests'];
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const { total, passed, failed, failures } = raw as Record<string, unknown>;
+  if (
+    typeof total !== 'number' ||
+    typeof passed !== 'number' ||
+    typeof failed !== 'number'
+  ) {
+    return null;
+  }
+
+  const failureList = Array.isArray(failures)
+    ? failures.flatMap((entry): CiStageTestResults['failures'] => {
+        if (typeof entry !== 'object' || entry === null) {
+          return [];
+        }
+        const { name, message } = entry as Record<string, unknown>;
+        return typeof name === 'string'
+          ? [{ name, message: typeof message === 'string' ? message : '' }]
+          : [];
+      })
+    : [];
+
+  return {
+    total,
+    passed,
+    failed,
+    failures: failureList,
+    failuresTruncated: failed > failureList.length,
+  };
+}
+
 @Injectable()
-export class CiRunReportsRepository {
+export class CiRunReportsRepository implements CiStageResultsLookup {
   constructor(private readonly databaseService: DatabaseService) {}
+
+  /**
+   * The newest report (highest run_id) per requested stage, for the exact
+   * (repoFullName, branch, commitSha) triple — backs CI_STAGE_RESULTS_LOOKUP
+   * (see ci-stage-results.port.ts). `DISTINCT ON (stage) ... ORDER BY
+   * stage, run_id DESC` picks exactly one, newest, row per stage; a stage
+   * with no matching row is simply absent from the result.
+   */
+  async latestStageReports(
+    input: CiStageResultsLookupInput,
+  ): Promise<CiStageResult[]> {
+    if (input.stages.length === 0) {
+      return [];
+    }
+
+    const result = await this.databaseService.query<
+      Pick<
+        CiRunReportRow,
+        'stage' | 'status' | 'results' | 'updated_at' | 'repo_full_name'
+      > & { run_id: string }
+    >(
+      `
+        SELECT DISTINCT ON (stage)
+          stage,
+          status,
+          run_id::text AS run_id,
+          results,
+          repo_full_name,
+          updated_at
+        FROM workflow.ci_run_reports
+        WHERE repo_full_name = $1
+          AND branch = $2
+          AND commit_sha = $3
+          AND stage = ANY($4::text[])
+        ORDER BY stage, run_id DESC;
+      `,
+      [input.repoFullName, input.branch, input.commitSha, input.stages],
+    );
+
+    return result.rows.map((row) => {
+      const runId = Number(row.run_id);
+      return {
+        stage: row.stage as CiStageId,
+        status: row.status,
+        runId,
+        runUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
+        reportedAt: row.updated_at,
+        tests: readTestResults(row.results),
+      };
+    });
+  }
 
   /**
    * Upsert a CI run report. The unique key is (repo_full_name, run_id, stage).

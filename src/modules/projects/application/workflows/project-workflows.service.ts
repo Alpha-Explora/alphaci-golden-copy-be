@@ -127,9 +127,14 @@ export class ProjectWorkflowsService {
     @Optional()
     @Inject(USAGE_QUOTA)
     private readonly usageQuotaService?: UsageQuotaPort,
+    // Explicit token: AuditEventSink is a type alias, which TypeScript emits
+    // as `Object` in design:paramtypes, so without @Inject Nest finds no
+    // provider and @Optional() silently injects undefined.
     @Optional()
+    @Inject(AuditEventPublisher)
     private readonly auditEventsService?: AuditEventSink,
     @Optional()
+    @Inject(NotificationEventPublisher)
     private readonly notificationEventsService?: NotificationEventSink,
     @Optional()
     private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,

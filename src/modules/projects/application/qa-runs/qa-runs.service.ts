@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   Optional,
@@ -38,6 +39,8 @@ import {
 } from '../../infrastructure/qa-runs.repository';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
+import { QaAutomationService } from './qa-automation.service';
+import { matchAutomatedResult } from './qa-automation-matching';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
 import {
   QA_OPEN_DEFECT_STATUSES,
@@ -45,6 +48,7 @@ import {
   QA_RUNS_LIST_MAX_LIMIT,
   type QaActor,
   type QaRun,
+  type QaRunAutomation,
   type QaRunItem,
   type QaRunItemPrevious,
   type QaRunItemStatus,
@@ -105,9 +109,15 @@ export class QaRunsService {
     private readonly qaChecklistsRepository: QaChecklistsRepository,
     private readonly access: QaAccessService,
     private readonly commitResolution: QaCommitResolutionService,
+    private readonly automation: QaAutomationService,
+    // Explicit token: AuditEventSink is a type alias, which TypeScript emits
+    // as `Object` in design:paramtypes, so without @Inject Nest finds no
+    // provider and @Optional() silently injects undefined.
     @Optional()
+    @Inject(AuditEventPublisher)
     private readonly auditEventsService?: AuditEventSink,
     @Optional()
+    @Inject(NotificationEventPublisher)
     private readonly notificationEventsService?: NotificationEventSink,
   ) {}
 
@@ -194,7 +204,7 @@ export class QaRunsService {
     return {
       commitSha: resolved.commitSha,
       commitSource: resolved.commitSource,
-      run: await this.assembleRun(runRow, items, signoff, role),
+      run: await this.assembleRun(project, runRow, items, signoff, role),
     };
   }
 
@@ -259,7 +269,13 @@ export class QaRunsService {
     const signoff = result.created
       ? null
       : await this.repository.findActiveSignoff(result.run.id);
-    const run = await this.assembleRun(result.run, result.items, signoff, role);
+    const run = await this.assembleRun(
+      project,
+      result.run,
+      result.items,
+      signoff,
+      role,
+    );
     return { created: result.created, run };
   }
 
@@ -268,7 +284,7 @@ export class QaRunsService {
     userId: string,
     runId: string,
   ): Promise<QaRun> {
-    await this.requireVisibleProject(projectId, userId);
+    const project = await this.requireVisibleProject(projectId, userId);
     const run = await this.requireRun(projectId, runId);
 
     const [items, signoff, role] = await Promise.all([
@@ -276,7 +292,7 @@ export class QaRunsService {
       this.repository.findActiveSignoff(run.id),
       this.access.findAppRole(userId),
     ]);
-    return this.assembleRun(run, items, signoff, role);
+    return this.assembleRun(project, run, items, signoff, role);
   }
 
   async updateItem(
@@ -355,7 +371,7 @@ export class QaRunsService {
       this.repository.listItemsByRunId(run.id),
       this.repository.findActiveSignoff(run.id),
     ]);
-    return this.assembleRun(run, items, signoff, role);
+    return this.assembleRun(project, run, items, signoff, role);
   }
 
   async requestRetest(
@@ -410,7 +426,7 @@ export class QaRunsService {
       this.repository.listItemsByRunId(run.id),
       this.repository.findActiveSignoff(run.id),
     ]);
-    return this.assembleRun(run, items, signoff, role);
+    return this.assembleRun(project, run, items, signoff, role);
   }
 
   async signoff(
@@ -452,7 +468,13 @@ export class QaRunsService {
       signedBy,
       signedAt: now,
     };
-    const reportBase = await this.assembleRun(signedOffRun, items, null, role);
+    const reportBase = await this.assembleRun(
+      project,
+      signedOffRun,
+      items,
+      null,
+      role,
+    );
     const report: QaRun = { ...reportBase, signoff: signoffForReport };
 
     const result = await this.repository
@@ -496,7 +518,7 @@ export class QaRunsService {
     );
     await this.notifySignoff(project, result.run, result.signoff, actor.userId);
 
-    return this.assembleRun(result.run, items, result.signoff, role);
+    return this.assembleRun(project, result.run, items, result.signoff, role);
   }
 
   async reopen(
@@ -537,14 +559,14 @@ export class QaRunsService {
       this.repository.listItemsByRunId(reopened.id),
       this.repository.findActiveSignoff(reopened.id),
     ]);
-    return this.assembleRun(reopened, items, signoff, role);
+    return this.assembleRun(project, reopened, items, signoff, role);
   }
 
   async listReturnedItems(
     projectId: string,
     userId: string,
   ): Promise<{ items: QaReturnedItem[] }> {
-    await this.requireVisibleProject(projectId, userId);
+    const project = await this.requireVisibleProject(projectId, userId);
     const role = await this.access.findAppRole(userId);
     const rows = await this.repository.listReturnedItemsForProject(projectId);
     if (rows.length === 0) {
@@ -557,8 +579,32 @@ export class QaRunsService {
     const priorSummaries =
       await this.repository.findPriorItemSummaries(priorIds);
 
-    return {
-      items: rows.map((row) => ({
+    // This feed spans every open run in the project, so unlike assembleRun
+    // (one run, one automation lookup) two rows here can belong to
+    // different runs with different (branch, commitSha). Deduped by that
+    // pair rather than looked up once per row -- rows sharing a run (the
+    // common case) share one CI lookup.
+    const automationCache = new Map<string, Promise<QaRunAutomation>>();
+    const automationFor = (
+      branch: string,
+      commitSha: string,
+    ): Promise<QaRunAutomation> => {
+      const key = `${branch}::${commitSha}`;
+      const cached = automationCache.get(key);
+      if (cached) {
+        return cached;
+      }
+      const pending = this.automation.forRun(
+        project.repo_full_name,
+        branch,
+        commitSha,
+      );
+      automationCache.set(key, pending);
+      return pending;
+    };
+
+    const items = await Promise.all(
+      rows.map(async (row) => ({
         runId: row.item.run_id,
         branch: row.runBranch,
         commitSha: row.runCommitSha,
@@ -568,9 +614,12 @@ export class QaRunsService {
           this.priorFor(row.item, priorSummaries),
           'open',
           role,
+          await automationFor(row.runBranch, row.runCommitSha),
         ),
       })),
-    };
+    );
+
+    return { items };
   }
 
   // ---------------------------------------------------------------------
@@ -731,16 +780,24 @@ export class QaRunsService {
   // ---------------------------------------------------------------------
 
   private async assembleRun(
+    project: ProvisionedProjectRow,
     run: QaVerificationRunRow,
     items: QaRunItemRow[],
     signoff: QaRunSignoffRow | null,
     role: PlatformAppRole,
   ): Promise<QaRun> {
-    const priorIds = items
-      .map((item) => item.prior_run_item_id)
-      .filter((id): id is string => id !== null);
-    const priorSummaries =
-      await this.repository.findPriorItemSummaries(priorIds);
+    const [priorSummaries, runAutomation] = await Promise.all([
+      this.repository.findPriorItemSummaries(
+        items
+          .map((item) => item.prior_run_item_id)
+          .filter((id): id is string => id !== null),
+      ),
+      this.automation.forRun(
+        project.repo_full_name,
+        run.branch,
+        run.commit_sha,
+      ),
+    ]);
 
     const runItems = items.map((item) =>
       this.toRunItem(
@@ -748,6 +805,7 @@ export class QaRunsService {
         this.priorFor(item, priorSummaries),
         run.status,
         role,
+        runAutomation,
       ),
     );
 
@@ -755,6 +813,7 @@ export class QaRunsService {
       ...this.toListItem(run, items, signoff),
       items: runItems,
       permissions: this.computePermissions(run, items, role),
+      automation: runAutomation,
     };
   }
 
@@ -836,6 +895,7 @@ export class QaRunsService {
     previous: QaRunItemPrevious | null,
     runStatus: QaVerificationRunRow['status'],
     role: PlatformAppRole,
+    runAutomation: QaRunAutomation,
   ): QaRunItem {
     return {
       id: row.id,
@@ -868,6 +928,13 @@ export class QaRunsService {
       canUpdate:
         runStatus === 'open' && personaAllowsRole(row.target_persona, role),
       previous,
+      automated: matchAutomatedResult(
+        {
+          verificationType: row.verification_type,
+          testIdentifier: row.test_identifier,
+        },
+        runAutomation,
+      ),
     };
   }
 

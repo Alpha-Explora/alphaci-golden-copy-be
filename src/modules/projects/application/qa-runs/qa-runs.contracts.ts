@@ -43,6 +43,74 @@ export interface QaRunItemPrevious {
   status: QaRunItemStatus;
 }
 
+/** One tool's stage-level report, folded into the shape the QA runs contract exposes. */
+export type QaAutomationStage = 'quality' | 'verify';
+
+export type QaAutomationRunStatus =
+  | 'success'
+  | 'failure'
+  | 'running'
+  | 'cancelled';
+
+export interface QaAutomationFailure {
+  name: string;
+  message: string;
+}
+
+export interface QaAutomationTestResults {
+  total: number;
+  passed: number;
+  failed: number;
+  /** Capped at the first 20 by the reporting workflow. */
+  failures: QaAutomationFailure[];
+  /** True when `failed` exceeds `failures.length` — the list is a prefix, not the whole set. */
+  failuresTruncated: boolean;
+}
+
+/** One CI stage's latest report for the run's (branch, commitSha), read at request time. */
+export interface QaStageAutomation {
+  stage: QaAutomationStage;
+  status: QaAutomationRunStatus;
+  runId: number;
+  runUrl: string;
+  reportedAt: string;
+  /** Null when the stage's report carries no test counts. */
+  tests: QaAutomationTestResults | null;
+}
+
+/** The run's automated evidence, one slot per stage it could come from. */
+export interface QaRunAutomation {
+  verify: QaStageAutomation | null;
+  quality: QaStageAutomation | null;
+}
+
+export type QaAutomationSource = 'playwright' | 'unit_test' | 'bruno';
+
+export type QaAutomationItemStatus =
+  | 'passed'
+  | 'failed'
+  | 'unknown'
+  | 'not_run';
+
+export type QaAutomationScope = 'spec' | 'suite' | 'stage';
+
+/**
+ * One checklist item's automated verdict, matched against QaRunAutomation —
+ * see qa-automation-matching.ts for the rules. Null on the item (never this
+ * shape itself) means the item's verificationType is 'manual'.
+ */
+export interface QaAutomatedResult {
+  source: QaAutomationSource;
+  stage: QaAutomationStage;
+  status: QaAutomationItemStatus;
+  scope: QaAutomationScope;
+  matchedSpec: string | null;
+  failure: QaAutomationFailure | null;
+  runId: number | null;
+  runUrl: string | null;
+  reportedAt: string | null;
+}
+
 export interface QaRunItem {
   id: string;
   runId: string;
@@ -62,6 +130,8 @@ export interface QaRunItem {
   rowVersion: number;
   canUpdate: boolean;
   previous: QaRunItemPrevious | null;
+  /** Null for verification_type 'manual'; computed at read time, never stored. */
+  automated: QaAutomatedResult | null;
 }
 
 export interface QaSignoff {
@@ -109,6 +179,8 @@ export interface QaRunListItem {
 export interface QaRun extends QaRunListItem {
   items: QaRunItem[];
   permissions: QaRunPermissions;
+  /** Computed at read time for (project repo, run.branch, run.commitSha); never stored. */
+  automation: QaRunAutomation;
 }
 
 export interface QaReturnedItem {

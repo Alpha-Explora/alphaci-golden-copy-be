@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -28,6 +29,7 @@ import { CreateQaRunDto } from '../application/qa-runs/dto/create-qa-run.dto';
 import { PatchQaRunItemDto } from '../application/qa-runs/dto/patch-qa-run-item.dto';
 import { RequestRetestDto } from '../application/qa-runs/dto/request-retest.dto';
 import { SignoffQaRunDto } from '../application/qa-runs/dto/signoff-qa-run.dto';
+import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { buildQaReportFilename } from '../application/qa-runs/qa-report.filename';
 import { renderQaReportMarkdown } from '../application/qa-runs/qa-report.markdown';
@@ -97,6 +99,7 @@ export class ProjectQaRunsController {
   constructor(
     private readonly qaRunsService: QaRunsService,
     private readonly qaReportService: QaReportService,
+    private readonly qaAutomationDispatchService: QaAutomationDispatchService,
   ) {}
 
   @Get()
@@ -247,6 +250,26 @@ export class ProjectQaRunsController {
     @Param('runId') runId: string,
   ) {
     return this.qaRunsService.reopen(projectId, actorContext(req), runId);
+  }
+
+  /**
+   * "Run Playwright": re-dispatches the run's branch's generated verify
+   * workflow via GitHub's workflow_dispatch, using the signed-in user's own
+   * OAuth token so the run is attributed to them — see
+   * qa-automation-dispatch.service.ts.
+   */
+  @Post(':runId/automation/dispatch')
+  @HttpCode(202)
+  dispatchAutomation(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('runId') runId: string,
+  ) {
+    return this.qaAutomationDispatchService.dispatch(
+      projectId,
+      actorContext(req),
+      runId,
+    );
   }
 }
 

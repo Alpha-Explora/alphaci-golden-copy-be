@@ -44,6 +44,7 @@ import { ProjectWorkspaceService } from './application/workspace/project-workspa
 import { ProjectsService } from './application/lifecycle/projects.service';
 import { SonarCloudSetupService } from './application/lifecycle/sonar-cloud-setup.service';
 import { ProjectReferenceModule } from './project-reference.module';
+import { ProjectVisibilityModule } from './project-visibility.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { ProjectReferenceModule } from './project-reference.module';
     CatalogModule,
     HierarchyProjectLinkModule,
     ProjectReferenceModule,
+    ProjectVisibilityModule,
     QaChecklistsModule,
     QaRunsModule,
   ],

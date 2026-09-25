@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   NotFoundException,
   StreamableFile,
 } from '@nestjs/common';
@@ -9,6 +10,7 @@ import type { Request } from 'express';
 
 import { ProjectQaRunsController } from './qa-runs.controller';
 import { QaRunsService } from '../application/qa-runs/qa-runs.service';
+import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { QA_REPORT_SCHEMA_VERSION } from '../application/qa-runs/qa-report.contracts';
 import type { QaReport } from '../application/qa-runs/qa-report.contracts';
@@ -56,6 +58,7 @@ const run = (overrides: Partial<QaRun> = {}): QaRun => ({
     canSignOff: true,
     canReopen: false,
   },
+  automation: { verify: null, quality: null },
   ...overrides,
 });
 
@@ -120,15 +123,30 @@ const makeReportService = (
     ...overrides,
   }) as unknown as jest.Mocked<QaReportService>;
 
+const makeDispatchService = (
+  overrides: Partial<jest.Mocked<QaAutomationDispatchService>> = {},
+) =>
+  ({
+    dispatch: jest.fn().mockResolvedValue({
+      workflowFile: '30-alphaci-verify.yml',
+      ref: 'main',
+      headSha: 'a'.repeat(40),
+      targetsRunCommit: true,
+    }),
+    ...overrides,
+  }) as unknown as jest.Mocked<QaAutomationDispatchService>;
+
 async function compileController(
   runsService: QaRunsService,
   reportService: QaReportService,
+  dispatchService: QaAutomationDispatchService = makeDispatchService(),
 ) {
   const module: TestingModule = await Test.createTestingModule({
     controllers: [ProjectQaRunsController],
     providers: [
       { provide: QaRunsService, useValue: runsService },
       { provide: QaReportService, useValue: reportService },
+      { provide: QaAutomationDispatchService, useValue: dispatchService },
     ],
   })
     .overrideGuard(
@@ -279,5 +297,54 @@ describe('ProjectQaRunsController.reopen', () => {
       { userId: 'user-1', userLogin: 'tone', oauthToken: 'token-1' },
       'run-1',
     );
+  });
+});
+
+describe('ProjectQaRunsController.dispatchAutomation', () => {
+  it('passes the full actor context and returns the dispatch service result verbatim', async () => {
+    const dispatchService = makeDispatchService();
+    const controller = await compileController(
+      makeRunsService(),
+      makeReportService(),
+      dispatchService,
+    );
+
+    const result = await controller.dispatchAutomation(
+      makeRequest(),
+      'project-1',
+      'run-1',
+    );
+
+    expect(dispatchService.dispatch).toHaveBeenCalledWith(
+      'project-1',
+      { userId: 'user-1', userLogin: 'tone', oauthToken: 'token-1' },
+      'run-1',
+    );
+    expect(result).toEqual({
+      workflowFile: '30-alphaci-verify.yml',
+      ref: 'main',
+      headSha: 'a'.repeat(40),
+      targetsRunCommit: true,
+    });
+  });
+
+  it('propagates the dispatch service rejection (e.g. a 409 GITHUB_REAUTH) unchanged', async () => {
+    const dispatchService = makeDispatchService({
+      dispatch: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: 'GITHUB_REAUTH',
+          message: 'Sign in to GitHub again, then retry.',
+        }),
+      ),
+    });
+    const controller = await compileController(
+      makeRunsService(),
+      makeReportService(),
+      dispatchService,
+    );
+
+    await expect(
+      controller.dispatchAutomation(makeRequest(), 'project-1', 'run-1'),
+    ).rejects.toThrow(ConflictException);
   });
 });
