@@ -1,11 +1,11 @@
 {
-  "routeCount": 173,
+  "routeCount": 176,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "23584582cb882ee39cb20dbb4bea76b7155a6c5ef05b42673d1e10bfd58b6c6d",
+  "referenceSha256": "91b3c3f84c69e7d6f46084e7d9f5b2f9e4085fd8528ac060547b45cc9410bcf4",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "23584582cb882ee39cb20dbb4bea76b7155a6c5ef05b42673d1e10bfd58b6c6d",
+  "baselineSha256": "91b3c3f84c69e7d6f46084e7d9f5b2f9e4085fd8528ac060547b45cc9410bcf4",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -61,6 +61,14 @@
       "reason": "QA report export (Slice 4): a signed-off run's frozen report, or an open run's live one, downloadable as JSON or Markdown for sharing outside the product.",
       "routes": [
         "GET /api/v1/projects/{projectId}/qa-runs/{runId}/report"
+      ]
+    },
+    {
+      "reason": "Project-owned deployment environments with project-scoped membership and mutation-role checks.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/environments",
+        "PATCH /api/v1/projects/{projectId}/environments/{environmentId}",
+        "POST /api/v1/projects/{projectId}/environments"
       ]
     }
   ]
