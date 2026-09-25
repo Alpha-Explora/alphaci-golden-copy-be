@@ -281,6 +281,19 @@ export class QaChecklistsRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * Deletes every checklist of a deleted workspace. Items and project shares
+   * cascade; QA runs keep their history (checklist_id is ON DELETE SET NULL,
+   * and each run snapshots its items and checklist name/version).
+   */
+  async deleteByWorkspace(workspaceId: string): Promise<number> {
+    const result = await this.databaseService.query(
+      `DELETE FROM projects.qa_checklists WHERE workspace_id = $1;`,
+      [workspaceId],
+    );
+    return result.rowCount ?? 0;
+  }
+
   /** Pre-flight check: which of these ids actually belong to this workspace. */
   async validWorkspaceProjectIds(
     workspaceId: string,

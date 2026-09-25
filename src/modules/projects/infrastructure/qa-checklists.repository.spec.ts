@@ -34,6 +34,18 @@ describe('QaChecklistsRepository', () => {
     repository = new QaChecklistsRepository(makeDatabaseService(query));
   });
 
+  it('deleteByWorkspace deletes every checklist of the workspace and returns the count', async () => {
+    query.mockResolvedValueOnce({ rows: [], rowCount: 3 });
+
+    await expect(repository.deleteByWorkspace('workspace-1')).resolves.toBe(3);
+
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain(
+      'DELETE FROM projects.qa_checklists WHERE workspace_id = $1',
+    );
+    expect(params).toEqual(['workspace-1']);
+  });
+
   it('createWithItems inserts the checklist then its items inside one transaction', async () => {
     query
       .mockResolvedValueOnce({ rows: [checklistRow()] })

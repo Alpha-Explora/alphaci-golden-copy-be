@@ -1,12 +1,18 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { DatabaseService } from '#kernel/db/database.service';
+import {
+  WORKSPACE_DATA_CLEANUP,
+  type WorkspaceDataCleanupPort,
+} from '#kernel/ports/workspace-data-cleanup.port';
 import {
   MemberDirectoryService,
   type DirectoryCaller,
@@ -26,6 +32,8 @@ import type { UpdateMemberRoleDto } from '../api/dto/update-member-role.dto';
 
 @Injectable()
 export class GroupsService {
+  private readonly logger = new Logger(GroupsService.name);
+
   constructor(
     private readonly groupsRepository: GroupsRepository,
     private readonly accessService: HierarchyAccessService,
@@ -34,6 +42,8 @@ export class GroupsService {
     private readonly directory: MemberDirectoryService,
     private readonly auditEventsService: AuditEventPublisher,
     private readonly databaseService: DatabaseService,
+    @Inject(WORKSPACE_DATA_CLEANUP)
+    private readonly workspaceDataCleanup: WorkspaceDataCleanupPort,
   ) {}
 
   async createGroup(
@@ -181,6 +191,19 @@ export class GroupsService {
     const deleted = await this.groupsRepository.deleteGroup(groupId);
     if (!deleted) {
       throw new NotFoundException('Group not found');
+    }
+
+    // Data other contexts key by workspace id (QA checklists) has no FK to
+    // cascade from, so it is removed here, after the workspace is gone. A
+    // failure is logged, not thrown: the workspace delete has committed, and
+    // what is left behind is unreachable because access checks go through
+    // workspace membership.
+    try {
+      await this.workspaceDataCleanup.purgeWorkspace(groupId);
+    } catch (error) {
+      this.logger.error(
+        `Workspace ${groupId} deleted, but its QA checklists could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     return { id: groupId, deleted: true };
