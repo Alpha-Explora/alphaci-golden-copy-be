@@ -531,10 +531,29 @@ export class ProjectProvisioningSupport {
     const row = await this.projectsRepository.create(projectInput);
 
     if (environments) {
-      await this.projectsRepository.createProjectEnvironments(
-        row.id,
-        environments,
-      );
+      try {
+        await this.projectsRepository.createProjectEnvironments(
+          row.id,
+          environments,
+        );
+      } catch (error) {
+        try {
+          const deleted = await this.projectsRepository.deleteByIdAndUser(
+            row.id,
+            row.user_id,
+          );
+          if (!deleted) {
+            this.logger.warn(
+              `Compensation: failed to delete project row ${row.id} after environment insert failure`,
+            );
+          }
+        } catch (cleanupError) {
+          this.logger.warn(
+            `Compensation: failed to delete project row ${row.id} after environment insert failure: ${String(cleanupError)}`,
+          );
+        }
+        throw error;
+      }
     }
 
     await this.hierarchyProjectLinkService?.ensureLink({

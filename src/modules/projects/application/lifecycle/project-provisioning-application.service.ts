@@ -144,6 +144,10 @@ export class ProjectProvisioningApplicationService {
           'Invalid project environments: ' + violation.replaceAll('_', ' '),
         );
       }
+
+      throw new BadRequestException(
+        'Custom project environments are not yet supported during provisioning. Create the project without an environments list until environment-aware provisioning is available.',
+      );
     }
     await this.support.assertWithinQuota(userId, 'projects', 1, null);
     await this.support.workspaceGate.resolveWorkspaceIdForCreate(

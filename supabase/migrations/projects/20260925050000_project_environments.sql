@@ -1,6 +1,8 @@
 -- Project-owned ordered environment identities. Legacy projects are backfilled
--- only when all configured targets point at one branch and a Render target
--- explicitly marks that branch as production. `main` and `production` are
+-- only when exactly one configured target points at a branch and a Render
+-- target explicitly marks that branch as production. Projects with multiple
+-- targets remain on the legacy path until their target mapping is explicit.
+-- `main` and `production` are
 -- excluded because earlier code derived those labels from the branch name.
 -- Projects with several branches also remain on the legacy path because this
 -- schema has no authoritative environment order for them.
@@ -47,7 +49,8 @@ WITH target_summary AS (
          ) AS has_explicit_production_target
     FROM env_provisioning.project_deployment_targets AS target
    GROUP BY target.project_id
-  HAVING COUNT(DISTINCT target.branch_name) = 1
+  HAVING COUNT(*) = 1
+     AND COUNT(DISTINCT target.branch_name) = 1
      AND BOOL_OR(
        target.provider = 'render'
        AND target.render_environment_name = 'production'

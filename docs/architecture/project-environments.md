@@ -28,25 +28,31 @@ The project API supports:
 - POST /projects/:projectId/environments to append an environment.
 - PATCH /projects/:projectId/environments/:environmentId to change only its
   display name.
-- Project creation may include an ordered environments array.
+- These E1 APIs manage environment metadata only. They do not create branches,
+  provision deployment targets, or change generated deploy workflows; project
+  provisioning and deployment continue through the legacy fixed path.
+- Project creation rejects an ordered `environments` array before repository or
+  GitHub writes until E3 provides environment-aware provisioning.
 
-Project creation accepts the complete ordered list and requires exactly one
-production environment at any position. This allows the editable `dev → uat →
-main` template to auto-deploy `dev` at position zero while keeping `main` as the
-production environment. When an environment is added to an empty legacy project,
-that first addition must be production so the API does not create a partially
-configured environment list. Later additions must be non-production. Slugs,
-IDs, source branches, roles, and order cannot be edited through this API, and
-there is no delete operation. Those changes need a separate migration flow
-because provider targets, secrets, and history will later refer to environment
+The environment definition accepts complete ordered lists and requires exactly
+one production environment at any position. The editable `dev → uat → main`
+template describes a future configuration; it does not affect deployment
+behavior before E3 makes provisioning and workflows environment-aware.
+When an environment is added to an empty legacy project, that first addition
+must be production so the API does not create a partially configured
+environment list. Later additions must be non-production. Slugs, IDs, source
+branches, roles, and order cannot be edited through this API, and there is no
+delete operation. Those changes need a separate migration flow because
+provider targets, secrets, and history will later refer to environment
 identity.
 
 Existing project deployment selection continues to use its legacy branch-based
 path until an environment mapping is explicit. The additive backfill creates
-one production record only where all project targets identify one branch and a
-Render target explicitly identifies that branch as production without relying
-on the legacy branch-derived `main` or `production` labels. Projects with
-multiple candidate branches or no unambiguous production setting remain
-without environment rows; an empty list therefore means legacy compatibility
-remains active and operator mapping is required. This migration does not alter
-targets, branches, providers, or hosted resources.
+one production record only where exactly one project target identifies one
+branch and a Render target explicitly identifies that branch as production
+without relying on the legacy branch-derived `main` or `production` labels.
+Projects with multiple targets, candidate branches, or no unambiguous
+production setting remain without environment rows; an empty list therefore
+means legacy compatibility remains active and operator mapping is required.
+This migration does not alter targets, branches, providers, or hosted
+resources.
