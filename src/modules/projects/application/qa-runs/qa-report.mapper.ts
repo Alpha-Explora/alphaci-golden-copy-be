@@ -127,7 +127,10 @@ export function buildQaReport(input: BuildQaReportInput): QaReport {
     run,
     summary: buildQaReportSummary(run),
     defects: buildQaReportDefects(run),
-    automatedResults: null,
+    // A report frozen before this slice shipped has no `automation` key at
+    // all (old report_json cast straight to QaRun) — `?? null` tolerates
+    // that absence the same as a run whose stages never reported.
+    automatedResults: run.automation ?? null,
     signoffHistory: input.signoffHistory,
   };
 }

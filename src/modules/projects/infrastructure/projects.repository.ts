@@ -4,6 +4,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import type { ProjectVisibilityLookup } from '#kernel/ports/project-visibility.port';
 
 /**
  * Role-aware visibility predicate for a provisioned project (table aliased `pp`).
@@ -114,7 +115,7 @@ export interface CreateProvisionedProjectInput {
 }
 
 @Injectable()
-export class ProjectsRepository {
+export class ProjectsRepository implements ProjectVisibilityLookup {
   private readonly logger = new Logger(ProjectsRepository.name);
 
   constructor(private readonly databaseService: DatabaseService) {}
@@ -459,6 +460,31 @@ export class ProjectsRepository {
     );
 
     return result.rows[0] ?? null;
+  }
+
+  /**
+   * Same role-aware visibility predicate as the default branch of
+   * findByIdAndUser above, keyed on repoFullName instead of the project id
+   * -- backs PROJECT_VISIBILITY_LOOKUP (see project-visibility.port.ts) for
+   * callers, like /ci/runs, that only have the repository name. Matches
+   * case-insensitively for the same reason deleteByRepoFullName does: GitHub
+   * repo names are case-insensitive.
+   */
+  async isRepoVisibleToUser(
+    repoFullName: string,
+    userId: string,
+  ): Promise<boolean> {
+    const result = await this.databaseService.query<{ visible: 1 }>(
+      `
+        SELECT 1 AS visible
+        FROM projects.provisioned_projects AS pp
+        WHERE lower(pp.repo_full_name) = lower($1)
+          AND (${projectVisibilitySql('$2')})
+        LIMIT 1;
+      `,
+      [repoFullName, userId],
+    );
+    return result.rows.length > 0;
   }
 
   async updateStatus(

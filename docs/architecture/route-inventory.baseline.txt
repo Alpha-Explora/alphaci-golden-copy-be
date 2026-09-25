@@ -150,6 +150,7 @@ POST /api/v1/projects/{projectId}/domains/{domainId}/verify
 POST /api/v1/projects/{projectId}/env-vars/provision
 POST /api/v1/projects/{projectId}/env-vars/validate
 POST /api/v1/projects/{projectId}/qa-runs
+POST /api/v1/projects/{projectId}/qa-runs/{runId}/automation/dispatch
 POST /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}/request-retest
 POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen
 POST /api/v1/projects/{projectId}/qa-runs/{runId}/signoff

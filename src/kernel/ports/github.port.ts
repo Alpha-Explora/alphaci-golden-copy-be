@@ -456,7 +456,36 @@ export interface GithubProjectPort {
     repoFullName: string,
     input: GitHubOpenPullRequestInput,
   ): Promise<GitHubOpenPullRequestResult>;
+  /**
+   * Dispatch a `workflow_dispatch` run on a person's behalf — first caller:
+   * QA automation's "Run Playwright" (re-dispatches the generated verify
+   * workflow for a QA run's branch, attributed to the signed-in user).
+   * GitHub answers 204 with no body on success.
+   */
+  dispatchWorkflow(
+    accessToken: string,
+    repoFullName: string,
+    workflowFile: string,
+    ref: string,
+  ): Promise<GitHubDispatchWorkflowResult>;
 }
+
+/**
+ * The outcome of asking GitHub to dispatch a workflow_dispatch run.
+ *
+ * `unauthorized` (401) and `forbidden` (403) are the token's own refusal,
+ * same distinction userWriteRefusal draws elsewhere in this file.
+ * `not_found` (404) means either the workflow file does not exist on `ref`
+ * or the token cannot see the repository — GitHub does not distinguish the
+ * two, and neither does the caller: both read as "no verify workflow yet".
+ */
+export type GitHubDispatchWorkflowResult =
+  | { dispatched: true }
+  | {
+      dispatched: false;
+      reason: 'unauthorized' | 'forbidden' | 'not_found';
+      message: string;
+    };
 
 export interface GithubTeamMembershipChangedEvent {
   action: string;

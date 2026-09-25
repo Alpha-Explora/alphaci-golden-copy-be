@@ -26,6 +26,7 @@ const item = (overrides: Partial<QaRunItem> = {}): QaRunItem => ({
   rowVersion: 1,
   canUpdate: true,
   previous: null,
+  automated: null,
   ...overrides,
 });
 
@@ -64,6 +65,7 @@ const run = (overrides: Partial<QaRun> = {}): QaRun => ({
     canSignOff: true,
     canReopen: false,
   },
+  automation: { verify: null, quality: null },
   ...overrides,
 });
 
@@ -265,10 +267,220 @@ describe('renderQaReportMarkdown / checklist', () => {
   });
 });
 
+describe('renderQaReportMarkdown / checklist — automated suffix', () => {
+  it('appends "(auto: <status>)" to the Status cell when the item has an automated result', () => {
+    const items = [
+      item({
+        position: 0,
+        status: 'passed',
+        verificationType: 'playwright',
+        automated: {
+          source: 'playwright',
+          stage: 'verify',
+          status: 'passed',
+          scope: 'spec',
+          matchedSpec: 'e2e/checkout.spec.ts',
+          failure: null,
+          runId: 1,
+          runUrl: 'https://github.com/org/repo/actions/runs/1',
+          reportedAt: '2026-09-25T00:00:00.000Z',
+        },
+      }),
+    ];
+    const md = renderQaReportMarkdown(report({ run: run({ items }) }));
+    expect(md).toContain(
+      '| 1 | Smoke test login | Everyone | Playwright E2E | Passed (auto: passed) | — |',
+    );
+  });
+
+  it('leaves the Status cell unchanged for a manual item (automated is null)', () => {
+    const items = [item({ status: 'pending', automated: null })];
+    const md = renderQaReportMarkdown(report({ run: run({ items }) }));
+    expect(md).toContain(
+      '| 1 | Smoke test login | Everyone | Manual check | Pending | — |',
+    );
+  });
+
+  it('renders "not run" (with a space, not the raw not_run) for that automated status', () => {
+    const items = [
+      item({
+        status: 'pending',
+        verificationType: 'bruno',
+        automated: {
+          source: 'bruno',
+          stage: 'verify',
+          status: 'not_run',
+          scope: 'stage',
+          matchedSpec: null,
+          failure: null,
+          runId: null,
+          runUrl: null,
+          reportedAt: null,
+        },
+      }),
+    ];
+    const md = renderQaReportMarkdown(report({ run: run({ items }) }));
+    expect(md).toContain('Pending (auto: not run)');
+  });
+});
+
 describe('renderQaReportMarkdown / automated results', () => {
-  it('always says results are not available yet', () => {
-    const md = renderQaReportMarkdown(report());
+  it('says "Not available yet." when automatedResults is null', () => {
+    const md = renderQaReportMarkdown(report({ automatedResults: null }));
     expect(md).toContain('## Automated results\n\nNot available yet.');
+  });
+
+  it('says "Not available yet." when automatedResults has both stages null', () => {
+    const md = renderQaReportMarkdown(
+      report({ automatedResults: { verify: null, quality: null } }),
+    );
+    expect(md).toContain('## Automated results\n\nNot available yet.');
+  });
+
+  it('renders a Stage | Status | Tests | Run row per present stage', () => {
+    const md = renderQaReportMarkdown(
+      report({
+        automatedResults: {
+          verify: {
+            stage: 'verify',
+            status: 'success',
+            runId: 42,
+            runUrl: 'https://github.com/org/repo/actions/runs/42',
+            reportedAt: '2026-09-25T02:00:00.000Z',
+            tests: {
+              total: 5,
+              passed: 5,
+              failed: 0,
+              failures: [],
+              failuresTruncated: false,
+            },
+          },
+          quality: {
+            stage: 'quality',
+            status: 'failure',
+            runId: 43,
+            runUrl: 'https://github.com/org/repo/actions/runs/43',
+            reportedAt: '2026-09-25T02:05:00.000Z',
+            tests: null,
+          },
+        },
+      }),
+    );
+
+    expect(md).toContain(
+      '| Verify | Success | 5/5 | [#42](https://github.com/org/repo/actions/runs/42) |',
+    );
+    expect(md).toContain(
+      '| Quality | Failure | — | [#43](https://github.com/org/repo/actions/runs/43) |',
+    );
+  });
+
+  it('lists failures as "name — message", prefixed by which stage', () => {
+    const md = renderQaReportMarkdown(
+      report({
+        automatedResults: {
+          verify: {
+            stage: 'verify',
+            status: 'failure',
+            runId: 42,
+            runUrl: 'https://github.com/org/repo/actions/runs/42',
+            reportedAt: '2026-09-25T02:00:00.000Z',
+            tests: {
+              total: 2,
+              passed: 1,
+              failed: 1,
+              failures: [
+                {
+                  name: 'e2e/checkout.spec.ts > Checkout > pays',
+                  message: 'Timed out waiting for selector',
+                },
+              ],
+              failuresTruncated: false,
+            },
+          },
+          quality: null,
+        },
+      }),
+    );
+
+    expect(md).toContain(
+      '- **Verify:** e2e/checkout.spec.ts > Checkout > pays — Timed out waiting for selector',
+    );
+  });
+
+  it('says "None." under Failures when no stage reports any', () => {
+    const md = renderQaReportMarkdown(
+      report({
+        automatedResults: {
+          verify: {
+            stage: 'verify',
+            status: 'success',
+            runId: 1,
+            runUrl: 'https://github.com/org/repo/actions/runs/1',
+            reportedAt: '2026-09-25T00:00:00.000Z',
+            tests: {
+              total: 1,
+              passed: 1,
+              failed: 0,
+              failures: [],
+              failuresTruncated: false,
+            },
+          },
+          quality: null,
+        },
+      }),
+    );
+    expect(md).toContain('### Failures\n\nNone.');
+  });
+
+  it('adds a truncation note naming the stage when failuresTruncated is true', () => {
+    const md = renderQaReportMarkdown(
+      report({
+        automatedResults: {
+          verify: {
+            stage: 'verify',
+            status: 'failure',
+            runId: 1,
+            runUrl: 'https://github.com/org/repo/actions/runs/1',
+            reportedAt: '2026-09-25T00:00:00.000Z',
+            tests: {
+              total: 30,
+              passed: 5,
+              failed: 25,
+              failures: [{ name: 'e2e/a.spec.ts > x', message: 'boom' }],
+              failuresTruncated: true,
+            },
+          },
+          quality: null,
+        },
+      }),
+    );
+    expect(md).toContain('Only the first 20 failures are shown for: Verify.');
+  });
+
+  it('omits the truncation note when nothing is truncated', () => {
+    const md = renderQaReportMarkdown(
+      report({
+        automatedResults: {
+          verify: {
+            stage: 'verify',
+            status: 'failure',
+            runId: 1,
+            runUrl: 'https://github.com/org/repo/actions/runs/1',
+            reportedAt: '2026-09-25T00:00:00.000Z',
+            tests: {
+              total: 1,
+              passed: 0,
+              failed: 1,
+              failures: [{ name: 'e2e/a.spec.ts > x', message: 'boom' }],
+              failuresTruncated: false,
+            },
+          },
+          quality: null,
+        },
+      }),
+    );
+    expect(md).not.toContain('Only the first 20 failures');
   });
 });
 

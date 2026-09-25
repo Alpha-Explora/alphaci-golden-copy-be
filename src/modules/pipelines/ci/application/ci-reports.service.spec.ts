@@ -1,5 +1,8 @@
+import { ForbiddenException } from '@nestjs/common';
+
 import { CiReportsService } from './ci-reports.service';
 import type { DatabaseService } from '#kernel/db/database.service';
+import type { ProjectVisibilityLookup } from '#kernel/ports/project-visibility.port';
 import type {
   CiRunReportRow,
   CiRunReportsRepository,
@@ -16,6 +19,11 @@ const makeRunReportsRepository = () =>
     findRecentByRepo: jest.fn(),
     findRecentByUser: jest.fn(),
   }) as unknown as CiRunReportsRepository;
+
+/** Defaults to visible so tests that never exercise assertOwnership are unaffected. */
+const makeProjectVisibility = (
+  isRepoVisibleToUser: jest.Mock = jest.fn().mockResolvedValue(true),
+): ProjectVisibilityLookup => ({ isRepoVisibleToUser });
 
 function row(overrides: Partial<CiRunReportRow>): CiRunReportRow {
   return {
@@ -44,7 +52,11 @@ describe('CiReportsService.getRuns grouping', () => {
   beforeEach(() => {
     databaseService = makeDatabaseService();
     runReportsRepository = makeRunReportsRepository();
-    service = new CiReportsService(databaseService, runReportsRepository);
+    service = new CiReportsService(
+      databaseService,
+      runReportsRepository,
+      makeProjectVisibility(),
+    );
   });
 
   it('merges access/quality/package rows sharing a commit SHA into one run, even though each stage has its own GitHub run_id', async () => {
@@ -153,7 +165,11 @@ describe('CiReportsService.getRuns per-tool checks', () => {
   beforeEach(() => {
     databaseService = makeDatabaseService();
     runReportsRepository = makeRunReportsRepository();
-    service = new CiReportsService(databaseService, runReportsRepository);
+    service = new CiReportsService(
+      databaseService,
+      runReportsRepository,
+      makeProjectVisibility(),
+    );
   });
 
   const stageOf = async (results: Record<string, unknown>) => {
@@ -277,7 +293,11 @@ describe('CiReportsService.getRuns, one commit promoted across branches', () => 
 
   beforeEach(() => {
     runReportsRepository = makeRunReportsRepository();
-    service = new CiReportsService(makeDatabaseService(), runReportsRepository);
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      makeProjectVisibility(),
+    );
   });
 
   it('keeps one run per branch instead of collapsing them', async () => {
@@ -364,5 +384,57 @@ describe('CiReportsService.getRuns, one commit promoted across branches', () => 
     expect(qualityOf('uat')).toBe('failure');
     expect(qualityOf('dev')).toBe('success');
     expect(qualityOf('main')).toBe('success');
+  });
+});
+
+/**
+ * assertOwnership used to be `pp.user_id = caller` only, so a workspace
+ * member or QA tester who can see the project everywhere else in the
+ * product got a 403 here. It now defers to PROJECT_VISIBILITY_LOOKUP (the
+ * same role-aware rule projects.repository.ts's projectVisibilitySql
+ * applies), reached through a port rather than a query in this file — see
+ * project-visibility.port.ts's doc comment for why a plain cross-module
+ * import would cycle.
+ */
+describe('CiReportsService.getRuns, repository-scoped visibility', () => {
+  let runReportsRepository: CiRunReportsRepository;
+  let projectVisibility: ProjectVisibilityLookup;
+  let service: CiReportsService;
+
+  beforeEach(() => {
+    runReportsRepository = makeRunReportsRepository();
+    projectVisibility = makeProjectVisibility();
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      projectVisibility,
+    );
+  });
+
+  it('returns the repo-scoped runs for a workspace member the visibility port says can see it', async () => {
+    (runReportsRepository.findRecentByRepo as jest.Mock).mockResolvedValueOnce([
+      row({ stage: 'access', run_id: '1', status: 'success' }),
+    ]);
+
+    const { runs } = await service.getRuns('member-1', 'acme/orders-api');
+
+    expect(projectVisibility.isRepoVisibleToUser).toHaveBeenCalledWith(
+      'acme/orders-api',
+      'member-1',
+    );
+    expect(runs).toHaveLength(1);
+  });
+
+  it('403s when the visibility port says the caller cannot see the repo', async () => {
+    (projectVisibility.isRepoVisibleToUser as jest.Mock).mockResolvedValueOnce(
+      false,
+    );
+
+    await expect(
+      service.getRuns('stranger-1', 'acme/orders-api'),
+    ).rejects.toThrow(ForbiddenException);
+    expect(
+      runReportsRepository.findRecentByRepo as jest.Mock,
+    ).not.toHaveBeenCalled();
   });
 });

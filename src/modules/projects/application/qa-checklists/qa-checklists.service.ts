@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   Optional,
@@ -44,7 +45,11 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
   constructor(
     private readonly repository: QaChecklistsRepository,
     private readonly access: QaAccessService,
+    // Explicit token: AuditEventSink is a type alias, which TypeScript emits
+    // as `Object` in design:paramtypes, so without @Inject Nest finds no
+    // provider and @Optional() silently injects undefined.
     @Optional()
+    @Inject(AuditEventPublisher)
     private readonly auditEventsService?: AuditEventSink,
   ) {}
 

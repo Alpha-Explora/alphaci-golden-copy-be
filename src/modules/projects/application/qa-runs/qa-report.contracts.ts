@@ -11,6 +11,7 @@ import type {
   QaActor,
   QaDefectSeverity,
   QaRun,
+  QaRunAutomation,
   QaRunItemFixRequest,
   QaVerdict,
 } from './qa-runs.contracts';
@@ -81,7 +82,13 @@ export interface QaReport {
   run: QaRun;
   summary: QaReportSummary;
   defects: QaReportDefect[];
-  /** Reserved for the Playwright slice (Slice 5); always null today. */
-  automatedResults: null;
+  /**
+   * `run.automation ?? null` — null only when neither stage has ever
+   * reported. A signed-off run's value is whatever was frozen into
+   * `run.automation` at sign-off (see the mapper); a report frozen before
+   * this slice shipped has no `automation` key at all, which callers must
+   * treat the same as null.
+   */
+  automatedResults: QaRunAutomation | null;
   signoffHistory: QaReportSignoffHistoryEntry[];
 }
