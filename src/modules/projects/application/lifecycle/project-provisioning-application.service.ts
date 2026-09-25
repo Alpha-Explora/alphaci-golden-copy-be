@@ -1,4 +1,9 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import {
@@ -48,6 +53,7 @@ import type {
 } from './projects.service.types';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import { validateProjectEnvironmentDefinitions } from '../../domain/project-environment.policy';
 
 export type * from './projects.service.types';
 
@@ -131,6 +137,14 @@ export class ProjectProvisioningApplicationService {
     accessToken: string | null,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
+    if (dto.environments) {
+      const violation = validateProjectEnvironmentDefinitions(dto.environments);
+      if (violation) {
+        throw new BadRequestException(
+          'Invalid project environments: ' + violation.replaceAll('_', ' '),
+        );
+      }
+    }
     await this.support.assertWithinQuota(userId, 'projects', 1, null);
     await this.support.workspaceGate.resolveWorkspaceIdForCreate(
       userId,

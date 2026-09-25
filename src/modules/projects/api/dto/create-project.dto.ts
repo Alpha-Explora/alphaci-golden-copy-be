@@ -17,6 +17,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { DeploymentProviderId } from '#kernel/ports/deployment-runtime.port';
+import { AddProjectEnvironmentDto } from './project-environment.dto';
 
 export class DeploymentProvisioningEnvVarDto {
   @IsString()
@@ -326,6 +327,12 @@ export class CreateProjectDto {
   @ValidateNested()
   @Type(() => MultiRepoConfigDto)
   multiRepoConfig?: MultiRepoConfigDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AddProjectEnvironmentDto)
+  environments?: AddProjectEnvironmentDto[];
 
   @IsOptional()
   @ValidateNested()

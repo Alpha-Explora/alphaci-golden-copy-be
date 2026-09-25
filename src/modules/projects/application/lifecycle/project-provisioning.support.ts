@@ -22,6 +22,7 @@ import type {
   CreateProjectDto,
 } from '../../api/dto/create-project.dto';
 import type { ProjectsRepository } from '../../infrastructure/projects.repository';
+import type { ProjectEnvironmentInput } from '../../domain/project-environment.policy';
 import {
   filterDeploymentProvisioningRequest,
   forceManagedProvisioning,
@@ -522,9 +523,19 @@ export class ProjectProvisioningSupport {
   }
 
   async createProjectRow(
-    input: Parameters<ProjectsRepository['create']>[0],
+    input: Parameters<ProjectsRepository['create']>[0] & {
+      environments?: ProjectEnvironmentInput[];
+    },
   ): Promise<Awaited<ReturnType<ProjectsRepository['create']>>> {
-    const row = await this.projectsRepository.create(input);
+    const { environments, ...projectInput } = input;
+    const row = await this.projectsRepository.create(projectInput);
+
+    if (environments) {
+      await this.projectsRepository.createProjectEnvironments(
+        row.id,
+        environments,
+      );
+    }
 
     await this.hierarchyProjectLinkService?.ensureLink({
       projectId: row.id,

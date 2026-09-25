@@ -19,6 +19,8 @@ import { CatalogModule } from './application/catalog/catalog.module';
 import { QaChecklistsModule } from './application/qa-checklists/qa-checklists.module';
 import { QaRunsModule } from './application/qa-runs/qa-runs.module';
 import { ProjectsController } from './api/projects.controller';
+import { ProjectEnvironmentsController } from './api/project-environments.controller';
+import { ProjectEnvironmentsService } from './application/project-environments.service';
 import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './infrastructure/project-dashboard-snapshots.repository';
 import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service';
@@ -65,9 +67,14 @@ import { ProjectReferenceModule } from './project-reference.module';
     QaChecklistsModule,
     QaRunsModule,
   ],
-  controllers: [ProjectsController, ProjectWorkspaceController],
+  controllers: [
+    ProjectsController,
+    ProjectWorkspaceController,
+    ProjectEnvironmentsController,
+  ],
   providers: [
     ProjectsService,
+    ProjectEnvironmentsService,
     {
       provide: PROJECT_PROVISIONING_PORT,
       useExisting: ProjectProvisioningApplicationService,

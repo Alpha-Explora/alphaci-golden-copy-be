@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-09-25
+
+- **Creation**: Added project-owned ordered environment identity and the session-authenticated list, append, and display-name update API. Existing projects are backfilled only when target settings identify one branch and an explicit Render production target; all other projects continue through the legacy branch-based path. Generated schema ownership records the one migration reference to Runtime target settings.
+
 ## 2026-09-15
 
 - **Update**: Added deterministic provenance to the generated `@alphaci/capability-catalog` package. `provenance.json` binds the backend source digest and package identity to a canonical generated-file digest, and the package checker now rejects stale or tampered output.
