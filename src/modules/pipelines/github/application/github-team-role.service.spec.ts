@@ -12,9 +12,14 @@ import type {
 import type { PlatformAdminPort } from '#kernel/ports/platform-admin.port';
 import type { GithubOrganizationPort } from '#kernel/ports/github.port';
 import type { GithubInstallationsRepository } from '../infrastructure/github-installations.repository';
-import { GithubTeamRoleService } from './github-team-role.service';
+import {
+  GithubTeamRoleService,
+  combineLowerTeamReads,
+  deriveReconciledRole,
+} from './github-team-role.service';
 
 const LEAD_TEAM = 'team-lead';
+const QA_TEAM = 'qa-team';
 const DEV_TEAM = 'developers';
 /** Distinct from the user token so a mock can answer differently per reader. */
 const INSTALLATION_TOKEN = 'installation-token';
@@ -25,6 +30,7 @@ function makeConfigService(mode: GithubTeamRoleSyncMode): ConfigService {
       enforcedOrg: 'Alpha-Explora',
       teamRoleSync: mode,
       leadTeamSlug: LEAD_TEAM,
+      qaTeamSlug: QA_TEAM,
       developerTeamSlug: DEV_TEAM,
     },
   } as unknown as AppConfig;
@@ -167,7 +173,7 @@ describe('GithubTeamRoleService', () => {
 
     it('maps developers membership to member', async () => {
       const { service } = build({
-        memberships: { [LEAD_TEAM]: false, [DEV_TEAM]: true },
+        memberships: { [LEAD_TEAM]: false, [QA_TEAM]: false, [DEV_TEAM]: true },
       });
       await expect(service.resolveRoleFromTeams('ada', 'tok')).resolves.toBe(
         'member',
@@ -176,7 +182,11 @@ describe('GithubTeamRoleService', () => {
 
     it('falls to member when the user is in the org but neither team', async () => {
       const { service } = build({
-        memberships: { [LEAD_TEAM]: false, [DEV_TEAM]: false },
+        memberships: {
+          [LEAD_TEAM]: false,
+          [QA_TEAM]: false,
+          [DEV_TEAM]: false,
+        },
       });
       await expect(service.resolveRoleFromTeams('ada', 'tok')).resolves.toBe(
         'member',
@@ -200,6 +210,118 @@ describe('GithubTeamRoleService', () => {
         'lead',
       );
       expect(getTeamMembership).toHaveBeenCalledTimes(1);
+    });
+
+    it('maps qa-team membership to qa', async () => {
+      const { service } = build({
+        memberships: { [LEAD_TEAM]: false, [QA_TEAM]: true, [DEV_TEAM]: false },
+      });
+      await expect(service.resolveRoleFromTeams('ada', 'tok')).resolves.toBe(
+        'qa',
+      );
+    });
+
+    it('ranks qa above developers for a user on both teams', async () => {
+      const { service } = build({
+        memberships: { [LEAD_TEAM]: false, [QA_TEAM]: true, [DEV_TEAM]: true },
+      });
+      await expect(service.resolveRoleFromTeams('ada', 'tok')).resolves.toBe(
+        'qa',
+      );
+    });
+
+    it('ranks lead above qa and never reads the lower teams', async () => {
+      const { service, getTeamMembership } = build({
+        memberships: { [LEAD_TEAM]: true, [QA_TEAM]: true },
+      });
+      await expect(service.resolveRoleFromTeams('ada', 'tok')).resolves.toBe(
+        'lead',
+      );
+      expect(getTeamMembership).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays unknown when the qa read fails, even with a developers hit', async () => {
+      // Resolving 'member' here would demote a real QA tester on one bad read.
+      const { service } = build({
+        memberships: { [LEAD_TEAM]: false, [QA_TEAM]: null, [DEV_TEAM]: true },
+      });
+      await expect(
+        service.resolveRoleFromTeams('ada', 'tok'),
+      ).resolves.toBeNull();
+    });
+  });
+
+  describe('combineLowerTeamReads', () => {
+    it.each([
+      [false, true, null, 'qa'],
+      [null, true, false, 'qa'],
+      [false, null, true, null],
+      [false, false, true, 'member'],
+      [false, false, false, 'member'],
+      [null, false, false, null],
+      [false, false, null, null],
+    ] as const)('lead=%s qa=%s dev=%s -> %s', (lead, qa, dev, expected) => {
+      expect(combineLowerTeamReads(lead, qa, dev)).toBe(expected);
+    });
+  });
+
+  describe('deriveReconciledRole', () => {
+    const leads = new Set(['ada']);
+    const qa = new Set(['quinn']);
+
+    it('assigns qa from a known qa roster, lead still winning', () => {
+      expect(
+        deriveReconciledRole(
+          { login: 'Quinn', appRole: 'member' },
+          leads,
+          qa,
+          true,
+        ),
+      ).toBe('qa');
+      expect(
+        deriveReconciledRole(
+          { login: 'ada', appRole: 'qa' },
+          leads,
+          new Set(['ada']),
+          true,
+        ),
+      ).toBe('lead');
+    });
+
+    it('demotes a qa user who left a known qa roster', () => {
+      expect(
+        deriveReconciledRole({ login: 'bob', appRole: 'qa' }, leads, qa, true),
+      ).toBe('member');
+    });
+
+    it('keeps existing qa users when the qa roster is unknown', () => {
+      expect(
+        deriveReconciledRole(
+          { login: 'quinn', appRole: 'qa' },
+          leads,
+          new Set(),
+          false,
+        ),
+      ).toBeNull();
+      expect(
+        deriveReconciledRole(
+          { login: 'bob', appRole: 'member' },
+          leads,
+          new Set(),
+          false,
+        ),
+      ).toBe('member');
+    });
+
+    it('never touches an admin', () => {
+      expect(
+        deriveReconciledRole(
+          { login: 'ada', appRole: 'admin' },
+          leads,
+          qa,
+          true,
+        ),
+      ).toBeNull();
     });
   });
 
@@ -256,7 +378,7 @@ describe('GithubTeamRoleService', () => {
 
     it('never auto-downgrades an admin', async () => {
       const { service, setAppRole } = build({
-        memberships: { [LEAD_TEAM]: false, [DEV_TEAM]: true },
+        memberships: { [LEAD_TEAM]: false, [QA_TEAM]: false, [DEV_TEAM]: true },
         current: { role: 'admin', source: 'github_team' },
       });
       await expect(
@@ -288,7 +410,7 @@ describe('GithubTeamRoleService', () => {
 
     it('demotes a lead removed from team-lead — the security-relevant direction', async () => {
       const { service, setAppRole } = build({
-        memberships: { [LEAD_TEAM]: false, [DEV_TEAM]: true },
+        memberships: { [LEAD_TEAM]: false, [QA_TEAM]: false, [DEV_TEAM]: true },
         current: { role: 'lead', source: 'github_team' },
       });
       await expect(
@@ -393,7 +515,7 @@ describe('GithubTeamRoleService', () => {
     it('does not consult the App when the user token already answered', async () => {
       const { service, createInstallationAccessToken } = build({
         mode: 'enforce',
-        memberships: { [DEV_TEAM]: true },
+        memberships: { [QA_TEAM]: false, [DEV_TEAM]: true },
         appMemberships: { [LEAD_TEAM]: true },
       });
       await expect(service.resolveSeedRole('ada', 'tok', false)).resolves.toBe(
@@ -494,6 +616,37 @@ describe('GithubTeamRoleService', () => {
       expect(setAppRole).not.toHaveBeenCalled();
     });
 
+    it('promotes qa-team members to qa during the sweep', async () => {
+      const { service, setAppRole } = build({
+        rosters: { ...LEADS, [QA_TEAM]: ['quinn'] },
+        syncedUsers: [
+          { id: 'u1', login: 'quinn', appRole: 'member' },
+          { id: 'u2', login: 'bob', appRole: 'qa' },
+        ],
+      });
+      await expect(service.reconcileAll()).resolves.toEqual({
+        status: 'completed',
+        checked: 2,
+        updated: 2,
+      });
+      expect(setAppRole).toHaveBeenCalledWith('u1', 'qa', 'github_team');
+      expect(setAppRole).toHaveBeenCalledWith('u2', 'member', 'github_team');
+    });
+
+    it('leaves qa users alone when the qa roster comes back empty', async () => {
+      // Empty is indistinguishable from unreadable: it must not demote QA.
+      const { service, setAppRole } = build({
+        rosters: LEADS,
+        syncedUsers: [{ id: 'u1', login: 'quinn', appRole: 'qa' }],
+      });
+      await expect(service.reconcileAll()).resolves.toEqual({
+        status: 'completed',
+        checked: 1,
+        updated: 0,
+      });
+      expect(setAppRole).not.toHaveBeenCalled();
+    });
+
     it('matches logins case-insensitively', async () => {
       const { service, setAppRole } = build({
         rosters: { [LEAD_TEAM]: ['Ada'], [DEV_TEAM]: ['bob'] },
@@ -509,7 +662,7 @@ describe('GithubTeamRoleService', () => {
   });
 
   describe('membership webhook filtering', () => {
-    it('ignores teams that are not one of the two configured role teams', async () => {
+    it('ignores teams that are not one of the three configured role teams', async () => {
       const { service, setAppRole } = build({
         memberships: { [LEAD_TEAM]: true },
       });

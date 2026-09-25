@@ -85,6 +85,7 @@ function githubOrgAndTeams(
   | 'teamRoleSync'
   | 'leadTeamSlug'
   | 'developerTeamSlug'
+  | 'qaTeamSlug'
   | 'teamRoleReconcileIntervalMs'
 > {
   const rawEnforcedOrg = env['GITHUB_ENFORCED_ORG']?.trim();
@@ -103,6 +104,7 @@ function githubOrgAndTeams(
     leadTeamSlug: env['GITHUB_TEAM_LEAD_SLUG']?.trim() || 'team-lead',
     developerTeamSlug:
       env['GITHUB_TEAM_DEVELOPER_SLUG']?.trim() || 'developers',
+    qaTeamSlug: env['GITHUB_TEAM_QA_SLUG']?.trim() || 'qa-team',
     teamRoleReconcileIntervalMs: Number(
       env['GITHUB_TEAM_ROLE_RECONCILE_INTERVAL_MS'] ?? 900_000,
     ),

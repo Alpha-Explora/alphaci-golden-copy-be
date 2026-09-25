@@ -182,7 +182,7 @@ export class GroupsRepository {
         SELECT
           workspace.id, workspace.name, workspace.description, workspace.business_unit,
           workspace.status, workspace.archived_at, workspace.archived_by, workspace.created_at,
-          CASE WHEN app_user.app_role = 'member' THEN 'member' ELSE 'admin' END AS role
+          CASE WHEN app_user.app_role IN ('admin', 'lead') THEN 'admin' ELSE 'member' END AS role
         FROM orgs.workspace_members AS member
         JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
         JOIN identity.app_users AS app_user ON app_user.id = member.user_id
@@ -280,8 +280,10 @@ export class GroupsRepository {
           member.id, member.workspace_id, member.user_id,
           -- Effective group role is derived from the user's GLOBAL app_role
           -- (single source of truth) — 'admin'/'lead' act as group managers,
-          -- 'member' does not. The stored member.role is no longer authoritative.
-          CASE WHEN app_user.app_role = 'member' THEN 'member' ELSE 'admin' END AS role
+          -- every other role ('qa', 'member') does not. Allow-list, never exclusion:
+          -- a new app_role value must not fall into the manager branch.
+          -- The stored member.role is no longer authoritative.
+          CASE WHEN app_user.app_role IN ('admin', 'lead') THEN 'admin' ELSE 'member' END AS role
         FROM orgs.workspace_members AS member
         JOIN orgs.workspaces AS workspace ON workspace.id = member.workspace_id
         JOIN identity.app_users AS app_user ON app_user.id = member.user_id
@@ -366,7 +368,7 @@ export class GroupsRepository {
       `
         SELECT
           member.id, member.workspace_id, member.user_id,
-          CASE WHEN user_profile.app_role = 'member' THEN 'member' ELSE 'admin' END AS role,
+          CASE WHEN user_profile.app_role IN ('admin', 'lead') THEN 'admin' ELSE 'member' END AS role,
           member.member_status,
           member.invited_by, member.invited_at, member.removed_at, member.removed_by, member.removal_reason,
           member.created_at,
@@ -376,7 +378,7 @@ export class GroupsRepository {
         WHERE member.workspace_id = $1
         ORDER BY
           CASE member.member_status WHEN 'active' THEN 1 WHEN 'invited' THEN 2 ELSE 3 END,
-          CASE WHEN user_profile.app_role = 'member' THEN 2 ELSE 1 END,
+          CASE WHEN user_profile.app_role IN ('admin', 'lead') THEN 1 ELSE 2 END,
           lower(user_profile.login) ASC;
       `,
       [groupId],

@@ -27,7 +27,7 @@ interface UpsertGitHubUserInput {
    * DO UPDATE clause, so a returning user keeps whatever the Admin Console has
    * since assigned. `null`/undefined falls back to the column default ('member').
    */
-  seedAppRole?: 'admin' | 'lead' | 'member' | null;
+  seedAppRole?: 'admin' | 'lead' | 'qa' | 'member' | null;
 }
 
 interface UpsertGoogleUserInput {

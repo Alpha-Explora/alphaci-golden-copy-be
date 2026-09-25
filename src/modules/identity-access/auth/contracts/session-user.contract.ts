@@ -4,5 +4,5 @@ export interface SessionUserContract {
   displayName: string | null;
   avatarUrl: string | null;
   githubLogin: string | null;
-  appRole: 'admin' | 'lead' | 'member';
+  appRole: 'admin' | 'lead' | 'qa' | 'member';
 }

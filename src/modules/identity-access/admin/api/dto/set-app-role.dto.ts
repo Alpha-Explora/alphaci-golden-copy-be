@@ -3,6 +3,6 @@ import { IsIn } from 'class-validator';
 import type { AppRole } from '../../infrastructure/platform-admins.repository';
 
 export class SetAppRoleDto {
-  @IsIn(['admin', 'lead', 'member'])
+  @IsIn(['admin', 'lead', 'qa', 'member'])
   role!: AppRole;
 }

@@ -5,7 +5,7 @@ import { DatabaseService } from '#kernel/db/database.service';
 export type PlatformRole = 'admin' | 'super_admin';
 
 /** Global hierarchy role — single source of truth for group capabilities. */
-export type AppRole = 'admin' | 'lead' | 'member';
+export type AppRole = 'admin' | 'lead' | 'qa' | 'member';
 
 /**
  * Provenance of app_role.

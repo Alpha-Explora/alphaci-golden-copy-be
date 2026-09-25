@@ -38,13 +38,56 @@ export type RoleSyncOutcome =
   | { status: 'updated'; from: AppRole; to: AppRole };
 
 /**
+ * Combines the three team reads once `team-lead` was NOT a positive hit
+ * (inLeadTeam is false or null here). Each read is true | false | null.
+ *
+ * Returns the implied role, or null to mean "unknown: change nothing".
+ * Exported for unit tests.
+ */
+export function combineLowerTeamReads(
+  inLeadTeam: boolean | null,
+  inQaTeam: boolean | null,
+  inDeveloperTeam: boolean | null,
+): AppRole | null {
+  if (inQaTeam === true) return 'qa';
+  // qa outranks developers, so an unreadable qa read cannot be settled by a
+  // developers hit: resolving 'member' here would demote a real QA tester on
+  // one bad response (safety rule 2).
+  if (inQaTeam === null) return null;
+  if (inDeveloperTeam === true) return 'member';
+  // In the org, on no role team: 'member' is the floor.
+  if (inLeadTeam === false && inDeveloperTeam === false) return 'member';
+  return null;
+}
+
+/**
+ * The role the reconcile sweep assigns one synced user, or null to skip them.
+ * Rosters are lower-cased login sets. Exported for unit tests.
+ */
+export function deriveReconciledRole(
+  user: { login: string; appRole: AppRole },
+  leads: ReadonlySet<string>,
+  qa: ReadonlySet<string>,
+  qaRosterKnown: boolean,
+): AppRole | null {
+  // Rule 3 still applies: admins are owner/Console territory.
+  if (user.appRole === 'admin') return null;
+  const login = user.login.toLowerCase();
+  if (leads.has(login)) return 'lead';
+  if (qaRosterKnown) return qa.has(login) ? 'qa' : 'member';
+  // Unknown qa roster: keep existing qa users, everyone else is 'member'.
+  return user.appRole === 'qa' ? null : 'member';
+}
+
+/**
  * Derives identity.app_users.app_role from GitHub org team membership.
  *
  * Mapping (Alpha-Explora):
  *   org owner            → 'admin'   (login path only — needs the user token)
  *   member of `team-lead`   → 'lead'    (may create projects)
+ *   member of `qa-team`     → 'qa'      (verify and sign off, cannot create)
  *   member of `developers`  → 'member'  (assigned work only)
- *   in the org, neither team → 'member'
+ *   in the org, no role team → 'member'
  *
  * Four safety rules, in priority order — every one of them exists to make a
  * GitHub outage or a permission gap harmless rather than destructive:
@@ -86,7 +129,7 @@ export class GithubTeamRoleService {
   }
 
   /**
-   * Only the two configured role teams matter. A membership change on any
+   * Only the three configured role teams matter. A membership change on any
    * other org team (including the per-repository `{repo}-developers` access
    * teams this product creates itself) must not touch app_role — otherwise
    * granting someone repo access would silently re-role them.
@@ -96,14 +139,12 @@ export class GithubTeamRoleService {
   ): Promise<void> {
     if (this.mode !== 'enforce') return;
 
-    const { leadTeamSlug, developerTeamSlug } = this.config.github;
+    const { leadTeamSlug, qaTeamSlug, developerTeamSlug } = this.config.github;
     const slug = event.teamSlug.toLowerCase();
-    if (
-      slug !== leadTeamSlug.toLowerCase() &&
-      slug !== developerTeamSlug.toLowerCase()
-    ) {
-      return;
-    }
+    const roleTeams = [leadTeamSlug, qaTeamSlug, developerTeamSlug].map((s) =>
+      s.toLowerCase(),
+    );
+    if (!roleTeams.includes(slug)) return;
 
     await this.syncFromMembershipEvent({
       login: event.login,
@@ -120,18 +161,21 @@ export class GithubTeamRoleService {
   }
 
   /**
-   * Reads both team memberships and returns the role they imply.
+   * Reads the role-team memberships and returns the role they imply.
+   * Precedence: team-lead > qa-team > developers.
    *
-   * Returns null when the answer is genuinely unknown — either team check came
-   * back unreadable AND no positive membership was established. A positive
-   * `team-lead` hit short-circuits, so a broken `developers` read can never
-   * block a promotion.
+   * Each read is true (active member), false (not a member, or the team does
+   * not exist: GitHub answers 404 for both), or null (unreadable).
+   *
+   * Returns null when the answer is genuinely unknown, which leaves the stored
+   * role untouched. A positive `team-lead` hit short-circuits, so a broken
+   * read of a lower team can never block a promotion.
    */
   async resolveRoleFromTeams(
     login: string,
     token: string,
   ): Promise<AppRole | null> {
-    const { leadTeamSlug, developerTeamSlug } = this.config.github;
+    const { leadTeamSlug, qaTeamSlug, developerTeamSlug } = this.config.github;
 
     const inLeadTeam = await this.githubService.getTeamMembership(
       leadTeamSlug,
@@ -140,20 +184,18 @@ export class GithubTeamRoleService {
     );
     if (inLeadTeam === true) return 'lead';
 
+    const inQaTeam = await this.githubService.getTeamMembership(
+      qaTeamSlug,
+      login,
+      token,
+    );
     const inDeveloperTeam = await this.githubService.getTeamMembership(
       developerTeamSlug,
       login,
       token,
     );
-    if (inDeveloperTeam === true) return 'member';
 
-    // Both answered "no" → the user is in the org but on neither role team.
-    // 'member' is the correct floor: they can sign in and see what they are
-    // assigned, but cannot create.
-    if (inLeadTeam === false && inDeveloperTeam === false) return 'member';
-
-    // At least one check was unreadable and neither was a positive hit.
-    return null;
+    return combineLowerTeamReads(inLeadTeam, inQaTeam, inDeveloperTeam);
   }
 
   /**
@@ -338,7 +380,7 @@ export class GithubTeamRoleService {
    * than issuing a membership check per user — with a few dozen users that is
    * the difference between 2 requests and 100.
    *
-   * Bails out entirely if either roster comes back empty. An empty roster is
+   * Bails out entirely if both the lead and developer rosters come back empty. An empty roster is
    * indistinguishable from an unreadable one at this layer (listTeamMembers
    * degrades to [] on failure), and treating "unreadable" as "nobody is in
    * team-lead" would demote every lead in the org in one pass. Refusing to act
@@ -361,14 +403,16 @@ export class GithubTeamRoleService {
       return { status: 'unreadable' };
     }
 
-    const { leadTeamSlug, developerTeamSlug } = this.config.github;
+    const { leadTeamSlug, qaTeamSlug, developerTeamSlug } = this.config.github;
     let leadMembers: string[];
+    let qaMembers: string[];
     let developerMembers: string[];
     try {
       const token =
         await this.githubService.createInstallationAccessToken(installationId);
-      [leadMembers, developerMembers] = await Promise.all([
+      [leadMembers, qaMembers, developerMembers] = await Promise.all([
         this.githubService.listTeamMembersWithToken(leadTeamSlug, token),
+        this.githubService.listTeamMembersWithToken(qaTeamSlug, token),
         this.githubService.listTeamMembersWithToken(developerTeamSlug, token),
       ]);
     } catch (error) {
@@ -386,17 +430,16 @@ export class GithubTeamRoleService {
     }
 
     const leads = new Set(leadMembers.map((login) => login.toLowerCase()));
+    const qa = new Set(qaMembers.map((login) => login.toLowerCase()));
+    // An empty qa roster is ambiguous in the same way (unreadable and "no QA
+    // team" both degrade to []), so it may neither grant nor revoke 'qa'.
+    const qaRosterKnown = qa.size > 0;
     const users = await this.roleAccess.listGithubTeamSyncedUsers();
 
     let updated = 0;
     for (const user of users) {
-      // Rule 3 still applies — admins are owner/Console territory.
-      if (user.appRole === 'admin') continue;
-
-      const derived: AppRole = leads.has(user.login.toLowerCase())
-        ? 'lead'
-        : 'member';
-      if (derived === user.appRole) continue;
+      const derived = deriveReconciledRole(user, leads, qa, qaRosterKnown);
+      if (derived === null || derived === user.appRole) continue;
 
       await this.roleAccess.setAppRole(user.id, derived, 'github_team');
       await this.recordRoleChange({

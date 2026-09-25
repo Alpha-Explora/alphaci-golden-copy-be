@@ -123,7 +123,7 @@ export class AuthController {
       // null for ordinary users; 'admin' | 'super_admin' for platform admins.
       // The frontend uses this to gate the /admin surface.
       platformRole: await this.platformAdminAccessService.findRole(user.id),
-      // Global hierarchy role ('admin' | 'lead' | 'member'). The frontend uses
+      // Global hierarchy role ('admin' | 'lead' | 'qa' | 'member'). The frontend uses
       // this to gate create actions (systems/repositories) — only admin/lead,
       // and to show the "Team lead" / "Developer" badge in the sidebar.
       appRole,
