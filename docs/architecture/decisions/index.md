@@ -12,3 +12,4 @@
 * [ADR-0010: Single authoring source for composition](adr-0010-single-authoring-source-for-composition.md) - one capability record, generated registry, manifests, and pack rows.
 * [ADR-0011: Member directory sources](adr-0011-member-directory-sources.md) - one per-deployment directory decides who may join a workspace, served by a public API.
 * [ADR-0012: Configurable deployment targets](adr-0012-configurable-deployment-targets.md) - proposed: provider per project slot and branch; the first planned mix uses Vercel/Render for `dev` and `uat`, and customer-hosted Compose for `main`.
+* [ADR-0013: QA verification runs](adr-0013-qa-verification-runs.md) - QA Team persona, commit-keyed snapshotted runs, server-enforced sign-off with a frozen report, and automated results shown beside manual verdicts.
