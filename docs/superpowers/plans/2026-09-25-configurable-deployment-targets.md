@@ -74,30 +74,46 @@ to the customer host.
 
 One Luna agent owns one PR in one Codex-managed isolated Git checkout. Run up
 to three implementation agents concurrently while the root agent reviews
-contracts and diffs. A dependent PR initially targets the preceding branch in its own
-repository; retarget it to `main` after the lower PR merges. Independent PRs
-target `main`. Link cross-repository dependencies in PR descriptions; Git
-cannot stack branches across repositories. Keep incomplete capabilities gated.
+contracts and diffs. This plan uses a plan-scoped `trunk` branch in the backend,
+frontend, and `alphaci-workflow` repositories. Each branch was created from its
+current `main` on 2026-09-25; these branches are not repository defaults. PRs
+for this plan target the relevant repository's `trunk`. A dependent PR initially
+targets the preceding branch in its own repository; retarget it to that plan's
+`trunk` after the lower PR merges. Independent PRs target the plan's `trunk`.
+When the planned work is ready for production, open a release PR from each
+plan-scoped `trunk` to that repository's `main`. Unrelated work continues to use
+the repository's normal `main` target. Link cross-repository dependencies in PR
+descriptions; Git cannot stack branches across repositories. Keep incomplete
+capabilities gated.
 
-**Baseline gate:** implementation has not started. The focused deployment plan,
-ADR-0012, and host guide landed on `main` as PR #100 at `4575e1c`; its
-documentation, boundary, and full CI checks passed. The original backend local
-`main` still contains prior local-only commits and untracked `artifacts/`; do
-not use it as an implementation base. Create fresh isolated checkouts from
-the current remote `main`. The frontend's prior `codex/golden-copy-trunk`
-commits remain on that branch; its untracked pnpm files and backend
-`artifacts/` remain untouched. Two earlier backend isolated checkouts for
-target routing and the React image were clean at `cdb78ae` when inspected;
-check their ownership and base again before reusing them. Fetch and confirm
-all three remote heads again when implementation begins.
+**Baseline:** the focused deployment plan, ADR-0012, and host guide landed on
+`main` as PR #100 at `4575e1c`; PR #101 closed Phase 0 at `1db35f6`. The plan
+branches currently start at the same commits as their repository `main` heads:
+backend `1db35f6`, frontend `572a8fe`, and central workflows `5031605`. Each
+`main` remains equal to `origin/main` and remains the GitHub default branch. The
+backend's 12 prior local-only commits are preserved on
+`codex/archive-main-before-phase1`; its untracked `artifacts/` and the
+frontend's untracked pnpm files remain untouched. Existing backend PR #75 and
+frontend PR #41 still target the older `codex/golden-copy-trunk` branch and are
+unrelated to this plan's new `trunk` branches. The earlier backend worktree
+already holds `codex/onprem-react-image`, so Phase 1 R1 uses the fresh branch
+`codex/onprem-react-image-phase1` from the same initial commit as the
+plan-scoped `trunk`.
+
+GitHub's API returned HTTP 403 (upgrade the plan or make the repository public)
+when reading branch protection for the private backend and frontend
+repositories; the central workflow repository currently has no branch
+protection or rulesets. This plan's PR targeting is therefore a workflow
+convention, not a server-enforced policy. Keep changes to both `trunk` and
+production `main` in reviewed PRs.
 
 | Stack | PR branches in merge order | Repository | Dependency |
 |---|---|---|---|
-| Environment core | E1 `codex/project-environments` -> E2 `codex/environment-targets` -> E3 `codex/environment-pipelines` | Backend | Start from reconciled `main` |
+| Environment core | E1 `codex/project-environments` -> E2 `codex/environment-targets` -> E3 `codex/environment-pipelines` | Backend | Start from plan-scoped `trunk` |
 | On-prem control | C1 `codex/onprem-release-contract` -> C2 `codex/onprem-compose-provider` -> C3 `codex/mixed-deployment-activation` | Backend | C1 from E1; C2 from E3 after C1 merges; C3 from C2 |
 | Host package | H1 `codex/onprem-host-agent` -> H2 `codex/onprem-windows-host` | Backend | H1 from C1; H2 from H1 |
-| Central workflows | W1 `codex/configurable-managed-workflows` -> W2 `codex/signed-onprem-release` | `alphaci-workflow` | W1 from its updated `main`; W2 consumes C1 API |
-| React image | R1 `codex/onprem-react-image` | Backend | Independent updated `main` |
+| Central workflows | W1 `codex/configurable-managed-workflows` -> W2 `codex/signed-onprem-release` | `alphaci-workflow` | W1 from its plan-scoped `trunk`; W2 consumes C1 API |
+| React image | R1 `codex/onprem-react-image-phase1` | Backend | Independent plan-scoped `trunk` |
 | Product UI | F1 `codex/project-environment-setup` -> F2 `codex/environment-operations` | Frontend | F1 consumes E1 API; F2 consumes E2/E3 APIs |
 
 The useful parallel waves are **E1 + W1 + R1**, then **E2 + C1 + F1**, then
@@ -145,23 +161,23 @@ signing and registration; W1 does not add host credentials to a deploy job.
 
 ### Phase 1: environment identity and reusable foundations (E1, W1, R1)
 
-- [ ] **E1**, backend PR to `main`: add project-owned ordered environment
-  records and API with stable ID, immutable slug, display name, source branch,
-  role, and exactly one production environment. Accept additions and display
+- [ ] **E1**, backend PR to this plan's `trunk`: add project-owned ordered
+  environment records and API with stable ID, immutable slug, display name,
+  source branch, role, and exactly one production environment. Accept additions and display
   name changes; reject destructive edits until a migration flow exists. Backfill
   existing projects without changing their branches, targets, or hosted costs.
   Evidence: additive migration on a disposable database and API behavior for
   legacy and custom projects, including two environments on one branch.
-- [ ] **W1**, central workflow PR to `main`: extend existing `docker-build.yml`,
-  `release.yml`, `render-deploy.yml`, and `vercel-deploy.yml` only where their
+- [ ] **W1**, central workflow PR to this plan's `trunk`: extend existing
+  `docker-build.yml`, `release.yml`, `render-deploy.yml`, and `vercel-deploy.yml` only where their
   contracts need pinned commit, environment ID, target ID, or artifact output.
   Remove fixed test/UAT/main secret or branch assumptions from managed deploy
   selection. Require a validated GitHub Environment identifier from the
   caller. Update contract docs, catalog, and validation lists; avoid a new
   reusable workflow when an existing one fits. Evidence: reusable callers
   accept nonstandard names and immutable release references.
-- [ ] **R1**, backend PR to `main`: add a static-serving Dockerfile to the
-  generated React scaffold and reproducible GHCR build path. Keep Vercel
+- [ ] **R1**, backend PR to this plan's `trunk`: add a static-serving Dockerfile
+  to the generated React scaffold and reproducible GHCR build path. Keep Vercel
   deployment available. Evidence: image digest tied to the scaffold revision.
 
 ### Phase 2: targets, release API, and setup UI (E2, C1, F1)
@@ -180,8 +196,8 @@ signing and registration; W1 does not add host credentials to a deploy job.
   environment ID, source commit, and immutable slot artifacts. Keep it inactive
   for projects without on-prem targets. Evidence: authorization and manifest
   behavior at the API boundary.
-- [ ] **F1**, frontend PR to its own `main`: edit the ordered environment set
-  during project setup, starting from the editable `dev/uat/main` template.
+- [ ] **F1**, frontend PR to this plan's `trunk`: edit the ordered environment
+  set during project setup, starting from the editable `dev/uat/main` template.
   Read E1's API, display the actual created branches, and remove frontend-only
   branch-rank constants. Existing projects display their effective legacy
   configuration without automatic changes.
