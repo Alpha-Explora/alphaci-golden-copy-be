@@ -70,6 +70,14 @@ export interface QaRunSignoffRow {
   report_json: Record<string, unknown>;
   superseded_at: string | null;
   superseded_by: string | null;
+  /**
+   * Added by 20260925040000_qa_signoff_superseded_login.sql, after
+   * superseded_by itself. NULL for two reasons: the row is still active
+   * (superseded_by is also null), or it was superseded before that
+   * migration shipped -- reopenRun() populates it for every reopen from
+   * here on.
+   */
+  superseded_by_login: string | null;
 }
 
 export interface CreateQaRunInput {
@@ -764,7 +772,7 @@ export class QaRunsRepository {
    */
   async reopenRun(
     runId: string,
-    actorId: string,
+    actor: RunActor,
   ): Promise<QaVerificationRunRow | null> {
     return this.databaseService.withTransaction(async (client) => {
       const runResult = await client.query<QaVerificationRunRow>(
@@ -784,14 +792,31 @@ export class QaRunsRepository {
       await client.query(
         `
           UPDATE projects.qa_run_signoffs
-          SET superseded_at = NOW(), superseded_by = $2
+          SET superseded_at = NOW(), superseded_by = $2, superseded_by_login = $3
           WHERE run_id = $1 AND superseded_at IS NULL;
         `,
-        [runId, actorId],
+        [runId, actor.id, actor.login],
       );
 
       return run;
     });
+  }
+
+  /**
+   * Every superseded sign-off for a run, oldest first -- the QA report
+   * export's signoffHistory (Slice 4). The active (non-superseded) signoff
+   * is never included here; it is surfaced separately as run.signoff.
+   */
+  async listSupersededSignoffs(runId: string): Promise<QaRunSignoffRow[]> {
+    const result = await this.databaseService.query<QaRunSignoffRow>(
+      `
+        SELECT * FROM projects.qa_run_signoffs
+        WHERE run_id = $1 AND superseded_at IS NOT NULL
+        ORDER BY signed_at ASC;
+      `,
+      [runId],
+    );
+    return result.rows;
   }
 
   /**

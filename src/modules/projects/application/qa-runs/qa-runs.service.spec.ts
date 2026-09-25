@@ -86,6 +86,7 @@ const signoffRow = (
   report_json: {},
   superseded_at: null,
   superseded_by: null,
+  superseded_by_login: null,
   ...overrides,
 });
 
@@ -163,6 +164,7 @@ const makeRepository = (
     requestRetest: jest.fn(),
     createSignoff: jest.fn(),
     reopenRun: jest.fn(),
+    listSupersededSignoffs: jest.fn().mockResolvedValue([]),
     listReturnedItemsForProject: jest.fn().mockResolvedValue([]),
     ...overrides,
   }) as unknown as jest.Mocked<QaRunsRepository>;
@@ -1008,9 +1010,9 @@ describe('QaRunsService.reopen', () => {
       }),
       access: makeAccess({ findAppRole: jest.fn().mockResolvedValue('qa') }),
     });
-    await expect(
-      service.reopen('project-1', actor.userId, 'run-1'),
-    ).rejects.toThrow(ForbiddenException);
+    await expect(service.reopen('project-1', actor, 'run-1')).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
   it('409s when the run is not signed off', async () => {
@@ -1022,26 +1024,33 @@ describe('QaRunsService.reopen', () => {
       }),
       access: makeAccess({ findAppRole: jest.fn().mockResolvedValue('lead') }),
     });
-    await expect(
-      service.reopen('project-1', actor.userId, 'run-1'),
-    ).rejects.toThrow(ConflictException);
+    await expect(service.reopen('project-1', actor, 'run-1')).rejects.toThrow(
+      ConflictException,
+    );
   });
 
   it.each(['lead', 'admin'] as const)(
     'role=%s may reopen a signed-off run',
     async (role) => {
+      const reopenRun = jest.fn().mockResolvedValue(runRow({ status: 'open' }));
       const { service } = makeService({
         repository: makeRepository({
           findRunForProject: jest
             .fn()
             .mockResolvedValue(runRow({ status: 'signed_off' })),
-          reopenRun: jest.fn().mockResolvedValue(runRow({ status: 'open' })),
+          reopenRun,
         }),
         access: makeAccess({ findAppRole: jest.fn().mockResolvedValue(role) }),
       });
       await expect(
-        service.reopen('project-1', actor.userId, 'run-1'),
+        service.reopen('project-1', actor, 'run-1'),
       ).resolves.toBeDefined();
+      // Reopen supersedes the active signoff as this actor -- the report
+      // export's signoffHistory needs the login, not just the id.
+      expect(reopenRun).toHaveBeenCalledWith('run-1', {
+        id: actor.userId,
+        login: actor.userLogin,
+      });
     },
   );
 });

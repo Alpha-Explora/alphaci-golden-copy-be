@@ -501,13 +501,13 @@ export class QaRunsService {
 
   async reopen(
     projectId: string,
-    userId: string,
+    actor: QaRunActorContext,
     runId: string,
   ): Promise<QaRun> {
-    const project = await this.requireVisibleProject(projectId, userId);
+    const project = await this.requireVisibleProject(projectId, actor.userId);
     const run = await this.requireRun(projectId, runId);
 
-    const role = await this.access.findAppRole(userId);
+    const role = await this.access.findAppRole(actor.userId);
     if (!canReopenRun(role)) {
       throw new ForbiddenException(
         'Only a lead or admin may reopen a signed-off run.',
@@ -517,7 +517,10 @@ export class QaRunsService {
       throw new ConflictException('This run is not signed off.');
     }
 
-    const reopened = await this.repository.reopenRun(run.id, userId);
+    const reopened = await this.repository.reopenRun(run.id, {
+      id: actor.userId,
+      login: actor.userLogin,
+    });
     if (!reopened) {
       throw new ConflictException('This run is not signed off.');
     }
@@ -525,7 +528,7 @@ export class QaRunsService {
     await this.recordAudit(
       QA_RUN_EVENTS.reopened,
       project,
-      userId,
+      actor.userId,
       reopened,
       {},
     );
