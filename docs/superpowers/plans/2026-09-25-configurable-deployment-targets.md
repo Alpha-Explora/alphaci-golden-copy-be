@@ -79,15 +79,15 @@ repository; retarget it to `main` after the lower PR merges. Independent PRs
 target `main`. Link cross-repository dependencies in PR descriptions; Git
 cannot stack branches across repositories. Keep incomplete capabilities gated.
 
-**Baseline gate:** implementation has not started. The 2026-09-25 local sync
-merged backend `origin/main` into local `main` (`acb0f04`), fast-forwarded
-frontend `main` to `572a8fe`, and fast-forwarded central workflow `main` to
-`5031605`. Backend `main` still has local commits ahead of its remote; those
-local commits must be integrated separately before opening implementation PRs
-so E1 does not carry unrelated history. The frontend's prior
-`codex/golden-copy-trunk` commits remain on that branch; its untracked pnpm
-files and backend `artifacts/` remain untouched. Two earlier backend isolated
-checkouts for target routing and the React image were clean at `cdb78ae` when inspected;
+**Baseline gate:** implementation has not started. The focused deployment plan,
+ADR-0012, and host guide landed on `main` as PR #100 at `4575e1c`; its
+documentation, boundary, and full CI checks passed. The original backend local
+`main` still contains prior local-only commits and untracked `artifacts/`; do
+not use it as an implementation base. Create fresh isolated checkouts from
+the current remote `main`. The frontend's prior `codex/golden-copy-trunk`
+commits remain on that branch; its untracked pnpm files and backend
+`artifacts/` remain untouched. Two earlier backend isolated checkouts for
+target routing and the React image were clean at `cdb78ae` when inspected;
 check their ownership and base again before reusing them. Fetch and confirm
 all three remote heads again when implementation begins.
 
@@ -108,11 +108,12 @@ merged, and the mixed deployment acceptance run passes.
 
 ### Phase 0: integrate the baseline and lock the contracts
 
-- [x] Reconcile local branch bases and update ADR-0012 and the host guide.
+- [x] Record the initial local branch bases and update ADR-0012 and the host guide.
   Evidence: plan commit `b8923df`, backend merge `acb0f04`, and matching local
   and remote `main` tips in frontend and central workflow on 2026-09-25.
-- [ ] Integrate this deployment-target plan, ADR-0012, and host guide into
-  remote `main` through reviewed PR #100 before implementation PRs.
+- [x] Integrate this deployment-target plan, ADR-0012, and host guide into
+  remote `main` through reviewed PR #100 before implementation PRs. Evidence:
+  merged as `4575e1c`; documentation, boundary, and full CI checks passed.
 - [x] Freeze the E1 environment API, E2 target identity, C1 release manifest,
   and W1 reusable-workflow inputs below. Copy these contracts into the first
   implementation PR descriptions; open those PRs as drafts when their diffs
