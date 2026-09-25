@@ -96,7 +96,7 @@ backend's 12 prior local-only commits are preserved on
 `codex/archive-main-before-phase1`; its untracked `artifacts/` and the
 frontend's untracked pnpm files remain untouched. Existing backend PR #75 and
 frontend PR #41 still target the older `codex/golden-copy-trunk` branch and are
-unrelated to this plan's new `trunk` branches. The earlier backend worktree
+unrelated to this plan's new `trunk` branches. The earlier backend checkout
 already holds `codex/onprem-react-image`, so Phase 1 R1 uses the fresh branch
 `codex/onprem-react-image-phase1` from the same initial commit as the
 plan-scoped `trunk`.
