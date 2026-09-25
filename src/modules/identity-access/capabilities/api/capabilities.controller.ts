@@ -101,6 +101,9 @@ export class CapabilitiesController {
       workflowUpdatePr: {
         enabled: has('projects.workflow-update-pr'),
       },
+      qaChecklists: {
+        enabled: has('projects.qa-checklists'),
+      },
       projectTargetManagement: {
         enabled: has('projects.target-management'),
       },
