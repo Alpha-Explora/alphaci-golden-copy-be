@@ -55,10 +55,9 @@ create an unprotected environment on first workflow use.
 
 This first delivery covers **customer applications**. AlphaCI platform hosting
 stays managed. `onprem-k8s` and self-managed AlphaCI platform hosting remain
-proposed in ADR-0012 for later work. The separate
-[database isolation plan](2026-09-18-multi-deployment-database-isolation.md)
-governs AlphaCI's own database deployment modes; this plan does not move that
-database to the customer host.
+proposed in ADR-0012 for later work. AlphaCI platform database deployment is
+outside this plan; customer application targets do not move AlphaCI's database
+to the customer host.
 
 ## Current state
 
