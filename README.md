@@ -21,18 +21,14 @@ The `FLOWCI_*` environment namespace remains a compatibility identifier where it
 
 ## Development
 
-Install and run the standard verification loop:
+Install and run the same verification CI runs:
 
 ```bash
 npm ci
-npm run typecheck
-npm run lint
-npm test -- --ci --runInBand
-npm run build
-npm run check:documentation
+npm run verify
 ```
 
-The architecture gates are available through `npm run boundaries`, `npm run check:application-boundaries`, `npm run check:provider-encapsulation`, `npm run check:schema-ownership`, and `npm run check:capabilities`. See the [local verification runbook](docs/runbooks/runbook-local-verification.md) for the complete sequence and evidence expectations.
+`npm run check` runs only the static gates (documentation, generated maps, boundaries, schema ownership, capabilities, migration replay). See the [local verification runbook](docs/runbooks/runbook-local-verification.md) for focused checks. Agent and contributor rules are in [AGENTS.md](AGENTS.md).
 
 Run a composition locally with a paired build profile and edition:
 

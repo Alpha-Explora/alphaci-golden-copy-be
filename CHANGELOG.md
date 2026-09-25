@@ -35,6 +35,7 @@
 
 ### Changed
 
+- Added `AGENTS.md` with testing, commit, and plan rules; added `npm run check` (static gates) and `npm run verify` (what CI runs); merged the two CI workflows into one with parallel static and test jobs and dropped duplicate steps. The documentation gate no longer requires a fixed file list, bans only session phrases, skips dated plans and reports, and no longer re-runs the capability gates. Retired `docs/log.md` in favor of this changelog and git history, removed the completed 2026-09-11 plans and spec, and moved the draft on-premises CI/CD report out of the architecture docs.
 - Classified optional provider and live-adapter mode toggles as explicit non-capability flags so the resolver gates base capabilities only on their primary enablement flags.
 - Changed `/api/v1/capabilities` to project its resolved deployment set into the existing compatibility fields and expose top-level `edition` and `capabilityKeys`, preserving the legacy nested response for the default fixture.
 - Changed the deployment-targets, provider-connections, env-vars, and custom-domains controllers to enforce `runtime.env-provisioning` through `CapabilityGuard` before `SubscriptionGuard`; removed the obsolete `EnvFeatureGuard`.

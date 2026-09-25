@@ -23,44 +23,24 @@ Use this sequence before merging a change that affects source, schemas, provider
 - Provide environment values from `.env.example` when a boot or integration check needs them.
 - Do not run database mutation commands against a shared environment without an approved target and rollback plan.
 
-## Fast documentation loop
+## Entry points
 
 ```bash
-npm run generate:architecture-maps
-npm run check:okf
-npm run check:capabilities
-npm run check:composition-source
-npm run check:capability-ledger
-npm run check:documentation
-git diff --check
+npm run check    # static gates: docs, generated maps, boundaries, schema, capabilities, migration replay
+npm run verify   # typecheck, lint, check, Jest, build-profile conformance (what CI runs)
 ```
 
-## Full local loop
-
-```bash
-npm run typecheck
-npm run lint
-npm test -- --ci --runInBand
-npm run build
-npm run boundaries
-npm run check:application-boundaries
-npm run check:provider-encapsulation
-npm run check:schema-ownership
-npm run check:capabilities
-npm run db:apply:all -- --dry-run
-npm run check:documentation
-git diff --check
-```
+After changing capabilities or architecture, regenerate derived files first with `npm run generate:composition` and `npm run generate:architecture-maps`.
 
 ## Focused checks
 
 ```bash
-npm run test:documentation
 npm test -- --ci --runInBand tests/architecture/http-boot.spec.ts
 npm test -- --ci --runInBand tests/architecture/outbox-scheduler.spec.ts
 npm test -- --ci --runInBand tests/architecture/provider-plugin.acceptance.spec.ts
+npm run report:architecture-metrics   # report only; never fails
 ```
 
 ## Evidence
 
-Record the commands run, pass/fail result, intentionally skipped integration checks, and any external environment required. A static pass does not prove live PostgreSQL, provider APIs, deployed scheduling, or rollback behavior.
+Put the commands run, their result, skipped integration checks, and any external environment in the pull request description. A static pass does not prove live PostgreSQL, provider APIs, deployed scheduling, or rollback behavior; the real-database E2E harness that will cover those is not built yet.
