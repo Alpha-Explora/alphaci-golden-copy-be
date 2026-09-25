@@ -24,6 +24,7 @@ const SAAS_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
 ] as const;
 
@@ -49,6 +50,7 @@ const EDU_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
 ] as const;
 
@@ -76,6 +78,7 @@ const ENTERPRISE_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
   'pipelines.github-enterprise-server',
 ] as const;

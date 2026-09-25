@@ -38,6 +38,7 @@ const REGISTRY_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
   'pipelines.github-enterprise-server',
 ] as const;
@@ -62,6 +63,7 @@ const SAAS_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
 ] as const;
 
@@ -87,6 +89,7 @@ const EDU_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
 ] as const;
 
@@ -114,6 +117,7 @@ const ENTERPRISE_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
   'pipelines.github-enterprise-server',
 ] as const;
@@ -135,6 +139,7 @@ const EXECUTABLE_KEYS = [
   'projects.workflow-settings-preview',
   'projects.workflow-update-pr',
   'projects.target-management',
+  'projects.qa-checklists',
   'pipelines.ci-run-tracking',
 ] as const;
 
@@ -155,6 +160,7 @@ const allFlagsEnabled = {
   workflowSettingsPreview: { enabled: true },
   workflowUpdatePr: { enabled: true },
   projectTargetManagement: { enabled: true },
+  qaChecklists: { enabled: true },
   ciRunTracking: { enabled: true, liveGithubEnabled: true },
   deploymentHistory: { enabled: true, liveProvidersEnabled: true },
   previewDeployments: { enabled: true },
@@ -217,8 +223,8 @@ const record = (
 });
 
 describe('declared composition catalog', () => {
-  it('keeps the 31 registry records in their existing order', () => {
-    expect(CAPABILITIES).toHaveLength(31);
+  it('keeps the 32 registry records in their existing order', () => {
+    expect(CAPABILITIES).toHaveLength(32);
     expect(CAPABILITIES.map(({ key }) => key)).toEqual(REGISTRY_KEYS);
   });
 

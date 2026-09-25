@@ -115,6 +115,7 @@ const appConfig: AppConfig = {
   archivedAccountRetentionDays: 30,
   directory: { source: 'github_org', organization: '' },
   projectTargetManagement: { enabled: false },
+  qaChecklists: { enabled: false },
   ciRunTracking: { enabled: false, liveGithubEnabled: false },
   deploymentHistory: { enabled: false, liveProvidersEnabled: false },
   previewDeployments: { enabled: false },

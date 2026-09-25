@@ -54,6 +54,7 @@ This matrix is generated from the application-owned capability registry and pack
 | `projects.workflow-settings-preview` | `projects` | Workflow settings preview and validation. | stable | saas, edu, enterprise | workflowSettingsPreview.enabled |
 | `projects.workflow-update-pr` | `projects` | Workflow update pull-request requests. | limited | saas, edu, enterprise | workflowUpdatePr.enabled |
 | `projects.target-management` | `projects` | Project target management composition with Runtime. | stable | saas, edu, enterprise | projectTargetManagement.enabled |
+| `projects.qa-checklists` | `projects` | QA checklist definitions and per-project sharing. | limited | saas, edu, enterprise | qaChecklists.enabled |
 | `pipelines.ci-run-tracking` | `pipelines` | CI run report ingestion and tracking. | limited | saas, edu, enterprise | ciRunTracking.enabled |
 | `pipelines.github-enterprise-server` | `pipelines` | GitHub Enterprise Server repository and CI integration. | not-implemented | enterprise | Not implemented in this backend. No AppConfig flag. |
 

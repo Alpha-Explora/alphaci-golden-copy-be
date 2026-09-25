@@ -183,6 +183,9 @@ export interface AppConfig {
   projectTargetManagement: {
     enabled: boolean;
   };
+  qaChecklists: {
+    enabled: boolean;
+  };
   ciRunTracking: {
     enabled: boolean;
     liveGithubEnabled: boolean;
