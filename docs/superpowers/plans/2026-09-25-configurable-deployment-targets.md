@@ -76,13 +76,14 @@ One Luna agent owns one PR in one Codex-managed isolated Git checkout. Run up
 to three implementation agents concurrently while the root agent reviews
 contracts and diffs. This plan uses a plan-scoped `trunk` branch in the backend,
 frontend, and `alphaci-workflow` repositories. Each branch was created from its
-current `main` on 2026-09-25; these branches are not repository defaults. PRs
-for this plan target the relevant repository's `trunk`. A dependent PR initially
+current `main` on 2026-09-25; these branches are not repository defaults and
+do not change the repositories' default-branch setting. Only PRs for this plan
+target the relevant repository's `trunk`; unrelated work continues to target
+`main`. A dependent PR initially
 targets the preceding branch in its own repository; retarget it to that plan's
 `trunk` after the lower PR merges. Independent PRs target the plan's `trunk`.
 When the planned work is ready for production, open a release PR from each
-plan-scoped `trunk` to that repository's `main`. Unrelated work continues to use
-the repository's normal `main` target. Link cross-repository dependencies in PR
+plan-scoped `trunk` to that repository's `main`. Link cross-repository dependencies in PR
 descriptions; Git cannot stack branches across repositories. Keep incomplete
 capabilities gated.
 
@@ -150,10 +151,14 @@ behavior for legacy projects until their environment mapping is explicit.
 | C1 manifest | Canonical signed payload: `schemaVersion`, `releaseId`, `projectId`, `sourceEnvironmentId`, `sourceBranch`, full `commitSha`, `createdAt`, `artifacts[{slot, image, digest}]`, optional `migrations[{id, checksum, mode}]`, and `workflowRun{provider, repo, runId, url}`. Envelope: manifest hash plus `signature{algorithm, keyId, value}`. A host assignment separately names destination environment and target IDs. | Container artifact references use `image@sha256:<64 hex>`; floating tags are refused. The host verifies the signature with its pinned public key before pulling any artifact. Neither manifest nor assignment contains host secrets. Vercel records its own deployment ID from the pinned commit rather than claiming the same image digest. |
 | W1 | Preserve existing reusable-workflow inputs, defaults, and outputs. Add optional string `environment-id`, `environment-name`, and `target-id` to managed deploy/release workflows. Keep existing `commit-sha`/`checkout-ref`, `artifact`, `image-digest`, and Vercel deployment outputs; expose a canonical digest image reference from `docker-build.yml`. New-mode callers provide the IDs, a full pinned SHA, and digest for container targets explicitly. | Legacy callers continue their current path when new IDs are absent. New-mode callers never resolve an environment or target from branch text and never fall back to DEV/UAT/MAIN credentials. The caller validates the provisioned, protected GitHub Environment and exact target before invoking deployment. Branch pushes to later environments can run quality gates but cannot call deployment; explicit promotion supplies the release ID. Render and Compose reuse the same digest; Vercel checks out the pinned SHA and records its distinct deployment ID. |
 
-E1 backfill uses effective project branches and target settings. If those
-settings cannot unambiguously identify one production environment, leave that
-project on the legacy compatibility path and require an operator mapping;
-never guess from the name `main` or change its current deployment behavior.
+E1 backfill uses effective project branches and target settings only when they
+identify the environment set, its order, and its single production role without
+guessing. Existing target rows have no authoritative order field, and prior
+code derived some provider environment labels from branch names. Therefore
+multi-branch projects and projects whose only production signal is a
+branch-derived `main` or `production` label remain on the legacy compatibility
+path until an operator maps them. Never infer production from the name `main`
+or change existing deployment behavior.
 E2 then attaches legacy target rows to the resolved environment IDs without
 replacing target IDs. E3 owns generated caller changes: W1 alone does not
 remove the current fixed `dev`/`uat`/`main` enumeration. W2 owns manifest
@@ -165,20 +170,53 @@ signing and registration; W1 does not add host credentials to a deploy job.
   environment records and API with stable ID, immutable slug, display name,
   source branch, role, and exactly one production environment. Accept additions and display
   name changes; reject destructive edits until a migration flow exists. Backfill
-  existing projects without changing their branches, targets, or hosted costs.
-  Evidence: additive migration on a disposable database and API behavior for
-  legacy and custom projects, including two environments on one branch.
+  only projects whose stored targets identify an environment set, order, and
+  production role without branch-derived guesses. Keep other projects on their
+  existing deployment path and require an operator mapping; do not change
+  branches, targets, or hosted costs. Evidence: additive migration on a
+  disposable database and API behavior for legacy and custom projects,
+  including two environments on one branch.
 - [ ] **W1**, central workflow PR to this plan's `trunk`: extend existing
   `docker-build.yml`, `release.yml`, `render-deploy.yml`, and `vercel-deploy.yml` only where their
   contracts need pinned commit, environment ID, target ID, or artifact output.
   Remove fixed test/UAT/main secret or branch assumptions from managed deploy
   selection. Require a validated GitHub Environment identifier from the
   caller. Update contract docs, catalog, and validation lists; avoid a new
-  reusable workflow when an existing one fits. Evidence: reusable callers
-  accept nonstandard names and immutable release references.
+  reusable workflow when an existing one fits. Evidence: static workflow
+  contract checks cover optional target identity and immutable image references
+  while legacy defaults remain intact. Generated caller behavior and promotion
+  evidence are verified with E3/W2 acceptance.
 - [ ] **R1**, backend PR to this plan's `trunk`: add a static-serving Dockerfile
   to the generated React scaffold and reproducible GHCR build path. Keep Vercel
-  deployment available. Evidence: image digest tied to the scaffold revision.
+  deployment available. Scan the exact pushed image digest and fail on HIGH or
+  CRITICAL vulnerabilities. Evidence: successful build and scan with the image
+  digest tied to the scaffold revision.
+
+R1 images are candidate artifacts only. They are not eligible for on-prem
+release or host deployment until W2 signs a release manifest naming the image
+digest and registers that manifest through C1. A successful R1 scan does not
+replace W2 signing and registration.
+
+#### Deferred Phase 1 end-to-end acceptance
+
+Defer runtime end-to-end runs while Phase 1 is under implementation review. Do
+not mark Phase 1 complete until repeatable evidence is saved for:
+
+- E1: migration, safe backfill and rollback on a disposable PostgreSQL
+  database; authenticated API creation/list/add/rename behavior for custom
+  environments, including two environments sharing one branch; legacy projects
+  retain their existing deployment path.
+- W1 with E3 callers: a generated caller passes nonstandard environment and
+  target IDs, a full source SHA, and an immutable container digest; Render uses
+  the digest, Vercel records its deployment ID, and a legacy caller still works.
+- R1: a generated React project installs from its committed lockfile, builds
+  and serves the static image, and the GHCR workflow scans the exact published
+  digest before reporting it.
+
+The saved artifact must identify the commit and reproducible commands and
+include the relevant workflow run, migration/API output, image digest, scanner
+result, and container health result. Static checks and code review do not count
+as runtime acceptance evidence.
 
 ### Phase 2: targets, release API, and setup UI (E2, C1, F1)
 
