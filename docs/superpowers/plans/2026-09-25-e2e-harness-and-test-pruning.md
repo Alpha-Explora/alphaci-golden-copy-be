@@ -20,9 +20,9 @@ including tenant-isolation tests. The harness is the prerequisite.
 - [ ] Cover the main flows end to end: unauthenticated rejection, tenant
       project isolation (list, read, update, delete), capability 404 before
       Billing 402, outbox write and relay.
-- [ ] Add the E2E job to CI with a PostgreSQL service container, and move the
-      "Live Postgres integration" step off the hosted `SUPABASE_DB_URL`
-      secret onto that container.
+- [ ] Add the E2E job to CI with a disposable PostgreSQL service container,
+      including the database integration scenarios now removed from the hosted
+      `SUPABASE_DB_URL` CI step.
 - [ ] Prune unit tests module by module (parallel agents allowed). For each
       deleted test, name the E2E or behavior test that covers the same failure
       in the pull request. First candidates: mock-call assertions in
