@@ -80,14 +80,17 @@ repository; retarget it to `main` after the lower PR merges. Independent PRs
 target `main`. Link cross-repository dependencies in PR descriptions; Git
 cannot stack branches across repositories. Keep incomplete capabilities gated.
 
-**Baseline gate:** implementation has not started. On 2026-09-25 the backend checkout was
-eight commits ahead and two behind `origin/main`, with untracked `artifacts/`.
-Two clean backend worktrees already exist at `cdb78ae` for the old B1/R1 plan;
-inspect their ownership and base before reusing them. The central workflow
-checkout was clean but four commits behind `origin/main`. The frontend checkout
-has its own in-progress branch and untracked files; start its future worktrees
-from a fresh remote base. Preserve all existing checkouts. Reconcile remote
-bases and land the planning commits before implementation PR branches start.
+**Baseline gate:** implementation has not started. The 2026-09-25 local sync
+merged backend `origin/main` into local `main` (`acb0f04`), fast-forwarded
+frontend `main` to `572a8fe`, and fast-forwarded central workflow `main` to
+`5031605`. Backend `main` still has local commits ahead of its remote; those
+local commits must be integrated separately before opening implementation PRs
+so E1 does not carry unrelated history. The frontend's prior
+`codex/golden-copy-trunk` commits remain on that branch; its untracked pnpm
+files and backend `artifacts/` remain untouched. Two earlier backend worktrees
+for target routing and the React image were clean at `cdb78ae` when inspected;
+check their ownership and base again before reusing them. Fetch and confirm
+all three remote heads again when implementation begins.
 
 | Stack | PR branches in merge order | Repository | Dependency |
 |---|---|---|---|
@@ -104,13 +107,17 @@ from an open PR, but its merge waits for that dependency to land. C3 stays
 draft until the central `@v1` tag includes W2, the host package and UI are
 merged, and the mixed deployment acceptance run passes.
 
-### Phase 0: reconcile bases and lock the contracts
+### Phase 0: integrate the baseline and lock the contracts
 
-- [ ] Reconcile the three repository bases above without discarding local work.
-  Freeze the E1 environment API, E2 target identity, C1 release manifest, and
-  W1 reusable-workflow inputs in the first PR descriptions. Update ADR-0012
-  and the host guide with the environment identity and promotion rules before
-  implementation. Open stacked PRs as drafts when their diffs are reviewable.
+- [x] Reconcile local branch bases and update ADR-0012 and the host guide.
+  Evidence: plan commit `b8923df`, backend merge `acb0f04`, and matching local
+  and remote `main` tips in frontend and central workflow on 2026-09-25.
+- [ ] Integrate the backend's local planning commits into remote `main` in a
+  separate reviewed change before implementation PRs; no push or PR is part of
+  this planning step.
+- [ ] Freeze the E1 environment API, E2 target identity, C1 release manifest,
+  and W1 reusable-workflow inputs in the first PR descriptions. Open stacked
+  PRs as drafts when their diffs are reviewable.
 
 ### Phase 1: environment identity and reusable foundations (E1, W1, R1)
 
