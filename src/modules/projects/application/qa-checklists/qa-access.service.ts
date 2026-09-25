@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
-import { ProjectsRepository } from '../../infrastructure/projects.repository';
+import {
+  ProjectsRepository,
+  type ProvisionedProjectRow,
+} from '../../infrastructure/projects.repository';
+import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 
 /**
  * Authorization for the QA checklists slice, built entirely on top of
@@ -62,5 +66,39 @@ export class QaAccessService {
       return null;
     }
     return { workspaceId: project.workspace_id ?? null };
+  }
+
+  /**
+   * The full project row, when visible to this user (same default-visibility
+   * predicate as findVisibleProjectWorkspace above, one query). Used by the
+   * QA verification-runs slice (Slice 3), which — unlike the checklists
+   * slice above — is entirely project-scoped and needs more than just the
+   * workspace id off the row: repo_full_name for commit resolution, and
+   * user_id (the owner) alongside workspace_id for notification recipients.
+   * Kept here rather than duplicated in qa-runs so there is exactly one
+   * "is this project visible to this caller" query path.
+   */
+  async findVisibleProject(
+    projectId: string,
+    userId: string,
+  ): Promise<ProvisionedProjectRow | null> {
+    return this.projectsRepository.findByIdAndUser(projectId, userId);
+  }
+
+  /**
+   * The caller's effective global persona (admin | lead | qa | member),
+   * platform_admins override included. This is the QA verification-runs
+   * slice's entire role model — unlike canManage() above (admin/lead only,
+   * built for the checklists slice), qa-runs' permission matrix also grants
+   * some actions to 'qa' and 'member', so callers need the raw role rather
+   * than a single collapsed boolean.
+   */
+  async findAppRole(userId: string): Promise<PlatformAppRole> {
+    return this.projectsRepository.findAppRole(userId);
+  }
+
+  /** Active workspace members whose global persona is 'lead' — notification recipients. */
+  async listWorkspaceLeadIds(workspaceId: string): Promise<string[]> {
+    return this.projectsRepository.listWorkspaceLeadIds(workspaceId);
   }
 }

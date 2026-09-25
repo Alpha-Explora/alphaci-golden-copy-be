@@ -38,6 +38,14 @@ import { QaChecklistsService } from './qa-checklists.service';
     QaAccessService,
     QaChecklistsService,
   ],
-  exports: [QaChecklistsService, QaAccessService],
+  // QaChecklistsRepository is also exported so the qa-runs sibling module
+  // (which needs to read checklist rows/items when creating a run) can
+  // import this module rather than re-declaring the repository a second
+  // time — see the comment above on why ProjectsRepository itself has to be
+  // re-declared instead: that one is a re-declare because re-exporting it
+  // would require ProjectsModule to export it too, which it deliberately
+  // does not. QaChecklistsRepository has no such constraint: it is only ever
+  // provided here, so exporting it is the clean option.
+  exports: [QaChecklistsService, QaAccessService, QaChecklistsRepository],
 })
 export class QaChecklistsModule {}

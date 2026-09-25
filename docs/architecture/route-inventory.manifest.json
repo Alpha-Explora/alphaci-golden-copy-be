@@ -1,11 +1,11 @@
 {
-  "routeCount": 163,
+  "routeCount": 172,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "bbe29ba86ccf42e7a0281133f1fe3e8ba621a531fc4506663da9fe1ed3aa5bd7",
+  "referenceSha256": "831f803c4df1cc3135bcf331bf2b3db4de6ade48ae79d12553030e6cc9f9a04b",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "bbe29ba86ccf42e7a0281133f1fe3e8ba621a531fc4506663da9fe1ed3aa5bd7",
+  "baselineSha256": "831f803c4df1cc3135bcf331bf2b3db4de6ade48ae79d12553030e6cc9f9a04b",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -41,6 +41,20 @@
         "POST /api/v1/qa-checklists/{id}/archive",
         "PUT /api/v1/qa-checklists/{id}/projects",
         "GET /api/v1/projects/{projectId}/qa-checklists"
+      ]
+    },
+    {
+      "reason": "QA verification runs (Slice 3): per-(checklist, branch, commit) verification runs, item statuses/defects, the returned-to-dev feedback loop, and sign-off/reopen — built on Slice 2's checklist definitions.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/qa-runs",
+        "GET /api/v1/projects/{projectId}/qa-runs/current",
+        "POST /api/v1/projects/{projectId}/qa-runs",
+        "GET /api/v1/projects/{projectId}/qa-runs/{runId}",
+        "PATCH /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}",
+        "POST /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}/request-retest",
+        "POST /api/v1/projects/{projectId}/qa-runs/{runId}/signoff",
+        "POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen",
+        "GET /api/v1/projects/{projectId}/qa-returned-items"
       ]
     }
   ]

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 
 /**
  * Role-aware visibility predicate for a provisioned project (table aliased `pp`).
@@ -349,6 +350,59 @@ export class ProjectsRepository {
       [userId, workspaceId],
     );
     return result.rows[0]?.allowed ?? false;
+  }
+
+  /**
+   * The caller's effective global persona for the QA verification-runs slice:
+   * a platform_admins row always wins (mirrors isGlobalProjectCreator/
+   * canCreateInWorkspace's admin override above), otherwise the user's own
+   * identity.app_users.app_role, defaulting to 'member' for a user row that
+   * does not exist (never happens in practice — a caller always has a
+   * session-backed app_users row — but a query with no match must still
+   * return a value, not throw).
+   */
+  async findAppRole(userId: string): Promise<PlatformAppRole> {
+    const result = await this.databaseService.query<{
+      app_role: PlatformAppRole;
+    }>(
+      `
+        SELECT (
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM identity.platform_admins pa WHERE pa.user_id = $1
+            ) THEN 'admin'
+            ELSE COALESCE(
+              (SELECT u.app_role FROM identity.app_users u WHERE u.id = $1),
+              'member'
+            )
+          END
+        ) AS app_role;
+      `,
+      [userId],
+    );
+    return result.rows[0]?.app_role ?? 'member';
+  }
+
+  /**
+   * Active workspace members whose global persona is 'lead' — the QA
+   * verification-runs notification recipients for "workspace leads". Deliberately
+   * app_role = 'lead' only (not admin too): callers that also want admins
+   * notified add the project owner / actor's own admin-ness separately, so
+   * this stays a precise, single-purpose lookup.
+   */
+  async listWorkspaceLeadIds(workspaceId: string): Promise<string[]> {
+    const result = await this.databaseService.query<{ id: string }>(
+      `
+        SELECT DISTINCT u.id
+        FROM orgs.workspace_members m
+        JOIN identity.app_users u ON u.id = m.user_id
+        WHERE m.workspace_id = $1
+          AND m.member_status = 'active'
+          AND u.app_role = 'lead';
+      `,
+      [workspaceId],
+    );
+    return result.rows.map((row) => row.id);
   }
 
   async findByIdAndUser(
