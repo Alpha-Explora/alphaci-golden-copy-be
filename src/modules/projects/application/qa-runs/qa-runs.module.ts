@@ -12,6 +12,7 @@ import {
 import { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
 import { QaChecklistsModule } from '../qa-checklists/qa-checklists.module';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
+import { QaReportService } from './qa-report.service';
 import { QaRunsService } from './qa-runs.service';
 
 @Module({
@@ -37,7 +38,8 @@ import { QaRunsService } from './qa-runs.service';
     QaRunsRepository,
     QaCommitResolutionService,
     QaRunsService,
+    QaReportService,
   ],
-  exports: [QaRunsService],
+  exports: [QaRunsService, QaReportService],
 })
 export class QaRunsModule {}

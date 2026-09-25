@@ -168,4 +168,40 @@ describe('QaRunsRepository concurrency guards', () => {
     await expect(repository.createSignoff(signoffInput())).resolves.toBeNull();
     expect(query).toHaveBeenCalledTimes(1);
   });
+
+  it('reopen supersedes the active signoff with the actor id and login', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 'run-1', status: 'open' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await repository.reopenRun('run-1', actor);
+
+    const [supersedeSql, supersedeParams] = query.mock.calls[1] as [
+      string,
+      unknown[],
+    ];
+    expect(supersedeSql).toMatch(/superseded_by_login = \$3/);
+    expect(supersedeParams).toEqual(['run-1', actor.id, actor.login]);
+  });
+
+  it('reopen returns null without superseding when the run is not signed off', async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await expect(repository.reopenRun('run-1', actor)).resolves.toBeNull();
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('QaRunsRepository.listSupersededSignoffs', () => {
+  it('queries only superseded rows for the run, oldest first', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    const repository = new QaRunsRepository(makeDatabaseService(query));
+
+    await repository.listSupersededSignoffs('run-1');
+
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toMatch(/WHERE run_id = \$1 AND superseded_at IS NOT NULL/);
+    expect(sql).toMatch(/ORDER BY signed_at ASC/);
+    expect(params).toEqual(['run-1']);
+  });
 });

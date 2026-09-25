@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -8,6 +9,7 @@ import {
   Query,
   Req,
   Res,
+  StreamableFile,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -26,6 +28,23 @@ import { CreateQaRunDto } from '../application/qa-runs/dto/create-qa-run.dto';
 import { PatchQaRunItemDto } from '../application/qa-runs/dto/patch-qa-run-item.dto';
 import { RequestRetestDto } from '../application/qa-runs/dto/request-retest.dto';
 import { SignoffQaRunDto } from '../application/qa-runs/dto/signoff-qa-run.dto';
+import { QaReportService } from '../application/qa-runs/qa-report.service';
+import { buildQaReportFilename } from '../application/qa-runs/qa-report.filename';
+import { renderQaReportMarkdown } from '../application/qa-runs/qa-report.markdown';
+import type { QaReportFormat } from '../application/qa-runs/qa-report.contracts';
+
+/** `format` query param on GET .../report: defaults to 'json', anything else is a 400. */
+function parseReportFormat(raw: string | undefined): QaReportFormat {
+  if (raw === undefined || raw === 'json') {
+    return 'json';
+  }
+  if (raw === 'md') {
+    return 'md';
+  }
+  throw new BadRequestException(
+    `Unsupported report format "${raw}"; use "json" or "md".`,
+  );
+}
 
 function requireUserId(req: Request): string {
   const userId = req.session.user?.id ?? req.session.userId;
@@ -75,7 +94,10 @@ function parseLimit(limit: string | undefined): number | undefined {
 @UseGuards(SessionAuthGuard, CapabilityGuard)
 @RequiresCapability('projects.qa-checklists')
 export class ProjectQaRunsController {
-  constructor(private readonly qaRunsService: QaRunsService) {}
+  constructor(
+    private readonly qaRunsService: QaRunsService,
+    private readonly qaReportService: QaReportService,
+  ) {}
 
   @Get()
   list(
@@ -135,6 +157,40 @@ export class ProjectQaRunsController {
     return this.qaRunsService.getById(projectId, requireUserId(req), runId);
   }
 
+  /**
+   * QA report export (Slice 4): JSON or Markdown, downloaded as an
+   * attachment. StreamableFile's `type`/`disposition` set Content-Type /
+   * Content-Disposition verbatim on the response (see
+   * ExpressAdapter.reply) -- no @Res({ passthrough: false }) needed.
+   */
+  @Get(':runId/report')
+  async report(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('runId') runId: string,
+    @Query('format') formatParam?: string,
+  ): Promise<StreamableFile> {
+    const format = parseReportFormat(formatParam);
+    const report = await this.qaReportService.build(
+      projectId,
+      requireUserId(req),
+      runId,
+    );
+    const filename = buildQaReportFilename(report, format);
+    const disposition = `attachment; filename="${filename}"`;
+
+    if (format === 'md') {
+      return new StreamableFile(
+        Buffer.from(renderQaReportMarkdown(report), 'utf8'),
+        { type: 'text/markdown; charset=utf-8', disposition },
+      );
+    }
+    return new StreamableFile(
+      Buffer.from(JSON.stringify(report, null, 2), 'utf8'),
+      { type: 'application/json; charset=utf-8', disposition },
+    );
+  }
+
   @Patch(':runId/items/:itemId')
   updateItem(
     @Req() req: Request,
@@ -190,7 +246,7 @@ export class ProjectQaRunsController {
     @Param('projectId') projectId: string,
     @Param('runId') runId: string,
   ) {
-    return this.qaRunsService.reopen(projectId, requireUserId(req), runId);
+    return this.qaRunsService.reopen(projectId, actorContext(req), runId);
   }
 }
 
