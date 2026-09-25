@@ -4,6 +4,8 @@
 stay the default; customer-hosted Compose (Windows + WSL2 first) and
 Kubernetes become options for both the AlphaCI platform and the projects it
 deploys. Decision: [ADR-0012](../../architecture/decisions/adr-0012-configurable-deployment-targets.md).
+Step-by-step host setup, from the test laptop to an enterprise client:
+[on-prem client setup guide](2026-09-25-onprem-client-setup-guide.md).
 
 Detailed research (Windows-first toolchain, WSL2 networking, recovery cases)
 lives on branch `codex/golden-copy-trunk` in
@@ -50,19 +52,20 @@ A project picks a provider per deployment target, for example:
 
 ## Tasks
 
-### Phase 0: decide (blocks everything)
+### Phase 0: decide
 
-- [ ] First workload: AlphaCI platform itself, or customer React/.NET projects.
-- [ ] First customer-hosted path: Compose on Windows + WSL2 (recommended), or Kubernetes.
-- [ ] First Windows target: Windows 11 Pro (feasibility) then Windows Server 2022.
-- [ ] Connectivity: connected GHCR (recommended first) or air-gapped bundle.
-- [ ] Signing key owner (recommended: AlphaCI key in Cloud KMS; host gets only the public key).
+- [x] First workload: customer React and .NET projects (product owner, 2026-09-25).
+- [x] Connectivity: connected, pulling from GHCR (product owner, 2026-09-25).
+- [x] Path: `onprem-compose` first; `onprem-k8s` later, for clients that already run Kubernetes.
+- [x] Hosts: our Windows 11 laptop, then one Windows Server 2022 VM, then the first client. Client distro Ubuntu 24.04 LTS.
+- [x] Signing: Cosign with an AlphaCI key in Cloud KMS; hosts get only the public key.
+- [x] Remaining defaults (ingress, ports, secrets, status, environments): see "Chosen defaults" in the setup guide.
 
-### Phase 1: local foundation (Windows developer machine)
+### Phase 1: test host on our laptop
 
-- [ ] `wsl --install -d Ubuntu`, then enable systemd (`[boot] systemd=true` in `/etc/wsl.conf`) and `wsl --shutdown`.
-- [ ] Install Docker Engine and the Compose plugin from Docker's apt repository inside Ubuntu.
-- [ ] Run the backend against `postgres:16` through Compose (bring the self-managed Compose file from trunk).
+- [ ] Turn off Docker Desktop WSL integration for the `Ubuntu` distro and install Docker Engine inside it (guide, section 0).
+- [ ] Confirm `docker info` in `Ubuntu` reports Ubuntu, systemd runs Docker, and networking stays NAT.
+- [ ] Create `/opt/alphaci` with test trust, TLS, and secret files.
 
 ### Phase 2: artifacts (needed by every customer-hosted target)
 
@@ -73,13 +76,14 @@ A project picks a provider per deployment target, for example:
 
 ### Phase 3: Compose target (default customer-hosted path)
 
-- [ ] PowerShell bootstrap, idempotent: check Windows version, enable WSL2, install the pinned distro, set resource limits.
-- [ ] Windows Task Scheduler runs the bootstrap at boot; it starts WSL and the agent.
-- [ ] Agent inside WSL: verify manifest signature, pull by digest, run the one-shot migration, `docker compose up -d`, check health, keep the previous manifest for rollback.
-- [ ] Expose only the intended port through Windows Firewall (reverse proxy or managed port forward; no mirrored networking on Windows Server).
+- [ ] `alphaci-agent` inside WSL: poll the releases API, verify the manifest signature with the pinned key, pull by digest, `docker compose up -d`, check health, roll back on failure, report status, export a support bundle.
+- [ ] `Install-AlphaCIHost.ps1`, safe to rerun: scheduled task as the service account, portproxy refresh, firewall rule scoped to client subnets.
+- [ ] Caddy in the Compose stack with the client's certificate.
 - [ ] Register the `onprem-compose` provider pack and workflow fragment in Runtime.
+- [ ] Pass the guide's acceptance checks on the laptop, then on a Windows Server 2022 VM with nested virtualization.
+- [ ] Move the setup guide to `docs/runbooks/runbook-onprem-client-setup.md` and drop its "proposed" labels.
 
-### Phase 4: Kubernetes lab (optional path)
+### Phase 4: Kubernetes lab (later; clients that already run Kubernetes)
 
 - [ ] `gcloud compute instances create <vm> --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud --no-address`; access with `gcloud compute ssh <vm> --tunnel-through-iap`; Cloud NAT for egress.
 - [ ] `curl -sfL https://get.k3s.io | sh -`; kubeconfig at `/etc/rancher/k3s/k3s.yaml`.

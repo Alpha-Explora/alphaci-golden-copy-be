@@ -45,6 +45,8 @@ Deployment is configuration. Each question gets its own setting, and neither is 
 
 A project chooses per deployment target, so `uat` can stay on Render while `main` goes on-premises. Stack fragments (Node, React, .NET) do not change; only the deploy step differs by provider.
 
+The first customer-hosted implementation is `onprem-compose` for customer React and .NET projects, on a Windows host running WSL2, pulling from GHCR over an outbound connection. `onprem-k8s` follows for clients that already run Kubernetes.
+
 **Platform hosting** is a deployment preset, like the existing `deploy/env` files: `managed` (current), `self-managed-compose`, and later `self-managed-k8s`. It uses the same artifacts and delivery rules as project targets.
 
 Every customer-hosted option follows the same contract:
