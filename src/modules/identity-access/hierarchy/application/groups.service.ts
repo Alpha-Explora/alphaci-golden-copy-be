@@ -40,10 +40,12 @@ export class GroupsService {
     userId: string,
     input: { name: string; description?: string; businessUnit?: string },
   ): Promise<GroupRecord> {
-    // Only global Leads and Admins may create groups (Members cannot).
+    // Only global Leads and Admins may create groups. Allow-list, not
+    // exclusion: 'qa' and 'member' (and any future role) are refused.
     const appRole = await this.accessService.getAppRole(userId);
     if (
-      appRole === 'member' &&
+      appRole !== 'admin' &&
+      appRole !== 'lead' &&
       !(await this.accessService.isPlatformAdmin(userId))
     ) {
       throw new ForbiddenException('Only Leads and Admins can create groups');

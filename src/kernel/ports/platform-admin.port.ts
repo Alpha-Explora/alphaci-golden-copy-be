@@ -1,4 +1,4 @@
-export type PlatformAppRole = 'admin' | 'lead' | 'member';
+export type PlatformAppRole = 'admin' | 'lead' | 'qa' | 'member';
 export type PlatformAppRoleSource = 'github_team' | 'manual';
 
 /**

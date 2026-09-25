@@ -20,7 +20,7 @@
  * Environment (read from the normal BE .env):
  *   GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY  — to mint an installation token
  *   GITHUB_ENFORCED_ORG                     — the org to inspect
- *   GITHUB_TEAM_LEAD_SLUG / GITHUB_TEAM_DEVELOPER_SLUG
+ *   GITHUB_TEAM_LEAD_SLUG / GITHUB_TEAM_QA_SLUG / GITHUB_TEAM_DEVELOPER_SLUG
  *   GITHUB_TEAM_ROLE_SYNC                   — reported, not required
  *   SUPABASE_DB_URL                         — optional; enables the DB checks
  */
@@ -36,6 +36,7 @@ const USER_AGENT = 'cicd-workflow-product';
 
 const org = (process.env['GITHUB_ENFORCED_ORG'] ?? 'Alpha-Explora').trim();
 const leadTeam = (process.env['GITHUB_TEAM_LEAD_SLUG'] ?? 'team-lead').trim();
+const qaTeam = (process.env['GITHUB_TEAM_QA_SLUG'] ?? 'qa-team').trim();
 const developerTeam = (
   process.env['GITHUB_TEAM_DEVELOPER_SLUG'] ?? 'developers'
 ).trim();
@@ -354,7 +355,18 @@ async function main(): Promise<void> {
     }
 
     const leads = await checkTeam(leadTeam, token, 'lead');
+    const qa = await checkTeam(qaTeam, token, 'qa');
     const developers = await checkTeam(developerTeam, token, 'member');
+
+    const qaAndDevelopers = qa.filter((login) =>
+      developers.some((d) => d.toLowerCase() === login.toLowerCase()),
+    );
+    if (qaAndDevelopers.length > 0) {
+      warn(
+        'Users in BOTH qa and developer teams',
+        `${qaAndDevelopers.join(', ')} — qa-team outranks developers, they resolve to 'qa'`,
+      );
+    }
 
     const both = leads.filter((login) =>
       developers.some((d) => d.toLowerCase() === login.toLowerCase()),

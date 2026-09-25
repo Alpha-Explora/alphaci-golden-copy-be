@@ -88,6 +88,11 @@ export interface AppConfig {
     /** Org team whose members become global 'member' (assigned work only). */
     developerTeamSlug: string;
     /**
+     * Org team whose members become global 'qa' (QA Team: verify and sign
+     * off, no creator power). Precedence is lead > qa > member.
+     */
+    qaTeamSlug: string;
+    /**
      * How often (ms) the reconciliation sweep re-reads both team rosters and
      * corrects any app_role that drifted — the safety net for webhook
      * deliveries that were missed or arrived while the service was down.

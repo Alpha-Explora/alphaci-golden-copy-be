@@ -1,5 +1,5 @@
 export type PlatformRoleContract = 'admin' | 'super_admin';
-export type PlatformAppRoleContract = 'admin' | 'lead' | 'member';
+export type PlatformAppRoleContract = 'admin' | 'lead' | 'qa' | 'member';
 
 export interface PlatformAdminContract {
   userId: string;

@@ -506,15 +506,20 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
     },
   );
 
-  it('blocks a global member from creating a group with 403', async () => {
-    jest.spyOn(accessService, 'getAppRole').mockResolvedValue('member');
-    jest.spyOn(accessService, 'isPlatformAdmin').mockResolvedValue(false);
+  // 'qa' is the regression guard for the allow-list: the check used to be
+  // `appRole === 'member'`, which let any other role (qa) create groups.
+  it.each(['member', 'qa'] as const)(
+    'blocks a global %s from creating a group with 403',
+    async (appRole) => {
+      jest.spyOn(accessService, 'getAppRole').mockResolvedValue(appRole);
+      jest.spyOn(accessService, 'isPlatformAdmin').mockResolvedValue(false);
 
-    await expect(
-      service.createGroup('user-1', { name: 'Team Blaine' }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(groupsRepository.createGroup).not.toHaveBeenCalled();
-  });
+      await expect(
+        service.createGroup('user-1', { name: 'Team Blaine' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(groupsRepository.createGroup).not.toHaveBeenCalled();
+    },
+  );
 
   it('lets a platform admin create a group despite a member app_role', async () => {
     jest.spyOn(accessService, 'getAppRole').mockResolvedValue('member');

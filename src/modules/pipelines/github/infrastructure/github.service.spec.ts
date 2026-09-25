@@ -52,6 +52,7 @@ const appConfig: AppConfig = {
     teamRoleSync: 'off',
     leadTeamSlug: 'team-lead',
     developerTeamSlug: 'developers',
+    qaTeamSlug: 'qa-team',
     teamRoleReconcileIntervalMs: 0,
   },
   templates: {
