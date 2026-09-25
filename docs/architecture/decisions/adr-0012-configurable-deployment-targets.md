@@ -43,25 +43,37 @@ Deployment is configuration. Each question gets its own setting, and neither is 
 | `onprem-compose` | One customer host: Windows + WSL2 Ubuntu, or Linux, running Docker Engine + Compose | Host agent pulls a signed release manifest and runs images by digest |
 | `onprem-k8s` | Customer Kubernetes (K3s for the lab) | Argo CD pulls a Helm chart and a digest values file |
 
-A project chooses a provider for each `(project, slot, branch)` target. At most
-one configured provider owns that tuple, regardless of its health status; a
-missing or failed target cannot fall back to another provider. The quality
-gates stay shared, while packaging and deployment follow the selected
-provider. The choice is
-configuration, not a rule that every project must use the same mix.
+A project defines ordered environments with stable IDs, slugs, display names,
+source branches, and roles; exactly one has the production role. Multiple
+environments may use one source branch. The provider is chosen for each
+`(project, environment ID, slot)` target. At most one configured provider owns
+that target, regardless of its health status; a missing or failed target cannot
+fall back to another provider. Secrets and deployment history are scoped to the
+environment ID, not inferred from its branch. Quality gates stay shared, while
+packaging and deployment follow the selected provider.
 
 The first customer configuration is:
 
-| Branch | Purpose | React frontend | .NET backend |
-|---|---|---|---|
-| `dev` | Test | Vercel preview | Render test service |
-| `uat` | UAT | Vercel preview | Render UAT service |
-| `main` | Production | `onprem-compose` | `onprem-compose` |
+| Environment | Source branch | Role | React frontend | .NET backend |
+|---|---|---|---|---|
+| `dev` | `dev` | Test | Vercel preview | Render test service |
+| `uat` | `uat` | UAT | Vercel preview | Render UAT service |
+| `main` | `main` | Production | `onprem-compose` | `onprem-compose` |
 
-Changing `main` later affects only its targets. Promotion remains
-`dev -> uat -> main`. Today, `dev` is not hosted and managed providers
-assume `main` is hosted by them, so the branch routing and provider
-provisioning must change before this configuration is available.
+The table is an editable template for new projects. Existing projects keep
+their effective branches, targets, and behavior until explicitly changed. A
+push to the first project environment's source branch may auto-deploy there.
+Pushes to later environments' branches can run quality checks but cannot deploy
+or replace the pinned release. Deployment promotion is an explicit action that
+carries that release to the next ordered environment; branch-promotion pull
+requests are optional and separate.
+Render and customer-hosted Compose use the same GHCR image digest across
+environments. Vercel is an explicit exception: each target builds from the
+same pinned commit and records its own immutable deployment ID; it does not
+promise identical build bytes across arbitrary Vercel environments. Today,
+`dev` is not hosted and managed providers assume `main` is hosted by them, so
+branch routing and provider provisioning must change before this example is
+available.
 
 The first customer-hosted implementation is `onprem-compose` for customer React and .NET projects, on a Windows host running WSL2, pulling from GHCR over an outbound connection. `onprem-k8s` follows for clients that already run Kubernetes.
 
@@ -73,7 +85,9 @@ Every customer-hosted option follows the same contract:
 - The customer side pulls. CI and the AlphaCI control plane never hold SSH keys, kubeconfig, or host credentials, and no self-hosted runner holds production access.
 - Status flows outward from the customer side (polling or an allowed outbound call); no design depends on inbound callbacks.
 - Secrets are created on the host or cluster and referenced by name. They never go into images, Helm charts, registries, or manifests.
-- Managed-provider workflows in the central workflow repository stay unchanged; customer-hosted workflows are added beside them.
+- Existing managed-provider reusable workflows remain available and gain
+  backward-compatible environment and pinned-release inputs where required;
+  customer-hosted delivery is added beside them.
 
 ## Rejected alternatives
 

@@ -25,17 +25,18 @@ Names marked *proposed* do not exist yet. Run section 0 before any client.
 | Ingress and TLS | Caddy container in the Compose stack, using the client's certificate or internal CA | Small, and keeps DNS and certificates with the client. |
 | Ports from Windows to WSL | Bootstrap refreshes a `netsh portproxy` rule at every start; Windows Firewall allows only client subnets | Server 2022 has no mirrored networking and the WSL address changes on restart. |
 | Secrets | Files under `/opt/alphaci/secrets` in WSL, root-only, read by Compose `env_file` | Entered by the client operator; never in images, manifests, or GitHub. |
-| Environments | `dev` (test) and `uat` use Vercel/Render; only `main` uses the client host | The managed test lanes do not share the production host. The laptop acts as `main` only for disposable lab projects. |
+| Example environments | `dev` (test) and `uat` use Vercel/Render; `main` (production) uses the client host | These names and source branches are editable for each new project. The laptop acts as production only for disposable lab projects. |
 | App data | Named Docker volumes, backed up by the client's backup tool | The data belongs to the client's application. |
 
 The environment routing above is the first client configuration, not a global
-rule. Each project can choose a different provider for each slot and branch.
+rule. Each project defines ordered environments and chooses a provider for each
+environment and slot. Environments may share a source branch.
 
 ## How a release reaches the host
 
-1. A push to `dev`, `uat`, or `main` runs the generated pipeline (`00` access to `30` verify). The target for each slot and branch selects its package and deploy jobs: Vercel/Render for `dev` and `uat`, and this host for `main`.
-2. On `main`, the package stage builds the frontend and backend images, scans them (block CRITICAL/HIGH), pushes them to GHCR, and records their digests.
-3. *Proposed* `onprem-release-publish.yml` writes the release manifest (image digests, release id, environment), signs it with the KMS key, and registers it with the AlphaCI releases API using the project's AlphaCI token.
+1. A push to the first project environment's source branch starts the release and deploys there. In this example, `dev` starts it on Vercel/Render. Pushes directly to `uat` or `main` may run quality checks but do not deploy. AlphaCI explicitly promotes the pinned release through `uat` to `main`; a branch PR, if used, is a separate code-governance step.
+2. The package stage builds the frontend and backend OCI images once, scans them (block CRITICAL/HIGH), pushes them to GHCR, and records their digests. Render and this host deploy those same digests. Vercel test/UAT targets instead build from the pinned source commit and record separate deployment IDs.
+3. The proposed on-prem signing workflow writes the release manifest (image digests, release ID, environment ID, source commit), signs it with the KMS key, and registers it with the AlphaCI releases API using the project's AlphaCI token.
 4. `alphaci-agent` on the host polls the API, downloads the manifest and signature, verifies them with the pinned public key, pulls each image by digest, runs `docker compose up -d`, checks health, and reports the result.
 5. If health fails, the agent restores the previous manifest and reports the failure.
 
@@ -56,7 +57,7 @@ the trust, TLS, and secret files are still pending.
 5. Run `sudo systemctl enable --now docker`. Verify with `sudo docker info --format '{{.OperatingSystem}}'`, `docker compose version`, `docker buildx version`, and `sudo docker run --rm hello-world`. The operating system must be Ubuntu, not Docker Desktop.
 6. Install Cosign using [Sigstore's Ubuntu package instructions](https://docs.sigstore.dev/cosign/system_config/installation/) and check `cosign version`. Create `/opt/alphaci/{bin,trust,secrets,tls,releases}` and restrict `secrets/` to root. Add the test trust, TLS, and secret files from section 3, steps 7 to 9, once the release and credentials exist.
 7. Keep WSL's default NAT networking (do not set `networkingMode=mirrored`), so the laptop behaves like Server 2022.
-8. Register the laptop as the `main` target of disposable React and .NET lab projects after the planned provider and agent exist. Keep those projects' `dev` and `uat` targets on Vercel and Render. Do not point a client's production project at the laptop.
+8. Register the laptop as the production environment's target for disposable React and .NET lab projects after the planned provider and agent exist. In the example template, this environment is named `main`; `dev` and `uat` stay on Vercel and Render. Do not point a client's production project at the laptop.
 9. Run the acceptance checks in section 4 after the planned release workflow and agent exist. For the reboot check, restart Windows and sign in; on the laptop the scheduled task may run as your user, only when signed in.
 
 The laptop lane proves the pipeline, signing, pulling, Compose, rollback, and
@@ -76,11 +77,12 @@ Windows Server 2022 VM with nested virtualization, then the first client.
 
 ## 2. AlphaCI side (before the visit)
 
-1. For each customer project, configure `dev` and `uat` frontend targets on Vercel and backend targets on Render. Create `onprem-compose` targets only for the `main` frontend and backend slots, with this production host id.
-2. Issue a host token for the agent (scoped to that host id; outbound polling and status only).
-3. Create a GHCR read token for the client's packages (`read:packages` only, on a machine account). Rotate every 90 days.
-4. Export the signing public key: `cosign public-key --key gcpkms://projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k> > alphaci.pub`.
-5. Confirm the promoted `main` pipeline produced a signed release for this host.
+1. Define each project's ordered environments, source branches, and sole production role. Assign one provider per environment and slot. In the example, configure `dev` and `uat` frontend targets on Vercel and backend targets on Render, then assign both `main` slots to `onprem-compose` with this production host ID. Record the stable environment and target IDs; do not use a branch name as their identity.
+2. Create the corresponding GitHub Environments and protection rules before generated workflows can reference them. Confirm the repository plan supports the required rules; use AlphaCI's explicit promotion authorization as the deployment gate where GitHub required reviewers are unavailable.
+3. Issue a host token for the agent (scoped to that host ID; outbound polling and status only).
+4. Create a GHCR read token for the client's packages (`read:packages` only, on a machine account). Rotate every 90 days.
+5. Export the signing public key: `cosign public-key --key gcpkms://projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k> > alphaci.pub`.
+6. Confirm AlphaCI has an explicitly promoted, signed production release for this host, with the approved source commit and image digests.
 
 ## 3. On the client host
 
@@ -109,23 +111,24 @@ Run as administrator in PowerShell unless a step says WSL.
 
 ## 4. Acceptance checks
 
-- [ ] Pushes to `dev` and `uat` deploy the frontend to Vercel and backend to Render; neither reaches the client host.
-- [ ] A promoted push to `main` deploys both apps to the client host; the AlphaCI release page shows their digests and "healthy". It does not deploy to Vercel or Render.
+- [ ] A push to `dev` deploys only to the example test environment: frontend on Vercel and backend on Render. It does not reach UAT or the client host.
+- [ ] Explicit promotion deploys the pinned source commit to UAT on Vercel/Render, then the same GHCR image digests to the production host. AlphaCI records each Vercel deployment ID and reports the host release as "healthy".
+- [ ] If two environments share a source branch, a push deploys only to the project's first environment; promoting to the second requires a separate authorized action. A direct push to a later environment's unique branch also does not deploy it.
 - [ ] The app answers on `https://<hostname>` from a client machine, with the client's certificate.
 - [ ] A tampered manifest (edit one digest) is rejected and nothing restarts.
 - [ ] A release whose health check fails rolls back to the previous release.
 - [ ] After a Windows restart, the apps come back without anyone signing in.
-- [ ] Changing one branch-and-slot target's provider in AlphaCI regenerates only that deploy route, with no pipeline edits by hand; the other branches keep their destinations.
+- [ ] Changing one environment-and-slot target's provider in AlphaCI regenerates only that route, with no pipeline edits by hand; the other environments keep their destinations.
 - [ ] No GitHub secret, pipeline, or AlphaCI record contains a host password, SSH key, or application secret.
 
 ## 5. Day-2 operations
 
-- **Upgrade:** push to the branch; the agent applies the new approved release.
+- **Upgrade:** push to the configured source branch, pass its first environment, then explicitly promote that pinned release to production; the agent applies the approved manifest.
 - **Rollback:** approve an earlier release in AlphaCI, or on the host run *proposed* `alphaci-agent rollback`.
 - **Rotate:** GHCR token every 90 days (`docker login` again); agent token from AlphaCI; certificates before expiry (replace files, `docker compose restart caddy`).
 - **Signing key rotation:** add the new public key to `trust/` on every host before signing with it; remove the old key after the last old release is retired.
 - **Support bundle:** *proposed* `alphaci-agent support-bundle` collects agent logs, `docker compose ps`, recent container logs, and the current manifest, without secrets.
-- **Uninstall:** disable the scheduled task, remove the portproxy and firewall rules, `docker compose down`, then `wsl --unregister Ubuntu-24.04` (this deletes all data in the distro).
+- **Uninstall:** export and verify a backup of application data, disable the scheduled task, remove the portproxy and firewall rules, then `docker compose down`. Run `wsl --unregister Ubuntu-24.04` only after the client approves permanent deletion of all data in that distro.
 
 ## 6. Troubleshooting
 
@@ -141,8 +144,10 @@ Run as administrator in PowerShell unless a step says WSL.
 
 ## 7. Switching between managed and on-prem
 
-The deployment target is selected per project, slot, and branch. The example
-configuration uses Vercel and Render on `dev` and `uat`, then `onprem-compose`
-on `main`. Changing one target's provider regenerates its package and deploy
-jobs without silently changing other branches. Quality gates stay shared;
-the host keeps its last release until another release or uninstall.
+The deployment target is selected per project, environment ID, and slot. The
+example uses Vercel and Render for environments named `dev` and `uat`, then
+`onprem-compose` for the production environment named `main`. Other projects
+may use different names, source branches, order, and provider assignments.
+Changing one target's provider regenerates its package and deploy jobs without
+silently changing other environments. Quality gates stay shared; the host
+keeps its last release until another approved release or uninstall.
