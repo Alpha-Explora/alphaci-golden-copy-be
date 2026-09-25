@@ -26,7 +26,7 @@ describe('capability composition architecture', () => {
     expect(
       existsSync(resolve(repositoryRoot, 'docs/capabilities/registry.ts')),
     ).toBe(false);
-    expect(CAPABILITIES).toHaveLength(31);
+    expect(CAPABILITIES).toHaveLength(32);
     expect(Object.keys(PACK_MANIFESTS)).toEqual(['saas', 'edu', 'enterprise']);
   });
 

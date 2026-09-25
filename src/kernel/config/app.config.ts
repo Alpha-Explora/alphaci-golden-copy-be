@@ -56,6 +56,7 @@ function featureFlagConfig(
   | 'workflowSettingsPreview'
   | 'workflowUpdatePr'
   | 'projectTargetManagement'
+  | 'qaChecklists'
   | 'ciRunTracking'
   | 'deploymentHistory'
   | 'previewDeployments'
@@ -82,6 +83,12 @@ function featureFlagConfig(
     },
     projectTargetManagement: {
       enabled: env['PROJECT_TARGET_MANAGEMENT_ENABLED'] === 'true',
+    },
+    // On by default: QA checklists are read/gated per-request, so a
+    // deployment that hasn't set up the QA persona for its workspaces yet
+    // just sees empty checklist lists, not a hidden feature.
+    qaChecklists: {
+      enabled: env['QA_CHECKLISTS_ENABLED'] !== 'false',
     },
     ciRunTracking: {
       enabled: env['CI_RUN_TRACKING_ENABLED'] === 'true',

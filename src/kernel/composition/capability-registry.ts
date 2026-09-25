@@ -277,6 +277,15 @@ export const CAPABILITIES = [
     requires: [],
   },
   {
+    key: 'projects.qa-checklists',
+    context: 'projects',
+    description: 'QA checklist definitions and per-project sharing.',
+    maturity: 'limited',
+    configuration: 'qaChecklists.enabled',
+    configurationFlags: ['qaChecklists.enabled'],
+    requires: [],
+  },
+  {
     key: 'pipelines.ci-run-tracking',
     context: 'pipelines',
     description: 'CI run report ingestion and tracking.',

@@ -1,11 +1,11 @@
 {
-  "routeCount": 155,
+  "routeCount": 163,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "86c12089eb01ad40d199ddd3fe83896003a4bb95845c6976462d18c491b8eb8f",
+  "referenceSha256": "bbe29ba86ccf42e7a0281133f1fe3e8ba621a531fc4506663da9fe1ed3aa5bd7",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "86c12089eb01ad40d199ddd3fe83896003a4bb95845c6976462d18c491b8eb8f",
+  "baselineSha256": "bbe29ba86ccf42e7a0281133f1fe3e8ba621a531fc4506663da9fe1ed3aa5bd7",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -28,6 +28,19 @@
       "routes": [
         "GET /api/v1/projects/{projectId}/workspace/compare",
         "POST /api/v1/projects/{projectId}/workspace/pull-requests"
+      ]
+    },
+    {
+      "reason": "QA checklists (Slice 2): team leads/admins define workspace-scoped QA checklists and share them to that workspace's projects; per-branch verification runs are a later slice.",
+      "routes": [
+        "GET /api/v1/workspaces/{workspaceId}/qa-checklists",
+        "POST /api/v1/workspaces/{workspaceId}/qa-checklists",
+        "GET /api/v1/qa-checklists/{id}",
+        "PATCH /api/v1/qa-checklists/{id}",
+        "PUT /api/v1/qa-checklists/{id}/items",
+        "POST /api/v1/qa-checklists/{id}/archive",
+        "PUT /api/v1/qa-checklists/{id}/projects",
+        "GET /api/v1/projects/{projectId}/qa-checklists"
       ]
     }
   ]

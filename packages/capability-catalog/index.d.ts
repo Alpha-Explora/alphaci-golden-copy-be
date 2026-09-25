@@ -32,6 +32,7 @@ export type CapabilityKey =
   | "projects.workflow-settings-preview"
   | "projects.workflow-update-pr"
   | "projects.target-management"
+  | "projects.qa-checklists"
   | "pipelines.ci-run-tracking"
   | "pipelines.github-enterprise-server";
 

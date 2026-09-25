@@ -33,3 +33,12 @@ export {
 } from './application/workflows/workflows.contracts';
 export { ExistingReposModule } from './application/existing-repos/existing-repos.module';
 export { ExistingReposService } from './application/existing-repos/existing-repos.service';
+export { QaChecklistsModule } from './application/qa-checklists/qa-checklists.module';
+export { QaChecklistsService } from './application/qa-checklists/qa-checklists.service';
+export type {
+  QaChecklist,
+  QaChecklistItem,
+  QaChecklistItemInput,
+  QaChecklistTargetPersona,
+  QaChecklistVerificationType,
+} from './application/qa-checklists/qa-checklists.contracts';

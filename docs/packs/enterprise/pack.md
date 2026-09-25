@@ -61,6 +61,7 @@ This table lists every current registry capability in registry order. Status is 
 | `projects.workflow-settings-preview` | `available` | Workflow settings preview and validation. Configuration: workflowSettingsPreview.enabled. |
 | `projects.workflow-update-pr` | `configuration-gated` | Workflow update pull-request requests. Configuration: workflowUpdatePr.enabled. |
 | `projects.target-management` | `available` | Project target management composition with Runtime. Configuration: projectTargetManagement.enabled. |
+| `projects.qa-checklists` | `configuration-gated` | QA checklist definitions and per-project sharing. Configuration: qaChecklists.enabled. |
 | `pipelines.ci-run-tracking` | `configuration-gated` | CI run report ingestion and tracking. Configuration: ciRunTracking.enabled. |
 | `pipelines.github-enterprise-server` | `not-implemented` | GitHub Enterprise Server repository and CI integration. Not implemented in this backend. |
 

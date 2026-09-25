@@ -27,6 +27,16 @@
       "summary": "Declared the SaaS-only public marketing site; EDU and Enterprise deployments go straight to login.",
       "reference": "CHANGELOG.md",
       "compositionHash": "sha256:edcf6a33098219f39572b4c403cb7323a2891234ebcae6ab43b9b5535ebc89fc"
+    },
+    {
+      "date": "2026-09-25",
+      "change": "added",
+      "keys": [
+        "projects.qa-checklists"
+      ],
+      "summary": "Added the projects.qa-checklists capability for QA checklist definitions, items, and per-project sharing (Slice 2).",
+      "reference": "CHANGELOG.md",
+      "compositionHash": "sha256:c2766dda40a6ab8af9ca60faea7a78a99422330f4f155609b11ed6f6ef329f06"
     }
   ]
 }
