@@ -237,10 +237,14 @@ function buildPackageJson(packageName: string, stack: string): string {
   }
 
   if (stack === 'react') {
+    scripts.build = 'vite build';
+    scripts.dev = 'vite --host 0.0.0.0';
+    scripts.start = 'vite preview --host 0.0.0.0';
     pkg.dependencies['react'] = '^19.0.0';
     pkg.dependencies['react-dom'] = '^19.0.0';
     pkg.devDependencies['@types/react'] = '^19.0.0';
     pkg.devDependencies['@types/react-dom'] = '^19.0.0';
+    pkg.devDependencies['vite'] = '8.3.0';
   }
 
   if (!isNextJs && !isNestJs) {
@@ -666,6 +670,40 @@ function buildReactApp(serviceName: string): string {
   ].join('\n');
 }
 
+function buildReactEntryPoint(): string {
+  return [
+    "import { StrictMode } from 'react';",
+    "import { createRoot } from 'react-dom/client';",
+    "import { App } from './App';",
+    '',
+    "const root = document.getElementById('root');",
+    "if (!root) throw new Error('Missing root element');",
+    '',
+    'createRoot(root).render(',
+    '  <StrictMode>',
+    '    <App />',
+    '  </StrictMode>,',
+    ');',
+  ].join('\n');
+}
+
+function buildReactIndex(serviceName: string): string {
+  return [
+    '<!doctype html>',
+    '<html lang="en">',
+    '  <head>',
+    '    <meta charset="UTF-8" />',
+    '    <meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+    `    <title>${serviceName}</title>`,
+    '  </head>',
+    '  <body>',
+    '    <div id="root"></div>',
+    '    <script type="module" src="/src/main.tsx"></script>',
+    '  </body>',
+    '</html>',
+  ].join('\n');
+}
+
 function buildReactAppSpec(serviceName: string, importPath = './App'): string {
   return [
     "import { renderToString } from 'react-dom/server';",
@@ -733,6 +771,106 @@ function buildDockerignore(): string {
     '.github',
     '*.log',
     'npm-debug.log*',
+  ].join('\n');
+}
+
+function buildReactDockerfile(): string {
+  return [
+    'FROM node:22.22.2-alpine3.23 AS builder',
+    'WORKDIR /app',
+    'COPY package.json package-lock.json ./',
+    'RUN npm ci',
+    'COPY . .',
+    'RUN npm run build',
+    '',
+    'FROM nginxinc/nginx-unprivileged:1.29.4-alpine3.23 AS runner',
+    'COPY nginx.conf /etc/nginx/conf.d/default.conf',
+    'COPY --from=builder /app/dist /usr/share/nginx/html',
+    'EXPOSE 8080',
+    'HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1',
+  ].join('\n');
+}
+
+function buildReactNginxConfig(): string {
+  return [
+    'server {',
+    '  listen 8080;',
+    '  server_name _;',
+    '  root /usr/share/nginx/html;',
+    '  index index.html;',
+    '',
+    '  location / {',
+    '    try_files $uri $uri/ /index.html;',
+    '  }',
+    '}',
+  ].join('\n');
+}
+
+function buildReactPublishWorkflow(context = '.'): string {
+  return [
+    'name: Publish React container',
+    '',
+    'on:',
+    '  push:',
+    '  workflow_dispatch:',
+    '',
+    'permissions:',
+    '  contents: read',
+    '  packages: write',
+    '',
+    'jobs:',
+    '  publish:',
+    '    runs-on: ubuntu-24.04',
+    '    steps:',
+    '      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2',
+    '      - name: Set image name',
+    '        id: image',
+    '        shell: bash',
+    '        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"',
+    '      - name: Require committed dependency lockfile',
+    '        shell: bash',
+    '        run: |',
+    `          test -f "${context === '.' ? 'package-lock.json' : `${context}/package-lock.json`}" || { echo "Commit ${context === '.' ? 'package-lock.json' : `${context}/package-lock.json`} before publishing a reproducible image." >&2; exit 1; }`,
+    '      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0',
+    '        with:',
+    '          registry: ghcr.io',
+    '          username: ${{ github.actor }}',
+    '          password: ${{ secrets.GITHUB_TOKEN }}',
+    '      - uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96 # v5.6.1',
+    '        id: meta',
+    '        with:',
+    '          images: ${{ steps.image.outputs.name }}',
+    '          tags: |',
+    '            type=sha,format=long,prefix=candidate-sha-',
+    '      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1',
+    '      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0',
+    '        id: build',
+    '        with:',
+    `          context: ${context}`,
+    `          file: ${context === '.' ? 'Dockerfile' : `${context}/Dockerfile`}`,
+    '          push: true',
+    '          tags: ${{ steps.meta.outputs.tags }}',
+    '          labels: |',
+    '            ${{ steps.meta.outputs.labels }}',
+    '            org.opencontainers.image.revision=${{ github.sha }}',
+    '          cache-from: type=gha',
+    '          cache-to: type=gha,mode=max',
+    '      - name: Scan exact image digest for vulnerabilities',
+    '        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0',
+    '        with:',
+    '          version: v0.74.0',
+    '          scan-type: image',
+    '          image-ref: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}',
+    '          format: table',
+    '          exit-code: \'1\'',
+    '          severity: HIGH,CRITICAL',
+    '          vuln-type: os,library',
+    '          ignore-unfixed: false',
+    '      - name: Record immutable image reference',
+    '        shell: bash',
+    '        run: |',
+    '          echo "Published ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"',
+    '          echo "Source revision: ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"',
   ].join('\n');
 }
 
@@ -880,7 +1018,8 @@ function buildPackagePackageJson(packageName: string, stack: string): string {
 
 // ─── Microservices-specific helpers ──────────────────────────────────────────
 
-function buildDockerCompose(): string {
+function buildDockerCompose(frontendStack = 'nextjs'): string {
+  const frontendContainerPort = frontendStack === 'react' ? '8080' : '3000';
   return [
     'version: "3.9"',
     'services:',
@@ -893,7 +1032,7 @@ function buildDockerCompose(): string {
     '  frontend:',
     '    build: ./frontend',
     '    ports:',
-    '      - "3000:3000"',
+    `      - "3000:${frontendContainerPort}"`,
     '    environment:',
     '      - NODE_ENV=development',
     '    depends_on:',
@@ -922,6 +1061,7 @@ function buildServiceSubdirFiles(
   serviceName: string,
   stack: string,
   nodeVersion: string,
+  includeDocker = false,
 ): ScaffoldFile[] {
   const packageName = toPackageName(serviceName);
 
@@ -988,12 +1128,21 @@ function buildServiceSubdirFiles(
   } else if (stack === 'react') {
     files.push(
       { path: `${dir}/src/App.tsx`, content: buildReactApp(serviceName) },
+      { path: `${dir}/src/main.tsx`, content: buildReactEntryPoint() },
+      { path: `${dir}/index.html`, content: buildReactIndex(serviceName) },
       {
         path: `${dir}/tests/unit/App.spec.tsx`,
         content: buildReactAppSpec(serviceName, '../../src/App'),
       },
       ...buildBrowserSuiteFiles(serviceName, `${dir}/`),
     );
+    if (includeDocker) {
+      files.push(
+        { path: `${dir}/Dockerfile`, content: buildReactDockerfile() },
+        { path: `${dir}/.dockerignore`, content: buildDockerignore() },
+        { path: `${dir}/nginx.conf`, content: buildReactNginxConfig() },
+      );
+    }
   }
 
   return files;
@@ -1082,21 +1231,37 @@ function buildStandaloneScaffold(
   } else if (stack === 'react') {
     stackFiles = [
       { path: 'src/App.tsx', content: buildReactApp(serviceName) },
+      { path: 'src/main.tsx', content: buildReactEntryPoint() },
+      { path: 'index.html', content: buildReactIndex(serviceName) },
       {
         path: 'tests/unit/App.spec.tsx',
         content: buildReactAppSpec(serviceName, '../../src/App'),
       },
       ...buildBrowserSuiteFiles(serviceName),
+      ...(includeDocker
+        ? [
+            {
+              path: '.github/workflows/publish-container.yml',
+              content: buildReactPublishWorkflow(),
+            },
+          ]
+        : []),
     ];
   } else {
     stackFiles = [];
   }
 
   const dockerFiles: ScaffoldFile[] = includeDocker
-    ? [
-        { path: 'Dockerfile', content: buildDockerfile(nodeVersion, stack) },
-        { path: '.dockerignore', content: buildDockerignore() },
-      ]
+    ? stack === 'react'
+      ? [
+          { path: 'Dockerfile', content: buildReactDockerfile() },
+          { path: '.dockerignore', content: buildDockerignore() },
+          { path: 'nginx.conf', content: buildReactNginxConfig() },
+        ]
+      : [
+          { path: 'Dockerfile', content: buildDockerfile(nodeVersion, stack) },
+          { path: '.dockerignore', content: buildDockerignore() },
+        ]
     : [];
 
   return [...sharedFiles, ...stackFiles, ...dockerFiles];
@@ -1160,6 +1325,8 @@ function buildMicroservicesScaffold(
 
   const beName = backendServiceName ?? serviceName;
   const feName = frontendServiceName ?? `${serviceName}-fe`;
+  const includeDocker =
+    options.includeDocker ?? defaultIncludeDocker(backendStack);
 
   const rootFiles: ScaffoldFile[] = [
     { path: '.gitignore', content: buildGitignore() },
@@ -1169,17 +1336,35 @@ function buildMicroservicesScaffold(
     },
   ];
 
-  if (options.includeDocker ?? defaultIncludeDocker(backendStack)) {
+  if (includeDocker) {
     rootFiles.push({
       path: 'docker-compose.yml',
-      content: buildDockerCompose(),
+      content: buildDockerCompose(frontendStack),
+    });
+  }
+  if (includeDocker && frontendStack === 'react') {
+    rootFiles.push({
+      path: '.github/workflows/publish-frontend-container.yml',
+      content: buildReactPublishWorkflow('frontend'),
     });
   }
 
   return [
     ...rootFiles,
-    ...buildServiceSubdirFiles('backend', beName, backendStack, nodeVersion),
-    ...buildServiceSubdirFiles('frontend', feName, frontendStack, nodeVersion),
+    ...buildServiceSubdirFiles(
+      'backend',
+      beName,
+      backendStack,
+      nodeVersion,
+      includeDocker,
+    ),
+    ...buildServiceSubdirFiles(
+      'frontend',
+      feName,
+      frontendStack,
+      nodeVersion,
+      includeDocker,
+    ),
   ];
 }
 
@@ -1218,15 +1403,15 @@ export function buildProjectScaffold(
 
 /**
  * Determine whether Docker files should be included in the scaffold based on
- * the project stack. Backend stacks include Docker by default; frontend stacks
- * do not, since they typically deploy to CDN/edge runtimes rather than
- * container registries.
+ * the project stack. Backend stacks and plain React frontends include a
+ * container target by default; Next.js frontends remain CDN/edge oriented.
  */
 export function defaultIncludeDocker(stack: string): boolean {
   const normalizedStack = normalizeProjectStack(stack);
   return (
     normalizedStack === 'nestjs' ||
     normalizedStack === 'nodejs' ||
+    normalizedStack === 'react' ||
     normalizedStack === 'dotnet'
   );
 }
