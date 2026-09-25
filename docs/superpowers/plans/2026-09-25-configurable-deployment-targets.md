@@ -63,16 +63,16 @@ A project picks a provider per deployment target, for example:
 
 ### Phase 1: test host on our laptop
 
-- [ ] Turn off Docker Desktop WSL integration for the `Ubuntu` distro and install Docker Engine inside it (guide, section 0).
-- [ ] Confirm `docker info` in `Ubuntu` reports Ubuntu, systemd runs Docker, and networking stays NAT.
-- [ ] Create `/opt/alphaci` with test trust, TLS, and secret files.
+- [x] Turn off Docker Desktop WSL integration for `Ubuntu` and install Docker Engine inside it. Evidence: `/usr/bin/docker`, Ubuntu Engine, Compose and Buildx versions, and `hello-world` run on 2026-09-25.
+- [x] Confirm Ubuntu Engine and systemd Docker service; keep WSL networking on NAT. Evidence: `docker info` reports Ubuntu 26.04.1, `systemctl is-active docker` reports active, and `.wslconfig` has no networking override (2026-09-25).
+- [x] Create `/opt/alphaci/{bin,trust,secrets,tls,releases}`. Evidence: root-owned directories and `secrets/` mode 700, checked 2026-09-25.
+- [ ] Add test trust, TLS, and secret files once signing, release publishing, and host credentials exist.
 
-### Phase 2: artifacts (needed by every customer-hosted target)
+### Phase 2: images and signed releases (Compose first)
 
 - [ ] Add a React Dockerfile (static build + nginx or Caddy) to the React scaffold.
 - [ ] Add `onprem-artifact-build.yml` to `alphaci-workflow`: build, Trivy scan, SBOM, push to GHCR, output digests.
 - [ ] Add `onprem-release-publish.yml`: write a Cosign-signed manifest (FE/BE digests, migration version, release id). No host or cluster credentials.
-- [ ] Package the Helm chart (`helm package`, `helm push <chart>.tgz oci://ghcr.io/<org>/charts`).
 
 ### Phase 3: Compose target (default customer-hosted path)
 
@@ -85,6 +85,7 @@ A project picks a provider per deployment target, for example:
 
 ### Phase 4: Kubernetes lab (later; clients that already run Kubernetes)
 
+- [ ] Package the Helm chart (`helm package`, `helm push <chart>.tgz oci://ghcr.io/<org>/charts`).
 - [ ] `gcloud compute instances create <vm> --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud --no-address`; access with `gcloud compute ssh <vm> --tunnel-through-iap`; Cloud NAT for egress.
 - [ ] `curl -sfL https://get.k3s.io | sh -`; kubeconfig at `/etc/rancher/k3s/k3s.yaml`.
 - [ ] `kubectl create namespace argocd`, then `kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml`.

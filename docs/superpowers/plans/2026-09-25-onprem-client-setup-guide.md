@@ -39,17 +39,22 @@ Names marked *proposed* do not exist yet. Run section 0 before any client.
 ## 0. Test lane: our Windows 11 laptop
 
 Host: the developer laptop's `Ubuntu` WSL distro, reserved for this test.
-Checked on 2026-09-25: Ubuntu 26.04 LTS, WSL 2.7.12, systemd on, 16 cores and
-about 7 GB of memory visible to WSL. The `docker` command in it was Docker
-Desktop's CLI through WSL integration; no Engine was installed in the distro.
+Checked on 2026-09-25: Ubuntu 26.04.1 LTS, WSL 2.7.12, systemd on, 16 cores
+and about 7 GB of memory visible to WSL. Docker Engine is installed in Ubuntu:
+`docker info` reports Ubuntu, `systemctl` reports Docker active, Compose and
+Buildx respond, and `hello-world` runs. Cosign v3.1.3 is installed. The
+`/opt/alphaci` directories exist, with `secrets/` owned by root at mode 700;
+the trust, TLS, and secret files are still pending.
 
 1. Docker Desktop, Settings, Resources, WSL integration: turn **off** `Ubuntu` and apply. Desktop keeps serving the other distros for development.
-2. In `Ubuntu`, run `. /etc/os-release; echo $VERSION_CODENAME`. If `https://download.docker.com/linux/ubuntu/dists/` lists that codename, install from Docker's repository (section 3, step 6). If not, use Ubuntu's packages for the test: `sudo apt-get install -y docker.io docker-compose-v2`.
-3. `sudo systemctl enable --now docker`, then `docker info --format '{{.OperatingSystem}}'` must print Ubuntu, not Docker Desktop.
-4. Keep WSL's default NAT networking (do not set `networkingMode=mirrored`), so the laptop behaves like Server 2022.
-5. Create `/opt/alphaci` and the files from section 3, steps 7 to 9, with test values.
-6. Register the laptop as the `uat` target of one React and one .NET test project in AlphaCI. Leave `main` on Vercel and Render.
-7. Run the acceptance checks in section 4. For the reboot check, restart Windows and sign in; on the laptop the scheduled task may run as your user, only when signed in.
+2. In Ubuntu, check `command -v docker`. After Engine installation it must resolve to `/usr/bin/docker`; `docker info --format '{{.OperatingSystem}}'` must report Ubuntu. Before Engine installation, a path under `/mnt/c/Program Files/Docker/...` can appear because WSL inherits the Windows PATH; this alone does not mean Desktop integration is enabled.
+3. Optional for this dedicated test distro: add `[interop]` and `appendWindowsPath=false` to `/etc/wsl.conf`, preserving `[boot] systemd=true` and `[user] default=anton`. Then run `wsl --terminate Ubuntu` in PowerShell and reopen it. The native Engine already works without this setting; it only removes Windows executables from Ubuntu's command search path.
+4. Install Docker Engine and the Compose and Buildx plugins from [Docker's Ubuntu apt repository](https://docs.docker.com/engine/install/ubuntu/). Docker's official packages support Ubuntu 26.04 (`resolute`). Remove any conflicting Ubuntu Docker packages first, as the Docker instructions describe. Do not use the `docker.io` fallback.
+5. Run `sudo systemctl enable --now docker`. Verify with `sudo docker info --format '{{.OperatingSystem}}'`, `docker compose version`, `docker buildx version`, and `sudo docker run --rm hello-world`. The operating system must be Ubuntu, not Docker Desktop.
+6. Install Cosign using [Sigstore's Ubuntu package instructions](https://docs.sigstore.dev/cosign/system_config/installation/) and check `cosign version`. Create `/opt/alphaci/{bin,trust,secrets,tls,releases}` and restrict `secrets/` to root. Add the test trust, TLS, and secret files from section 3, steps 7 to 9, once the release and credentials exist.
+7. Keep WSL's default NAT networking (do not set `networkingMode=mirrored`), so the laptop behaves like Server 2022.
+8. Register the laptop as the `uat` target of one React and one .NET test project in AlphaCI after the planned provider and agent exist. Leave `main` on Vercel and Render.
+9. Run the acceptance checks in section 4 after the planned release workflow and agent exist. For the reboot check, restart Windows and sign in; on the laptop the scheduled task may run as your user, only when signed in.
 
 The laptop lane proves the pipeline, signing, pulling, Compose, rollback, and
 reboot recovery. It does not prove Server 2022 networking, client proxies and
