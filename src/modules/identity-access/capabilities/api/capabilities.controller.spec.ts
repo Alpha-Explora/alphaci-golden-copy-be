@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
@@ -101,6 +104,68 @@ const providerCatalog = () => ({
 });
 
 describe('CapabilitiesController', () => {
+  /*
+   * Regression guard. projects.qa-checklists declared apiField "qaChecklists"
+   * in the catalog but the response never carried it, so the frontend read
+   * the flag as off and hid every QA screen while the capability was active.
+   * Every catalog capability that declares an apiField must appear here, and
+   * follow its capability.
+   */
+  it('reports every catalog apiField, following its capability', async () => {
+    const { capabilities: catalog } = JSON.parse(
+      readFileSync(
+        resolve(
+          __dirname,
+          '../../../../kernel/composition/catalog.source.json',
+        ),
+        'utf8',
+      ),
+    ) as {
+      capabilities: Array<{
+        key: string;
+        surface?: { apiField?: string | null };
+      }>;
+    };
+    const surfaced = catalog.filter((entry) => entry.surface?.apiField);
+
+    const build = async (keys: string[]) => {
+      const module = await Test.createTestingModule({
+        controllers: [CapabilitiesController],
+        providers: [
+          { provide: ConfigService, useValue: makeConfig(true) },
+          {
+            provide: CAPABILITY_RESOLVER,
+            useValue: { deployment: () => new Set(keys) },
+          },
+          { ...providerCatalog() },
+        ],
+      }).compile();
+      return module
+        .get(CapabilitiesController)
+        .getCapabilities() as unknown as Record<
+        string,
+        { enabled?: unknown } | undefined
+      >;
+    };
+
+    const allOn = await build(surfaced.map((entry) => entry.key));
+    const allOff = await build([]);
+    for (const entry of surfaced) {
+      const field = entry.surface!.apiField!;
+      expect({ field, present: typeof allOn[field]?.enabled }).toEqual({
+        field,
+        present: 'boolean',
+      });
+      expect({ field, off: allOff[field]?.enabled }).toEqual({
+        field,
+        off: false,
+      });
+    }
+    // The capability that was missing: on when active, off when not.
+    expect(allOn.qaChecklists).toEqual({ enabled: true });
+    expect(allOff.qaChecklists).toEqual({ enabled: false });
+  });
+
   it('reports env provisioning enabled capabilities', async () => {
     const module = await Test.createTestingModule({
       controllers: [CapabilitiesController],
@@ -180,6 +245,9 @@ describe('CapabilitiesController', () => {
       },
       workflowUpdatePr: {
         enabled: true,
+      },
+      qaChecklists: {
+        enabled: false,
       },
       projectTargetManagement: {
         enabled: true,
@@ -319,6 +387,9 @@ describe('CapabilitiesController', () => {
         enabled: false,
       },
       workflowUpdatePr: {
+        enabled: false,
+      },
+      qaChecklists: {
         enabled: false,
       },
       projectTargetManagement: {
