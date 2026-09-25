@@ -112,12 +112,36 @@ merged, and the mixed deployment acceptance run passes.
 - [x] Reconcile local branch bases and update ADR-0012 and the host guide.
   Evidence: plan commit `b8923df`, backend merge `acb0f04`, and matching local
   and remote `main` tips in frontend and central workflow on 2026-09-25.
-- [ ] Integrate the backend's local planning commits into remote `main` in a
-  separate reviewed change before implementation PRs; no push or PR is part of
-  this planning step.
-- [ ] Freeze the E1 environment API, E2 target identity, C1 release manifest,
-  and W1 reusable-workflow inputs in the first PR descriptions. Open stacked
-  PRs as drafts when their diffs are reviewable.
+- [ ] Integrate the backend's local governance and deployment-planning commits
+  into remote `main` as separate reviewed changes before implementation PRs.
+- [x] Freeze the E1 environment API, E2 target identity, C1 release manifest,
+  and W1 reusable-workflow inputs below. Copy these contracts into the first
+  implementation PR descriptions; open those PRs as drafts when their diffs
+  are reviewable. Evidence: Phase 0 read-only backend, workflow, and baseline
+  reviews on 2026-09-25.
+
+#### Frozen implementation contracts
+
+These are design contracts for E1, E2, C1, and W1, not claims that the APIs or
+workflows exist. Keep the current branch-based API and generated workflow
+behavior for legacy projects until their environment mapping is explicit.
+
+| Slice | Public contract | Required invariant |
+|---|---|---|
+| E1 | `GET /projects/:projectId/environments` returns ordered `{id, slug, displayName, position, sourceBranch, role, autoDeploy}` records. `POST` adds an environment; `PATCH /:environmentId` changes its display name. Project creation accepts an ordered `environments` array. `role` is `production` or `non_production`; test/UAT are display names, not fixed roles. | UUID `id` and slug are permanent; slug and position are unique per project; position is contiguous; exactly one environment is production; `autoDeploy` is read-only and true only at position zero. Source branches may repeat. Live source-branch, order, role, slug, and delete changes are rejected until a migration flow exists. Session auth and project authorization match deployment-target routes. |
+| E2 | Target create/list/update responses include `environmentId`; the target key is `(projectId, environmentId, slot)`, with one provider and stable target ID. A branch remains an environment's source setting and is never used to choose a target. | Reject duplicate, absent, missing, or failed targets without fallback. Keep env-var metadata and custom domains attached to their existing target IDs during migration; provider-specific environment labels are configuration on that target. Provision and protect the named GitHub Environment before a generated workflow references it. |
+| C1 | A new-mode `POST /ci/releases` registers a project-scoped immutable release with a UUID, full source commit SHA, source environment ID, per-slot artifact digests, and workflow provenance. `GET /ci/releases/:id` reads it. A session-authenticated `POST /projects/:projectId/environments/:environmentId/promotions` with `{releaseId}` creates a deployment of that release to the next ordered environment. Retain the current CI request/opaque ID response as a legacy compatibility path until callers migrate. | CI tokens may register and inspect their project's package but cannot promote, approve, or change a production pin. Release build/verification state and per-environment deployment/health/rollback state are separate persistent records. Promotion checks the immediately preceding environment's pinned release, target identity, authorization, and immutable artifacts. Only the first environment may deploy automatically. |
+| C1 manifest | Canonical signed payload: `schemaVersion`, `releaseId`, `projectId`, `sourceEnvironmentId`, `sourceBranch`, full `commitSha`, `createdAt`, `artifacts[{slot, image, digest}]`, optional `migrations[{id, checksum, mode}]`, and `workflowRun{provider, repo, runId, url}`. Envelope: manifest hash plus `signature{algorithm, keyId, value}`. A host assignment separately names destination environment and target IDs. | Container artifact references use `image@sha256:<64 hex>`; floating tags are refused. The host verifies the signature with its pinned public key before pulling any artifact. Neither manifest nor assignment contains host secrets. Vercel records its own deployment ID from the pinned commit rather than claiming the same image digest. |
+| W1 | Preserve existing reusable-workflow inputs, defaults, and outputs. Add optional string `environment-id`, `environment-name`, and `target-id` to managed deploy/release workflows. Keep existing `commit-sha`/`checkout-ref`, `artifact`, `image-digest`, and Vercel deployment outputs; expose a canonical digest image reference from `docker-build.yml`. New-mode callers provide the IDs, a full pinned SHA, and digest for container targets explicitly. | Legacy callers continue their current path when new IDs are absent. New-mode callers never resolve an environment or target from branch text and never fall back to DEV/UAT/MAIN credentials. The caller validates the provisioned, protected GitHub Environment and exact target before invoking deployment. Branch pushes to later environments can run quality gates but cannot call deployment; explicit promotion supplies the release ID. Render and Compose reuse the same digest; Vercel checks out the pinned SHA and records its distinct deployment ID. |
+
+E1 backfill uses effective project branches and target settings. If those
+settings cannot unambiguously identify one production environment, leave that
+project on the legacy compatibility path and require an operator mapping;
+never guess from the name `main` or change its current deployment behavior.
+E2 then attaches legacy target rows to the resolved environment IDs without
+replacing target IDs. E3 owns generated caller changes: W1 alone does not
+remove the current fixed `dev`/`uat`/`main` enumeration. W2 owns manifest
+signing and registration; W1 does not add host credentials to a deploy job.
 
 ### Phase 1: environment identity and reusable foundations (E1, W1, R1)
 
