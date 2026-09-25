@@ -43,53 +43,119 @@ database to the customer host.
   `dev` is a working branch without hosted infrastructure. Render can fan out
   to a `main` service. Provider packs for on-prem are not registered.
 
-## Tasks
+## Worktrees and pull requests
 
-### 1. Choose a provider for every hosted branch
+Each named PR below gets its own Codex-managed worktree and `codex/` branch.
+Its commits form one reviewable feature slice. In one repository, a dependent
+PR targets the branch named as its base; merge the bottom PR first, then
+retarget the next PR to `main`. Independent PRs target `main` immediately.
+Cross-repository dependencies are linked in PR descriptions because Git cannot
+stack branches across repositories. Do not expose `onprem-compose` in project
+setup until the workflow and host paths are ready. B4 stays draft until the
+end-to-end host checks pass; earlier PRs can merge with the provider gated.
 
-- [ ] Make `dev` a hosted test target and keep branch provisioning, promotion,
-  environment display, and workflow triggers in agreement.
-- [ ] Let project setup and the target API/UI assign a provider by slot and
-  branch. Prevent duplicate configured targets and fail visibly if a target is
-  missing; preserve existing Vercel/Render behavior for projects that retain it.
-- [ ] Scope Vercel jobs to `dev` and `uat`, and Render services and jobs to
-  `dev` and `uat`, for the example configuration. Do not create or deploy a
-  managed `main` service when `main` selects `onprem-compose`.
+**Baseline gate:** before creating implementation worktrees, reconcile the
+backend's local `main` with `origin/main` (six local commits ahead when this
+plan was split). Use a fresh frontend worktree from updated `origin/main`;
+the current frontend checkout is on `codex/golden-copy-trunk` with untracked
+files, and its local `main` is stale. The `alphaci-workflow` checkout is clean
+on `main`. Preserve those existing checkouts and files.
 
-### 2. Publish a release for on-prem main
+| Stack | PR order | Repository | Base for first PR |
+|---|---|---|---|
+| Target and control | B1 -> B2 -> B3 -> B4 | Backend | Updated `main` |
+| Host runtime | H1 -> H2 | Backend | B2; H1 and B3 can run in parallel |
+| Release workflows | W1 -> W2 | `alphaci-workflow` | Updated `main` |
+| React image | R1 | Backend | Updated `main`; independent of B1 |
+| Target UI | F1 | Frontend | Updated `origin/main`; depends on B1's API contract |
 
-- [ ] Add a static-serving Dockerfile to the generated React scaffold; reuse
-  the .NET Linux image path. Build and scan the `main` images, produce an SBOM,
-  publish to GHCR, and record immutable digests.
-- [ ] Add the on-prem artifact and release workflows in `alphaci-workflow`.
-  Sign a manifest containing the frontend and backend digests, release ID,
-  environment, and migration version when present with the AlphaCI Cloud KMS
-  key; register that release with the AlphaCI API. Keep host credentials out
-  of CI.
+Merge R1, W1, and B1 as their checks pass. Merge B2 after B1; B3 and H1
+after B2; W2 after W1 and B2's contract; H2 after H1; F1 after B1's API is
+available. Merge B4 last, after B3, H2, R1, W2, and the host acceptance
+checks. Retarget each stacked PR to `main` as its base merges.
 
-### 3. Run the Compose target
+### Phase 0: freeze the baseline and contracts
 
-- [ ] Add the `onprem-compose` Runtime provider pack and workflow fragment.
-  The host agent polls outbound, verifies the signed manifest with a pinned
-  public key, pulls images by digest, applies Compose, checks health, rolls
-  back on failure, and reports status.
-- [ ] Add Caddy with the client's TLS files and an idempotent Windows host
-  bootstrap for the startup task, WSL port forwarding, and subnet-scoped
-  firewall rule. Populate the test host's trust, TLS, and secret files only
-  when real test credentials exist.
+- [ ] Reconcile each repository's branch state above. Record the exact target
+  API fields and release-manifest schema in B1/B2 before W2, B3, or F1 code
+  depends on them. Open draft stacked PRs as soon as each diff is reviewable;
+  merge only when its own checks and dependencies pass.
 
-### 4. Prove the mixed deployment configuration
+### Phase 1: provider selection (B1)
 
-- [ ] On disposable React and .NET projects, deploy `dev` and `uat` to
-  Vercel/Render and `main` to the Ubuntu test host. Verify each branch reaches
-  only its configured provider, and capture repeatable release evidence.
-- [ ] Verify main install, upgrade, failed-health rollback, signature rejection,
-  and restart recovery on the laptop, then repeat on a Windows Server 2022 VM
-  with nested virtualization. Keep the E2E work documented until this harness
-  is practical to run.
-- [ ] Turn the [host setup guide](2026-09-25-onprem-client-setup-guide.md) into
-  a current-state runbook after these checks pass; regenerate the provider map
-  and mark ADR-0012 accepted only for the delivered scope.
+- [ ] **B1 `codex/onprem-target-routing`**, backend PR to `main`: key the
+  configured provider by project, slot, and branch; reject duplicates and
+  missing or failed targets without fallback. Allow an opt-in hosted `dev`
+  target without creating paid `dev` services for existing projects. Update
+  Runtime provisioning, environment display, Vercel/Render job selection, and
+  generated workflow routing together. The example emits managed jobs only
+  for `dev` and `uat`; it never creates a Render or Vercel `main` deployment.
+  Evidence: generated workflow files and target API behavior for both the
+  mixed configuration and unchanged managed-only projects.
+
+### Phase 2: parallel foundations (R1, W1, B2, F1)
+
+- [ ] **R1 `codex/onprem-react-image`**, backend PR to `main`: add a
+  static-serving Dockerfile to the generated React scaffold and a reproducible
+  image build. Keep the existing Vercel build path. Evidence: built image and
+  digest tied to the scaffold revision.
+- [ ] **W1 `codex/onprem-image-workflow`**, workflow PR to `main`: add a reusable
+  image build that scans, emits an SBOM, pushes React/.NET images to GHCR, and
+  outputs immutable digests. Update its workflow contract docs and validation
+  allow-list. It must not deploy or need customer host credentials.
+- [ ] **B2 `codex/onprem-release-contract`**, backend PR based on B1: define
+  the signed-manifest schema and project/host-scoped release API, including
+  outbound polling, status, and token boundaries. Keep it inactive for
+  projects without an on-prem target. Evidence: authorization and manifest
+  behavior at the API boundary.
+- [ ] **F1 `codex/onprem-target-ui`**, frontend PR to its own `main`: display
+  and edit a provider per slot and branch, show `dev` as test, and render
+  on-prem host configuration only when provider discovery advertises B3's
+  enabled pack. This PR is independent in Git but requires B1's target API.
+
+### Phase 3: signed release, provider, and agent (W2, B3, H1)
+
+- [ ] **W2 `codex/onprem-signed-release`**, workflow PR based on W1: sign the
+  release manifest with the AlphaCI Cloud KMS key and register it through
+  B2's API. The manifest names the release ID, environment, image digests,
+  and migration version when present. Verify the workflow using a disposable
+  release fixture; no CI job receives host credentials.
+- [ ] **B3 `codex/onprem-compose-provider`**, backend PR based on B2: add the
+  Compose provider pack and workflow fragment, including target validation and
+  release-to-host status mapping. Keep provider discovery gated until Phase 5.
+  Evidence: generated `main` workflow and provider behavior against a release
+  fixture.
+- [ ] **H1 `codex/onprem-host-agent`**, backend PR based on B2, parallel to
+  B3: package a Linux agent under `deploy/onprem/agent`. It polls outbound,
+  verifies the pinned public key, pulls by digest, applies Compose, checks
+  health, rolls back, and reports status. Evidence: repeatable signed-release,
+  tamper, and rollback runs on the Ubuntu lab host.
+
+### Phase 4: Windows host package (H2)
+
+- [ ] **H2 `codex/onprem-windows-host`**, backend PR based on H1: package
+  Caddy/TLS and an idempotent Windows bootstrap for the startup task, WSL
+  port forwarding, subnet-scoped firewall, and support bundle. Populate the
+  lab host's trust, TLS, and secret files with scoped test credentials.
+  Evidence: install, restart, and rerun on the laptop without manual repair.
+
+### Phase 5: activate and prove the mixed configuration (B4)
+
+- [ ] **B4 `codex/onprem-mixed-deployment`**, backend PR based on B3: register
+  the on-prem provider and generated `main` workflow only after W2 merges to
+  `alphaci-workflow/main` and its validated `@v1` ref contains both new
+  reusable workflows, and H2 is merged. Link F1 and R1. Regenerate the
+  provider map.
+- [ ] On disposable React and .NET projects, deploy `dev`/`uat` to
+  Vercel/Render and `main` to the Ubuntu lab host. Verify provider isolation,
+  install, upgrade, rejected signature, failed-health rollback, and restart
+  recovery. Record a repeatable release report tied to the commit. Defer the
+  long E2E run while building earlier phases, but do not claim the on-prem
+  path ready for a client or merge B4 until this gate passes on the laptop and
+  then on a Windows Server 2022 VM with nested virtualization.
+- [ ] Move the [host setup guide](2026-09-25-onprem-client-setup-guide.md) to
+  a current-state runbook after those checks pass; mark ADR-0012 accepted
+  only for the delivered scope.
 
 ## Done when
 
