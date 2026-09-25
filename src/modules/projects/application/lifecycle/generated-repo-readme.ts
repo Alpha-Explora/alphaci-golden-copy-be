@@ -51,7 +51,7 @@ export function generatedStructureLines(opts: {
       '- `docker-compose.yml` is included when Docker scaffolding is enabled for the backend service.',
       ...(normalizeProjectStack(opts.frontendStack ?? 'nextjs') === 'react'
         ? [
-            '- The React frontend builds with Vite for Vercel. When Docker scaffolding is enabled, its static Nginx image is published by the root `publish-frontend-container.yml` workflow, which reports the image digest.',
+            '- The React frontend builds with Vite for Vercel. When Docker scaffolding is enabled, the root `publish-frontend-container.yml` workflow publishes its static Nginx image to GHCR after ALPHACI quality succeeds and a committed lockfile is present; it reports the image digest.',
             '- Commit `frontend/package-lock.json` from `npm install` for a repeatable frontend container build.',
           ]
         : []),
@@ -88,7 +88,7 @@ export function generatedStructureLines(opts: {
     return [
       '- `src/App.tsx` contains the starter React component.',
       '- `src/main.tsx` and `index.html` provide the Vite app entrypoint; `npm run build` creates the static `dist/` site for Vercel or the container target.',
-      '- When Docker scaffolding is enabled, `Dockerfile` serves the same static build with unprivileged Nginx and `.github/workflows/publish-container.yml` publishes a commit-tagged GHCR image with its digest.',
+      '- When Docker scaffolding is enabled, `Dockerfile` serves the same static build with unprivileged Nginx and `.github/workflows/publish-container.yml` publishes a commit-tagged GHCR image after ALPHACI quality succeeds and a committed lockfile is present; it reports the image digest.',
       '- Commit the `package-lock.json` created by `npm install` so container builds use the same dependency tree.',
       '- `tests/unit/App.spec.tsx` renders the component with `react-dom/server`.',
     ];
