@@ -80,6 +80,21 @@ export const HOSTED_BRANCHES = [
 export type HostedBranch = (typeof HOSTED_BRANCHES)[number];
 
 /**
+ * The branch QA verifies. QA runs, QA Studio and the promotion gate read this
+ * one name: uat is the hosted QA tier (see the promotion model in
+ * staged-workflow.builder.ts), and a verdict on main would be a verdict on
+ * what is already in production. Promotion then carries a QA-approved uat
+ * commit to TARGET branch main.
+ *
+ * `satisfies` ties it to the hosted list: a QA branch that is not deployed
+ * would have nothing to preview.
+ */
+export const QA_BRANCH = 'uat' satisfies HostedBranch;
+
+/** Where a QA-approved uat commit is promoted to. */
+export const QA_PROMOTION_TARGET_BRANCH = DEFAULT_BRANCH satisfies HostedBranch;
+
+/**
  * Every branch a provisioned repository ends up with, default branch included.
  *
  * Reported to the caller so the product can show what it actually created. The
