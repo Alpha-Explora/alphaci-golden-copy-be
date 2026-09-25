@@ -17,6 +17,7 @@ import { WorkflowsModule } from './application/workflows/workflows.module';
 import { ExistingReposModule } from './application/existing-repos/existing-repos.module';
 import { CatalogModule } from './application/catalog/catalog.module';
 import { QaChecklistsModule } from './application/qa-checklists/qa-checklists.module';
+import { QaRunsModule } from './application/qa-runs/qa-runs.module';
 import { ProjectsController } from './api/projects.controller';
 import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './infrastructure/project-dashboard-snapshots.repository';
@@ -62,6 +63,7 @@ import { ProjectReferenceModule } from './project-reference.module';
     HierarchyProjectLinkModule,
     ProjectReferenceModule,
     QaChecklistsModule,
+    QaRunsModule,
   ],
   controllers: [ProjectsController, ProjectWorkspaceController],
   providers: [

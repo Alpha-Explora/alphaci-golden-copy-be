@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 163 current API routes."
+description: "Generated inventory of the 172 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **163 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **172 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -89,6 +89,10 @@ The current compiled API exposes **163 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/domains`
 - `GET /api/v1/projects/{projectId}/env-vars`
 - `GET /api/v1/projects/{projectId}/qa-checklists`
+- `GET /api/v1/projects/{projectId}/qa-returned-items`
+- `GET /api/v1/projects/{projectId}/qa-runs`
+- `GET /api/v1/projects/{projectId}/qa-runs/current`
+- `GET /api/v1/projects/{projectId}/qa-runs/{runId}`
 - `GET /api/v1/projects/{projectId}/workspace/branches`
 - `GET /api/v1/projects/{projectId}/workspace/compare`
 - `GET /api/v1/projects/{projectId}/workspace/files`
@@ -120,6 +124,7 @@ The current compiled API exposes **163 routes** under the global `/api/v1` prefi
 - `PATCH /api/v1/groups/{groupId}/members/{memberId}`
 - `PATCH /api/v1/notifications/preferences`
 - `PATCH /api/v1/projects/{projectId}/deployment-targets/{targetId}`
+- `PATCH /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}`
 - `PATCH /api/v1/qa-checklists/{id}`
 - `PATCH /api/v1/repositories/{repositoryId}`
 - `PATCH /api/v1/systems/{systemId}`
@@ -164,6 +169,10 @@ The current compiled API exposes **163 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{projectId}/domains/{domainId}/verify`
 - `POST /api/v1/projects/{projectId}/env-vars/provision`
 - `POST /api/v1/projects/{projectId}/env-vars/validate`
+- `POST /api/v1/projects/{projectId}/qa-runs`
+- `POST /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}/request-retest`
+- `POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen`
+- `POST /api/v1/projects/{projectId}/qa-runs/{runId}/signoff`
 - `POST /api/v1/projects/{projectId}/workspace/pull-requests`
 - `POST /api/v1/projects/{projectId}/workspace/pull-requests/{number}/merge`
 - `POST /api/v1/provider-connections`

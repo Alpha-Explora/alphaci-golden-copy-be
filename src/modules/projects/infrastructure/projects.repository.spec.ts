@@ -378,4 +378,56 @@ describe('ProjectsRepository', () => {
       expect(query).toContain("vra.status IN ('active', 'pending')");
     });
   });
+
+  describe('findAppRole', () => {
+    it('returns the resolved app_role from the query', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [{ app_role: 'lead' }],
+      });
+
+      await expect(repo.findAppRole('user-1')).resolves.toBe('lead');
+      const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+        string,
+        unknown[],
+      ];
+      expect(query).toContain('identity.platform_admins');
+      expect(query).toContain('identity.app_users');
+      expect(values).toEqual(['user-1']);
+    });
+
+    it("defaults to 'member' when the query returns no row", async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+
+      await expect(repo.findAppRole('user-1')).resolves.toBe('member');
+    });
+  });
+
+  describe('listWorkspaceLeadIds', () => {
+    it('queries active workspace_members joined to app_users with app_role = lead', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [{ id: 'lead-1' }, { id: 'lead-2' }],
+      });
+
+      await expect(repo.listWorkspaceLeadIds('workspace-1')).resolves.toEqual([
+        'lead-1',
+        'lead-2',
+      ]);
+      const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+        string,
+        unknown[],
+      ];
+      expect(query).toContain('orgs.workspace_members');
+      expect(query).toContain("m.member_status = 'active'");
+      expect(query).toContain("u.app_role = 'lead'");
+      expect(values).toEqual(['workspace-1']);
+    });
+
+    it('returns an empty array when nobody matches', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+
+      await expect(repo.listWorkspaceLeadIds('workspace-1')).resolves.toEqual(
+        [],
+      );
+    });
+  });
 });

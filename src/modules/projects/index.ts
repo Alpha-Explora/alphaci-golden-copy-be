@@ -42,3 +42,20 @@ export type {
   QaChecklistTargetPersona,
   QaChecklistVerificationType,
 } from './application/qa-checklists/qa-checklists.contracts';
+export { QaRunsModule } from './application/qa-runs/qa-runs.module';
+export { QaRunsService } from './application/qa-runs/qa-runs.service';
+export type {
+  QaActor,
+  QaCommitSource,
+  QaDefectSeverity,
+  QaReturnedItem,
+  QaRun,
+  QaRunItem,
+  QaRunItemStatus,
+  QaRunListItem,
+  QaRunPermissions,
+  QaRunStatus,
+  QaRunSummaryCounts,
+  QaSignoff,
+  QaVerdict,
+} from './application/qa-runs/qa-runs.contracts';
