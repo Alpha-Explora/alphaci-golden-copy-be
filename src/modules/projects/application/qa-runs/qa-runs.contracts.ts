@@ -91,7 +91,8 @@ export interface QaRunPermissions {
 export interface QaRunListItem {
   id: string;
   projectId: string;
-  checklistId: string;
+  /** Null once the checklist was deleted with its workspace; checklistName/Version stay. */
+  checklistId: string | null;
   checklistName: string;
   checklistVersion: number;
   branch: string;

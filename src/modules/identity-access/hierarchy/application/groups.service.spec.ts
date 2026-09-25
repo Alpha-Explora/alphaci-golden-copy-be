@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import type { PoolClient } from 'pg';
 
 import type { DatabaseService } from '#kernel/db/database.service';
@@ -61,6 +65,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
   let auditEventsService: jest.Mocked<AuditEventPublisher>;
   let databaseService: jest.Mocked<DatabaseService>;
   let directory: jest.Mocked<MemberDirectoryService>;
+  let workspaceDataCleanup: { purgeWorkspace: jest.Mock };
   let service: GroupsService;
 
   beforeEach(() => {
@@ -117,6 +122,10 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       ),
     } as unknown as jest.Mocked<DatabaseService>;
 
+    workspaceDataCleanup = {
+      purgeWorkspace: jest.fn().mockResolvedValue({ removed: 0 }),
+    };
+
     service = new GroupsService(
       groupsRepository,
       accessService,
@@ -125,7 +134,57 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       directory,
       auditEventsService,
       databaseService,
+      workspaceDataCleanup,
     );
+  });
+
+  describe('deleteGroup removes workspace-keyed data owned elsewhere', () => {
+    beforeEach(() => {
+      jest
+        .spyOn(accessService, 'assertGroupManagerOrPlatformAdmin')
+        .mockResolvedValue(undefined as never);
+      groupsRepository.findGroupById.mockResolvedValue({
+        id: 'group-1',
+        name: 'Design team',
+      } as never);
+      (groupsRepository as unknown as { deleteGroup: jest.Mock }).deleteGroup =
+        jest.fn().mockResolvedValue(true);
+    });
+
+    it('purges the workspace QA checklists after the workspace is deleted', async () => {
+      await expect(service.deleteGroup('group-1', 'lead-1')).resolves.toEqual({
+        id: 'group-1',
+        deleted: true,
+      });
+      expect(workspaceDataCleanup.purgeWorkspace).toHaveBeenCalledWith(
+        'group-1',
+      );
+    });
+
+    it('does not purge anything when the workspace delete did not happen', async () => {
+      (
+        groupsRepository as unknown as { deleteGroup: jest.Mock }
+      ).deleteGroup.mockResolvedValue(false);
+
+      await expect(service.deleteGroup('group-1', 'lead-1')).rejects.toThrow(
+        'Group not found',
+      );
+      expect(workspaceDataCleanup.purgeWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('still reports the delete when the purge fails, and logs it', async () => {
+      workspaceDataCleanup.purgeWorkspace.mockRejectedValue(new Error('boom'));
+      const logged = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+
+      await expect(service.deleteGroup('group-1', 'lead-1')).resolves.toEqual({
+        id: 'group-1',
+        deleted: true,
+      });
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('boom'));
+      logged.mockRestore();
+    });
   });
 
   describe('searchEligibleMembers (member picker)', () => {

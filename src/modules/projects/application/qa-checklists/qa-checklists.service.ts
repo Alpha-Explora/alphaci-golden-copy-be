@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import type { WorkspaceDataCleanupPort } from '#kernel/ports/workspace-data-cleanup.port';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
@@ -39,13 +40,22 @@ export interface QaChecklistListResult {
 }
 
 @Injectable()
-export class QaChecklistsService {
+export class QaChecklistsService implements WorkspaceDataCleanupPort {
   constructor(
     private readonly repository: QaChecklistsRepository,
     private readonly access: QaAccessService,
     @Optional()
     private readonly auditEventsService?: AuditEventSink,
   ) {}
+
+  /**
+   * WorkspaceDataCleanupPort: called by the workspace deletion flow. No
+   * authorization here: the caller has already authorized and performed the
+   * workspace delete, and this only removes data that is now unreachable.
+   */
+  async purgeWorkspace(workspaceId: string): Promise<{ removed: number }> {
+    return { removed: await this.repository.deleteByWorkspace(workspaceId) };
+  }
 
   async listForWorkspace(
     workspaceId: string,

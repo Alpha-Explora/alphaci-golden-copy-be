@@ -18,7 +18,8 @@ import type {
 export interface QaVerificationRunRow {
   id: string;
   project_id: string;
-  checklist_id: string;
+  /** Null once its checklist was deleted (workspace deletion); the run keeps its snapshot. */
+  checklist_id: string | null;
   checklist_version: number;
   checklist_name: string;
   branch: string;
