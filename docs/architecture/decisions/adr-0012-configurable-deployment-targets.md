@@ -43,7 +43,25 @@ Deployment is configuration. Each question gets its own setting, and neither is 
 | `onprem-compose` | One customer host: Windows + WSL2 Ubuntu, or Linux, running Docker Engine + Compose | Host agent pulls a signed release manifest and runs images by digest |
 | `onprem-k8s` | Customer Kubernetes (K3s for the lab) | Argo CD pulls a Helm chart and a digest values file |
 
-A project chooses per deployment target, so `uat` can stay on Render while `main` goes on-premises. Stack fragments (Node, React, .NET) do not change; only the deploy step differs by provider.
+A project chooses a provider for each `(project, slot, branch)` target. At most
+one configured provider owns that tuple, regardless of its health status; a
+missing or failed target cannot fall back to another provider. The quality
+gates stay shared, while packaging and deployment follow the selected
+provider. The choice is
+configuration, not a rule that every project must use the same mix.
+
+The first customer configuration is:
+
+| Branch | Purpose | React frontend | .NET backend |
+|---|---|---|---|
+| `dev` | Test | Vercel preview | Render test service |
+| `uat` | UAT | Vercel preview | Render UAT service |
+| `main` | Production | `onprem-compose` | `onprem-compose` |
+
+Changing `main` later affects only its targets. Promotion remains
+`dev -> uat -> main`. Today, `dev` is not hosted and managed providers
+assume `main` is hosted by them, so the branch routing and provider
+provisioning must change before this configuration is available.
 
 The first customer-hosted implementation is `onprem-compose` for customer React and .NET projects, on a Windows host running WSL2, pulling from GHCR over an outbound connection. `onprem-k8s` follows for clients that already run Kubernetes.
 
@@ -51,7 +69,7 @@ The first customer-hosted implementation is `onprem-compose` for customer React 
 
 Every customer-hosted option follows the same contract:
 
-- CI builds, scans, and signs immutable OCI images and publishes them to GHCR by digest, with a release manifest naming the digests and the migration version.
+- CI builds and scans immutable OCI images, publishes them to GHCR by digest, and signs a release manifest naming the digests and any applicable migration version.
 - The customer side pulls. CI and the AlphaCI control plane never hold SSH keys, kubeconfig, or host credentials, and no self-hosted runner holds production access.
 - Status flows outward from the customer side (polling or an allowed outbound call); no design depends on inbound callbacks.
 - Secrets are created on the host or cluster and referenced by name. They never go into images, Helm charts, registries, or manifests.
