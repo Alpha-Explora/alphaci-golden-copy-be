@@ -1,11 +1,11 @@
 {
-  "routeCount": 174,
+  "routeCount": 175,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "181bf1aa2999d8a1b5ee74fe373282475fe2eea6b92f19833afafd69a7ae6271",
+  "referenceSha256": "5f935142e8ff61ba634d21bf3ed4a1063d7c68862452eb9a82d26f55c4283eda",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "181bf1aa2999d8a1b5ee74fe373282475fe2eea6b92f19833afafd69a7ae6271",
+  "baselineSha256": "5f935142e8ff61ba634d21bf3ed4a1063d7c68862452eb9a82d26f55c4283eda",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -67,6 +67,12 @@
       "reason": "Playwright and automated verification (Slice 5): \"Run Playwright\" re-dispatches the generated verify workflow for a QA run's branch, attributed to the signed-in user's own GitHub token.",
       "routes": [
         "POST /api/v1/projects/{projectId}/qa-runs/{runId}/automation/dispatch"
+      ]
+    },
+    {
+      "reason": "Project folders (A2): a team lead moves a repository into another project of the same team, so a frontend and backend that were created apart can sit under one project.",
+      "routes": [
+        "POST /api/v1/repositories/{repositoryId}/move"
       ]
     }
   ]
