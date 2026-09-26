@@ -110,6 +110,7 @@ export const HIERARCHY_EVENT_CODES = {
   deliveryProjectArchived: 'hierarchy.delivery_project.archived',
   repositoryCreated: 'hierarchy.repository.created',
   repositoryArchived: 'hierarchy.repository.archived',
+  repositoryMoved: 'hierarchy.repository.moved',
   assignmentRequested: 'hierarchy.assignment.requested',
   assignmentGrantVerified: 'hierarchy.assignment.grant_verified',
   assignmentGrantFailed: 'hierarchy.assignment.grant_failed',

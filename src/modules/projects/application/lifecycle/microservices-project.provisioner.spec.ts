@@ -23,7 +23,9 @@ function fakeSupport() {
       applyBranchProtection: jest.fn().mockResolvedValue(undefined),
     },
     pushStarterFiles: jest.fn().mockResolvedValue(undefined),
-    createProjectRow: jest.fn().mockResolvedValue({ id: 'proj-be' }),
+    createProjectRow: jest
+      .fn()
+      .mockResolvedValue({ row: { id: 'proj-be' }, deliveryProjectId: null }),
     workspaceGate: {
       resolveWorkspaceIdForCreate: jest.fn().mockResolvedValue('ws-1'),
     },
@@ -120,5 +122,60 @@ describe('MicroservicesProjectProvisioner', () => {
       'proj-be',
       'user-1',
     );
+  });
+
+  it('creates one shared chain for the pair, named after the shared repo, and links both slots to it', async () => {
+    const support = fakeSupport();
+    support.createProjectRow.mockResolvedValueOnce({
+      row: { id: 'proj-be' },
+      deliveryProjectId: 'dp-shared',
+    });
+    const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+    await provisioner.createMicroservicesProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      packedShapeDto as never,
+    );
+
+    expect(support.createProjectRow).toHaveBeenCalledTimes(2);
+    // Backend slot: no deliveryProjectId on the request, so it auto-creates
+    // the chain, named after the one shared repo both slots live in.
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      chainName: 'orders',
+    });
+    // Frontend slot: reuses the delivery project the backend slot's link
+    // just created, instead of creating a second, independent chain.
+    expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      deliveryProjectId: 'dp-shared',
+    });
+  });
+
+  it('links both slots to an explicit deliveryProjectId instead of auto-creating a chain', async () => {
+    const support = fakeSupport();
+    support.createProjectRow.mockResolvedValueOnce({
+      row: { id: 'proj-be' },
+      deliveryProjectId: 'dp-given',
+    });
+    const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+    await provisioner.createMicroservicesProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      { ...packedShapeDto, deliveryProjectId: 'dp-given' } as never,
+    );
+
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      deliveryProjectId: 'dp-given',
+    });
+    expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      deliveryProjectId: 'dp-given',
+    });
   });
 });

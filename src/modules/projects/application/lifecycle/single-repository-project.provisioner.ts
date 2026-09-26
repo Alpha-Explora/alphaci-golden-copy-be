@@ -123,29 +123,34 @@ export class SingleRepositoryProjectProvisioner {
       // of ALPHACI_TOKEN. Secrets are installed strictly so a token without
       // `secrets:write` aborts provisioning here rather than producing a repo
       // whose pipelines can never authenticate.
-      row = await this.support.createProjectRow({
-        userId,
-        workspaceId:
-          await this.support.workspaceGate.resolveWorkspaceIdForCreate(
-            userId,
-            dto.workspaceId,
-          ),
-        repoFullName,
-        templateId,
-        serviceName: dto.serviceName,
-        workflowPath,
-        status: 'provisioned',
-        repoUrl,
-        visibility: dto.visibility,
-        repoShape,
-        projectTypeId: dto.projectTypeId,
-        workflowRecipeId: dto.workflowRecipeId ?? null,
-        projectOptions: {
-          ...this.support.repositoryOwnershipMetadata(dto, ownerLogin),
-          ...(dto.tests ? { tests: dto.tests } : {}),
-          workflowFiles: workflowFileMetadata(workflowFiles),
+      ({ row } = await this.support.createProjectRow(
+        {
+          userId,
+          workspaceId:
+            await this.support.workspaceGate.resolveWorkspaceIdForCreate(
+              userId,
+              dto.workspaceId,
+            ),
+          repoFullName,
+          templateId,
+          serviceName: dto.serviceName,
+          workflowPath,
+          status: 'provisioned',
+          repoUrl,
+          visibility: dto.visibility,
+          repoShape,
+          projectTypeId: dto.projectTypeId,
+          workflowRecipeId: dto.workflowRecipeId ?? null,
+          projectOptions: {
+            ...this.support.repositoryOwnershipMetadata(dto, ownerLogin),
+            ...(dto.tests ? { tests: dto.tests } : {}),
+            workflowFiles: workflowFileMetadata(workflowFiles),
+          },
         },
-      });
+        dto.deliveryProjectId
+          ? { deliveryProjectId: dto.deliveryProjectId }
+          : undefined,
+      ));
 
       const ciToken = await this.support.ciService.issueProjectToken(row.id);
       await this.support.githubService.setActionsSecretStrict(
@@ -348,21 +353,27 @@ export class SingleRepositoryProjectProvisioner {
     const workflowPath =
       workflowFiles[0]?.path ?? `.github/workflows/${outputFileName}`;
 
-    const row = await this.support.createProjectRow({
-      userId,
-      workspaceId: await this.support.workspaceGate.resolveWorkspaceIdForCreate(
+    const { row } = await this.support.createProjectRow(
+      {
         userId,
-        dto.workspaceId,
-      ),
-      repoFullName: dto.repoFullName,
-      templateId: dto.templateId,
-      serviceName: dto.serviceName,
-      workflowPath,
-      status: 'provisioned',
-      projectOptions: {
-        workflowFiles: workflowFileMetadata(workflowFiles),
+        workspaceId:
+          await this.support.workspaceGate.resolveWorkspaceIdForCreate(
+            userId,
+            dto.workspaceId,
+          ),
+        repoFullName: dto.repoFullName,
+        templateId: dto.templateId,
+        serviceName: dto.serviceName,
+        workflowPath,
+        status: 'provisioned',
+        projectOptions: {
+          workflowFiles: workflowFileMetadata(workflowFiles),
+        },
       },
-    });
+      dto.deliveryProjectId
+        ? { deliveryProjectId: dto.deliveryProjectId }
+        : undefined,
+    );
 
     let commitSha = '';
     let commitUrl: string | null = null;

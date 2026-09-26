@@ -1,11 +1,11 @@
 {
-  "routeCount": 176,
+  "routeCount": 175,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "c323c736eaf6f962a4820badf02ad225958cbe4f32270724cd579b2f9d1ec46a",
+  "referenceSha256": "e4580e9fc87357b259238fca1ac0973257270c2e4b69912f662f5ecc801d18e4",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "c323c736eaf6f962a4820badf02ad225958cbe4f32270724cd579b2f9d1ec46a",
+  "baselineSha256": "e4580e9fc87357b259238fca1ac0973257270c2e4b69912f662f5ecc801d18e4",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -70,10 +70,9 @@
       ]
     },
     {
-      "reason": "Project explorer (A3): the team page reads every project with its repositories in one call, and a project folder attaches or detaches QA checklists without replacing the checklist's other shares.",
+      "reason": "Project folders (A2): a team lead moves a repository into another project of the same team, so a frontend and backend that were created apart can sit under one project.",
       "routes": [
-        "GET /api/v1/groups/{groupId}/project-folders",
-        "PATCH /api/v1/qa-checklists/{id}/projects"
+        "POST /api/v1/repositories/{repositoryId}/move"
       ]
     }
   ]

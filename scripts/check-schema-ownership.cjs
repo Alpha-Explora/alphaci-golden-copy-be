@@ -84,6 +84,10 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
     pairs(['projects.provisioned_projects']),
   ],
   [
+    'identity-access/20260926010000_cascade_hierarchy_repository_on_project_delete.sql',
+    pairs(['projects.provisioned_projects']),
+  ],
+  [
     'identity-access/20260617000000_enable_rls_exposed_tables.sql',
     pairs([
       'env_provisioning.provider_connections',

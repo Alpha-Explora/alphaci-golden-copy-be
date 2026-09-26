@@ -217,7 +217,11 @@ export async function persistPackedBackendRow(input: {
   repoFullName: string;
   repoUrl: string;
   bundle: PackedWorkflowBundle;
-}): Promise<ProvisionedProjectRow> {
+  /** Link into this existing delivery project instead of creating a new chain. */
+  deliveryProjectId?: string;
+  /** Name for a newly auto-created system/delivery-project chain. */
+  chainName?: string;
+}): Promise<{ row: ProvisionedProjectRow; deliveryProjectId: string | null }> {
   const {
     support,
     userId,
@@ -227,30 +231,38 @@ export async function persistPackedBackendRow(input: {
     repoFullName,
     repoUrl,
     bundle,
+    deliveryProjectId,
+    chainName,
   } = input;
 
-  return support.createProjectRow({
-    userId,
-    workspaceId: await support.workspaceGate.resolveWorkspaceIdForCreate(
+  return support.createProjectRow(
+    {
       userId,
-      dto.workspaceId,
-    ),
-    repoFullName,
-    templateId: bundle.templateId,
-    serviceName: backend.serviceName,
-    workflowPath: bundle.workflowPath,
-    status: 'provisioned',
-    repoUrl,
-    visibility: dto.visibility,
-    repoShape: normalizeRepoShape(dto.repoShape),
-    projectTypeId: backend.projectTypeId,
-    workflowRecipeId: backend.workflowRecipeId ?? null,
-    projectOptions: {
-      ...support.repositoryOwnershipMetadata(dto, ownerLogin),
-      ...packedTestsProjectOption(dto.tests),
-      workflowFiles: workflowFileMetadata(bundle.workflowFiles),
+      workspaceId: await support.workspaceGate.resolveWorkspaceIdForCreate(
+        userId,
+        dto.workspaceId,
+      ),
+      repoFullName,
+      templateId: bundle.templateId,
+      serviceName: backend.serviceName,
+      workflowPath: bundle.workflowPath,
+      status: 'provisioned',
+      repoUrl,
+      visibility: dto.visibility,
+      repoShape: normalizeRepoShape(dto.repoShape),
+      projectTypeId: backend.projectTypeId,
+      workflowRecipeId: backend.workflowRecipeId ?? null,
+      projectOptions: {
+        ...support.repositoryOwnershipMetadata(dto, ownerLogin),
+        ...packedTestsProjectOption(dto.tests),
+        workflowFiles: workflowFileMetadata(bundle.workflowFiles),
+      },
     },
-  });
+    {
+      ...(deliveryProjectId !== undefined && { deliveryProjectId }),
+      ...(chainName !== undefined && { chainName }),
+    },
+  );
 }
 
 export async function installPackedRepoSecrets(input: {
@@ -383,39 +395,52 @@ export async function persistPackedFrontendRowIfPushed(input: {
   frontendPushResult:
     | { commitSha: string; commitUrl: string | null }
     | undefined;
+  /**
+   * The delivery project both slots must share — either the caller's
+   * explicit dto.deliveryProjectId, or the chain the backend row just
+   * auto-created. Null only when the backend row itself linked nowhere.
+   */
+  pairDeliveryProjectId: string | null;
 }): Promise<void> {
   if (input.frontendPushResult === undefined) {
     return;
   }
 
   try {
-    await input.support.createProjectRow({
-      userId: input.userId,
-      workspaceId:
-        await input.support.workspaceGate.resolveWorkspaceIdForCreate(
-          input.userId,
-          input.dto.workspaceId,
-        ),
-      repoFullName: input.repoFullName,
-      templateId: input.frontendBundle.templateId,
-      serviceName: input.frontend.serviceName,
-      workflowPath: input.frontendBundle.workflowPath,
-      status: 'provisioned',
-      githubCommitSha: input.frontendPushResult.commitSha,
-      githubCommitUrl: input.frontendPushResult.commitUrl,
-      repoUrl: input.repoUrl,
-      visibility: input.dto.visibility,
-      repoShape: normalizeRepoShape(input.dto.repoShape),
-      projectTypeId: input.frontend.projectTypeId,
-      workflowRecipeId: input.frontend.workflowRecipeId ?? null,
-      projectOptions: {
-        ...input.support.repositoryOwnershipMetadata(
-          input.dto,
-          input.ownerLogin,
-        ),
-        workflowFiles: workflowFileMetadata(input.frontendBundle.workflowFiles),
+    await input.support.createProjectRow(
+      {
+        userId: input.userId,
+        workspaceId:
+          await input.support.workspaceGate.resolveWorkspaceIdForCreate(
+            input.userId,
+            input.dto.workspaceId,
+          ),
+        repoFullName: input.repoFullName,
+        templateId: input.frontendBundle.templateId,
+        serviceName: input.frontend.serviceName,
+        workflowPath: input.frontendBundle.workflowPath,
+        status: 'provisioned',
+        githubCommitSha: input.frontendPushResult.commitSha,
+        githubCommitUrl: input.frontendPushResult.commitUrl,
+        repoUrl: input.repoUrl,
+        visibility: input.dto.visibility,
+        repoShape: normalizeRepoShape(input.dto.repoShape),
+        projectTypeId: input.frontend.projectTypeId,
+        workflowRecipeId: input.frontend.workflowRecipeId ?? null,
+        projectOptions: {
+          ...input.support.repositoryOwnershipMetadata(
+            input.dto,
+            input.ownerLogin,
+          ),
+          workflowFiles: workflowFileMetadata(
+            input.frontendBundle.workflowFiles,
+          ),
+        },
       },
-    });
+      input.pairDeliveryProjectId
+        ? { deliveryProjectId: input.pairDeliveryProjectId }
+        : { chainName: input.dto.repoName },
+    );
   } catch (err) {
     input.logger.warn(
       `Microservices project: frontend DB row save failed: ${String(err)}`,

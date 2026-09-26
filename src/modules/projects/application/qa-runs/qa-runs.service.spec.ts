@@ -35,7 +35,7 @@ const runRow = (
   checklist_id: 'checklist-1',
   checklist_version: 1,
   checklist_name: 'Release checklist',
-  branch: 'main',
+  branch: 'uat',
   commit_sha: 'a'.repeat(40),
   commit_source: 'deployment',
   status: 'open',
@@ -260,7 +260,7 @@ describe('QaRunsService.create', () => {
     await expect(
       service.create('project-1', actor, {
         checklistId: 'checklist-1',
-        branch: 'main',
+        branch: 'uat',
       }),
     ).rejects.toThrow(NotFoundException);
   });
@@ -274,7 +274,7 @@ describe('QaRunsService.create', () => {
     await expect(
       service.create('project-1', actor, {
         checklistId: 'checklist-1',
-        branch: 'main',
+        branch: 'uat',
       }),
     ).rejects.toThrow(ForbiddenException);
   });
@@ -296,23 +296,27 @@ describe('QaRunsService.create', () => {
       await expect(
         service.create('project-1', actor, {
           checklistId: 'checklist-1',
-          branch: 'main',
+          branch: 'uat',
         }),
       ).resolves.toBeDefined();
     },
   );
 
-  it('rejects a branch outside HOSTED_BRANCHES with 400', async () => {
-    const { service } = makeService({
-      access: makeAccess({ findAppRole: jest.fn().mockResolvedValue('qa') }),
-    });
-    await expect(
-      service.create('project-1', actor, {
-        checklistId: 'checklist-1',
-        branch: 'dev',
-      }),
-    ).rejects.toThrow(BadRequestException);
-  });
+  // QA verifies the uat tier only: main is production and dev is not hosted.
+  it.each(['dev', 'main'])(
+    'rejects a run on %s with 400 (QA runs only on the QA branch)',
+    async (branch) => {
+      const { service } = makeService({
+        access: makeAccess({ findAppRole: jest.fn().mockResolvedValue('qa') }),
+      });
+      await expect(
+        service.create('project-1', actor, {
+          checklistId: 'checklist-1',
+          branch,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    },
+  );
 
   it('rejects a checklist that is not shared to the project, or is archived (409)', async () => {
     const { service } = makeService({
@@ -324,7 +328,7 @@ describe('QaRunsService.create', () => {
     await expect(
       service.create('project-1', actor, {
         checklistId: 'checklist-1',
-        branch: 'main',
+        branch: 'uat',
       }),
     ).rejects.toThrow(ConflictException);
   });
@@ -339,7 +343,7 @@ describe('QaRunsService.create', () => {
     await expect(
       service.create('project-1', actor, {
         checklistId: 'checklist-1',
-        branch: 'main',
+        branch: 'uat',
       }),
     ).rejects.toThrow(ConflictException);
   });
@@ -361,7 +365,7 @@ describe('QaRunsService.create', () => {
 
     const result = await service.create('project-1', actor, {
       checklistId: 'checklist-1',
-      branch: 'main',
+      branch: 'uat',
     });
 
     expect(result.created).toBe(true);
@@ -387,7 +391,7 @@ describe('QaRunsService.create', () => {
 
     const result = await service.create('project-1', actor, {
       checklistId: 'checklist-1',
-      branch: 'main',
+      branch: 'uat',
     });
 
     expect(result.created).toBe(false);
@@ -396,12 +400,15 @@ describe('QaRunsService.create', () => {
 });
 
 describe('QaRunsService.current', () => {
-  it('rejects a branch outside HOSTED_BRANCHES with 400', async () => {
-    const { service } = makeService();
-    await expect(
-      service.current('project-1', actor, 'dev', undefined),
-    ).rejects.toThrow(BadRequestException);
-  });
+  it.each(['dev', 'main'])(
+    'rejects %s with 400 (QA runs only on the QA branch)',
+    async (branch) => {
+      const { service } = makeService();
+      await expect(
+        service.current('project-1', actor, branch, undefined),
+      ).rejects.toThrow(BadRequestException);
+    },
+  );
 
   it('resolves nulls (no 409) when no commit can be resolved', async () => {
     const { service } = makeService({
@@ -412,7 +419,7 @@ describe('QaRunsService.current', () => {
     const result = await service.current(
       'project-1',
       actor,
-      'main',
+      'uat',
       'checklist-1',
     );
     expect(result).toEqual({ commitSha: null, commitSource: null, run: null });
@@ -420,7 +427,7 @@ describe('QaRunsService.current', () => {
 
   it('returns the resolved commit with a null run when no checklistId is given', async () => {
     const { service } = makeService();
-    const result = await service.current('project-1', actor, 'main', undefined);
+    const result = await service.current('project-1', actor, 'uat', undefined);
     expect(result.run).toBeNull();
     expect(result.commitSha).toBe('a'.repeat(40));
     expect(result.commitSource).toBe('deployment');
@@ -435,7 +442,7 @@ describe('QaRunsService.current', () => {
     const result = await service.current(
       'project-1',
       actor,
-      'main',
+      'uat',
       'checklist-1',
     );
     expect(result.run).not.toBeNull();
@@ -1077,7 +1084,7 @@ describe('QaRunsService.listReturnedItems', () => {
         listReturnedItemsForProject: jest.fn().mockResolvedValue([
           {
             item,
-            runBranch: 'main',
+            runBranch: 'uat',
             runCommitSha: 'a'.repeat(40),
             runChecklistName: 'Release checklist',
           },
@@ -1090,7 +1097,7 @@ describe('QaRunsService.listReturnedItems', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
       runId: 'run-1',
-      branch: 'main',
+      branch: 'uat',
       commitSha: 'a'.repeat(40),
       checklistName: 'Release checklist',
     });
@@ -1107,13 +1114,13 @@ describe('QaRunsService.listReturnedItems', () => {
         listReturnedItemsForProject: jest.fn().mockResolvedValue([
           {
             item: sameRunItemA,
-            runBranch: 'main',
+            runBranch: 'uat',
             runCommitSha: 'sha-a',
             runChecklistName: 'c',
           },
           {
             item: sameRunItemB,
-            runBranch: 'main',
+            runBranch: 'uat',
             runCommitSha: 'sha-a',
             runChecklistName: 'c',
           },
@@ -1132,7 +1139,7 @@ describe('QaRunsService.listReturnedItems', () => {
 
     expect(result.items).toHaveLength(3);
     expect(forRun).toHaveBeenCalledTimes(2);
-    expect(forRun).toHaveBeenCalledWith('org/repo', 'main', 'sha-a');
+    expect(forRun).toHaveBeenCalledWith('org/repo', 'uat', 'sha-a');
     expect(forRun).toHaveBeenCalledWith('org/repo', 'dev', 'sha-b');
   });
 });

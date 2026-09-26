@@ -12,6 +12,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { MoveRepositoryDto } from './dto/move-repository.dto';
 import { UpdateRepositoryDto } from './dto/update-repository.dto';
 import { RepositoriesService } from '../application/repositories.service';
 
@@ -41,6 +42,19 @@ export class RepositoriesController {
       repositoryId,
       this.requireUserId(req),
       body,
+    );
+  }
+
+  @Post(':repositoryId/move')
+  moveRepository(
+    @Req() req: Request,
+    @Param('repositoryId') repositoryId: string,
+    @Body() body: MoveRepositoryDto,
+  ) {
+    return this.repositoriesService.moveRepository(
+      repositoryId,
+      this.requireUserId(req),
+      body.deliveryProjectId,
     );
   }
 
