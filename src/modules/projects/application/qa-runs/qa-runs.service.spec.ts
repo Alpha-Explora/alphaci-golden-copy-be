@@ -167,6 +167,7 @@ const makeRepository = (
     reopenRun: jest.fn(),
     listSupersededSignoffs: jest.fn().mockResolvedValue([]),
     listReturnedItemsForProject: jest.fn().mockResolvedValue([]),
+    listOpenDeveloperItemsForProject: jest.fn().mockResolvedValue([]),
     ...overrides,
   }) as unknown as jest.Mocked<QaRunsRepository>;
 
@@ -1141,6 +1142,87 @@ describe('QaRunsService.listReturnedItems', () => {
     expect(forRun).toHaveBeenCalledTimes(2);
     expect(forRun).toHaveBeenCalledWith('org/repo', 'uat', 'sha-a');
     expect(forRun).toHaveBeenCalledWith('org/repo', 'dev', 'sha-b');
+  });
+});
+
+describe('QaRunsService.listMyItems', () => {
+  it('combines listReturnedItems output with open developer-targeted items on uat', async () => {
+    const returnedItem = itemRow({
+      id: 'item-returned',
+      status: 'returned_to_dev',
+    });
+    const developerItem = itemRow({
+      id: 'item-dev',
+      target_persona: 'developer',
+      status: 'failed',
+    });
+    const { service, repository } = makeService({
+      repository: makeRepository({
+        listReturnedItemsForProject: jest.fn().mockResolvedValue([
+          {
+            item: returnedItem,
+            runBranch: 'uat',
+            runCommitSha: 'a'.repeat(40),
+            runChecklistName: 'Release checklist',
+          },
+        ]),
+        listOpenDeveloperItemsForProject: jest.fn().mockResolvedValue([
+          {
+            item: developerItem,
+            runBranch: 'uat',
+            runCommitSha: 'b'.repeat(40),
+            runChecklistName: 'Release checklist',
+          },
+        ]),
+      }),
+    });
+
+    const result = await service.listMyItems('project-1', actor.userId);
+
+    expect(result.returned).toHaveLength(1);
+    expect(result.returned[0]?.item.id).toBe('item-returned');
+    expect(result.developerItems).toHaveLength(1);
+    expect(result.developerItems[0]?.item.id).toBe('item-dev');
+    expect(repository.listOpenDeveloperItemsForProject).toHaveBeenCalledWith(
+      'project-1',
+      'uat',
+    );
+  });
+
+  it("computes canUpdate for developer items using the caller's own role", async () => {
+    const developerItem = itemRow({
+      id: 'item-dev',
+      target_persona: 'developer',
+      status: 'pending',
+    });
+    const { service } = makeService({
+      access: makeAccess({
+        findAppRole: jest.fn().mockResolvedValue('member'),
+      }),
+      repository: makeRepository({
+        listOpenDeveloperItemsForProject: jest.fn().mockResolvedValue([
+          {
+            item: developerItem,
+            runBranch: 'uat',
+            runCommitSha: 'b'.repeat(40),
+            runChecklistName: 'Release checklist',
+          },
+        ]),
+      }),
+    });
+
+    const result = await service.listMyItems('project-1', actor.userId);
+
+    // developer persona + open run + role 'member' -> canUpdate true.
+    expect(result.developerItems[0]?.item.canUpdate).toBe(true);
+  });
+
+  it('returns empty arrays when nothing is returned or outstanding', async () => {
+    const { service } = makeService();
+
+    const result = await service.listMyItems('project-1', actor.userId);
+
+    expect(result).toEqual({ returned: [], developerItems: [] });
   });
 });
 

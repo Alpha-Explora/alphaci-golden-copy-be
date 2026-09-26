@@ -1,11 +1,11 @@
 {
-  "routeCount": 175,
+  "routeCount": 181,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "e4580e9fc87357b259238fca1ac0973257270c2e4b69912f662f5ecc801d18e4",
+  "referenceSha256": "6decd014e6174a73fa66d12308b17dd5f527653812a6789f19284436889b4db1",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "e4580e9fc87357b259238fca1ac0973257270c2e4b69912f662f5ecc801d18e4",
+  "baselineSha256": "6decd014e6174a73fa66d12308b17dd5f527653812a6789f19284436889b4db1",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -73,6 +73,14 @@
       "reason": "Project folders (A2): a team lead moves a repository into another project of the same team, so a frontend and backend that were created apart can sit under one project.",
       "routes": [
         "POST /api/v1/repositories/{repositoryId}/move"
+      ]
+    },
+    {
+      "reason": "QA promotion and My QA items (Slice 6): the \"Merge to main\" gate and action for a QA-approved uat commit, and the Overview \"My QA items\" card (returned items plus open developer-targeted items on the current uat run).",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/qa/promotion",
+        "POST /api/v1/projects/{projectId}/qa/promotion/merge",
+        "GET /api/v1/projects/{projectId}/qa-my-items"
       ]
     }
   ]

@@ -64,6 +64,9 @@ const { QaChecklistsService } =
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ProjectWorkflowsService } =
   require('../../src/modules/projects/application/workflows/project-workflows.service.js') as typeof import('../../src/modules/projects/application/workflows/project-workflows.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaPromotionService } =
+  require('../../src/modules/projects/application/qa-runs/qa-promotion.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-promotion.service.js');
 
 describe('HTTP application boot', () => {
   it('initializes the real Express middleware and serves health without a DB', async () => {
@@ -269,6 +272,7 @@ describe('HTTP application boot', () => {
     ['QaRunsService', () => QaRunsService, true],
     ['QaChecklistsService', () => QaChecklistsService, false],
     ['ProjectWorkflowsService', () => ProjectWorkflowsService, true],
+    ['QaPromotionService', () => QaPromotionService, true],
   ] as const)(
     'gives %s its real audit (and notification) publishers',
     async (_name, service, hasNotifications) => {

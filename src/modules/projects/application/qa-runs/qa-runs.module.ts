@@ -7,6 +7,8 @@ import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
 import {
+  ProjectQaMyItemsController,
+  ProjectQaPromotionController,
   ProjectQaReturnedItemsController,
   ProjectQaRunsController,
 } from '../../api/qa-runs.controller';
@@ -15,6 +17,7 @@ import { QaChecklistsModule } from '../qa-checklists/qa-checklists.module';
 import { QaAutomationDispatchService } from './qa-automation-dispatch.service';
 import { QaAutomationService } from './qa-automation.service';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
+import { QaPromotionService } from './qa-promotion.service';
 import { QaReportService } from './qa-report.service';
 import { QaRunsService } from './qa-runs.service';
 
@@ -38,7 +41,12 @@ import { QaRunsService } from './qa-runs.service';
     // for POST create) — both exported by this module already.
     QaChecklistsModule,
   ],
-  controllers: [ProjectQaRunsController, ProjectQaReturnedItemsController],
+  controllers: [
+    ProjectQaRunsController,
+    ProjectQaReturnedItemsController,
+    ProjectQaMyItemsController,
+    ProjectQaPromotionController,
+  ],
   providers: [
     SessionAuthGuard,
     QaRunsRepository,
@@ -47,7 +55,8 @@ import { QaRunsService } from './qa-runs.service';
     QaAutomationDispatchService,
     QaRunsService,
     QaReportService,
+    QaPromotionService,
   ],
-  exports: [QaRunsService, QaReportService],
+  exports: [QaRunsService, QaReportService, QaPromotionService],
 })
 export class QaRunsModule {}

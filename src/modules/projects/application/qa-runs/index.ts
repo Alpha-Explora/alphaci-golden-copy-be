@@ -2,6 +2,15 @@ export { QaRunsModule } from './qa-runs.module';
 export { QaRunsService, type QaRunActorContext } from './qa-runs.service';
 export { QaCommitResolutionService } from './qa-commit-resolution.service';
 export { QaReportService } from './qa-report.service';
+export { QaPromotionService } from './qa-promotion.service';
+export { buildQaPromotionPullRequestBody } from './qa-promotion.pr-body';
+export type {
+  QaPromotionChecklist,
+  QaPromotionMergePullRequestRef,
+  QaPromotionMergeResult,
+  QaPromotionPullRequestRef,
+  QaPromotionStatus,
+} from './qa-promotion.contracts';
 export { buildQaReportFilename } from './qa-report.filename';
 export { renderQaReportMarkdown } from './qa-report.markdown';
 export {
@@ -26,6 +35,8 @@ export type {
   QaActor,
   QaCommitSource,
   QaDefectSeverity,
+  QaDeveloperItem,
+  QaMyItems,
   QaReturnedItem,
   QaRun,
   QaRunItem,

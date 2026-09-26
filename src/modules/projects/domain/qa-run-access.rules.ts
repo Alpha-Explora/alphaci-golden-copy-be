@@ -61,3 +61,8 @@ export function canReopenRun(role: PlatformAppRole): boolean {
 export function canDispatchAutomation(role: PlatformAppRole): boolean {
   return role === 'qa' || role === 'lead' || role === 'admin';
 }
+
+/** Merging a QA-approved uat commit to main: lead|admin only, same set as reopening a signed-off run. */
+export function canMergeQaPromotion(role: PlatformAppRole): boolean {
+  return role === 'lead' || role === 'admin';
+}
