@@ -10,7 +10,7 @@ import {
   Optional,
 } from '@nestjs/common';
 
-import { HOSTED_BRANCHES } from '#kernel/config/pipeline-branches';
+import { QA_BRANCH } from '#kernel/config/pipeline-branches';
 import {
   AuditEventPublisher,
   NotificationEventPublisher,
@@ -710,9 +710,9 @@ export class QaRunsService {
   }
 
   private requireHostedBranch(branch: string): void {
-    if (!(HOSTED_BRANCHES as readonly string[]).includes(branch)) {
+    if (branch !== QA_BRANCH) {
       throw new BadRequestException(
-        `QA verification runs are only supported on hosted branches (${HOSTED_BRANCHES.join(', ')}).`,
+        `QA verification runs are only supported on the ${QA_BRANCH} branch.`,
       );
     }
   }
