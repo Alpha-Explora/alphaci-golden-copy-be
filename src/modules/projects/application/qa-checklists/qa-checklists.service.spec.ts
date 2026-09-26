@@ -59,6 +59,7 @@ const makeRepository = (
     archive: jest.fn(),
     validWorkspaceProjectIds: jest.fn(),
     replaceSharedProjects: jest.fn(),
+    updateSharedProjects: jest.fn(),
     ...overrides,
   }) as unknown as jest.Mocked<QaChecklistsRepository>;
 
@@ -406,5 +407,129 @@ describe('QaChecklistsService — project-scoped read', () => {
     const result = await service.listForProject('project-1', 'lead-1');
 
     expect(result.canManage).toBe(true);
+  });
+});
+
+describe('QaChecklistsService — add/remove sharing', () => {
+  it('adds and removes only the given projects and records both lists', async () => {
+    const repository = makeRepository({
+      findById: jest.fn().mockResolvedValue(checklistRow()),
+      validWorkspaceProjectIds: jest.fn().mockResolvedValue(['project-fe']),
+      updateSharedProjects: jest
+        .fn()
+        .mockResolvedValue(['project-other', 'project-fe']),
+    });
+    const recordProjectEvent = jest.fn().mockResolvedValue(undefined);
+    const service = new QaChecklistsService(repository, makeAccess(), {
+      recordProjectEvent,
+    });
+
+    const result = await service.updateSharedProjects('checklist-1', 'lead-1', {
+      add: ['project-fe', 'project-fe'],
+      remove: ['project-be'],
+    });
+
+    expect(repository.validWorkspaceProjectIds).toHaveBeenCalledWith(
+      'workspace-1',
+      ['project-fe'],
+    );
+    expect(repository.updateSharedProjects).toHaveBeenCalledWith(
+      'checklist-1',
+      ['project-fe'],
+      ['project-be'],
+      'lead-1',
+    );
+    expect(repository.replaceSharedProjects).not.toHaveBeenCalled();
+    expect(result.sharedProjectIds).toEqual(['project-other', 'project-fe']);
+    expect(recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCode: 'qa.checklist.shared',
+        metadata: expect.objectContaining({
+          added: ['project-fe'],
+          removed: ['project-be'],
+        }),
+      }),
+    );
+  });
+
+  it('removes without validating workspace membership of the removed ids', async () => {
+    const repository = makeRepository({
+      findById: jest.fn().mockResolvedValue(checklistRow()),
+      updateSharedProjects: jest.fn().mockResolvedValue([]),
+    });
+    const service = new QaChecklistsService(repository, makeAccess());
+
+    await service.updateSharedProjects('checklist-1', 'lead-1', {
+      remove: ['project-be'],
+    });
+
+    expect(repository.validWorkspaceProjectIds).not.toHaveBeenCalled();
+    expect(repository.updateSharedProjects).toHaveBeenCalledWith(
+      'checklist-1',
+      [],
+      ['project-be'],
+      'lead-1',
+    );
+  });
+
+  it('rejects an added project outside the checklist workspace with 400', async () => {
+    const repository = makeRepository({
+      findById: jest.fn().mockResolvedValue(checklistRow()),
+      validWorkspaceProjectIds: jest.fn().mockResolvedValue([]),
+    });
+    const service = new QaChecklistsService(repository, makeAccess());
+
+    await expect(
+      service.updateSharedProjects('checklist-1', 'lead-1', {
+        add: ['project-from-another-workspace'],
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(repository.updateSharedProjects).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty change and an id in both lists with 400', async () => {
+    const repository = makeRepository({
+      findById: jest.fn().mockResolvedValue(checklistRow()),
+    });
+    const service = new QaChecklistsService(repository, makeAccess());
+
+    await expect(
+      service.updateSharedProjects('checklist-1', 'lead-1', {}),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.updateSharedProjects('checklist-1', 'lead-1', {
+        add: ['project-1'],
+        remove: ['project-1'],
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(repository.updateSharedProjects).not.toHaveBeenCalled();
+  });
+
+  it('keeps the lead/admin gate and the archived-checklist guard', async () => {
+    const forbidden = new QaChecklistsService(
+      makeRepository({ findById: jest.fn().mockResolvedValue(checklistRow()) }),
+      makeAccess({ canManage: jest.fn().mockResolvedValue(false) }),
+    );
+    await expect(
+      forbidden.updateSharedProjects('checklist-1', 'qa-user', {
+        add: ['project-1'],
+      }),
+    ).rejects.toThrow(ForbiddenException);
+
+    const archived = new QaChecklistsService(
+      makeRepository({
+        findById: jest
+          .fn()
+          .mockResolvedValue(
+            checklistRow({ archived_at: '2026-09-01T00:00:00.000Z' }),
+          ),
+      }),
+      makeAccess(),
+    );
+    await expect(
+      archived.updateSharedProjects('checklist-1', 'lead-1', {
+        add: ['project-1'],
+      }),
+    ).rejects.toThrow(ConflictException);
   });
 });

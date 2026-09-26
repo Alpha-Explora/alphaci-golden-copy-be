@@ -182,6 +182,10 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
           { handler: 'deleteConfiguration', method: 'DELETE' },
         ],
       },
+    'src/modules/identity-access/hierarchy/api/project-folders.controller.ts': {
+      reason: 'identity hierarchy surface',
+      routes: [{ handler: 'listProjectFolders', method: 'GET' }],
+    },
     'src/modules/identity-access/hierarchy/api/repositories.controller.ts': {
       reason: 'identity hierarchy surface',
       routes: [

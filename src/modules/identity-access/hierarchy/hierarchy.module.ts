@@ -36,6 +36,9 @@ import { GroupsRepository } from './infrastructure/groups.repository';
 import { GroupsService } from './application/groups.service';
 import { HierarchyAccessService } from './application/hierarchy-access.service';
 import { MeController } from './api/me.controller';
+import { ProjectFoldersController } from './api/project-folders.controller';
+import { ProjectFoldersRepository } from './infrastructure/project-folders.repository';
+import { ProjectFoldersService } from './application/project-folders.service';
 import { RepositoriesController } from './api/repositories.controller';
 import { RepositoriesRepository } from './infrastructure/repositories.repository';
 import { RepositoriesService } from './application/repositories.service';
@@ -57,6 +60,7 @@ import { SystemsService } from './application/systems.service';
     GroupsController,
     SystemsController,
     DeliveryProjectsController,
+    ProjectFoldersController,
     RepositoriesController,
     AssignmentsController,
     RepoConfigBrokerController,
@@ -74,6 +78,8 @@ import { SystemsService } from './application/systems.service';
     SystemsService,
     DeliveryProjectsRepository,
     DeliveryProjectsService,
+    ProjectFoldersRepository,
+    ProjectFoldersService,
     RepositoriesRepository,
     RepositoriesService,
     AssignmentsRepository,

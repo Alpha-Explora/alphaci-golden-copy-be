@@ -23,6 +23,7 @@ import { CreateQaChecklistDto } from '../application/qa-checklists/dto/create-qa
 import { UpdateQaChecklistDto } from '../application/qa-checklists/dto/update-qa-checklist.dto';
 import { ReplaceQaChecklistItemsDto } from '../application/qa-checklists/dto/replace-qa-checklist-items.dto';
 import { ShareQaChecklistProjectsDto } from '../application/qa-checklists/dto/share-qa-checklist-projects.dto';
+import { UpdateQaChecklistProjectsDto } from '../application/qa-checklists/dto/update-qa-checklist-projects.dto';
 
 function requireUserId(req: Request): string {
   const userId = req.session.user?.id ?? req.session.userId;
@@ -113,6 +114,19 @@ export class QaChecklistsController {
     @Body() body: ShareQaChecklistProjectsDto,
   ) {
     return this.qaChecklistsService.setSharedProjects(
+      id,
+      requireUserId(req),
+      body,
+    );
+  }
+
+  @Patch(':id/projects')
+  updateSharedProjects(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateQaChecklistProjectsDto,
+  ) {
+    return this.qaChecklistsService.updateSharedProjects(
       id,
       requireUserId(req),
       body,

@@ -353,6 +353,58 @@ export class QaChecklistsRepository {
     });
   }
 
+  /**
+   * Removes then adds shares in one transaction and returns the resulting
+   * set. The INSERT carries the same workspace join as replaceSharedProjects,
+   * so a cross-workspace id can never be shared even if pre-validation was
+   * bypassed; ON CONFLICT keeps an already-shared project's original row.
+   */
+  async updateSharedProjects(
+    checklistId: string,
+    add: string[],
+    remove: string[],
+    sharedBy: string,
+  ): Promise<string[]> {
+    return this.databaseService.withTransaction(async (client) => {
+      if (remove.length > 0) {
+        await client.query(
+          `
+            DELETE FROM projects.qa_checklist_projects
+            WHERE checklist_id = $1 AND project_id = ANY($2::uuid[]);
+          `,
+          [checklistId, remove],
+        );
+      }
+
+      if (add.length > 0) {
+        await client.query(
+          `
+            INSERT INTO projects.qa_checklist_projects (checklist_id, project_id, shared_by)
+            SELECT c.id, pp.id, $3
+            FROM projects.qa_checklists c
+            JOIN projects.provisioned_projects pp
+              ON pp.id = ANY($2::uuid[])
+             AND pp.workspace_id = c.workspace_id
+            WHERE c.id = $1
+            ON CONFLICT (checklist_id, project_id) DO NOTHING;
+          `,
+          [checklistId, add, sharedBy],
+        );
+      }
+
+      const result = await client.query<{ project_id: string }>(
+        `
+          SELECT project_id
+          FROM projects.qa_checklist_projects
+          WHERE checklist_id = $1
+          ORDER BY shared_at, project_id;
+        `,
+        [checklistId],
+      );
+      return result.rows.map((row) => row.project_id);
+    });
+  }
+
   private async insertItemsWithClient(
     client: Pick<PoolClient, 'query'>,
     checklistId: string,
