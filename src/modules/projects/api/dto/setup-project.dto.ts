@@ -76,4 +76,9 @@ export class SetupProjectDto {
   @IsOptional()
   @IsUUID()
   workspaceId?: string;
+
+  /** Existing delivery project to link this repository into (see CreateProjectDto). */
+  @IsOptional()
+  @IsUUID()
+  deliveryProjectId?: string;
 }

@@ -1,4 +1,8 @@
-import { Logger, UnprocessableEntityException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import type {
@@ -523,10 +527,21 @@ export class ProjectProvisioningSupport {
 
   async createProjectRow(
     input: Parameters<ProjectsRepository['create']>[0],
-  ): Promise<Awaited<ReturnType<ProjectsRepository['create']>>> {
+    linkOptions?: { deliveryProjectId?: string; chainName?: string },
+  ): Promise<{
+    row: Awaited<ReturnType<ProjectsRepository['create']>>;
+    /**
+     * The hierarchy delivery project this row was linked under (existing or
+     * newly auto-created), or null when no link happened. Callers linking a
+     * multi-repo/microservices PAIR read this from the first row's result and
+     * feed it back in as the second row's `linkOptions.deliveryProjectId`, so
+     * both land under the same chain instead of each creating its own.
+     */
+    deliveryProjectId: string | null;
+  }> {
     const row = await this.projectsRepository.create(input);
 
-    await this.hierarchyProjectLinkService?.ensureLink({
+    const link = await this.hierarchyProjectLinkService?.ensureLink({
       projectId: row.id,
       workspaceId: input.workspaceId ?? null,
       name: input.serviceName,
@@ -534,9 +549,46 @@ export class ProjectProvisioningSupport {
       visibility: input.visibility ?? null,
       createdBy: input.userId,
       projectStatus: input.status ?? 'provisioning',
+      ...(linkOptions?.chainName !== undefined && {
+        chainName: linkOptions.chainName,
+      }),
+      ...(linkOptions?.deliveryProjectId !== undefined && {
+        deliveryProjectId: linkOptions.deliveryProjectId,
+      }),
     });
 
-    return row;
+    return { row, deliveryProjectId: link?.deliveryProjectId ?? null };
+  }
+
+  /**
+   * Up-front gate for a caller-supplied `deliveryProjectId` on project
+   * creation. Must be called BEFORE any GitHub call — a late rejection would
+   * strand a real repository. Fails closed: an unresolvable workspace, or a
+   * deployment with no hierarchy port wired up, cannot vouch for the id, so
+   * the id is rejected rather than silently accepted.
+   */
+  async assertDeliveryProjectAvailableForCreate(input: {
+    deliveryProjectId: string;
+    workspaceId: string | null;
+    userId: string;
+  }): Promise<void> {
+    if (!input.workspaceId) {
+      throw new BadRequestException(
+        'deliveryProjectId requires the project to belong to a team workspace.',
+      );
+    }
+    if (!this.hierarchyProjectLinkService) {
+      throw new UnprocessableEntityException(
+        'Project hierarchy is not available; deliveryProjectId cannot be validated.',
+      );
+    }
+    await this.hierarchyProjectLinkService.assertDeliveryProjectAvailableForCreate(
+      {
+        deliveryProjectId: input.deliveryProjectId,
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+      },
+    );
   }
 
   async compensateFailedProvision(

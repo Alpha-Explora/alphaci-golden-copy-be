@@ -10,11 +10,13 @@ import { HierarchyAccessService } from './hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../domain/hierarchy.types';
 import { RepositoriesService } from './repositories.service';
 import type { RepositoryRecord } from '../infrastructure/repositories.repository';
+import type { DeliveryProjectRecord } from '../infrastructure/delivery-projects.repository';
 import {
   SystemsRepository,
   type SystemRecord,
 } from '../infrastructure/systems.repository';
 import type { CreateSystemDto } from '../api/dto/create-system.dto';
+import type { CreateEmptyProjectDto } from '../api/dto/create-empty-project.dto';
 import type { UpdateSystemDto } from '../api/dto/update-system.dto';
 
 /**
@@ -109,6 +111,45 @@ export class SystemsService {
       deliveryProjectId: deliveryProject.id,
       repository,
     };
+  }
+
+  /**
+   * "Project folder" with no repository yet — a place to group future
+   * repos before any exist. Otherwise identical to `createSystem`'s
+   * system + delivery project auto-creation, minus the repository step:
+   * same Lead/Admin/platform-admin gate, same audit trail for the system.
+   * `createDeliveryProject` records its own `deliveryProjectCreated` event.
+   */
+  async createEmptyProject(
+    groupId: string,
+    userId: string,
+    dto: CreateEmptyProjectDto,
+  ): Promise<DeliveryProjectRecord> {
+    await this.accessService.assertCanCreateInGroup(groupId, userId);
+
+    const system = await this.systemsRepository.create({
+      groupId,
+      name: dto.name,
+      description: dto.description ?? null,
+      ownerId: userId,
+    });
+
+    await this.auditEventsService.recordProjectEvent({
+      workspaceId: groupId,
+      actorUserId: userId,
+      eventCode: HIERARCHY_EVENT_CODES.systemCreated,
+      message: `System "${system.name}" created`,
+      metadata: { groupId, systemId: system.id },
+    });
+
+    return this.deliveryProjectsService.createDeliveryProject(
+      system.id,
+      userId,
+      {
+        name: dto.name,
+        ...(dto.description !== undefined && { description: dto.description }),
+      },
+    );
   }
 
   async listSystems(groupId: string, userId: string): Promise<SystemRecord[]> {

@@ -1,6 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
-import type { ProjectLinkPort } from '#kernel/ports/project-link.port';
+import type {
+  EnsureLinkResult,
+  ProjectLinkPort,
+} from '#kernel/ports/project-link.port';
+import { DeliveryProjectsRepository } from '../../infrastructure/delivery-projects.repository';
+import { HierarchyAccessService } from '../../application/hierarchy-access.service';
 import { HierarchyProjectLinkRepository } from '../infrastructure/hierarchy-project-link.repository';
 
 export interface EnsureProjectLinkInput {
@@ -8,10 +13,14 @@ export interface EnsureProjectLinkInput {
   workspaceId: string | null;
   /** service_name, falling back to the repo name. */
   name: string;
+  /** Name for a newly auto-created system/delivery-project chain; falls back to `name`. */
+  chainName?: string;
   repoFullName: string;
   visibility?: string | null;
   createdBy: string;
   projectStatus: string;
+  /** Link into this existing delivery project instead of creating a new chain. */
+  deliveryProjectId?: string;
 }
 
 /**
@@ -35,7 +44,11 @@ export interface EnsureProjectLinkInput {
 export class HierarchyProjectLinkService implements ProjectLinkPort {
   private readonly logger = new Logger(HierarchyProjectLinkService.name);
 
-  constructor(private readonly repository: HierarchyProjectLinkRepository) {}
+  constructor(
+    private readonly repository: HierarchyProjectLinkRepository,
+    private readonly accessService: HierarchyAccessService,
+    private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
+  ) {}
 
   /**
    * Read-only lookup of an ALREADY-linked hierarchy repository id.
@@ -61,10 +74,12 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
   }
 
   /**
-   * Returns the hierarchy repository id, or null when no link was needed or
-   * possible. Never throws.
+   * Returns the linked repository id and its delivery project id, or null
+   * when no link was needed or possible. Never throws — see class doc.
    */
-  async ensureLink(input: EnsureProjectLinkInput): Promise<string | null> {
+  async ensureLink(
+    input: EnsureProjectLinkInput,
+  ): Promise<EnsureLinkResult | null> {
     // Personal workspace (or none) — there is no hierarchy tree to attach to,
     // and inventing one would put private work inside a group structure.
     if (!input.workspaceId) return null;
@@ -74,9 +89,10 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         return null;
       }
 
-      const existing = await this.repository.findLinkedRepositoryId(
-        input.projectId,
-      );
+      const existing =
+        await this.repository.findLinkedRepositoryAndDeliveryProject(
+          input.projectId,
+        );
       if (existing) return existing;
 
       const name = input.name.trim() || input.repoFullName.split('/').at(-1);
@@ -86,10 +102,14 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         projectId: input.projectId,
         workspaceId: input.workspaceId,
         name,
+        ...(input.chainName !== undefined && { chainName: input.chainName }),
         repoFullName: input.repoFullName,
         visibility: input.visibility === 'public' ? 'public' : 'private',
         createdBy: input.createdBy,
         projectStatus: input.projectStatus,
+        ...(input.deliveryProjectId !== undefined && {
+          deliveryProjectId: input.deliveryProjectId,
+        }),
       });
     } catch (error) {
       this.logger.warn(
@@ -98,6 +118,44 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         }`,
       );
       return null;
+    }
+  }
+
+  /**
+   * User-facing gate for an explicit, caller-supplied `deliveryProjectId` on
+   * project creation. Unlike `ensureLink`, this THROWS — it runs before any
+   * GitHub call, so surfacing a clear 400/404/403 here is exactly what
+   * prevents a request from stranding a real repository against an invalid
+   * target (see class doc's best-effort rationale, which is why `ensureLink`
+   * itself must stay silent — this method is the opposite: the one place a
+   * bad deliveryProjectId is loud, and it runs first).
+   */
+  async assertDeliveryProjectAvailableForCreate(input: {
+    deliveryProjectId: string;
+    workspaceId: string;
+    userId: string;
+  }): Promise<void> {
+    // 404 (unknown/invisible delivery project) or 403 (visible, but the
+    // caller is not a Lead/Admin/platform-admin there) — never a silent pass.
+    const { groupId } =
+      await this.accessService.assertCanCreateUnderDeliveryProject(
+        input.deliveryProjectId,
+        input.userId,
+      );
+
+    if (groupId !== input.workspaceId) {
+      throw new BadRequestException(
+        `deliveryProjectId ${input.deliveryProjectId} does not belong to the selected team.`,
+      );
+    }
+
+    const deliveryProject = await this.deliveryProjectsRepository.findById(
+      input.deliveryProjectId,
+    );
+    if (!deliveryProject || deliveryProject.status !== 'active') {
+      throw new BadRequestException(
+        `Delivery project ${input.deliveryProjectId} is archived and cannot accept new repositories.`,
+      );
     }
   }
 }

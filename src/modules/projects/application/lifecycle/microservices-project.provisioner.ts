@@ -106,7 +106,10 @@ export class MicroservicesProjectProvisioner {
       // repo Actions secrets BEFORE pushing any workflow YAML — both pipeline
       // chains authenticate with the same repo-level ALPHACI_TOKEN, and the
       // access-gate runs as soon as a workflow file is pushed.
-      backendRow = await persistPackedBackendRow({
+      //
+      // No explicit deliveryProjectId on the request: auto-create ONE chain,
+      // named after the shared repo, for both slots to share.
+      const backendLink = await persistPackedBackendRow({
         support: this.support,
         userId,
         dto,
@@ -115,7 +118,11 @@ export class MicroservicesProjectProvisioner {
         repoFullName,
         repoUrl,
         bundle: backendBundle,
+        ...(dto.deliveryProjectId
+          ? { deliveryProjectId: dto.deliveryProjectId }
+          : { chainName: dto.repoName }),
       });
+      backendRow = backendLink.row;
       await installPackedRepoSecrets({
         support: this.support,
         provisioningToken,
@@ -165,6 +172,8 @@ export class MicroservicesProjectProvisioner {
         repoUrl,
         frontendBundle,
         frontendPushResult,
+        pairDeliveryProjectId:
+          dto.deliveryProjectId ?? backendLink.deliveryProjectId,
       });
 
       const deploymentProvisioning = await provisionPackedDeploymentTargets({

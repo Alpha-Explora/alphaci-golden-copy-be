@@ -132,10 +132,22 @@ export class ProjectProvisioningApplicationService {
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
     await this.support.assertWithinQuota(userId, 'projects', 1, null);
-    await this.support.workspaceGate.resolveWorkspaceIdForCreate(
-      userId,
-      dto.workspaceId,
-    );
+    const workspaceId =
+      await this.support.workspaceGate.resolveWorkspaceIdForCreate(
+        userId,
+        dto.workspaceId,
+      );
+
+    // Validated before resolveRepositoryProvisioning below (the first call
+    // that can reach GitHub) — a deliveryProjectId rejected after the repo
+    // already exists would strand it.
+    if (dto.deliveryProjectId) {
+      await this.support.assertDeliveryProjectAvailableForCreate({
+        deliveryProjectId: dto.deliveryProjectId,
+        workspaceId,
+        userId,
+      });
+    }
 
     const {
       repositoryCreationToken,
@@ -180,11 +192,26 @@ export class ProjectProvisioningApplicationService {
     );
   }
 
-  setupProject(
+  async setupProject(
     userId: string,
     oauthAccessToken: string | null | undefined,
     dto: SetupProjectDto,
   ): Promise<SetupProjectResponse> {
+    // Same ordering as createProject: validated before the setup flow's first
+    // GitHub call (resolveSetupProvisioningToken).
+    if (dto.deliveryProjectId) {
+      const workspaceId =
+        await this.support.workspaceGate.resolveWorkspaceIdForCreate(
+          userId,
+          dto.workspaceId,
+        );
+      await this.support.assertDeliveryProjectAvailableForCreate({
+        deliveryProjectId: dto.deliveryProjectId,
+        workspaceId,
+        userId,
+      });
+    }
+
     return this.singleRepository.setupProject(userId, oauthAccessToken, dto);
   }
 

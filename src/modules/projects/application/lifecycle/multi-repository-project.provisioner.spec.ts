@@ -27,7 +27,9 @@ function fakeSupport() {
       applyBranchProtection: jest.fn().mockResolvedValue(undefined),
     },
     pushStarterFiles: jest.fn().mockResolvedValue(undefined),
-    createProjectRow: jest.fn().mockResolvedValue({ id: 'proj-be' }),
+    createProjectRow: jest
+      .fn()
+      .mockResolvedValue({ row: { id: 'proj-be' }, deliveryProjectId: null }),
     workspaceGate: {
       resolveWorkspaceIdForCreate: jest.fn().mockResolvedValue('ws-1'),
     },
@@ -159,8 +161,14 @@ describe('MultiRepositoryProjectProvisioner', () => {
         repoName: 'orders-fe',
       });
     support.createProjectRow
-      .mockResolvedValueOnce({ id: 'proj-be' })
-      .mockResolvedValueOnce({ id: 'proj-fe' });
+      .mockResolvedValueOnce({
+        row: { id: 'proj-be' },
+        deliveryProjectId: null,
+      })
+      .mockResolvedValueOnce({
+        row: { id: 'proj-fe' },
+        deliveryProjectId: null,
+      });
     const provisioner = new MultiRepositoryProjectProvisioner(support as never);
 
     await provisioner.createMultiRepoProject(
@@ -206,5 +214,92 @@ describe('MultiRepositoryProjectProvisioner', () => {
     expect(
       frontendBundle?.deploymentTargets.map((target) => target.provider),
     ).toEqual(['vercel']);
+  });
+
+  it('creates one shared chain for the pair, named after the base repoName, and links both rows to it', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-fe',
+        ownerLogin: 'org',
+        repoName: 'orders-fe',
+      });
+    support.createProjectRow
+      .mockResolvedValueOnce({
+        row: { id: 'proj-be' },
+        deliveryProjectId: 'dp-shared',
+      })
+      .mockResolvedValueOnce({
+        row: { id: 'proj-fe' },
+        deliveryProjectId: 'dp-shared',
+      });
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      multiRepoDto as never,
+    );
+
+    expect(support.createProjectRow).toHaveBeenCalledTimes(2);
+    // Backend row: no deliveryProjectId given on the request, so it auto-
+    // creates the chain, named after the base repoName (not the -be suffix).
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      chainName: 'orders',
+    });
+    // Frontend row: reuses the delivery project the backend row's link just
+    // created, instead of creating a second, independent chain.
+    expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      deliveryProjectId: 'dp-shared',
+    });
+  });
+
+  it('links both pair rows to an explicit deliveryProjectId instead of auto-creating a chain', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-fe',
+        ownerLogin: 'org',
+        repoName: 'orders-fe',
+      });
+    support.createProjectRow
+      .mockResolvedValueOnce({
+        row: { id: 'proj-be' },
+        deliveryProjectId: 'dp-given',
+      })
+      .mockResolvedValueOnce({
+        row: { id: 'proj-fe' },
+        deliveryProjectId: 'dp-given',
+      });
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      { ...multiRepoDto, deliveryProjectId: 'dp-given' } as never,
+    );
+
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      deliveryProjectId: 'dp-given',
+    });
+    expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      deliveryProjectId: 'dp-given',
+    });
   });
 });
