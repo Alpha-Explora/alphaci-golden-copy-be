@@ -25,6 +25,7 @@ import type { CreateQaChecklistDto } from './dto/create-qa-checklist.dto';
 import type { UpdateQaChecklistDto } from './dto/update-qa-checklist.dto';
 import type { ReplaceQaChecklistItemsDto } from './dto/replace-qa-checklist-items.dto';
 import type { ShareQaChecklistProjectsDto } from './dto/share-qa-checklist-projects.dto';
+import type { UpdateQaChecklistProjectsDto } from './dto/update-qa-checklist-projects.dto';
 
 type AuditEventSink = Pick<AuditEventPublisher, 'recordProjectEvent'>;
 
@@ -268,6 +269,72 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     );
     await this.recordEvent(QA_CHECKLIST_EVENTS.shared, checklist, userId, {
       projectIds: sharedProjectIds,
+    });
+
+    const itemsByChecklist = await this.repository.listItemsByChecklistIds([
+      id,
+    ]);
+    return this.toChecklist(
+      checklist,
+      itemsByChecklist.get(id) ?? [],
+      sharedProjectIds,
+    );
+  }
+
+  /**
+   * Attaches and detaches projects without replacing the rest of the share
+   * set. Added ids must belong to the checklist's workspace (400 otherwise);
+   * removing a project that is not shared is a no-op.
+   */
+  async updateSharedProjects(
+    id: string,
+    userId: string,
+    dto: UpdateQaChecklistProjectsDto,
+  ): Promise<QaChecklist> {
+    const checklist = await this.requireChecklist(id);
+    await this.assertWorkspaceAccess(userId, checklist.workspace_id);
+    await this.assertManage(userId);
+    this.assertNotArchived(checklist);
+
+    const add = [...new Set(dto.add ?? [])];
+    const remove = [...new Set(dto.remove ?? [])];
+    if (add.length === 0 && remove.length === 0) {
+      throw new BadRequestException(
+        'Nothing to change: pass project ids in add or remove.',
+      );
+    }
+    const removeSet = new Set(remove);
+    const both = add.filter((pid) => removeSet.has(pid));
+    if (both.length > 0) {
+      throw new BadRequestException(
+        `These project ids are in both add and remove: ${both.join(', ')}`,
+      );
+    }
+
+    if (add.length > 0) {
+      const validIds = await this.repository.validWorkspaceProjectIds(
+        checklist.workspace_id,
+        add,
+      );
+      if (validIds.length !== add.length) {
+        const validSet = new Set(validIds);
+        const rejected = add.filter((pid) => !validSet.has(pid));
+        throw new BadRequestException(
+          `These project ids are not in this checklist's workspace: ${rejected.join(', ')}`,
+        );
+      }
+    }
+
+    const sharedProjectIds = await this.repository.updateSharedProjects(
+      id,
+      add,
+      remove,
+      userId,
+    );
+    await this.recordEvent(QA_CHECKLIST_EVENTS.shared, checklist, userId, {
+      projectIds: sharedProjectIds,
+      added: add,
+      removed: remove,
     });
 
     const itemsByChecklist = await this.repository.listItemsByChecklistIds([

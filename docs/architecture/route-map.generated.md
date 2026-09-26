@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 174 current API routes."
+description: "Generated inventory of the 176 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **174 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **176 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -67,6 +67,7 @@ The current compiled API exposes **174 routes** under the global `/api/v1` prefi
 - `GET /api/v1/groups/{groupId}/activity`
 - `GET /api/v1/groups/{groupId}/eligible-users`
 - `GET /api/v1/groups/{groupId}/members`
+- `GET /api/v1/groups/{groupId}/project-folders`
 - `GET /api/v1/groups/{groupId}/systems`
 - `GET /api/v1/health`
 - `GET /api/v1/me/assigned-repositories`
@@ -127,6 +128,7 @@ The current compiled API exposes **174 routes** under the global `/api/v1` prefi
 - `PATCH /api/v1/projects/{projectId}/deployment-targets/{targetId}`
 - `PATCH /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}`
 - `PATCH /api/v1/qa-checklists/{id}`
+- `PATCH /api/v1/qa-checklists/{id}/projects`
 - `PATCH /api/v1/repositories/{repositoryId}`
 - `PATCH /api/v1/systems/{systemId}`
 - `PATCH /api/v1/workspaces/{workspaceId}/members/{memberId}`

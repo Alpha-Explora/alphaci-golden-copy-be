@@ -1,11 +1,11 @@
 {
-  "routeCount": 174,
+  "routeCount": 176,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "181bf1aa2999d8a1b5ee74fe373282475fe2eea6b92f19833afafd69a7ae6271",
+  "referenceSha256": "c323c736eaf6f962a4820badf02ad225958cbe4f32270724cd579b2f9d1ec46a",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "181bf1aa2999d8a1b5ee74fe373282475fe2eea6b92f19833afafd69a7ae6271",
+  "baselineSha256": "c323c736eaf6f962a4820badf02ad225958cbe4f32270724cd579b2f9d1ec46a",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -67,6 +67,13 @@
       "reason": "Playwright and automated verification (Slice 5): \"Run Playwright\" re-dispatches the generated verify workflow for a QA run's branch, attributed to the signed-in user's own GitHub token.",
       "routes": [
         "POST /api/v1/projects/{projectId}/qa-runs/{runId}/automation/dispatch"
+      ]
+    },
+    {
+      "reason": "Project explorer (A3): the team page reads every project with its repositories in one call, and a project folder attaches or detaches QA checklists without replacing the checklist's other shares.",
+      "routes": [
+        "GET /api/v1/groups/{groupId}/project-folders",
+        "PATCH /api/v1/qa-checklists/{id}/projects"
       ]
     }
   ]

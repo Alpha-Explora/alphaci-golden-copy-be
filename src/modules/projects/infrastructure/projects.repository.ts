@@ -406,6 +406,43 @@ export class ProjectsRepository implements ProjectVisibilityLookup {
     return result.rows.map((row) => row.id);
   }
 
+  /**
+   * The columns the team project explorer needs for every project a
+   * workspace owns. Capped like the other workspace-wide reads; a team with
+   * more projects than this has outgrown a single explorer page.
+   */
+  async listWorkspaceProjectSummaries(workspaceId: string): Promise<
+    Array<{
+      id: string;
+      repo_full_name: string | null;
+      service_name: string | null;
+      repo_name: string | null;
+      repo_shape: string | null;
+      project_type_id: string | null;
+      status: string;
+    }>
+  > {
+    const result = await this.databaseService.query<{
+      id: string;
+      repo_full_name: string | null;
+      service_name: string | null;
+      repo_name: string | null;
+      repo_shape: string | null;
+      project_type_id: string | null;
+      status: string;
+    }>(
+      `
+        SELECT id, repo_full_name, service_name, repo_name, repo_shape, project_type_id, status
+        FROM projects.provisioned_projects
+        WHERE workspace_id = $1
+        ORDER BY created_at ASC
+        LIMIT 500;
+      `,
+      [workspaceId],
+    );
+    return result.rows;
+  }
+
   async findByIdAndUser(
     id: string,
     userId: string,
