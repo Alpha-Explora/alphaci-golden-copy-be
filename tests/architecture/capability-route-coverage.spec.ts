@@ -187,6 +187,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       routes: [
         { handler: 'getRepository', method: 'GET' },
         { handler: 'updateRepository', method: 'PATCH' },
+        { handler: 'moveRepository', method: 'POST' },
         { handler: 'archiveRepository', method: 'POST' },
       ],
     },

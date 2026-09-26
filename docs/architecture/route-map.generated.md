@@ -183,6 +183,7 @@ The current compiled API exposes **175 routes** under the global `/api/v1` prefi
 - `POST /api/v1/repositories/{repositoryId}/archive`
 - `POST /api/v1/repositories/{repositoryId}/assignments`
 - `POST /api/v1/repositories/{repositoryId}/assignments/{assignmentId}/reconcile`
+- `POST /api/v1/repositories/{repositoryId}/move`
 - `POST /api/v1/subscription/monthly/activate`
 - `POST /api/v1/subscription/monthly/cancel`
 - `POST /api/v1/systems/{systemId}/archive`

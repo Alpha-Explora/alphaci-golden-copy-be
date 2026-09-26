@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -23,6 +24,15 @@ import {
 } from '../infrastructure/repositories.repository';
 import type { CreateRepositoryDto } from '../api/dto/create-repository.dto';
 import type { UpdateRepositoryDto } from '../api/dto/update-repository.dto';
+
+export interface MoveRepositoryResult {
+  repository: RepositoryRecord;
+  /** False when the repository was already in the target project. */
+  moved: boolean;
+  sourceDeliveryProjectId: string;
+  /** True when the move left the source project with no active repositories. */
+  sourceDeliveryProjectEmpty: boolean;
+}
 
 @Injectable()
 export class RepositoriesService {
@@ -162,6 +172,97 @@ export class RepositoriesService {
       throw new NotFoundException('Repository not found');
     }
     return repository;
+  }
+
+  /**
+   * Moves a repository into another project of the same team. Only the
+   * `hierarchy.repositories` row changes: access assignments hang off the
+   * repository, so developers keep exactly the access they had.
+   *
+   * An emptied source project is left in place, not deleted — a lead may have
+   * created it on purpose. `sourceDeliveryProjectEmpty` lets the UI offer to
+   * archive it.
+   */
+  async moveRepository(
+    repositoryId: string,
+    userId: string,
+    targetDeliveryProjectId: string,
+  ): Promise<MoveRepositoryResult> {
+    const { groupId } =
+      await this.accessService.assertRepositoryManagerOrPlatformAdmin(
+        repositoryId,
+        userId,
+      );
+    const repository = await this.repositoriesRepository.findById(repositoryId);
+    if (!repository) {
+      throw new NotFoundException('Repository not found');
+    }
+    if (repository.status === 'archived') {
+      throw new BadRequestException('Archived repositories cannot be moved.');
+    }
+
+    const target = await this.deliveryProjectsRepository.findById(
+      targetDeliveryProjectId,
+    );
+    // Another team's project answers exactly like a missing one, so a lead
+    // cannot probe for project ids outside their own team.
+    if (!target || target.groupId !== groupId) {
+      throw new NotFoundException('Delivery project not found');
+    }
+    if (target.status === 'archived') {
+      throw new BadRequestException(
+        'Repositories cannot be moved into an archived project.',
+      );
+    }
+
+    const sourceDeliveryProjectId = repository.deliveryProjectId;
+    if (sourceDeliveryProjectId === target.id) {
+      return {
+        repository,
+        moved: false,
+        sourceDeliveryProjectId,
+        sourceDeliveryProjectEmpty: false,
+      };
+    }
+
+    const moved = await this.repositoriesRepository.moveToDeliveryProject(
+      repositoryId,
+      sourceDeliveryProjectId,
+      target.id,
+    );
+    if (!moved) {
+      throw new ConflictException(
+        'This repository was moved by someone else. Refresh and try again.',
+      );
+    }
+
+    const remaining =
+      await this.repositoriesRepository.countActiveInDeliveryProject(
+        sourceDeliveryProjectId,
+      );
+
+    await this.auditEventsService.recordProjectEvent({
+      workspaceId: groupId,
+      actorUserId: userId,
+      eventCode: HIERARCHY_EVENT_CODES.repositoryMoved,
+      message: `Repository "${moved.name}" moved to project "${target.name}"`,
+      ...(moved.provisionedProjectId
+        ? { projectId: moved.provisionedProjectId }
+        : {}),
+      metadata: {
+        groupId,
+        repositoryId,
+        fromDeliveryProjectId: sourceDeliveryProjectId,
+        toDeliveryProjectId: target.id,
+      },
+    });
+
+    return {
+      repository: moved,
+      moved: true,
+      sourceDeliveryProjectId,
+      sourceDeliveryProjectEmpty: remaining === 0,
+    };
   }
 
   async archiveRepository(

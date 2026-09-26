@@ -191,6 +191,53 @@ export class RepositoriesRepository {
     return this.toRecord(row, counts.get(row.id) ?? 0);
   }
 
+  /**
+   * Re-points one repository at another delivery project. The WHERE clause
+   * only matches while the repository still sits in `fromDeliveryProjectId`
+   * and the target is in the same team, so a concurrent move (or a target
+   * from another team) updates nothing and returns null.
+   */
+  async moveToDeliveryProject(
+    repositoryId: string,
+    fromDeliveryProjectId: string,
+    toDeliveryProjectId: string,
+  ): Promise<RepositoryRecord | null> {
+    const result = await this.databaseService.query<RepositoryRow>(
+      `
+        UPDATE hierarchy.repositories r
+        SET delivery_project_id = dp.id, updated_at = NOW()
+        FROM hierarchy.delivery_projects dp
+        WHERE r.id = $1
+          AND r.delivery_project_id = $2
+          AND dp.id = $3
+          AND dp.group_id = r.group_id
+        RETURNING r.id, r.delivery_project_id, r.group_id, r.name, r.repo_full_name, r.github_repo_id,
+          r.visibility, r.created_by, r.status, r.archived_at, r.provisioned_project_id,
+          r.created_at, r.updated_at;
+      `,
+      [repositoryId, fromDeliveryProjectId, toDeliveryProjectId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const counts = await this.getAssignmentCounts([row.id]);
+    return this.toRecord(row, counts.get(row.id) ?? 0);
+  }
+
+  /** Non-archived repositories left in one delivery project. */
+  async countActiveInDeliveryProject(
+    deliveryProjectId: string,
+  ): Promise<number> {
+    const result = await this.databaseService.query<{ count: number }>(
+      `
+        SELECT count(*)::int AS count
+        FROM hierarchy.repositories
+        WHERE delivery_project_id = $1 AND status != 'archived';
+      `,
+      [deliveryProjectId],
+    );
+    return result.rows[0]?.count ?? 0;
+  }
+
   async archive(repositoryId: string): Promise<RepositoryRecord | null> {
     const result = await this.databaseService.query<RepositoryRow>(
       `

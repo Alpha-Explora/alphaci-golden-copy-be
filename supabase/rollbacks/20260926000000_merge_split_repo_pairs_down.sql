@@ -1,0 +1,28 @@
+-- Down: no automatic reversal.
+--
+-- The up migration folds each `<stem>-fe` / `<stem>-be` pair into one delivery
+-- project and deletes the emptied chain. After it runs, a merged pair looks
+-- exactly like a pair created by the fixed provisioning code (which keeps both
+-- repositories under one delivery project from the start), so re-splitting
+-- "the merged ones" would mean guessing, and a wrong guess splits a real
+-- project. The original names and ids are also gone once the chain is deleted.
+--
+-- The merge loses no repository, assignment or channel: repositories and
+-- channels are re-pointed, never deleted, and assignments hang off
+-- repositories. There is nothing to undo for correctness.
+--
+-- To split one pair back apart by hand, recreate a chain for the repository
+-- and re-point it (use the pre-merge names from the migration log, or pick
+-- new ones):
+--
+--   INSERT INTO hierarchy.systems (group_id, name, owner_id, status)
+--   VALUES ('<group-id>', '<name>', '<owner-id>', 'active') RETURNING id;
+--   INSERT INTO hierarchy.delivery_projects (system_id, group_id, name, manager_id, status)
+--   VALUES ('<new-system-id>', '<group-id>', '<name>', '<owner-id>', 'active') RETURNING id;
+--   UPDATE hierarchy.repositories
+--      SET delivery_project_id = '<new-delivery-project-id>', updated_at = now()
+--    WHERE id = '<repository-id>';
+--
+-- The in-app "Move repository" action does the re-point step as well.
+
+SELECT 'No automatic rollback — see the comment in this file.' AS note;

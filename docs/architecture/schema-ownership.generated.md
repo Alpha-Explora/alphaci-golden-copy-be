@@ -47,6 +47,7 @@ These are exact file-to-schema.table allowances required for historical migratio
 | `identity-access/20260713061000_hierarchy_core.sql` | `projects.provisioned_projects` |
 | `identity-access/20260818000000_link_group_projects_to_hierarchy.sql` | `projects.provisioned_projects` |
 | `identity-access/20260824120000_backfill_hierarchy_links.sql` | `projects.provisioned_projects` |
+| `identity-access/20260926010000_cascade_hierarchy_repository_on_project_delete.sql` | `projects.provisioned_projects` |
 | `pipelines/20260607000200_project_ci_tokens.sql` | `projects.provisioned_projects` |
 | `pipelines/20260614000100_ci_run_reports.sql` | `identity.app_users` |
 | `platform-ops/20260614000300_workspaces_audit_notifications.sql` | `orgs.workspace_members`, `orgs.workspaces`, `projects.provisioned_projects` |

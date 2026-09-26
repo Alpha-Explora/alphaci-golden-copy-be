@@ -68,6 +68,12 @@
       "routes": [
         "POST /api/v1/projects/{projectId}/qa-runs/{runId}/automation/dispatch"
       ]
+    },
+    {
+      "reason": "Project folders (A2): a team lead moves a repository into another project of the same team, so a frontend and backend that were created apart can sit under one project.",
+      "routes": [
+        "POST /api/v1/repositories/{repositoryId}/move"
+      ]
     }
   ]
 }
