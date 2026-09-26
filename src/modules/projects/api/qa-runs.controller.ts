@@ -30,6 +30,7 @@ import { PatchQaRunItemDto } from '../application/qa-runs/dto/patch-qa-run-item.
 import { RequestRetestDto } from '../application/qa-runs/dto/request-retest.dto';
 import { SignoffQaRunDto } from '../application/qa-runs/dto/signoff-qa-run.dto';
 import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
+import { QaPromotionService } from '../application/qa-runs/qa-promotion.service';
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { buildQaReportFilename } from '../application/qa-runs/qa-report.filename';
 import { renderQaReportMarkdown } from '../application/qa-runs/qa-report.markdown';
@@ -283,5 +284,49 @@ export class ProjectQaReturnedItemsController {
   @Get()
   list(@Req() req: Request, @Param('projectId') projectId: string) {
     return this.qaRunsService.listReturnedItems(projectId, requireUserId(req));
+  }
+}
+
+/**
+ * Overview's "My QA items" card (Slice 6): everything listReturnedItems
+ * already returns, plus open developer-targeted items on the current uat
+ * run. That existing endpoint is untouched -- this is a separate route so
+ * its response shape stays exactly what it always was.
+ */
+@Controller('projects/:projectId/qa-my-items')
+@UseGuards(SessionAuthGuard, CapabilityGuard)
+@RequiresCapability('projects.qa-checklists')
+export class ProjectQaMyItemsController {
+  constructor(private readonly qaRunsService: QaRunsService) {}
+
+  @Get()
+  list(@Req() req: Request, @Param('projectId') projectId: string) {
+    return this.qaRunsService.listMyItems(projectId, requireUserId(req));
+  }
+}
+
+/**
+ * QA promotion (Slice 6, "Merge to main"): the gate that decides whether a
+ * QA-approved uat commit may go to main, and the merge action itself.
+ * GET is readable by anyone who can see the project; POST is lead|admin
+ * only, enforced inside QaPromotionService (a 403 there, not a 404 --
+ * unlike checklist workspace-scoping, project visibility was already
+ * established by the same GET this pairs with).
+ */
+@Controller('projects/:projectId/qa/promotion')
+@UseGuards(SessionAuthGuard, CapabilityGuard)
+@RequiresCapability('projects.qa-checklists')
+export class ProjectQaPromotionController {
+  constructor(private readonly qaPromotionService: QaPromotionService) {}
+
+  @Get()
+  status(@Req() req: Request, @Param('projectId') projectId: string) {
+    return this.qaPromotionService.getStatus(projectId, actorContext(req));
+  }
+
+  @Post('merge')
+  @HttpCode(200)
+  merge(@Req() req: Request, @Param('projectId') projectId: string) {
+    return this.qaPromotionService.merge(projectId, actorContext(req));
   }
 }

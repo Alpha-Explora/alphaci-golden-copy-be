@@ -191,6 +191,21 @@ export interface QaReturnedItem {
   item: QaRunItem;
 }
 
+/** One open, developer-targeted item on the current uat run -- same shape as QaReturnedItem, named for its distinct feed. */
+export interface QaDeveloperItem {
+  runId: string;
+  branch: string;
+  commitSha: string;
+  checklistName: string;
+  item: QaRunItem;
+}
+
+/** The Overview "My QA items" card: items returned by QA, plus open developer-targeted items still awaiting work. */
+export interface QaMyItems {
+  returned: QaReturnedItem[];
+  developerItems: QaDeveloperItem[];
+}
+
 export const QA_RUN_ITEM_STATUSES: readonly QaRunItemStatus[] = [
   'pending',
   'in_progress',

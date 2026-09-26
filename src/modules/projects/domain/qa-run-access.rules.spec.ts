@@ -3,6 +3,7 @@ import type { QaChecklistTargetPersona } from '../application/qa-checklists/qa-c
 import {
   canCreateRun,
   canDispatchAutomation,
+  canMergeQaPromotion,
   canReopenRun,
   canRequestRetest,
   canSetReturnedToDev,
@@ -85,5 +86,14 @@ describe('canDispatchAutomation', () => {
     expect(canDispatchAutomation('lead')).toBe(true);
     expect(canDispatchAutomation('admin')).toBe(true);
     expect(canDispatchAutomation('member')).toBe(false);
+  });
+});
+
+describe('canMergeQaPromotion', () => {
+  it('allows only lead and admin', () => {
+    expect(canMergeQaPromotion('lead')).toBe(true);
+    expect(canMergeQaPromotion('admin')).toBe(true);
+    expect(canMergeQaPromotion('qa')).toBe(false);
+    expect(canMergeQaPromotion('member')).toBe(false);
   });
 });

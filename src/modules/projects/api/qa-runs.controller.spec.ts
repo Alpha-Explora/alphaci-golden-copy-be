@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   StreamableFile,
 } from '@nestjs/common';
@@ -8,13 +9,19 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import type { Request } from 'express';
 
-import { ProjectQaRunsController } from './qa-runs.controller';
+import {
+  ProjectQaMyItemsController,
+  ProjectQaPromotionController,
+  ProjectQaRunsController,
+} from './qa-runs.controller';
 import { QaRunsService } from '../application/qa-runs/qa-runs.service';
 import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
+import { QaPromotionService } from '../application/qa-runs/qa-promotion.service';
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { QA_REPORT_SCHEMA_VERSION } from '../application/qa-runs/qa-report.contracts';
 import type { QaReport } from '../application/qa-runs/qa-report.contracts';
 import type { QaRun } from '../application/qa-runs/qa-runs.contracts';
+import type { QaPromotionStatus } from '../application/qa-runs/qa-promotion.contracts';
 
 const fakeUser = { id: 'user-1', login: 'tone' };
 
@@ -113,7 +120,31 @@ const makeRunsService = () =>
     signoff: jest.fn(),
     reopen: jest.fn().mockResolvedValue(run()),
     listReturnedItems: jest.fn(),
+    listMyItems: jest.fn(),
   }) as unknown as QaRunsService;
+
+const promotionStatusFixture = (
+  overrides: Partial<QaPromotionStatus> = {},
+): QaPromotionStatus => ({
+  qaBranch: 'uat',
+  targetBranch: 'main',
+  headSha: 'a'.repeat(40),
+  checklists: [],
+  eligible: false,
+  reasons: ['No QA checklist is shared to this project'],
+  pullRequest: null,
+  canMerge: false,
+  ...overrides,
+});
+
+const makePromotionService = (
+  overrides: Partial<jest.Mocked<QaPromotionService>> = {},
+) =>
+  ({
+    getStatus: jest.fn().mockResolvedValue(promotionStatusFixture()),
+    merge: jest.fn(),
+    ...overrides,
+  }) as unknown as jest.Mocked<QaPromotionService>;
 
 const makeReportService = (
   overrides: Partial<jest.Mocked<QaReportService>> = {},
@@ -346,5 +377,128 @@ describe('ProjectQaRunsController.dispatchAutomation', () => {
     await expect(
       controller.dispatchAutomation(makeRequest(), 'project-1', 'run-1'),
     ).rejects.toThrow(ConflictException);
+  });
+});
+
+async function compileMyItemsController(runsService: QaRunsService) {
+  const module: TestingModule = await Test.createTestingModule({
+    controllers: [ProjectQaMyItemsController],
+    providers: [{ provide: QaRunsService, useValue: runsService }],
+  })
+    .overrideGuard(
+      require('#kernel/auth/session-auth.guard.js').SessionAuthGuard,
+    )
+    .useValue({ canActivate: () => true })
+    .overrideGuard(require('#kernel/composition/index.js').CapabilityGuard)
+    .useValue({ canActivate: () => true })
+    .compile();
+  return module.get(ProjectQaMyItemsController);
+}
+
+describe('ProjectQaMyItemsController.list', () => {
+  it('delegates to QaRunsService.listMyItems with the caller id', async () => {
+    const runsService = makeRunsService();
+    (runsService.listMyItems as jest.Mock).mockResolvedValue({
+      returned: [],
+      developerItems: [],
+    });
+    const controller = await compileMyItemsController(runsService);
+
+    const result = await controller.list(makeRequest(), 'project-1');
+
+    expect(runsService.listMyItems).toHaveBeenCalledWith('project-1', 'user-1');
+    expect(result).toEqual({ returned: [], developerItems: [] });
+  });
+});
+
+async function compilePromotionController(
+  promotionService: QaPromotionService,
+) {
+  const module: TestingModule = await Test.createTestingModule({
+    controllers: [ProjectQaPromotionController],
+    providers: [{ provide: QaPromotionService, useValue: promotionService }],
+  })
+    .overrideGuard(
+      require('#kernel/auth/session-auth.guard.js').SessionAuthGuard,
+    )
+    .useValue({ canActivate: () => true })
+    .overrideGuard(require('#kernel/composition/index.js').CapabilityGuard)
+    .useValue({ canActivate: () => true })
+    .compile();
+  return module.get(ProjectQaPromotionController);
+}
+
+describe('ProjectQaPromotionController.status', () => {
+  it('passes the full actor context and returns the service result verbatim', async () => {
+    const status = promotionStatusFixture({ eligible: true, canMerge: true });
+    const promotionService = makePromotionService({
+      getStatus: jest.fn().mockResolvedValue(status),
+    });
+    const controller = await compilePromotionController(promotionService);
+
+    const result = await controller.status(makeRequest(), 'project-1');
+
+    expect(promotionService.getStatus).toHaveBeenCalledWith('project-1', {
+      userId: 'user-1',
+      userLogin: 'tone',
+      oauthToken: 'token-1',
+    });
+    expect(result).toBe(status);
+  });
+});
+
+describe('ProjectQaPromotionController.merge', () => {
+  it('passes the full actor context and returns the merge result verbatim', async () => {
+    const promotionService = makePromotionService({
+      merge: jest.fn().mockResolvedValue({
+        merged: true,
+        sha: 'merged-sha',
+        message: 'Merged.',
+        pullRequest: { number: 42, url: 'https://github.com/org/repo/pull/42' },
+      }),
+    });
+    const controller = await compilePromotionController(promotionService);
+
+    const result = await controller.merge(makeRequest(), 'project-1');
+
+    expect(promotionService.merge).toHaveBeenCalledWith('project-1', {
+      userId: 'user-1',
+      userLogin: 'tone',
+      oauthToken: 'token-1',
+    });
+    expect(result).toEqual({
+      merged: true,
+      sha: 'merged-sha',
+      message: 'Merged.',
+      pullRequest: { number: 42, url: 'https://github.com/org/repo/pull/42' },
+    });
+  });
+
+  it('propagates a 403 for a caller who is not lead|admin', async () => {
+    const promotionService = makePromotionService({
+      merge: jest.fn().mockRejectedValue(new ForbiddenException()),
+    });
+    const controller = await compilePromotionController(promotionService);
+
+    await expect(controller.merge(makeRequest(), 'project-1')).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('propagates a 409 QA_PROMOTION_BLOCKED unchanged', async () => {
+    const promotionService = makePromotionService({
+      merge: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: 'QA_PROMOTION_BLOCKED',
+          message: 'QA promotion is not eligible yet.',
+          reasons: ['No QA checklist is shared to this project'],
+        }),
+      ),
+    });
+    const controller = await compilePromotionController(promotionService);
+
+    await expect(controller.merge(makeRequest(), 'project-1')).rejects.toThrow(
+      ConflictException,
+    );
   });
 });

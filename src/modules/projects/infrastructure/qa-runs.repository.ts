@@ -857,4 +857,49 @@ export class QaRunsRepository {
       runChecklistName: row.run_checklist_name,
     }));
   }
+
+  /**
+   * Open, developer-targeted items on the project's OPEN runs for `branch`
+   * (the "My QA items" feed's developerItems half -- see
+   * QaRunsService.listMyItems). Excludes 'passed' and 'returned_to_dev':
+   * passed needs no action, and a returned item already surfaces in
+   * listReturnedItemsForProject above -- a developer should not see it
+   * twice under two different labels. Newest run first (r.created_at DESC),
+   * then item position for a stable order within a run.
+   */
+  async listOpenDeveloperItemsForProject(
+    projectId: string,
+    branch: string,
+  ): Promise<QaReturnedItemRow[]> {
+    const result = await this.databaseService.query<
+      QaRunItemRow & {
+        run_branch: string;
+        run_commit_sha: string;
+        run_checklist_name: string;
+      }
+    >(
+      `
+        SELECT
+          i.*,
+          r.branch AS run_branch,
+          r.commit_sha AS run_commit_sha,
+          r.checklist_name AS run_checklist_name
+        FROM projects.qa_run_items i
+        JOIN projects.qa_verification_runs r ON r.id = i.run_id
+        WHERE r.project_id = $1
+          AND r.branch = $2
+          AND r.status = 'open'
+          AND i.target_persona = 'developer'
+          AND i.status NOT IN ('passed', 'returned_to_dev')
+        ORDER BY r.created_at DESC, i."position" ASC;
+      `,
+      [projectId, branch],
+    );
+    return result.rows.map((row) => ({
+      item: row,
+      runBranch: row.run_branch,
+      runCommitSha: row.run_commit_sha,
+      runChecklistName: row.run_checklist_name,
+    }));
+  }
 }

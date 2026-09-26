@@ -33,6 +33,7 @@ import {
   QaRunItemsChangedError,
   QaRunNotOpenError,
   QaRunsRepository,
+  type QaReturnedItemRow,
   type QaRunItemRow,
   type QaRunSignoffRow,
   type QaVerificationRunRow,
@@ -55,6 +56,7 @@ import {
   type QaRunListItem,
   type QaRunPermissions,
   type QaRunSummaryCounts,
+  type QaMyItems,
   type QaReturnedItem,
   type QaSignoff,
 } from './qa-runs.contracts';
@@ -569,8 +571,47 @@ export class QaRunsService {
     const project = await this.requireVisibleProject(projectId, userId);
     const role = await this.access.findAppRole(userId);
     const rows = await this.repository.listReturnedItemsForProject(projectId);
+    const items = await this.assembleFeedItems(rows, project, role);
+    return { items };
+  }
+
+  async listMyItems(projectId: string, userId: string): Promise<QaMyItems> {
+    // Deliberately two separate round trips (requireVisibleProject/findAppRole
+    // done again inside listReturnedItems) rather than threading the
+    // already-fetched project/role through -- same defense-in-depth choice
+    // qa-report.service.ts makes for its own frozen-vs-live split, over a
+    // shared code path that could silently drift the two branches apart.
+    const project = await this.requireVisibleProject(projectId, userId);
+    const role = await this.access.findAppRole(userId);
+
+    const [returnedResult, developerRows] = await Promise.all([
+      this.listReturnedItems(projectId, userId),
+      this.repository.listOpenDeveloperItemsForProject(projectId, QA_BRANCH),
+    ]);
+    const developerItems = await this.assembleFeedItems(
+      developerRows,
+      project,
+      role,
+    );
+
+    return { returned: returnedResult.items, developerItems };
+  }
+
+  /**
+   * Shared by listReturnedItems and listMyItems' developerItems half: both
+   * feed off QaReturnedItemRow-shaped rows spanning every OPEN run in the
+   * project, so unlike assembleRun (one run, one automation lookup) two rows
+   * here can belong to different runs with different (branch, commitSha).
+   * Deduped by that pair rather than looked up once per row -- rows sharing
+   * a run (the common case) share one CI lookup.
+   */
+  private async assembleFeedItems(
+    rows: QaReturnedItemRow[],
+    project: ProvisionedProjectRow,
+    role: PlatformAppRole,
+  ): Promise<QaReturnedItem[]> {
     if (rows.length === 0) {
-      return { items: [] };
+      return [];
     }
 
     const priorIds = rows
@@ -579,11 +620,6 @@ export class QaRunsService {
     const priorSummaries =
       await this.repository.findPriorItemSummaries(priorIds);
 
-    // This feed spans every open run in the project, so unlike assembleRun
-    // (one run, one automation lookup) two rows here can belong to
-    // different runs with different (branch, commitSha). Deduped by that
-    // pair rather than looked up once per row -- rows sharing a run (the
-    // common case) share one CI lookup.
     const automationCache = new Map<string, Promise<QaRunAutomation>>();
     const automationFor = (
       branch: string,
@@ -603,7 +639,7 @@ export class QaRunsService {
       return pending;
     };
 
-    const items = await Promise.all(
+    return Promise.all(
       rows.map(async (row) => ({
         runId: row.item.run_id,
         branch: row.runBranch,
@@ -618,8 +654,6 @@ export class QaRunsService {
         ),
       })),
     );
-
-    return { items };
   }
 
   // ---------------------------------------------------------------------
