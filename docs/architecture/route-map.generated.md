@@ -151,6 +151,7 @@ The current compiled API exposes **175 routes** under the global `/api/v1` prefi
 - `POST /api/v1/groups`
 - `POST /api/v1/groups/{groupId}/archive`
 - `POST /api/v1/groups/{groupId}/members`
+- `POST /api/v1/groups/{groupId}/projects`
 - `POST /api/v1/groups/{groupId}/reopen`
 - `POST /api/v1/groups/{groupId}/systems`
 - `POST /api/v1/groups/{groupId}/transfer`

@@ -15,6 +15,7 @@ import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { CreateSystemDto } from './dto/create-system.dto';
 import { UpdateSystemDto } from './dto/update-system.dto';
 import { CreateDeliveryProjectDto } from './dto/create-delivery-project.dto';
+import { CreateEmptyProjectDto } from './dto/create-empty-project.dto';
 import { DeliveryProjectsService } from '../application/delivery-projects.service';
 import { SystemsService } from '../application/systems.service';
 
@@ -43,6 +44,24 @@ export class SystemsController {
   @Get('groups/:groupId/systems')
   listSystems(@Req() req: Request, @Param('groupId') groupId: string) {
     return this.systemsService.listSystems(groupId, this.requireUserId(req));
+  }
+
+  /**
+   * "Project folder" with no repository — Team lead/Admin (or platform
+   * admin), same gate as createSystem. Returns the DeliveryProject shape
+   * (the API-facing "Project"), not the System.
+   */
+  @Post('groups/:groupId/projects')
+  createEmptyProject(
+    @Req() req: Request,
+    @Param('groupId') groupId: string,
+    @Body() body: CreateEmptyProjectDto,
+  ) {
+    return this.systemsService.createEmptyProject(
+      groupId,
+      this.requireUserId(req),
+      body,
+    );
   }
 
   @Get('systems/:systemId')

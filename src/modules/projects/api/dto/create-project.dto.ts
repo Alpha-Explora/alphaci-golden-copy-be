@@ -340,4 +340,15 @@ export class CreateProjectDto {
   @IsOptional()
   @IsUUID()
   workspaceId?: string;
+
+  /**
+   * Existing hierarchy delivery project ("Project folder") to link this
+   * repository into, instead of auto-creating a new system/delivery-project
+   * chain. Validated up front (exists, active, same workspace, caller may
+   * create there) before any GitHub call. For a multi-repo/microservices
+   * shape, both repos in the pair are linked to this same delivery project.
+   */
+  @IsOptional()
+  @IsUUID()
+  deliveryProjectId?: string;
 }

@@ -40,6 +40,8 @@ export type MultiRepoBackendProvision = {
   row: ProvisionedProjectRow;
   commitSha: string;
   commitUrl: string | null;
+  /** The hierarchy delivery project the backend row was linked under, if any. */
+  deliveryProjectId: string | null;
 };
 
 export type MultiRepoFrontendProvision = {
@@ -191,7 +193,11 @@ export async function persistMultiRepoStandaloneRow(input: {
   workflowPath: string;
   workflowFiles: StagedWorkflowFile[];
   includeTests: boolean;
-}): Promise<ProvisionedProjectRow> {
+  /** Link into this existing delivery project instead of creating a new chain. */
+  deliveryProjectId?: string;
+  /** Name for a newly auto-created system/delivery-project chain. */
+  chainName?: string;
+}): Promise<{ row: ProvisionedProjectRow; deliveryProjectId: string | null }> {
   const {
     support,
     userId,
@@ -204,30 +210,38 @@ export async function persistMultiRepoStandaloneRow(input: {
     workflowPath,
     workflowFiles,
     includeTests,
+    deliveryProjectId,
+    chainName,
   } = input;
 
-  return support.createProjectRow({
-    userId,
-    workspaceId: await support.workspaceGate.resolveWorkspaceIdForCreate(
+  return support.createProjectRow(
+    {
       userId,
-      dto.workspaceId,
-    ),
-    repoFullName,
-    templateId,
-    serviceName: slot.serviceName,
-    workflowPath,
-    status: 'provisioned',
-    repoUrl,
-    visibility: dto.visibility,
-    repoShape: normalizeRepoShape(dto.repoShape),
-    projectTypeId: slot.projectTypeId,
-    workflowRecipeId: slot.workflowRecipeId ?? null,
-    projectOptions: {
-      ...support.repositoryOwnershipMetadata(dto, ownerLogin),
-      ...(includeTests ? testsProjectOption(dto.tests) : {}),
-      workflowFiles: workflowFileMetadata(workflowFiles),
+      workspaceId: await support.workspaceGate.resolveWorkspaceIdForCreate(
+        userId,
+        dto.workspaceId,
+      ),
+      repoFullName,
+      templateId,
+      serviceName: slot.serviceName,
+      workflowPath,
+      status: 'provisioned',
+      repoUrl,
+      visibility: dto.visibility,
+      repoShape: normalizeRepoShape(dto.repoShape),
+      projectTypeId: slot.projectTypeId,
+      workflowRecipeId: slot.workflowRecipeId ?? null,
+      projectOptions: {
+        ...support.repositoryOwnershipMetadata(dto, ownerLogin),
+        ...(includeTests ? testsProjectOption(dto.tests) : {}),
+        workflowFiles: workflowFileMetadata(workflowFiles),
+      },
     },
-  });
+    {
+      ...(deliveryProjectId !== undefined && { deliveryProjectId }),
+      ...(chainName !== undefined && { chainName }),
+    },
+  );
 }
 
 export async function installMultiRepoCiSecrets(input: {
@@ -327,6 +341,7 @@ export async function provisionMultiRepoBackend(input: {
   const repoFullName = `${repo.ownerLogin}/${repo.repoName}`;
 
   let backendRow: ProvisionedProjectRow | undefined;
+  let backendDeliveryProjectId: string | null = null;
   let backendCommitSha = '';
   let backendCommitUrl: string | null = null;
   let backendProvisioningComplete = false;
@@ -345,19 +360,25 @@ export async function provisionMultiRepoBackend(input: {
 
     // Persist + token + secrets before the workflow push so the first
     // access-gate run can authenticate (see createProject for rationale).
-    backendRow = await persistMultiRepoStandaloneRow({
-      support,
-      userId,
-      dto,
-      slot: backend,
-      ownerLogin: repo.ownerLogin,
-      repoFullName,
-      repoUrl: repo.repoUrl,
-      templateId: bundle.templateId,
-      workflowPath: bundle.workflowPath,
-      workflowFiles: bundle.workflowFiles,
-      includeTests: true,
-    });
+    // No explicit deliveryProjectId on the request: auto-create ONE chain,
+    // named after the base repoName, for the backend/frontend pair to share.
+    ({ row: backendRow, deliveryProjectId: backendDeliveryProjectId } =
+      await persistMultiRepoStandaloneRow({
+        support,
+        userId,
+        dto,
+        slot: backend,
+        ownerLogin: repo.ownerLogin,
+        repoFullName,
+        repoUrl: repo.repoUrl,
+        templateId: bundle.templateId,
+        workflowPath: bundle.workflowPath,
+        workflowFiles: bundle.workflowFiles,
+        includeTests: true,
+        ...(dto.deliveryProjectId
+          ? { deliveryProjectId: dto.deliveryProjectId }
+          : { chainName: dto.repoName }),
+      }));
 
     await installMultiRepoCiSecrets({
       support,
@@ -414,6 +435,7 @@ export async function provisionMultiRepoBackend(input: {
     row: backendRow,
     commitSha: backendCommitSha,
     commitUrl: backendCommitUrl,
+    deliveryProjectId: backendDeliveryProjectId,
   };
 }
 
@@ -428,6 +450,13 @@ export async function provisionMultiRepoFrontend(input: {
   frontend: MicroserviceSlotDto;
   feRepoName: string;
   effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
+  /**
+   * The delivery project both pair members must share — either the caller's
+   * explicit dto.deliveryProjectId, or the chain the backend row just
+   * auto-created. Null only when the backend row itself linked nowhere
+   * (personal workspace, or no hierarchy port wired up).
+   */
+  pairDeliveryProjectId: string | null;
 }): Promise<MultiRepoFrontendProvision> {
   const {
     support,
@@ -440,6 +469,7 @@ export async function provisionMultiRepoFrontend(input: {
     frontend,
     feRepoName,
     effectiveDeploymentProvisioning,
+    pairDeliveryProjectId,
   } = input;
 
   let feRepoFullName: string | undefined;
@@ -479,7 +509,7 @@ export async function provisionMultiRepoFrontend(input: {
       },
     );
 
-    feRow = await persistMultiRepoStandaloneRow({
+    ({ row: feRow } = await persistMultiRepoStandaloneRow({
       support,
       userId,
       dto,
@@ -491,7 +521,15 @@ export async function provisionMultiRepoFrontend(input: {
       workflowPath: bundle.workflowPath,
       workflowFiles: bundle.workflowFiles,
       includeTests: false,
-    });
+      // Land under the SAME chain as the backend row rather than creating a
+      // second, independent one — this is the pairing fix. When the pair
+      // linked nowhere at all (personal workspace / no hierarchy port), fall
+      // back to the same chainName the backend attempted, which will equally
+      // no-op through ensureLink's own workspace check.
+      ...(pairDeliveryProjectId
+        ? { deliveryProjectId: pairDeliveryProjectId }
+        : { chainName: dto.repoName }),
+    }));
 
     await installMultiRepoCiSecrets({
       support,
