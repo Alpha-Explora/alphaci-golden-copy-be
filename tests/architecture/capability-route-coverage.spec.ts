@@ -195,6 +195,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       routes: [
         { handler: 'createSystem', method: 'POST' },
         { handler: 'listSystems', method: 'GET' },
+        { handler: 'createEmptyProject', method: 'POST' },
         { handler: 'getSystem', method: 'GET' },
         { handler: 'updateSystem', method: 'PATCH' },
         { handler: 'archiveSystem', method: 'POST' },

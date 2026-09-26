@@ -1,18 +1,57 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+
+import type { DeliveryProjectsRepository } from '../../infrastructure/delivery-projects.repository';
+import type { HierarchyAccessService } from '../../application/hierarchy-access.service';
 import { HierarchyProjectLinkService } from './hierarchy-project-link.service';
 import type { HierarchyProjectLinkRepository } from '../infrastructure/hierarchy-project-link.repository';
 
 function build(overrides: Partial<HierarchyProjectLinkRepository> = {}) {
-  const link = jest.fn(() => Promise.resolve('repo-1'));
+  const link = jest.fn(() =>
+    Promise.resolve({ repositoryId: 'repo-1', deliveryProjectId: 'dp-1' }),
+  );
   const repository = {
     isTeamWorkspace: jest.fn(() => Promise.resolve(true)),
     findLinkedRepositoryId: jest.fn(() => Promise.resolve(null)),
+    findLinkedRepositoryAndDeliveryProject: jest.fn(() =>
+      Promise.resolve(null),
+    ),
     link,
     ...overrides,
   } as unknown as HierarchyProjectLinkRepository;
 
+  const accessService = {
+    assertCanCreateUnderDeliveryProject: jest.fn(() =>
+      Promise.resolve({ groupId: 'w1' }),
+    ),
+  } as unknown as jest.Mocked<HierarchyAccessService>;
+
+  const deliveryProjectsRepository = {
+    findById: jest.fn(() =>
+      Promise.resolve({
+        id: 'dp-1',
+        systemId: 'sys-1',
+        groupId: 'w1',
+        name: 'payments',
+        description: null,
+        managerId: 'u1',
+        status: 'active',
+        archivedAt: null,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        repositoryCount: 1,
+      }),
+    ),
+  } as unknown as jest.Mocked<DeliveryProjectsRepository>;
+
   return {
-    service: new HierarchyProjectLinkService(repository),
+    service: new HierarchyProjectLinkService(
+      repository,
+      accessService,
+      deliveryProjectsRepository,
+    ),
     repository,
+    accessService,
+    deliveryProjectsRepository,
     link: repository.link as unknown as jest.Mock,
   };
 }
@@ -28,58 +67,121 @@ const BASE = {
 };
 
 describe('HierarchyProjectLinkService', () => {
-  it('skips projects with no workspace', async () => {
-    const { service, link } = build();
-    await expect(
-      service.ensureLink({ ...BASE, workspaceId: null }),
-    ).resolves.toBeNull();
-    expect(link).not.toHaveBeenCalled();
-  });
-
-  it('skips personal workspaces — they have no hierarchy tree', async () => {
-    const { service, link } = build({
-      isTeamWorkspace: jest.fn(() => Promise.resolve(false)),
+  describe('ensureLink', () => {
+    it('skips projects with no workspace', async () => {
+      const { service, link } = build();
+      await expect(
+        service.ensureLink({ ...BASE, workspaceId: null }),
+      ).resolves.toBeNull();
+      expect(link).not.toHaveBeenCalled();
     });
-    await expect(service.ensureLink(BASE)).resolves.toBeNull();
-    expect(link).not.toHaveBeenCalled();
-  });
 
-  it('is idempotent — an already-linked project is not linked twice', async () => {
-    const { service, link } = build({
-      findLinkedRepositoryId: jest.fn(() => Promise.resolve('existing')),
+    it('skips personal workspaces — they have no hierarchy tree', async () => {
+      const { service, link } = build({
+        isTeamWorkspace: jest.fn(() => Promise.resolve(false)),
+      });
+      await expect(service.ensureLink(BASE)).resolves.toBeNull();
+      expect(link).not.toHaveBeenCalled();
     });
-    await expect(service.ensureLink(BASE)).resolves.toBe('existing');
-    expect(link).not.toHaveBeenCalled();
-  });
 
-  it('links a group project and maps provisioned status', async () => {
-    const { service, link } = build();
-    await expect(service.ensureLink(BASE)).resolves.toBe('repo-1');
-    expect(link).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: 'p1',
-        workspaceId: 'w1',
-        name: 'payments-api',
-        visibility: 'private',
-        projectStatus: 'provisioned',
-      }),
-    );
-  });
+    it('is idempotent — an already-linked project is not linked twice', async () => {
+      const { service, link } = build({
+        findLinkedRepositoryAndDeliveryProject: jest.fn(() =>
+          Promise.resolve({
+            repositoryId: 'existing',
+            deliveryProjectId: 'dp-9',
+          }),
+        ),
+      });
+      await expect(service.ensureLink(BASE)).resolves.toEqual({
+        repositoryId: 'existing',
+        deliveryProjectId: 'dp-9',
+      });
+      expect(link).not.toHaveBeenCalled();
+    });
 
-  it('records public visibility rather than forcing private', async () => {
-    const { service, link } = build();
-    await service.ensureLink({ ...BASE, visibility: 'public' });
-    expect(link).toHaveBeenCalledWith(
-      expect.objectContaining({ visibility: 'public' }),
-    );
-  });
+    it('links a group project and maps provisioned status', async () => {
+      const { service, link } = build();
+      await expect(service.ensureLink(BASE)).resolves.toEqual({
+        repositoryId: 'repo-1',
+        deliveryProjectId: 'dp-1',
+      });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'p1',
+          workspaceId: 'w1',
+          name: 'payments-api',
+          visibility: 'private',
+          projectStatus: 'provisioned',
+        }),
+      );
+      // No deliveryProjectId given — a brand new chain is created, so the
+      // link call must not carry one either.
+      expect(link.mock.calls[0]?.[0]).not.toHaveProperty('deliveryProjectId');
+    });
 
-  it('falls back to the repo name when the service name is blank', async () => {
-    const { service, link } = build();
-    await service.ensureLink({ ...BASE, name: '   ' });
-    expect(link).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'payments-api' }),
-    );
+    it('records public visibility rather than forcing private', async () => {
+      const { service, link } = build();
+      await service.ensureLink({ ...BASE, visibility: 'public' });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ visibility: 'public' }),
+      );
+    });
+
+    it('falls back to the repo name when the service name is blank', async () => {
+      const { service, link } = build();
+      await service.ensureLink({ ...BASE, name: '   ' });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'payments-api' }),
+      );
+    });
+
+    it('passes chainName through for a naming override without touching the repository name', async () => {
+      const { service, link } = build();
+      await service.ensureLink({ ...BASE, chainName: 'payments' });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'payments-api',
+          chainName: 'payments',
+        }),
+      );
+    });
+
+    it('passes an explicit deliveryProjectId through to the repository so both pair members land under one chain', async () => {
+      const { service, link } = build();
+      await service.ensureLink({ ...BASE, deliveryProjectId: 'dp-shared' });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ deliveryProjectId: 'dp-shared' }),
+      );
+    });
+
+    it('never throws — a failed link must not fail an already-provisioned project', async () => {
+      // By the time this runs the GitHub repo, branches, secrets and workflow
+      // commit have all succeeded. Throwing here would report a working project
+      // as a failure and let the compensation path delete it.
+      const { service } = build({
+        link: jest.fn(() => Promise.reject(new Error('db down'))),
+      });
+      await expect(service.ensureLink(BASE)).resolves.toBeNull();
+    });
+
+    it('is no-link-plus-logged-error when the repository rejects an invalid deliveryProjectId (e.g. wrong workspace)', async () => {
+      const { service, link } = build({
+        link: jest.fn(() =>
+          Promise.reject(
+            new Error(
+              'Delivery project dp-other is not an active delivery project in workspace w1',
+            ),
+          ),
+        ),
+      });
+      await expect(
+        service.ensureLink({ ...BASE, deliveryProjectId: 'dp-other' }),
+      ).resolves.toBeNull();
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ deliveryProjectId: 'dp-other' }),
+      );
+    });
   });
 
   describe('getLinkedRepositoryId', () => {
@@ -111,13 +213,68 @@ describe('HierarchyProjectLinkService', () => {
     });
   });
 
-  it('never throws — a failed link must not fail an already-provisioned project', async () => {
-    // By the time this runs the GitHub repo, branches, secrets and workflow
-    // commit have all succeeded. Throwing here would report a working project
-    // as a failure and let the compensation path delete it.
-    const { service } = build({
-      link: jest.fn(() => Promise.reject(new Error('db down'))),
+  describe('assertDeliveryProjectAvailableForCreate', () => {
+    it('passes for an active delivery project in the caller-resolved workspace', async () => {
+      const { service } = build();
+      await expect(
+        service.assertDeliveryProjectAvailableForCreate({
+          deliveryProjectId: 'dp-1',
+          workspaceId: 'w1',
+          userId: 'u1',
+        }),
+      ).resolves.toBeUndefined();
     });
-    await expect(service.ensureLink(BASE)).resolves.toBeNull();
+
+    it('rejects (404/403 via HierarchyAccessService) when the caller may not create in that group', async () => {
+      const { service, accessService } = build();
+      accessService.assertCanCreateUnderDeliveryProject.mockRejectedValueOnce(
+        new ForbiddenException('Only a Lead or Admin can create'),
+      );
+      await expect(
+        service.assertDeliveryProjectAvailableForCreate({
+          deliveryProjectId: 'dp-1',
+          workspaceId: 'w1',
+          userId: 'u1',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects with 400 when the delivery project belongs to a different workspace than the one being created into', async () => {
+      const { service, accessService } = build();
+      accessService.assertCanCreateUnderDeliveryProject.mockResolvedValueOnce({
+        groupId: 'w-other',
+      });
+      await expect(
+        service.assertDeliveryProjectAvailableForCreate({
+          deliveryProjectId: 'dp-1',
+          workspaceId: 'w1',
+          userId: 'u1',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects with 400 when the delivery project is archived', async () => {
+      const { service, deliveryProjectsRepository } = build();
+      deliveryProjectsRepository.findById.mockResolvedValueOnce({
+        id: 'dp-1',
+        systemId: 'sys-1',
+        groupId: 'w1',
+        name: 'payments',
+        description: null,
+        managerId: 'u1',
+        status: 'archived',
+        archivedAt: '2026-01-02T00:00:00Z',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-02T00:00:00Z',
+        repositoryCount: 0,
+      });
+      await expect(
+        service.assertDeliveryProjectAvailableForCreate({
+          deliveryProjectId: 'dp-1',
+          workspaceId: 'w1',
+          userId: 'u1',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 });

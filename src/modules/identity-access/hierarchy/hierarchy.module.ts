@@ -107,5 +107,10 @@ import { SystemsService } from './application/systems.service';
     },
     RepoConfigBrokerService,
   ],
+  // HierarchyAccessService and DeliveryProjectsRepository are consumed by
+  // HierarchyProjectLinkModule (the deliveryProjectId create-time gate),
+  // which imports this module rather than re-deriving the same Lead/Admin
+  // creator-role and delivery-project-lookup logic.
+  exports: [HierarchyAccessService, DeliveryProjectsRepository],
 })
 export class HierarchyModule {}

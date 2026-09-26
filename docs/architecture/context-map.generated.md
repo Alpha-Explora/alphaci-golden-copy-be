@@ -21,8 +21,8 @@ This map is generated from the current source tree and architecture metrics. It 
 
 | Context | Owns | Public boundary | Owned schemas | Measured source/test files |
 |---|---|---|---|---|
-| `identity-access` | authentication, administration, capabilities, workspaces, hierarchy, and repository access policy | `src/modules/identity-access/index.ts` | `identity`, `orgs`, `hierarchy` | 126 source files / 23 tests |
-| `projects` | project lifecycle, catalog, workflows, existing repositories, and project read models | `src/modules/projects/index.ts` | `projects`, `workflow` | 164 source files / 53 tests |
+| `identity-access` | authentication, administration, capabilities, workspaces, hierarchy, and repository access policy | `src/modules/identity-access/index.ts` | `identity`, `orgs`, `hierarchy` | 128 source files / 24 tests |
+| `projects` | project lifecycle, catalog, workflows, existing repositories, and project read models | `src/modules/projects/index.ts` | `projects`, `workflow` | 165 source files / 54 tests |
 | `pipelines` | GitHub integration, CI token lifecycle, and CI report ingestion | `src/modules/pipelines/index.ts` | `github_app`, `ci`, `workflow` | 48 source files / 14 tests |
 | `runtime` | deployment targets, environment metadata, domains, provider connections, provider adapters, and deployment history | `src/modules/runtime/index.ts` | `runtime`, `env_provisioning`, `runtime_deployments`, `runtime_domains`, `runtime_secrets`, `gcp_operations` | 151 source files / 55 tests |
 | `billing` | subscriptions, usage, and quota policy | `src/modules/billing/index.ts` | `billing`, `usage`, `billing_lifecycle` | 21 source files / 5 tests |

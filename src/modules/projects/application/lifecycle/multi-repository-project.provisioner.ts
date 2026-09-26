@@ -94,6 +94,8 @@ export class MultiRepositoryProjectProvisioner {
       frontend,
       feRepoName,
       effectiveDeploymentProvisioning,
+      pairDeliveryProjectId:
+        dto.deliveryProjectId ?? backendProvision.deliveryProjectId,
     });
 
     const deploymentProvisioning = await provisionMultiRepoDeployments({
