@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -993,6 +994,32 @@ describe('DeploymentTargetsService', () => {
           null,
         ),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('is limited to leads and stops a member before any secret is written', async () => {
+      const installer = {
+        supports: jest.fn().mockReturnValue(true),
+        installForTarget: jest.fn(),
+      };
+      ciSecretsInstallers.get.mockReturnValue(installer);
+      workspaceAccessService.assertProjectRole.mockRejectedValueOnce(
+        new ForbiddenException('Insufficient project role'),
+      );
+
+      await expect(
+        service.reinstallDeploymentSecrets(
+          'project-1',
+          'target-1',
+          'member-1',
+          'github-token',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+        'project-1',
+        'member-1',
+        ['admin', 'delegated_lead'],
+      );
+      expect(installer.installForTarget).not.toHaveBeenCalled();
     });
 
     it('refuses when no installer supports this target', async () => {

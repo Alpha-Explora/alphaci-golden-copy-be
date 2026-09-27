@@ -705,7 +705,13 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       throw new BadRequestException('Project target management is disabled');
     }
 
-    await this.assertProjectMutationAccess(projectId, userId);
+    // Leads only: this rewrites the repository's deployment credentials, and
+    // for an ALPHACI-managed target that means writing the platform's own
+    // provider token — the same bar Detach sets for touching a provider.
+    await this.assertProjectMutationAccess(projectId, userId, [
+      'admin',
+      'delegated_lead',
+    ]);
     const target = await this.getOwnedTargetOrThrow(
       projectId,
       targetId,
