@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -10,6 +11,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import {
   VERCEL_ALIAS_VARIABLE,
   vercelAliasHost,
+  vercelAutomationBypassSecretName,
 } from '#kernel/ports/workflow-fragment.port';
 import { EnvTokenEncryptionService } from '../../../application/encryption.service';
 import type {
@@ -27,6 +29,7 @@ import {
   type GithubActionsSecretsPort,
 } from '../../../application/ports/github-actions-secrets.port';
 import { Inject } from '@nestjs/common';
+import { VercelEnvClient } from './vercel-env.client';
 
 export interface InstallVercelCiSecretsInput {
   githubAccessToken: string;
@@ -41,6 +44,13 @@ export interface VercelCiSecretNames {
   token: string;
   orgId: string;
   projectId: string;
+  /**
+   * Only present when installing it actually succeeded - see
+   * VercelCiSecretsService.installForTarget. A BYO account on a plan without
+   * Protection Bypass for Automation, or a token that cannot manage it, must
+   * not stop the rest of the target's secrets from installing.
+   */
+  automationBypassSecret?: string;
 }
 
 /** Repository variables Vercel publishes, as opposed to its credentials. */
@@ -52,6 +62,7 @@ export interface VercelCiVariableNames {
 @Injectable()
 export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
   readonly provider = 'vercel';
+  private readonly logger = new Logger(VercelCiSecretsService.name);
 
   constructor(
     @Inject(GITHUB_ACTIONS_SECRETS)
@@ -59,6 +70,7 @@ export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
     private readonly providerConnectionsRepository: ProviderConnectionsRepository,
     private readonly encryptionService: EnvTokenEncryptionService,
     private readonly configService: ConfigService,
+    private readonly vercelEnvClient: VercelEnvClient,
   ) {}
 
   supports(target: DeploymentTargetSummary): boolean {
@@ -128,7 +140,88 @@ export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
       vercelAliasHost(input.target.providerProjectName),
     );
 
-    return { githubSecrets: secretNames, githubVariables: variableNames };
+    const githubSecrets: VercelCiSecretNames = { ...secretNames };
+    const automationBypassSecretName = await this.installAutomationBypassSecret(
+      {
+        githubAccessToken: input.githubAccessToken,
+        owner,
+        repo,
+        target: input.target,
+        vercelToken,
+      },
+    );
+    if (automationBypassSecretName) {
+      githubSecrets.automationBypassSecret = automationBypassSecretName;
+    }
+
+    return { githubSecrets, githubVariables: variableNames };
+  }
+
+  /**
+   * Best-effort: the Playwright UI suite the verify stage runs needs this to
+   * reach a protected uat/main preview, but not every Vercel account can grant
+   * it (plan, or a token without permission over it), and a repository must
+   * still get the rest of its Vercel secrets when it cannot. Returns the
+   * installed secret's NAME on success, or null - never the secret itself,
+   * and never thrown further up.
+   */
+  private async installAutomationBypassSecret(input: {
+    githubAccessToken: string;
+    owner: string;
+    repo: string;
+    target: DeploymentTargetSummary;
+    vercelToken: string;
+  }): Promise<string | null> {
+    const secretName = vercelAutomationBypassSecretName(input.target.slot);
+    try {
+      const secret = await this.vercelEnvClient.ensureAutomationBypassSecret({
+        token: input.vercelToken,
+        targetId: input.target.providerProjectId,
+        ...this.vercelTeamScope(input.target),
+      });
+      await this.githubService.setActionsSecretStrict(
+        input.githubAccessToken,
+        input.owner,
+        input.repo,
+        secretName,
+        secret,
+      );
+      return secretName;
+    } catch (error) {
+      this.logger.warn(
+        `Vercel automation bypass secret was not installed for ${input.owner}/${input.repo} ` +
+          `(${input.target.slot}): ${error instanceof Error ? error.message : String(error)}. ` +
+          'Playwright UI tests against a protected preview will need it granted by hand.',
+      );
+      return null;
+    }
+  }
+
+  /** The same BYO-team scoping resolveOperationInput reads off providerMetadata. */
+  private vercelTeamScope(target: DeploymentTargetSummary): {
+    vercelTeamId?: string;
+    vercelTeamSlug?: string;
+  } {
+    const teamId = this.optionalMetadataString(
+      target.providerMetadata,
+      'vercelTeamId',
+    );
+    const teamSlug = this.optionalMetadataString(
+      target.providerMetadata,
+      'vercelTeamSlug',
+    );
+    return {
+      ...(teamId ? { vercelTeamId: teamId } : {}),
+      ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
+    };
+  }
+
+  private optionalMetadataString(
+    metadata: Record<string, unknown>,
+    key: string,
+  ): string | null {
+    const value = metadata[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
   }
 
   /**

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   InternalServerErrorException,
+  UnauthorizedException,
 } from '@nestjs/common';
 
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
@@ -52,6 +53,9 @@ describe('DeploymentTargetsService', () => {
   };
   const notificationEventsService = {
     record: jest.fn(),
+  };
+  const ciSecretsInstallers = {
+    get: jest.fn(),
   };
   const providerRegistry = {
     find: jest.fn((provider: string) => {
@@ -197,6 +201,7 @@ describe('DeploymentTargetsService', () => {
       notificationEventsService as never,
       providerRegistry as never,
       capabilityResolver as never,
+      ciSecretsInstallers as never,
     );
   });
 
@@ -827,7 +832,7 @@ describe('DeploymentTargetsService', () => {
         detach: { enabled: true },
         reinstallDeploymentSecrets: {
           enabled: false,
-          reason: 'Provider activation required',
+          reason: 'No CI secrets installer is registered for vercel.',
         },
         openProviderDashboard: {
           enabled: true,
@@ -838,6 +843,174 @@ describe('DeploymentTargetsService', () => {
           url: 'https://vercel.com/flowci-team/orders-web/deployments',
         },
       },
+    });
+  });
+
+  it('reports reinstallDeploymentSecrets disabled with a strategy-specific reason when an installer is registered but declines', async () => {
+    ciSecretsInstallers.get.mockReturnValue({
+      supports: jest.fn().mockReturnValue(false),
+    });
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'vercel',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'orders-web',
+        deploymentStrategy: 'vercel_git_connected',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.getDeploymentTargetActions('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      actions: {
+        reinstallDeploymentSecrets: {
+          enabled: false,
+          reason:
+            'vercel has no CI secrets to reinstall for a vercel_git_connected deployment.',
+        },
+      },
+    });
+  });
+
+  it('reports reinstallDeploymentSecrets enabled when the registered installer supports this target', async () => {
+    ciSecretsInstallers.get.mockReturnValue({
+      supports: jest.fn().mockReturnValue(true),
+    });
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'vercel',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'orders-web',
+        deploymentStrategy: 'vercel_ci_pushed',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.getDeploymentTargetActions('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      actions: {
+        reinstallDeploymentSecrets: { enabled: true },
+      },
+    });
+  });
+
+  describe('reinstallDeploymentSecrets', () => {
+    const target = {
+      id: 'target-1',
+      projectId: 'project-1',
+      provider: 'vercel',
+      providerConnectionId: 'connection-1',
+      providerProjectId: 'prj_1',
+      providerProjectName: 'orders-web',
+      repoFullName: 'owner/repo',
+      deploymentStrategy: 'vercel_ci_pushed',
+      providerMetadata: { vercelOrgId: 'user_123' },
+    };
+
+    it('reinstalls a target CI secrets and persists the result onto provider metadata', async () => {
+      const installer = {
+        supports: jest.fn().mockReturnValue(true),
+        installForTarget: jest.fn().mockResolvedValue({
+          githubSecrets: {
+            token: 'VERCEL_FRONTEND_TOKEN',
+            orgId: 'VERCEL_FRONTEND_ORG_ID',
+            projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+            automationBypassSecret: 'VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET',
+          },
+          githubVariables: { alias: 'VERCEL_ALIAS' },
+        }),
+      };
+      ciSecretsInstallers.get.mockReturnValue(installer);
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        target,
+      );
+      deploymentTargetsRepository.updateProviderMetadata.mockResolvedValueOnce({
+        ...target,
+      });
+
+      const result = await service.reinstallDeploymentSecrets(
+        'project-1',
+        'target-1',
+        'user-1',
+        'github-token',
+      );
+
+      expect(result).toEqual({
+        reinstalled: true,
+        githubSecrets: {
+          token: 'VERCEL_FRONTEND_TOKEN',
+          orgId: 'VERCEL_FRONTEND_ORG_ID',
+          projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+          automationBypassSecret: 'VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET',
+        },
+        githubVariables: { alias: 'VERCEL_ALIAS' },
+      });
+      expect(installer.installForTarget).toHaveBeenCalledWith({
+        githubAccessToken: 'github-token',
+        repoFullName: 'owner/repo',
+        userId: 'user-1',
+        providerConnectionId: 'connection-1',
+        target,
+      });
+      expect(
+        deploymentTargetsRepository.updateProviderMetadata,
+      ).toHaveBeenCalledWith('target-1', {
+        vercelOrgId: 'user_123',
+        githubSecrets: {
+          token: 'VERCEL_FRONTEND_TOKEN',
+          orgId: 'VERCEL_FRONTEND_ORG_ID',
+          projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+          automationBypassSecret: 'VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET',
+        },
+        githubVariables: { alias: 'VERCEL_ALIAS' },
+      });
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'deployment_target_ci_secrets_reinstalled',
+        }),
+      );
+    });
+
+    it('requires a GitHub token, with the same wording syncProjects uses', async () => {
+      ciSecretsInstallers.get.mockReturnValue({
+        supports: jest.fn().mockReturnValue(true),
+      });
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        target,
+      );
+
+      await expect(
+        service.reinstallDeploymentSecrets(
+          'project-1',
+          'target-1',
+          'user-1',
+          null,
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('refuses when no installer supports this target', async () => {
+      ciSecretsInstallers.get.mockReturnValue({
+        supports: jest.fn().mockReturnValue(false),
+      });
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        { ...target, deploymentStrategy: 'vercel_git_connected' },
+      );
+
+      await expect(
+        service.reinstallDeploymentSecrets(
+          'project-1',
+          'target-1',
+          'user-1',
+          'github-token',
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 

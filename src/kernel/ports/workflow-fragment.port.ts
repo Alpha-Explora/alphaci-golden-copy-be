@@ -161,3 +161,21 @@ export function vercelAliasHost(projectName: string): string {
 export function vercelBranchAlias(branch: string, aliasStem: string): string {
   return branch === 'main' ? aliasStem : `${branch}-${aliasStem}`;
 }
+
+/**
+ * Repository secret carrying a Vercel "Protection Bypass for Automation" key
+ * for one deployment slot.
+ *
+ * Named through the same helper the workflow generator reads, mirroring
+ * {@link VERCEL_ALIAS_VARIABLE} above: the verify stage's browser suite runs
+ * Playwright against a uat/main preview sitting behind Vercel's Standard
+ * Protection, which answers every request - including Playwright's - with a
+ * 302 to its SSO wall. This is the value that goes in the
+ * `x-vercel-protection-bypass` header Vercel documents as the CI-facing way
+ * past that wall. One secret per slot, not per branch: Vercel scopes the
+ * bypass secret to the PROJECT, and one Vercel project already serves every
+ * branch this pipeline deploys.
+ */
+export function vercelAutomationBypassSecretName(slot: string): string {
+  return `VERCEL_${slot.toUpperCase()}_AUTOMATION_BYPASS_SECRET`;
+}

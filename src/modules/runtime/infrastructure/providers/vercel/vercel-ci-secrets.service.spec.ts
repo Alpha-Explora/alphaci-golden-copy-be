@@ -19,6 +19,9 @@ describe('VercelCiSecretsService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const vercelEnvClient = {
+    ensureAutomationBypassSecret: jest.fn(),
+  };
 
   const makeService = () =>
     new VercelCiSecretsService(
@@ -26,6 +29,7 @@ describe('VercelCiSecretsService', () => {
       providerConnectionsRepository as never,
       encryptionService as never,
       configService as never,
+      vercelEnvClient as never,
     );
 
   beforeEach(() => {
@@ -44,6 +48,9 @@ describe('VercelCiSecretsService', () => {
       },
     );
     encryptionService.decrypt.mockReturnValue('plain-vercel-token');
+    vercelEnvClient.ensureAutomationBypassSecret.mockResolvedValue(
+      'bypass-secret-value',
+    );
   });
 
   it('installs per-slot Vercel secrets for BYO CI-pushed targets', async () => {
@@ -79,8 +86,9 @@ describe('VercelCiSecretsService', () => {
       token: 'VERCEL_FRONTEND_TOKEN',
       orgId: 'VERCEL_FRONTEND_ORG_ID',
       projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+      automationBypassSecret: 'VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET',
     });
-    expect(githubService.setActionsSecretStrict).toHaveBeenCalledTimes(3);
+    expect(githubService.setActionsSecretStrict).toHaveBeenCalledTimes(4);
     expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
       'github-token',
       'owner',
@@ -102,6 +110,107 @@ describe('VercelCiSecretsService', () => {
       'VERCEL_FRONTEND_PROJECT_ID',
       'prj_1',
     );
+    expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
+      'github-token',
+      'owner',
+      'web',
+      'VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET',
+      'bypass-secret-value',
+    );
+    expect(vercelEnvClient.ensureAutomationBypassSecret).toHaveBeenCalledWith({
+      token: 'plain-vercel-token',
+      targetId: 'prj_1',
+    });
+  });
+
+  /*
+   * Not every Vercel account can grant Protection Bypass for Automation (plan,
+   * or a token without permission over it) — that must not cost the target
+   * the rest of its Vercel secrets, which is why this is a best-effort step
+   * and not a fourth setActionsSecretStrict call the caller must also mock.
+   */
+  it('installs the rest of the Vercel secrets when the bypass secret cannot be granted', async () => {
+    vercelEnvClient.ensureAutomationBypassSecret.mockRejectedValue(
+      new Error('Vercel refused to generate a Protection Bypass secret (403)'),
+    );
+    const service = makeService();
+
+    const result = await service.installForTarget({
+      githubAccessToken: 'github-token',
+      repoFullName: 'owner/web',
+      userId: 'user-1',
+      providerConnectionId: 'connection-1',
+      target: {
+        id: 'target-1',
+        projectId: 'project-1',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        providerConnectionId: 'connection-1',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'web',
+        repoFullName: 'owner/web',
+        branchName: 'test',
+        rootDirectory: null,
+        buildCommand: null,
+        startCommand: null,
+        environmentMap: {},
+        deploymentStrategy: 'vercel_ci_pushed',
+        providerMetadata: { vercelOrgId: 'user_123' },
+        status: 'active',
+      },
+    });
+
+    expect(result.githubSecrets).toEqual({
+      token: 'VERCEL_FRONTEND_TOKEN',
+      orgId: 'VERCEL_FRONTEND_ORG_ID',
+      projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+    });
+    expect(result.githubSecrets.automationBypassSecret).toBeUndefined();
+    // The other three secrets and the alias variable still installed.
+    expect(githubService.setActionsSecretStrict).toHaveBeenCalledTimes(3);
+    expect(githubService.setActionsVariableStrict).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes the bypass request to a BYO Vercel team, the same as its other calls', async () => {
+    const service = makeService();
+
+    await service.installForTarget({
+      githubAccessToken: 'github-token',
+      repoFullName: 'owner/web',
+      userId: 'user-1',
+      providerConnectionId: 'connection-1',
+      target: {
+        id: 'target-1',
+        projectId: 'project-1',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        providerConnectionId: 'connection-1',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'web',
+        repoFullName: 'owner/web',
+        branchName: 'test',
+        rootDirectory: null,
+        buildCommand: null,
+        startCommand: null,
+        environmentMap: {},
+        deploymentStrategy: 'vercel_ci_pushed',
+        providerMetadata: {
+          vercelOrgId: 'team_byo',
+          vercelTeamId: 'team_byo',
+          vercelTeamSlug: 'byo-team',
+        },
+        status: 'active',
+      },
+    });
+
+    expect(vercelEnvClient.ensureAutomationBypassSecret).toHaveBeenCalledWith({
+      token: 'plain-vercel-token',
+      targetId: 'prj_1',
+      vercelTeamId: 'team_byo',
+      vercelTeamSlug: 'byo-team',
+    });
   });
 
   /*

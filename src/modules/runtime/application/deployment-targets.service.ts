@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -72,6 +73,10 @@ import {
   type DeploymentLogsResponse,
   type LogFilterKey,
 } from '../core/deployment-logs.types';
+import {
+  PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
+  type ProviderCiSecretsInstallerRegistryPort,
+} from './ports/provider-ci-secrets-installer.port';
 
 const EMPTY_PROVIDER_TARGET_POLICY: DeploymentProviderTargetPolicyResult = {
   storage: {},
@@ -112,6 +117,9 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    @Inject(PROVIDER_CI_SECRETS_INSTALLER_REGISTRY)
+    private readonly ciSecretsInstallers?: ProviderCiSecretsInstallerRegistryPort,
   ) {}
 
   async listDeploymentTargets(projectId: string, userId: string) {
@@ -629,10 +637,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         detach: {
           enabled: true,
         },
-        reinstallDeploymentSecrets: {
-          enabled: false,
-          reason: 'Provider activation required',
-        },
+        reinstallDeploymentSecrets: this.reinstallSecretsDescriptor(target),
         openProviderDashboard: {
           enabled: this.providerDashboardUrl(target) !== null,
           url: this.providerDashboardUrl(target),
@@ -642,6 +647,129 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
           url: this.providerConsoleUrl(target),
         },
       },
+    };
+  }
+
+  /**
+   * Whether the reinstall action can do anything for this target: only a
+   * provider WITH an installer registered, whose installer's own `supports()`
+   * accepts this target's deployment strategy, can be asked to reinstall
+   * anything — the same test `installCiSecretsIfSupported` already applies
+   * during provisioning (see project-deployment-provisioning.service.ts).
+   * Currently that means Vercel CI-pushed targets and Render image-pushed /
+   * existing-service targets; a Git-connected Vercel project or a Render
+   * native-Git target has no CI secrets of its own to reinstall.
+   */
+  private reinstallSecretsDescriptor(
+    target: DeploymentTargetSummary,
+  ): { enabled: true } | { enabled: false; reason: string } {
+    const installer = this.ciSecretsInstallers?.get(target.provider);
+    if (installer?.supports(target)) {
+      return { enabled: true };
+    }
+
+    return {
+      enabled: false,
+      reason: installer
+        ? `${target.provider} has no CI secrets to reinstall for a ${target.deploymentStrategy} deployment.`
+        : `No CI secrets installer is registered for ${target.provider}.`,
+    };
+  }
+
+  /**
+   * Re-runs this target's CI secrets install — the same step provisioning
+   * performs once, up front (see
+   * ProjectDeploymentProvisioningService.installCiSecretsIfSupported) —
+   * without recreating anything at the provider. For a target whose secrets
+   * were never installed (an early provisioning failure, a provider that
+   * added bypass-secret support after this target already existed) or whose
+   * installed secrets need rotating.
+   *
+   * Requires the signed-in user's own GitHub token, the same way every other
+   * GitHub-writing endpoint in this codebase reads it — a missing token
+   * answers with the same "sign in again" wording `syncProjects` uses rather
+   * than a generic 401, since there is nothing else this call can do without
+   * one.
+   */
+  async reinstallDeploymentSecrets(
+    projectId: string,
+    targetId: string,
+    userId: string,
+    githubAccessToken: string | null,
+  ): Promise<{
+    reinstalled: true;
+    githubSecrets: Record<string, string>;
+    githubVariables?: Record<string, string>;
+  }> {
+    if (!this.projectTargetManagementEnabled()) {
+      throw new BadRequestException('Project target management is disabled');
+    }
+
+    await this.assertProjectMutationAccess(projectId, userId);
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+
+    const installer = this.ciSecretsInstallers?.get(target.provider);
+    if (!installer?.supports(target)) {
+      throw new BadRequestException(
+        `${target.provider} has no CI secrets to reinstall for a ${target.deploymentStrategy} deployment.`,
+      );
+    }
+    if (!githubAccessToken) {
+      throw new UnauthorizedException(
+        'GitHub access token not found. Re-authenticate via GitHub OAuth.',
+      );
+    }
+
+    const result = await installer.installForTarget({
+      githubAccessToken,
+      repoFullName: target.repoFullName,
+      userId,
+      providerConnectionId: target.providerConnectionId,
+      target,
+    });
+
+    // Persisted the same way provisioning persists it, so a target reinstalled
+    // by hand reads identically to one whose secrets were written at create
+    // time — nothing downstream (the actions descriptor above, the setup
+    // panel) can tell the two apart.
+    const providerMetadata = {
+      ...target.providerMetadata,
+      githubSecrets: result.githubSecrets,
+      ...(result.githubVariables
+        ? { githubVariables: result.githubVariables }
+        : {}),
+    };
+    await this.deploymentTargetsRepository.updateProviderMetadata(
+      target.id,
+      providerMetadata,
+    );
+
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_ci_secrets_reinstalled',
+      title: 'Deployment CI secrets reinstalled',
+      body: `${target.providerProjectName}'s CI secrets were reinstalled on ${target.repoFullName}.`,
+      metadata: {
+        targetId: target.id,
+        provider: target.provider,
+        githubSecrets: Object.keys(result.githubSecrets),
+        ...(result.githubVariables
+          ? { githubVariables: Object.keys(result.githubVariables) }
+          : {}),
+      },
+    });
+
+    return {
+      reinstalled: true,
+      githubSecrets: result.githubSecrets,
+      ...(result.githubVariables
+        ? { githubVariables: result.githubVariables }
+        : {}),
     };
   }
 

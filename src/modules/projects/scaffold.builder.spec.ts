@@ -128,6 +128,29 @@ describe('buildProjectScaffold', () => {
     expect(config).not.toContain('localhost');
   });
 
+  /*
+   * A uat/main preview sits behind Vercel's Standard Protection, which sends
+   * Playwright the same 302-to-SSO every other unauthenticated caller gets.
+   * playwright-e2e.yml only ever sets this env var when a Vercel frontend
+   * target actually installed the bypass secret, so its absence (no Vercel
+   * target, or one provisioned before this existed) must run the suite
+   * exactly as before rather than send an empty header.
+   */
+  it('sends the Vercel automation bypass header only when the secret is provided', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'react',
+      repoShape: 'standalone',
+    });
+    const config = files.find(
+      (file) => file.path === 'playwright.config.ts',
+    )!.content;
+
+    expect(config).toContain('VERCEL_AUTOMATION_BYPASS_SECRET');
+    expect(config).toContain('x-vercel-protection-bypass');
+    expect(config).toContain('x-vercel-set-bypass-cookie');
+  });
+
   it("renders the monorepo workspace scaffold for the catalog ID 'mono'", () => {
     const files = buildProjectScaffold({ ...baseOptions, repoShape: 'mono' });
     const paths = files.map((file) => file.path);
