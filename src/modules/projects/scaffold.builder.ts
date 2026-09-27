@@ -274,6 +274,15 @@ function buildPackageJson(packageName: string, stack: string): string {
  * the verify stage's resolved deployment hostname. There is no fallback to
  * localhost on purpose: a suite that quietly tests a dev server instead of
  * the deployment it was pointed at is worse than one that fails.
+ *
+ * A uat/main preview sits behind Vercel's Standard Protection, which answers
+ * every request - Playwright's included - with a redirect to Vercel's own
+ * SSO page rather than the app. VERCEL_AUTOMATION_BYPASS_SECRET is the
+ * per-project key playwright-e2e.yml is handed when a Vercel frontend target
+ * installed one (staged-workflow.builder.ts's uiTestJob); sent as a header,
+ * it is Vercel's own documented way past that wall for CI. Unset - no Vercel
+ * frontend target, or one that predates this - and the suite runs exactly as
+ * it did before, against whatever E2E_BASE_URL resolves to unprotected.
  */
 function buildPlaywrightConfig(): string {
   return [
@@ -287,6 +296,9 @@ function buildPlaywrightConfig(): string {
       "environment, so there is no default to fall back to.',",
     '  );',
     '}',
+    '',
+    'const vercelAutomationBypassSecret =',
+    '  process.env.VERCEL_AUTOMATION_BYPASS_SECRET;',
     '',
     'export default defineConfig({',
     "  testDir: 'tests/e2e',",
@@ -305,6 +317,17 @@ function buildPlaywrightConfig(): string {
     '  use: {',
     '    baseURL,',
     "    trace: 'on-first-retry',",
+    '    // Vercel Protection Bypass for Automation: gets Playwright past the',
+    "    // deployment's SSO wall on a protected uat/main preview. Omitted",
+    '    // entirely when the secret is not set, rather than sent empty.',
+    '    ...(vercelAutomationBypassSecret',
+    '      ? {',
+    '          extraHTTPHeaders: {',
+    "            'x-vercel-protection-bypass': vercelAutomationBypassSecret,",
+    "            'x-vercel-set-bypass-cookie': 'true',",
+    '          },',
+    '        }',
+    '      : {}),',
     '  },',
     '  projects: [',
     "    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },",

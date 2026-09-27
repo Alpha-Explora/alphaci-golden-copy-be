@@ -1045,6 +1045,176 @@ describe('VercelEnvClient', () => {
     ).resolves.toEqual({ deleted: true });
   });
 
+  describe('ensureAutomationBypassSecret', () => {
+    it('reuses an existing automation-bypass secret rather than generating a new one', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            id: 'prj_1',
+            protectionBypass: {
+              other_scope_secret: { scope: 'shareable-link' },
+              existing_secret: {
+                scope: 'automation-bypass',
+                note: 'ALPHACI verify stage',
+              },
+            },
+          }),
+      });
+
+      await expect(
+        new VercelEnvClient().ensureAutomationBypassSecret({
+          token: 'vercel',
+          targetId: 'prj_1',
+        }),
+      ).resolves.toBe('existing_secret');
+
+      // Reading, not writing: no PATCH was needed because one was already there.
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.vercel.com/v9/projects/prj_1',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer vercel' }),
+        }),
+      );
+    });
+
+    /*
+     * Vercel does not require a note on a bypass secret at all, and a
+     * platform is free to reuse one it did not create the note for — so an
+     * automation-bypass secret missing this platform's note is still
+     * reused rather than treated as absent.
+     */
+    it('reuses an automation-bypass secret even when no note matches', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            protectionBypass: {
+              hand_made_secret: { scope: 'automation-bypass' },
+            },
+          }),
+      });
+
+      await expect(
+        new VercelEnvClient().ensureAutomationBypassSecret({
+          token: 'vercel',
+          targetId: 'prj_1',
+        }),
+      ).resolves.toBe('hand_made_secret');
+    });
+
+    it('generates a new automation-bypass secret when none exists yet', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              protectionBypass: {
+                shared_link_secret: { scope: 'shareable-link' },
+              },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              protectionBypass: {
+                shared_link_secret: { scope: 'shareable-link' },
+                new_secret: {
+                  scope: 'automation-bypass',
+                  note: 'ALPHACI verify stage',
+                },
+              },
+            }),
+        });
+
+      await expect(
+        new VercelEnvClient().ensureAutomationBypassSecret({
+          token: 'vercel',
+          targetId: 'prj_1',
+        }),
+      ).resolves.toBe('new_secret');
+
+      expect(fetch).toHaveBeenCalledTimes(2);
+      const [url, init] = (fetch as jest.Mock).mock.calls[1] as [
+        string,
+        { method: string; body: string },
+      ];
+      expect(url).toBe(
+        'https://api.vercel.com/v1/projects/prj_1/protection-bypass',
+      );
+      expect(init.method).toBe('PATCH');
+      expect(JSON.parse(init.body)).toEqual({
+        generate: { note: 'ALPHACI verify stage' },
+      });
+    });
+
+    it('scopes both the read and the generate call to a BYO team, like getTargetStatus', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ protectionBypass: {} }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              protectionBypass: {
+                new_secret: { scope: 'automation-bypass' },
+              },
+            }),
+        });
+
+      await new VercelEnvClient().ensureAutomationBypassSecret({
+        token: 'vercel',
+        targetId: 'prj_1',
+        vercelTeamId: 'team_byo',
+      });
+
+      const [readUrl] = (fetch as jest.Mock).mock.calls[0] as [string];
+      const [generateUrl] = (fetch as jest.Mock).mock.calls[1] as [string];
+      expect(readUrl).toBe(
+        'https://api.vercel.com/v9/projects/prj_1?teamId=team_byo',
+      );
+      expect(generateUrl).toBe(
+        'https://api.vercel.com/v1/projects/prj_1/protection-bypass?teamId=team_byo',
+      );
+    });
+
+    it('throws without exposing the token when Vercel refuses the generate call', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ protectionBypass: {} }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          text: () =>
+            Promise.resolve(
+              '{"error":{"message":"Forbidden","code":"forbidden"}}',
+            ),
+        });
+
+      let thrown: Error | null = null;
+      try {
+        await new VercelEnvClient().ensureAutomationBypassSecret({
+          token: 'vercel-secret-token',
+          targetId: 'prj_1',
+        });
+      } catch (error) {
+        thrown = error as Error;
+      }
+
+      expect(thrown).not.toBeNull();
+      expect(thrown?.message).not.toContain('vercel-secret-token');
+    });
+  });
+
   it('returns an actionable message when Vercel GitHub integration is missing', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: false,

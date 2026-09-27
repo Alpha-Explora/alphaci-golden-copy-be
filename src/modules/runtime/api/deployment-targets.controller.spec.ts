@@ -10,6 +10,9 @@ describe('DeploymentTargetsController', () => {
       createDeploymentTarget: jest.fn().mockResolvedValue({ id: 'target-2' }),
       getDeploymentTargetActions: jest.fn().mockResolvedValue({ actions: [] }),
       syncDeploymentTarget: jest.fn().mockResolvedValue({ synced: true }),
+      reinstallDeploymentSecrets: jest
+        .fn()
+        .mockResolvedValue({ reinstalled: true, githubSecrets: {} }),
       updateDeploymentTargetMetadata: jest
         .fn()
         .mockResolvedValue({ id: 'target-1', branchName: 'test' }),
@@ -76,6 +79,38 @@ describe('DeploymentTargetsController', () => {
       'project-1',
       'target-1',
       'user-1',
+    );
+  });
+
+  it('reinstalls CI secrets, passing the session GitHub token through', async () => {
+    const service = makeService();
+    const controller = new DeploymentTargetsController(service);
+    const tokenRequest = {
+      session: { user: { id: 'user-1' }, githubAccessToken: 'gh-token' },
+    } as never;
+
+    await expect(
+      controller.reinstallSecrets(tokenRequest, 'project-1', 'target-1'),
+    ).resolves.toEqual({ reinstalled: true, githubSecrets: {} });
+    expect(service.reinstallDeploymentSecrets).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      'gh-token',
+    );
+  });
+
+  it('reinstalls CI secrets with a null token when the session has none', async () => {
+    const service = makeService();
+    const controller = new DeploymentTargetsController(service);
+
+    await controller.reinstallSecrets(request, 'project-1', 'target-1');
+
+    expect(service.reinstallDeploymentSecrets).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      null,
     );
   });
 

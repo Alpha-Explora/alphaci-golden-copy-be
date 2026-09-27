@@ -5,6 +5,7 @@ import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port'
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
   VERCEL_ALIAS_VARIABLE,
+  vercelAutomationBypassSecretName,
   vercelBranchAlias,
 } from '#kernel/ports/workflow-fragment.port';
 import type {
@@ -757,6 +758,24 @@ function buildVerifyWorkflowFile(
        */
       'run-only-on-branch': '*',
       'upload-artifacts': true,
+    },
+    /*
+     * A browser suite's target is always the Vercel-deployed frontend slot -
+     * Vercel is the only provider this platform lets take that slot (see
+     * `supportedSlots` on the provider registry) - so the bypass secret this
+     * job needs is always the frontend one, whether or not this particular
+     * project has that target wired up yet.
+     *
+     * `secrets:` and not `with:`: GitHub rejects the whole workflow file at
+     * parse time if a reusable-workflow call reads `secrets.*` inside `with:`,
+     * but a `secrets:` block is exactly what a reusable-workflow call takes
+     * it in. An unset repository secret evaluates to an empty string here,
+     * which playwright-e2e.yml (and this scaffold's playwright.config.ts)
+     * both treat as "no bypass header to send" - so a project with no Vercel
+     * frontend target, or one that predates this, runs exactly as before.
+     */
+    secrets: {
+      VERCEL_AUTOMATION_BYPASS_SECRET: `\${{ secrets.${vercelAutomationBypassSecretName('frontend')} }}`,
     },
   });
 

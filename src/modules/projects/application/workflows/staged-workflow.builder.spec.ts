@@ -1395,6 +1395,50 @@ describe('the verify stage', () => {
   });
 
   /*
+   * Vercel's Standard Protection answers every request against a uat/main
+   * preview — Playwright's included — with a redirect to its own SSO page,
+   * so the browser suite needs this to reach the deployment at all. Reusing
+   * the same helper VercelCiSecretsService writes the secret under is what
+   * keeps the name read here and the name written there from drifting apart.
+   * `secrets:`, not `with:`: GitHub rejects a reusable-workflow call outright
+   * if `secrets.*` is read inside `with:`.
+   */
+  it('hands the browser suite the Vercel automation bypass secret, for both branches', () => {
+    const bundle = buildStagedWorkflowBundle(
+      makeTemplate('react'),
+      {
+        templateId: 'fe-react',
+        serviceName: 'orders-web',
+        deploymentTargets: [
+          {
+            slot: 'standalone',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            secretNames: {
+              token: 'VERCEL_TOKEN_STANDALONE',
+              orgId: 'VERCEL_ORG_ID_STANDALONE',
+              projectId: 'VERCEL_PROJECT_ID_STANDALONE',
+            },
+          },
+        ],
+      } as never,
+      workflowFragmentRegistry,
+    );
+
+    const verify = yaml.load(
+      bundle.workflowFiles.find((candidate) => candidate.stage === 'verify')!
+        .yaml,
+    ) as ParsedWorkflow;
+
+    for (const jobId of ['ui-tests-uat', 'ui-tests-main']) {
+      expect(verify.jobs[jobId]?.secrets).toEqual({
+        VERCEL_AUTOMATION_BYPASS_SECRET:
+          '${{ secrets.VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET }}',
+      });
+    }
+  });
+
+  /*
    * One variable for a Vercel project, because one project serves every
    * branch and the branch is a prefix on its hostname.
    *

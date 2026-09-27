@@ -51,6 +51,21 @@ interface CreateProjectAttempt {
 /** Vercel's production lane. Every other branch is a scoped preview. */
 const VERCEL_PRODUCTION_BRANCH = 'main';
 
+/** Vercel's own scope label for a Protection Bypass for Automation secret. */
+const VERCEL_AUTOMATION_BYPASS_SCOPE = 'automation-bypass';
+
+/**
+ * Recorded on every automation bypass secret this platform generates.
+ *
+ * Read back on the next call before generating a new one, so re-provisioning
+ * or reinstalling a target's CI secrets reuses the same key rather than
+ * minting another every time - Vercel does not cap how many bypass secrets a
+ * project can hold, but nothing removes the old ones either. Also lets
+ * whoever is reading the Vercel dashboard tell which secret is this
+ * platform's.
+ */
+const VERCEL_AUTOMATION_BYPASS_NOTE = 'ALPHACI verify stage';
+
 /**
  * Whether this target's variables will be scoped to a Git branch.
  *
@@ -476,6 +491,107 @@ export class VercelEnvClient implements DeploymentProvider {
       exists: true,
       ...(url !== undefined ? { url } : {}),
     };
+  }
+
+  /**
+   * A Protection Bypass for Automation secret for this project, reusing one
+   * already there before minting another.
+   *
+   * Scoped exactly the way {@link getTargetStatus} scopes a call against an
+   * existing target - `withInputScope`, so a BYO connection's team travels on
+   * the input the same way it does for status/history/log lookups, rather
+   * than silently falling back to the ALPHACI-managed team `withScope` reads
+   * from config.
+   */
+  async ensureAutomationBypassSecret(
+    input: ProviderTargetStatusInput,
+  ): Promise<string> {
+    const before = await this.protectionBypassEntries(input);
+    const existing = this.preferredAutomationBypassSecret(before);
+    if (existing) {
+      return existing;
+    }
+
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v1/projects/${encodeURIComponent(input.targetId)}/protection-bypass`,
+        input,
+      ),
+      {
+        method: 'PATCH',
+        headers: this.headers(input.token),
+        body: JSON.stringify({
+          generate: { note: VERCEL_AUTOMATION_BYPASS_NOTE },
+        }),
+      },
+    );
+    await this.assertOk(
+      response,
+      'Vercel automation bypass secret could not be created',
+    );
+    const payload = (await response.json()) as {
+      protectionBypass?: Record<string, unknown>;
+    };
+    // The PATCH response is the PROJECT's full bypass-secret set, not just
+    // what this call added, so the new key is whichever one was not in the
+    // snapshot read a moment ago.
+    const created = Object.keys(payload.protectionBypass ?? {}).find(
+      (key) => !(key in before),
+    );
+    if (!created) {
+      throw new Error(
+        'Vercel accepted the automation bypass request but did not return a new secret',
+      );
+    }
+
+    return created;
+  }
+
+  /** Every scope: 'automation-bypass' entry, keyed by the secret itself. */
+  private async protectionBypassEntries(
+    input: ProviderTargetStatusInput,
+  ): Promise<Record<string, { scope?: string; note?: string }>> {
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v9/projects/${encodeURIComponent(input.targetId)}`,
+        input,
+      ),
+      { headers: this.headers(input.token) },
+    );
+    await this.assertOk(response, 'Vercel project could not be loaded');
+    const payload = (await response.json()) as {
+      protectionBypass?: Record<string, { scope?: string; note?: string }>;
+    };
+
+    return payload.protectionBypass ?? {};
+  }
+
+  /**
+   * Which already-provisioned bypass secret to reuse, or null when none
+   * exists yet.
+   *
+   * Prefers the one this platform generated (its note matches), so a project
+   * with other bypass secrets - hand-created, or made for a different tool -
+   * is not handed one of those instead. Falls back to any automation-bypass
+   * secret when none carries that note, because Vercel does not require a
+   * note at all and an un-noted one this platform made earlier is still this
+   * platform's to reuse.
+   */
+  private preferredAutomationBypassSecret(
+    entries: Record<string, { scope?: string; note?: string }>,
+  ): string | null {
+    const automationSecrets = Object.entries(entries).filter(
+      ([, meta]) => meta.scope === VERCEL_AUTOMATION_BYPASS_SCOPE,
+    );
+    if (automationSecrets.length === 0) {
+      return null;
+    }
+
+    const ownNote = automationSecrets.find(
+      ([, meta]) => meta.note === VERCEL_AUTOMATION_BYPASS_NOTE,
+    );
+
+    return (ownNote ?? automationSecrets[0])![0];
   }
 
   async deleteTarget(

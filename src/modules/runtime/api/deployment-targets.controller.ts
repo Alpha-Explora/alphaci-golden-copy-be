@@ -100,6 +100,27 @@ export class DeploymentTargetsController {
     );
   }
 
+  /**
+   * Re-runs this target's CI secrets install without recreating anything at
+   * the provider — for a target created before a secret this platform now
+   * installs existed (e.g. the Vercel automation bypass secret), or whose
+   * installed secrets need rotating. Requires the signed-in user's own GitHub
+   * token, read the same way `syncProjects` (projects.controller.ts) reads it.
+   */
+  @Post(':targetId/reinstall-secrets')
+  reinstallSecrets(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('targetId') targetId: string,
+  ) {
+    return this.service.reinstallDeploymentSecrets(
+      projectId,
+      targetId,
+      req.session.user!.id,
+      req.session.githubAccessToken ?? null,
+    );
+  }
+
   @Patch(':targetId')
   update(
     @Req() req: Request,
