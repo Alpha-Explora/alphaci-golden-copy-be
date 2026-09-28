@@ -6,7 +6,13 @@ import {
   sign,
   type KeyObject,
 } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
@@ -44,7 +50,8 @@ const digest = (character: string) => 'sha256:' + character.repeat(64);
  * image pulled before the signature is checked; a release signed with another
  * key, or a changed manifest, deployed; an image pulled by tag; a release that
  * fails its health check left running, or reported healthy; the previous
- * release not restored.
+ * release not restored; a support bundle that leaks the host token or lacks
+ * what support needs.
  */
 describe('On-prem host agent', () => {
   let e2e: E2eApplication;
@@ -150,7 +157,7 @@ describe('On-prem host agent', () => {
   }
 
   // Asynchronous: the agent calls back into this process's HTTP server.
-  async function runAgent(extra: string[] = []) {
+  async function runAgent(extra: string[] = [], command = '') {
     writeFileSync(join(work, 'docker.log'), '');
     await promisify(execFile)(
       'docker',
@@ -178,11 +185,13 @@ describe('On-prem host agent', () => {
         'ALPHACI_DOCKER=/work/docker',
         '-e',
         'ALPHACI_HEALTH_TIMEOUT=5',
+        '-e',
+        'ALPHACI_SUPPORT_DIR=/work/support',
         ...extra,
         IMAGE,
         'sh',
         '-c',
-        'chmod +x /work/docker && bash /agent/alphaci-agent.sh',
+        'chmod +x /work/docker && bash /agent/alphaci-agent.sh ' + command,
       ],
       { encoding: 'utf8', timeout: 120_000 },
     );
@@ -343,4 +352,49 @@ describe('On-prem host agent', () => {
       digest('a'),
     );
   });
+
+  it('writes a support bundle with the running release and none of the host token', async () => {
+    const log = await runAgent([], 'support-bundle');
+
+    // The bundle asked Compose for state and logs, and pulled or started nothing.
+    const calls = log.split('\n').filter(Boolean);
+    expect(calls).toEqual([
+      'version --format docker {{.Server.Version}}',
+      expect.stringMatching(/current\.env ps -a$/),
+      expect.stringMatching(
+        /current\.env logs --no-color --timestamps --tail 200$/,
+      ),
+    ]);
+
+    await promisify(execFile)('docker', [
+      'run',
+      '--rm',
+      '-v',
+      work + ':/work',
+      IMAGE,
+      'sh',
+      '-c',
+      'rm -rf /work/bundle && mkdir /work/bundle && tar -xzf /work/support/*.tar.gz -C /work/bundle',
+    ]);
+    const files = listFiles(join(work, 'bundle'));
+    const text = (name: string) =>
+      readFileSync(required(files.find((file) => file.endsWith(name))), 'utf8');
+
+    expect(text('release.env')).toContain(
+      'ALPHACI_IMAGE_BACKEND=ghcr.io/e2e-org/api@' + digest('a'),
+    );
+    expect(text('settings.txt')).toContain(
+      'ALPHACI_HOST_TOKEN_FILE=<redacted>',
+    );
+    for (const file of files) {
+      expect(readFileSync(file, 'utf8')).not.toContain(project.hostToken);
+    }
+  });
 });
+
+function listFiles(directory: string): string[] {
+  return readdirSync(directory).flatMap((name) => {
+    const path = join(directory, name);
+    return statSync(path).isDirectory() ? listFiles(path) : [path];
+  });
+}
