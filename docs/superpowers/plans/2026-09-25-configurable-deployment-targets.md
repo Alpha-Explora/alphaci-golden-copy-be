@@ -113,26 +113,25 @@ PR targeting is therefore a workflow convention, not a server-enforced policy.
 Keep changes to both `codex/configurable-deployment-targets` and production
 `main` in reviewed PRs.
 
-E1 (backend #104), R1 (backend #105), and W1 (`alphaci-workflow` #30) are
-merged. The remaining slices run in this order:
+Merged: E1 (#104), R1 (#105), X0 (#114), E2 (#115), C1 (#116), E3a (#117),
+release history for the UI (#118), W1 (`alphaci-workflow` #30), and W2
+(`alphaci-workflow` #33). The remaining work runs in this order; the critical
+path is E3b, H1, C2, and the lab run.
 
 | Order | Slice | Branch | Repository | Needs merged first |
 |---|---|---|---|---|
-| 1 | X0 | `codex/e2e-suite` | Backend | E1 |
-| 2 | E2 | `codex/environment-targets` | Backend | E1, X0 |
-| 3 | C1 | `codex/onprem-release-contract` | Backend | E1, X0 |
-| 4 | E3a | `codex/environment-pipelines` | Backend | E2, C1 |
-| 4b | E3b | `codex/environment-project-creation` | Backend | E3a, W2 |
-| 5 | W2 | `codex/signed-onprem-release` | `alphaci-workflow` | W1, C1 |
-| 6 | H1 | `codex/onprem-host-agent` | Backend | C1 |
-| 7 | C2 | `codex/onprem-compose-provider` | Backend | C1, E3 |
-| 8 | F1 | `codex/project-environment-setup` | Frontend | E3 |
-| 9 | H2 | `codex/onprem-windows-host` | Backend | H1 |
-| 10 | F2 | `codex/environment-operations` | Frontend | F1, E2, E3 |
-| 11 | C3 | `codex/mixed-deployment-activation` | Backend | C2, H2, R1, F2, W2 |
+| 1 | E3b | `codex/environment-project-creation` | Backend | E3a, W2 |
+| 2 | H1 | `codex/onprem-host-agent` | Backend | C1 |
+| 3 | C2 | `codex/onprem-compose-provider` | Backend | E3b, H1 |
+| 4 | Lab run | none | All | C2; central `@v1` includes W1 and W2 |
+| 5 | F2 | `codex/environment-operations` | Frontend | E2, C1, release history |
+| 6 | F1 | `codex/project-environment-setup` | Frontend | E3b |
+| 7 | H2 | `codex/onprem-windows-host` | Backend | Lab run |
 
-C3 stays draft until the central `@v1` tag includes W2 and the mixed
-deployment acceptance run passes.
+C2 registers the on-prem provider and turns it on; it replaces the separate
+C3 activation slice. F1 and F2 are not on the critical path: the lab run
+drives the API directly. H2 and the Windows Server VM check belong to client
+readiness (Phase 6), after the design is proven on the laptop.
 
 #### Implementation rules
 
@@ -155,11 +154,16 @@ deployment acceptance run passes.
 - Each slice PR ticks its own task here and links its evidence in one line.
   Regenerate `*.generated.md` files only when a PR changes their inputs.
 - Squash each PR to one Conventional Commit. Extend existing validators and
-  scripts; add no new scripts, gates, or refactors outside the slice.
+  scripts; add no new scripts, gates, or refactors outside the slice, except
+  `npm run routes:add`, which records new routes in the route inventory.
+- Batch each PR's commit, push, and PR creation into one command, and CI
+  watching and merge into another. CI runs once per PR: `push` triggers only
+  `main` and `codex/configurable-deployment-targets`.
 - Review each PR once for correctness, security, and contract drift before
   merging. Only P0 and P1 findings block; list the rest as PR follow-ups.
-- Checks that need hosted providers, the WSL host, or the Windows Server VM
-  wait for the Phase 5 lab run. Each PR adds its scenario to that checklist.
+- Checks that need hosted providers or the WSL host wait for the Phase 5 lab
+  run; Windows Server VM checks wait for Phase 6. Each PR adds its scenario to
+  the matching checklist.
 
 ### Phase 0: integrate the baseline and lock the contracts
 
@@ -327,50 +331,57 @@ as runtime acceptance evidence.
   project-creation contract. Display the actual created branches and remove
   frontend-only branch-rank constants. Existing projects display their
   effective legacy configuration without automatic changes.
-- [ ] **W2**, central workflow PR based on W1: add the missing reusable
+- [x] **W2**, central workflow PR based on W1: add the missing reusable
   on-prem manifest-signing and registration workflow, or extend `release.yml`
   if its contract can remain host-neutral. Sign with the AlphaCI Cloud KMS
   key; register through C1's API. The manifest includes environment ID,
   release ID, pinned commit, image digests, and migration version when present.
   Update docs and workflow validation. No CI job receives host credentials.
+  Evidence: `alphaci-workflow` #33; actionlint and the shared canonical vector.
 - [ ] **H1**, backend PR based on C1: package a Linux agent under
   `deploy/onprem/agent`. It polls outbound, verifies the pinned public key,
   pulls by digest, applies Compose, checks health, rolls back, and reports
-  status. Evidence: repeatable signed-release, tamper, and rollback runs on
-  the Ubuntu lab host.
+  status. Run it from a systemd service and timer inside WSL. Evidence:
+  signed-release, tamper, and rollback scenarios against the E2E backend and
+  a local registry, then the lab run on Ubuntu.
 
-### Phase 4: provider, Windows host, and operations UI (C2, H2, F2)
+### Phase 4: on-prem provider and activation (C2)
 
-- [ ] **C2**, backend PR based on E3 after C1 merges: add the Compose provider
-  pack and workflow fragment using the E2/E3 environment contract. Keep provider
-  discovery gated until Phase 5. Evidence: generated workflow and release
-  status mapping against a fixture.
-- [ ] **H2**, backend PR based on H1: package Caddy/TLS and an idempotent
-  Windows bootstrap for the startup task, WSL port forwarding, subnet-scoped
-  firewall, and support bundle. Populate the lab host's trust, TLS, and secret
-  files with scoped test credentials. Evidence: install, restart, and rerun on
-  the laptop without manual repair.
-- [ ] **F2**, frontend PR based on F1: configure a provider per environment
-  and slot; show environment-scoped secrets, deployment status, artifact
-  identity, and explicit promotion controls from E2/E3. Show on-prem host
-  settings only after provider discovery advertises C3's enabled pack. Do not
-  collapse every non-production environment into UAT.
+- [ ] **C2**, backend PR based on E3b and H1: add the `onprem-compose`
+  provider pack and workflow fragment using the E2/E3 environment contract,
+  register it behind `ONPREM_RELEASES_ENABLED`, and regenerate the provider
+  map. Promotions to an on-prem target create the host assignment instead of
+  dispatching a workflow. Confirm the validated central `@v1` ref contains W1
+  and W2 before any generated caller uses them. Evidence: E2E promotion to an
+  on-prem target reaching the host assignment, and generated workflows for the
+  mixed-provider example.
 
-### Phase 5: activate and prove the mixed configuration (C3)
+### Phase 5: prove the mixed configuration on the laptop
 
-- [ ] **C3**, backend PR based on C2: register the on-prem provider and
-  generated production workflow after E3, H2, R1, F2, and W2 merge. Confirm
-  the validated central `@v1` ref contains the new reusable contract before
-  any generated caller uses it. Regenerate the provider map.
 - [ ] On disposable React and .NET projects, deploy the example test/UAT
   environments to Vercel/Render and production to Ubuntu. Also cover custom
   names and two environments sharing one branch. Verify one auto-deploy per
   push, explicit promotion, pinned source identity, provider isolation,
   install, upgrade, rejected signature, failed-health rollback, and restart
-  recovery. Record a repeatable report tied to the commit. Defer this long E2E
-  run while building earlier phases, but do not merge C3 or claim client
-  readiness until it passes on the laptop and Windows Server 2022 VM with
-  nested virtualization.
+  recovery of the WSL host. Record a repeatable report tied to the commit.
+- [ ] **F2**, frontend PR: show each environment in order with its targets per
+  slot, current release (commit, image digests), deployment history, and an
+  explicit Promote action with the backend's reason when it is refused and a
+  confirmation for production. Do not collapse non-production environments
+  into UAT. Show on-prem host settings only when the on-prem provider is
+  enabled.
+- [ ] **F1**, frontend PR after E3b: edit the complete ordered environment
+  definition during project setup, starting from the editable `dev/uat/main`
+  template, and display the branches actually created. Existing projects keep
+  their effective legacy configuration.
+
+### Phase 6: client readiness (H2)
+
+- [ ] **H2**, backend PR based on H1: package Caddy/TLS and an idempotent
+  Windows bootstrap for the startup task, WSL port forwarding, subnet-scoped
+  firewall, and support bundle. Evidence: install, restart, and rerun on the
+  laptop without manual repair, then the Phase 5 checks on a Windows Server
+  2022 VM with nested virtualization.
 - [ ] Move the [host setup guide](2026-09-25-onprem-client-setup-guide.md) to
   a current-state runbook after those checks pass; mark ADR-0012 accepted
   only for the delivered scope.
@@ -380,7 +391,8 @@ as runtime acceptance evidence.
 One project can name and order its own environments, map two of them to one
 source branch, choose a provider for each slot, and promote a pinned release
 without an unrequested deploy or provider switch. The example has managed
-test/UAT and on-prem production targets. The host passes install, upgrade,
-rollback, and restart checks; no CI job or AlphaCI service holds customer host
-secrets.
+test/UAT and on-prem production targets on the WSL lab host, which passes
+install, upgrade, rollback, and restart checks; no CI job or AlphaCI service
+holds customer host secrets. Client readiness (Phase 6) is tracked here but is
+a separate milestone for the first enterprise installation.
 Delete this plan when the last task lands; Git retains it.

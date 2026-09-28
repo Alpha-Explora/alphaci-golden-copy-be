@@ -7,7 +7,10 @@ name: CI
 #   npm run typecheck && npm run lint && npm test && npm run boundaries && npm run check:documentation && npm run check:capabilities
 
 on:
-  push: {}
+  # Pull requests run the gate once; pushes run it only on the branches that
+  # receive merges, so a PR branch push does not run it a second time.
+  push:
+    branches: [main, codex/configurable-deployment-targets]
   pull_request: {}
   workflow_dispatch: {}
 
