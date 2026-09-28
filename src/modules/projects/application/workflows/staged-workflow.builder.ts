@@ -371,7 +371,7 @@ export interface StagedEnvironmentTarget {
   environmentId: string;
   slot: 'backend' | 'frontend' | 'standalone';
   targetId: string;
-  provider: 'render' | 'vercel';
+  provider: string;
 }
 
 /** The promotion workflow AlphaCI dispatches, relative to .github/workflows. */
@@ -1099,7 +1099,12 @@ export function buildStagedWorkflowBundle(
   const ctx = resolveStagedContext(template, dto);
   const toolchain = resolveToolchain(ctx);
   if (dto.environments?.length) {
-    return buildEnvironmentWorkflowBundle(ctx, toolchain, dto);
+    return buildEnvironmentWorkflowBundle(
+      ctx,
+      toolchain,
+      dto,
+      workflowFragmentRegistry,
+    );
   }
   const deploymentPlan = buildPackageDeploymentPlan(
     dto.deploymentTargets ?? [],
@@ -1209,7 +1214,13 @@ function buildEnvironmentWorkflowBundle(
   ctx: StagedWorkflowContext,
   toolchain: ToolchainFragmentResult,
   dto: StagedWorkflowOptions,
+  registry: WorkflowFragmentRegistry | undefined,
 ): StagedWorkflowBundle {
+  if (!registry) {
+    throw new Error(
+      'Environment pipelines need the workflow fragment registry.',
+    );
+  }
   const environments = orderedEnvironments(dto.environments ?? []);
   const targets = dto.environmentTargets ?? [];
   for (const target of targets) {
@@ -1225,10 +1236,16 @@ function buildEnvironmentWorkflowBundle(
   const files: StagedWorkflowFile[] = [
     buildAccessWorkflowFile(ctx),
     buildQualityWorkflowFile(ctx, toolchain),
-    buildEnvironmentPackageWorkflowFile(ctx, toolchain, environments, targets),
+    buildEnvironmentPackageWorkflowFile(
+      ctx,
+      toolchain,
+      registry,
+      environments,
+      targets,
+    ),
   ];
   if (dto.workflowVariant !== 'frontend') {
-    files.push(buildPromoteWorkflowFile(ctx, environments, targets));
+    files.push(buildPromoteWorkflowFile(ctx, registry, environments, targets));
     files.push(buildEnvGuardWorkflowFile(ctx.branches));
   }
 
@@ -1243,14 +1260,10 @@ function buildEnvironmentWorkflowBundle(
   };
 }
 
-const LEGACY_ENVIRONMENT_LABEL = {
-  production: 'production',
-  non_production: 'uat',
-} as const;
-
-/** A reusable deploy call for one environment target, fully identified. */
+/** A deploy job for one environment target, built by its provider's fragment. */
 function environmentDeployJob(
   ctx: StagedWorkflowContext,
+  registry: WorkflowFragmentRegistry,
   environment: StagedWorkflowEnvironment,
   target: StagedEnvironmentTarget,
   input: {
@@ -1260,52 +1273,33 @@ function environmentDeployJob(
     artifact: string | undefined;
   },
 ) {
-  const identity = {
-    'environment-id': environment.id,
-    'environment-name': environment.slug,
-    'target-id': target.targetId,
-  };
-  if (target.provider === 'vercel') {
-    return {
-      needs: input.needs,
-      if: input.if,
-      uses: `${CENTRAL_WORKFLOW_BASE}/vercel-deploy.yml@${ctx.centralWorkflowRef}`,
-      with: {
-        'system-name': ctx.serviceName,
-        'working-directory': ctx.servicePath,
-        environment: LEGACY_ENVIRONMENT_LABEL[environment.role],
-        'checkout-ref': input.commitSha,
-        'git-branch': environment.sourceBranch,
-        ...identity,
-      },
-      secrets: 'inherit',
-    };
-  }
-  return {
-    needs: input.needs,
-    if: input.if,
-    uses: `${CENTRAL_WORKFLOW_BASE}/render-deploy.yml@${ctx.centralWorkflowRef}`,
-    with: {
-      'system-name': ctx.serviceName,
-      environment: LEGACY_ENVIRONMENT_LABEL[environment.role],
-      branch: environment.sourceBranch,
-      ...identity,
-      'commit-sha': input.commitSha,
-      ...(input.artifact ? { artifact: input.artifact } : {}),
+  return registry.environmentDeployJob(
+    target.provider,
+    {
+      environment,
+      targetId: target.targetId,
+      ...input,
     },
-    secrets: 'inherit',
-  };
+    {
+      serviceName: ctx.serviceName,
+      servicePath: ctx.servicePath,
+      centralWorkflowRef: ctx.centralWorkflowRef,
+    },
+  );
 }
 
 const imageJobId = (slot: string) => 'image-' + slot;
 const releaseImageOutput = (slot: string) => 'image-' + slot;
 
 /** Slots whose target runs a container image built by this pipeline. */
-function containerSlots(targets: StagedEnvironmentTarget[]): string[] {
+function containerSlots(
+  registry: WorkflowFragmentRegistry,
+  targets: StagedEnvironmentTarget[],
+): string[] {
   return [
     ...new Set(
       targets
-        .filter(({ provider }) => provider === 'render')
+        .filter(({ provider }) => registry.deploysBuiltImage(provider))
         .map(({ slot }) => slot),
     ),
   ];
@@ -1319,6 +1313,7 @@ const CI_REQUEST_HEADERS = [
 function buildEnvironmentPackageWorkflowFile(
   ctx: StagedWorkflowContext,
   toolchain: ToolchainFragmentResult,
+  registry: WorkflowFragmentRegistry,
   environments: StagedWorkflowEnvironment[],
   targets: StagedEnvironmentTarget[],
 ): StagedWorkflowFile {
@@ -1328,7 +1323,7 @@ function buildEnvironmentPackageWorkflowFile(
     ({ environmentId }) => environmentId === first.id,
   );
   const onFirstBranch = branchIsOneOf([first.sourceBranch]);
-  const slots = containerSlots(firstTargets);
+  const slots = containerSlots(registry, firstTargets);
   const imageJobs = Object.fromEntries(
     slots.map((slot) => [
       imageJobId(slot),
@@ -1365,7 +1360,7 @@ function buildEnvironmentPackageWorkflowFile(
   const deployJobs = Object.fromEntries(
     firstTargets.map((target) => [
       'deploy-' + first.slug + '-' + target.slot,
-      environmentDeployJob(ctx, first, target, {
+      environmentDeployJob(ctx, registry, first, target, {
         needs: [
           'register-release',
           ...(slots.includes(target.slot) ? [imageJobId(target.slot)] : []),
@@ -1488,18 +1483,19 @@ function buildEnvironmentPackageWorkflowFile(
  */
 function buildPromoteWorkflowFile(
   ctx: StagedWorkflowContext,
+  registry: WorkflowFragmentRegistry,
   environments: StagedWorkflowEnvironment[],
   targets: StagedEnvironmentTarget[],
 ): StagedWorkflowFile {
   const later = environments.slice(1);
-  const slots = containerSlots(targets);
+  const slots = containerSlots(registry, targets);
   const deployJobs = Object.fromEntries(
     later.flatMap((environment) =>
       targets
         .filter(({ environmentId }) => environmentId === environment.id)
         .map((target) => [
           'deploy-' + environment.slug + '-' + target.slot,
-          environmentDeployJob(ctx, environment, target, {
+          environmentDeployJob(ctx, registry, environment, target, {
             needs: ['release'],
             if: `\${{ inputs.environment-id == '${environment.id}' }}`,
             commitSha: '${{ needs.release.outputs.commit-sha }}',

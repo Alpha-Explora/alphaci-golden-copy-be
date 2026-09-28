@@ -1,4 +1,7 @@
 import yaml from 'js-yaml';
+import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
+import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
@@ -93,7 +96,14 @@ const options: StagedWorkflowOptions = {
 };
 
 function workflows(bundleOptions: StagedWorkflowOptions) {
-  const bundle = buildStagedWorkflowBundle(template, bundleOptions);
+  const bundle = buildStagedWorkflowBundle(
+    template,
+    bundleOptions,
+    new WorkflowFragmentRegistry([
+      renderWorkflowFragment,
+      vercelWorkflowFragment,
+    ]),
+  );
   return new Map(
     bundle.workflowFiles.map((file) => [
       file.path,
@@ -189,6 +199,22 @@ describe('pipeline generated from project environments', () => {
         environmentTargets: [],
       }),
     ).toThrow(/cannot be used in a workflow/);
+  });
+
+  it('refuses a target whose provider has no environment deploy job', () => {
+    expect(() =>
+      workflows({
+        ...options,
+        environmentTargets: [
+          {
+            environmentId: ids.dev,
+            slot: 'backend',
+            targetId: 'target-dev',
+            provider: 'no-such-provider',
+          },
+        ],
+      }),
+    ).toThrow(/No environment deploy job is registered/);
   });
 
   it('leaves the pipeline of a project without environments unchanged', () => {

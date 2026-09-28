@@ -1,6 +1,8 @@
 import {
   VERCEL_ALIAS_VARIABLE,
+  legacyEnvironmentLabel,
   vercelBranchAlias,
+  type EnvironmentDeployInput,
 } from '#kernel/ports/workflow-fragment.port';
 
 import type {
@@ -119,4 +121,33 @@ export const vercelWorkflowFragment: WorkflowFragment = {
   expandTargets: expandVercelTargets,
   build: (target, branch, context) =>
     buildVercelFragment(target, branch, context),
+  environmentDeployJob: (input, context) =>
+    vercelEnvironmentDeployJob(input, context),
 };
+
+/**
+ * Deploy one environment's Vercel target from the release's pinned commit.
+ * Vercel builds that commit itself and records its own deployment ID, so the
+ * job carries no image digest.
+ */
+function vercelEnvironmentDeployJob(
+  input: EnvironmentDeployInput,
+  context: WorkflowFragmentContext,
+): Record<string, unknown> {
+  return {
+    needs: input.needs,
+    if: input.if,
+    uses: `${CENTRAL_WORKFLOW_BASE}/vercel-deploy.yml@${context.centralWorkflowRef}`,
+    with: {
+      'system-name': context.serviceName,
+      'working-directory': context.servicePath,
+      environment: legacyEnvironmentLabel(input.environment.role),
+      'checkout-ref': input.commitSha,
+      'git-branch': input.environment.sourceBranch,
+      'environment-id': input.environment.id,
+      'environment-name': input.environment.slug,
+      'target-id': input.targetId,
+    },
+    secrets: 'inherit',
+  };
+}
