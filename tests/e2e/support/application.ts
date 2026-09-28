@@ -1,3 +1,4 @@
+import { BadGatewayException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -9,6 +10,8 @@ import { DEPLOYMENT_PROVISIONING_FACADE } from '#kernel/ports/deployment-runtime
 import { GITHUB_PROJECT_PORT } from '#kernel/ports/github.port';
 import { AppModule } from '../../../src/app.module';
 import { configureHttpApplication } from '../../../src/main';
+import { GITHUB_ACTIONS_SECRETS } from '../../../src/modules/runtime/application/ports/github-actions-secrets.port';
+import { PROVIDER_CLIENT_REGISTRY } from '../../../src/modules/runtime/application/ports/provider-client-registry.port';
 import { withClient } from './database';
 import { recordingPort, type RecordedCall } from './recording-port';
 
@@ -20,6 +23,11 @@ export interface E2eApplication {
   databaseUrl: string;
   /** Calls that reached a faked external provider port. */
   externalCalls: RecordedCall[];
+  /** Scenario controls for the faked providers. */
+  providers: {
+    /** Make GitHub Environment provisioning fail until reset. */
+    failGithubEnvironments(fail: boolean): void;
+  };
   /** Sign in through the real loopback quick-login session flow. */
   signIn(): Promise<{ agent: SignedInAgent; userId: string }>;
   query<T extends Record<string, unknown>>(
@@ -33,9 +41,11 @@ const QUICK_LOGIN_GITHUB_USER_ID = 'alphaci-local-dev-quick-login';
 
 // Synchronous GitHub port members read during module construction.
 const GITHUB_SYNC_MEMBERS = {
-  getEnforcedOrg: () => 'e2e-org',
-  onRepositoryDeleted: () => undefined,
-  onTeamMembershipChanged: () => undefined,
+  silent: {
+    getEnforcedOrg: () => 'e2e-org',
+    onRepositoryDeleted: () => undefined,
+    onTeamMembershipChanged: () => undefined,
+  },
 };
 
 /**
@@ -45,6 +55,35 @@ const GITHUB_SYNC_MEMBERS = {
 export async function startApplication(): Promise<E2eApplication> {
   const databaseUrl = process.env['E2E_APP_DATABASE_URL'] ?? '';
   const externalCalls: RecordedCall[] = [];
+  let githubEnvironmentsFail = false;
+  let providerTargets = 0;
+
+  const githubActions = recordingPort('githubActions', externalCalls, {
+    answers: {
+      ensureDeploymentEnvironment: () =>
+        githubEnvironmentsFail
+          ? Promise.reject(
+              new BadGatewayException('E2E: GitHub rejected the environment.'),
+            )
+          : Promise.resolve(),
+    },
+  });
+  const providerClients = {
+    getClient: (provider: string) =>
+      recordingPort('provider:' + provider, externalCalls, {
+        answers: {
+          createTarget: (input) => {
+            providerTargets += 1;
+            return Promise.resolve({
+              id: 'e2e-' + provider + '-' + String(providerTargets),
+              name: (input as { projectName: string }).projectName,
+              provider,
+              metadata: {},
+            });
+          },
+        },
+      }),
+  };
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(GITHUB_PROJECT_PORT)
@@ -53,6 +92,10 @@ export async function startApplication(): Promise<E2eApplication> {
     .useValue(recordingPort('ci', externalCalls))
     .overrideProvider(DEPLOYMENT_PROVISIONING_FACADE)
     .useValue(recordingPort('deploymentProvisioning', externalCalls))
+    .overrideProvider(GITHUB_ACTIONS_SECRETS)
+    .useValue(githubActions)
+    .overrideProvider(PROVIDER_CLIENT_REGISTRY)
+    .useValue(providerClients)
     .compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>({
@@ -82,6 +125,11 @@ export async function startApplication(): Promise<E2eApplication> {
     http,
     databaseUrl,
     externalCalls,
+    providers: {
+      failGithubEnvironments(fail) {
+        githubEnvironmentsFail = fail;
+      },
+    },
     query,
     async signIn() {
       const agent = request.agent(http);

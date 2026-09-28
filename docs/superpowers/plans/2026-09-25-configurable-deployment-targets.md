@@ -270,7 +270,7 @@ as runtime acceptance evidence.
 
 ### Phase 2: targets and release API (E2, C1)
 
-- [ ] **E2**, backend PR based on E1: key deployment targets and environment
+- [x] **E2**, backend PR based on E1: key deployment targets and environment
   variables by environment ID and slot, rather than branch alone. Make provider
   provisioning and environment URLs use the chosen target; reject duplicates,
   missing targets, and failed targets without fallback. Map existing rows and
@@ -279,6 +279,7 @@ as runtime acceptance evidence.
   a generated workflow can reference it. Evidence: same-branch environments
   keep separate secrets and destinations; no unprotected environment is
   created implicitly by the first workflow run.
+  Evidence: E2E `deployment-target-environments` scenarios and backfill run.
 - [ ] **C1**, backend PR based on E1: define project/host-scoped release API,
   signed-manifest schema, outbound polling, status, and token boundaries using
   environment ID, source commit, and immutable slot artifacts. Keep it inactive

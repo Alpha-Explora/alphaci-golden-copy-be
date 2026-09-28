@@ -17,6 +17,7 @@ import type {
 interface DeploymentTargetRow {
   id: string;
   project_id: string;
+  environment_id: string | null;
   slot: EnvTargetSlot;
   ownership_mode: EnvOwnershipMode;
   provider: EnvProvider;
@@ -43,6 +44,7 @@ interface DeploymentTargetRow {
 
 export interface CreateDeploymentTargetInput {
   projectId: string;
+  environmentId?: string | null;
   slot: EnvTargetSlot;
   ownershipMode: EnvOwnershipMode;
   provider: EnvProvider;
@@ -90,6 +92,7 @@ function toInsertParams(input: CreateDeploymentTargetInput): unknown[] {
     JSON.stringify(input.environmentMap ?? {}),
     input.deploymentStrategy ?? 'provider_native',
     JSON.stringify(input.providerMetadata ?? {}),
+    input.environmentId ?? null,
   ];
 }
 
@@ -124,9 +127,10 @@ export class DeploymentTargetsRepository {
           image_url,
           environment_map,
           deployment_strategy,
-          provider_metadata
+          provider_metadata,
+          environment_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
         RETURNING *;
       `,
       toInsertParams(input),
@@ -144,18 +148,61 @@ export class DeploymentTargetsRepository {
 
   async listDeploymentTargets(
     projectId: string,
+    environmentId?: string,
   ): Promise<DeploymentTargetSummary[]> {
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
         SELECT *
         FROM env_provisioning.project_deployment_targets
         WHERE project_id = $1
+          AND ($2::uuid IS NULL OR environment_id = $2::uuid)
         ORDER BY created_at DESC;
       `,
-      [projectId],
+      [projectId, environmentId ?? null],
     );
 
     return result.rows.map((row) => this.toSummary(row));
+  }
+
+  async findEnvironmentTarget(
+    projectId: string,
+    environmentId: string,
+    slot: EnvTargetSlot,
+  ): Promise<DeploymentTargetSummary | null> {
+    const result = await this.databaseService.query<DeploymentTargetRow>(
+      `
+        SELECT *
+        FROM env_provisioning.project_deployment_targets
+        WHERE project_id = $1 AND environment_id = $2 AND slot = $3
+        LIMIT 1;
+      `,
+      [projectId, environmentId, slot],
+    );
+    const row = result.rows[0];
+    return row ? this.toSummary(row) : null;
+  }
+
+  /**
+   * Attach a legacy target to an environment, keeping its ID so env-var
+   * metadata and custom domains stay with it. Returns null when the target is
+   * absent or already attached to an environment.
+   */
+  async attachEnvironment(
+    projectId: string,
+    targetId: string,
+    environmentId: string,
+  ): Promise<DeploymentTargetSummary | null> {
+    const result = await this.databaseService.query<DeploymentTargetRow>(
+      `
+        UPDATE env_provisioning.project_deployment_targets
+        SET environment_id = $3, updated_at = NOW()
+        WHERE project_id = $1 AND id = $2 AND environment_id IS NULL
+        RETURNING *;
+      `,
+      [projectId, targetId, environmentId],
+    );
+    const row = result.rows[0];
+    return row ? this.toSummary(row) : null;
   }
 
   async updateProviderMetadata(
@@ -306,6 +353,7 @@ export class DeploymentTargetsRepository {
     return {
       id: row.id,
       projectId: row.project_id,
+      environmentId: row.environment_id ?? null,
       slot: row.slot,
       ownershipMode: row.ownership_mode,
       provider: row.provider,

@@ -10,6 +10,12 @@ import type {
 
 export interface CreateDeploymentTargetDto {
   action: 'create' | 'register_existing';
+  /**
+   * Project environment this target deploys. When set, the target branch is
+   * the environment's source branch and the environment may hold at most one
+   * target per slot. Omit it for the legacy branch-based path.
+   */
+  environmentId?: string;
   slot: EnvTargetSlot;
   ownershipMode: EnvOwnershipMode;
   provider: EnvProvider;

@@ -1,11 +1,11 @@
 {
-  "routeCount": 176,
+  "routeCount": 178,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "91b3c3f84c69e7d6f46084e7d9f5b2f9e4085fd8528ac060547b45cc9410bcf4",
+  "referenceSha256": "330a1f1ff84d5a7c921020906269f66b1d8ad62f8afe7346ada4d568767638ff",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "91b3c3f84c69e7d6f46084e7d9f5b2f9e4085fd8528ac060547b45cc9410bcf4",
+  "baselineSha256": "330a1f1ff84d5a7c921020906269f66b1d8ad62f8afe7346ada4d568767638ff",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -69,6 +69,13 @@
         "GET /api/v1/projects/{projectId}/environments",
         "PATCH /api/v1/projects/{projectId}/environments/{environmentId}",
         "POST /api/v1/projects/{projectId}/environments"
+      ]
+    },
+    {
+      "reason": "Environment-keyed deployment targets: attach a legacy target to a project environment, and read the target an environment deploys to for one slot.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/environments/{environmentId}/deployment-targets/{slot}",
+        "PUT /api/v1/projects/{projectId}/deployment-targets/{targetId}/environment"
       ]
     }
   ]

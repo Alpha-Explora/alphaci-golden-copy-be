@@ -31,6 +31,7 @@ describe('DeploymentTargetsController', () => {
     expect(service.listDeploymentTargets).toHaveBeenCalledWith(
       'project-1',
       'user-1',
+      undefined,
     );
   });
 

@@ -2,6 +2,7 @@ import { Global, Injectable, Module } from '@nestjs/common';
 
 import { DatabaseModule } from '#kernel/db/database.module';
 import {
+  type DeploymentProjectEnvironment,
   type DeploymentProjectReference,
   type DeploymentProjectReferenceLookup,
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
@@ -28,6 +29,24 @@ class ProjectReferenceLookupAdapter implements DeploymentProjectReferenceLookup 
           repoUrl: project.repo_url,
           workflowPath: project.workflow_path,
           projectOptions: project.project_options,
+        }
+      : null;
+  }
+
+  async findProjectEnvironment(
+    projectId: string,
+    environmentId: string,
+  ): Promise<DeploymentProjectEnvironment | null> {
+    const environments =
+      await this.projectsRepository.listProjectEnvironments(projectId);
+    const environment = environments.find(({ id }) => id === environmentId);
+    return environment
+      ? {
+          id: environment.id,
+          slug: environment.slug,
+          sourceBranch: environment.sourceBranch,
+          role: environment.role,
+          position: environment.position,
         }
       : null;
   }

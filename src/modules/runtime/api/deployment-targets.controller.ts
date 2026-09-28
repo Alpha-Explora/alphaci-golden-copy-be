@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   Sse,
@@ -57,8 +58,16 @@ export class DeploymentTargetsController {
   constructor(private readonly service: DeploymentTargetsService) {}
 
   @Get()
-  list(@Req() req: Request, @Param('projectId') projectId: string) {
-    return this.service.listDeploymentTargets(projectId, req.session.user!.id);
+  list(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Query('environmentId') environmentId?: string,
+  ) {
+    return this.service.listDeploymentTargets(
+      projectId,
+      req.session.user!.id,
+      environmentId,
+    );
   }
 
   @Post()
@@ -97,6 +106,21 @@ export class DeploymentTargetsController {
       projectId,
       targetId,
       req.session.user!.id,
+    );
+  }
+
+  @Put(':targetId/environment')
+  attachEnvironment(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('targetId') targetId: string,
+    @Body() body: { environmentId?: unknown },
+  ) {
+    return this.service.attachEnvironment(
+      projectId,
+      targetId,
+      req.session.user!.id,
+      body?.environmentId,
     );
   }
 
