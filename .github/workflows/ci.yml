@@ -98,6 +98,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Project creation reads workflow templates and the stack catalog from
+      # the public central workflow repository, as a deployment does.
+      - uses: actions/checkout@v4
+        with:
+          repository: Alpha-Explora/alphaci-workflow
+          ref: main
+          path: .ci/alphaci-workflow
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -106,6 +114,8 @@ jobs:
       - run: npm ci
 
       - name: E2E suite
+        env:
+          TEMPLATE_REPO_PATH: ${{ github.workspace }}/.ci/alphaci-workflow
         run: npm run test:e2e -- --ci
 
       - name: Upload E2E report
