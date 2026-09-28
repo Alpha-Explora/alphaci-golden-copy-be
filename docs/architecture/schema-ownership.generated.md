@@ -59,6 +59,7 @@ These are exact file-to-schema.table allowances for historical migrations that m
 | `projects/20260925050000_project_environments.sql` | `env_provisioning.project_deployment_targets` |
 | `runtime/20260608_env_provisioning.sql` | `identity.app_users`, `projects.provisioned_projects` |
 | `runtime/20260701_gcp_runtime_expand_contract.sql` | `billing_lifecycle.runtime_cost_summaries`, `identity.app_users`, `orgs.workspaces`, `projects.provisioned_projects` |
+| `runtime/20260928100000_deployment_target_environments.sql` | `projects.project_environments` |
 
 ## Explicit source transition references
 

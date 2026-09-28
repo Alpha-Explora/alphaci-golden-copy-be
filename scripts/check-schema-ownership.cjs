@@ -42,6 +42,10 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
     pairs(['env_provisioning.project_deployment_targets']),
   ],
   [
+    'runtime/20260928100000_deployment_target_environments.sql',
+    pairs(['projects.project_environments']),
+  ],
+  [
     'identity-access/20260606_domain_schema_bootstrap.sql',
     pairs([
       'projects.provisioned_projects',

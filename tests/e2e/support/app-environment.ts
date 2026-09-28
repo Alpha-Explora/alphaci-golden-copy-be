@@ -30,6 +30,10 @@ Object.assign(process.env, {
   FRONTEND_URL: 'http://localhost:3000',
   GITHUB_CLIENT_ID: 'e2e-client-id',
   GITHUB_CLIENT_SECRET: 'e2e-client-secret',
-  ENV_PROVISIONING_ENABLED: 'false',
+  // Deployment targets are reachable; every provider client is a fake, so
+  // these managed-account values are placeholders that never leave the test.
+  ENV_PROVISIONING_ENABLED: 'true',
+  ALPHACI_RENDER_API_KEY: 'e2e-render-token',
+  ALPHACI_RENDER_OWNER_ID: 'e2e-render-owner',
   ENV_PROVISIONING_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64'),
 });

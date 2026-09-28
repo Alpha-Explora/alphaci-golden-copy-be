@@ -13,6 +13,7 @@ import type { DeploymentProviderPolicy } from '../domain/deployment-provider.pol
 describe('DeploymentTargetsService', () => {
   const projectReferenceLookup = {
     findProjectReference: jest.fn(),
+    findProjectEnvironment: jest.fn(),
   };
   const deploymentTargetsRepository = {
     createDeploymentTarget: jest.fn(),

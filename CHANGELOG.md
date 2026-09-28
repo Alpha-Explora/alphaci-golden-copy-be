@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added deployment targets keyed by project environment. A target created with `environmentId` deploys that environment's source branch, and each environment holds at most one target per slot, so two environments on one branch keep separate targets, env vars, and domains. `PUT .../deployment-targets/:targetId/environment` attaches a legacy target without changing its ID, `GET .../environments/:environmentId/deployment-targets/:slot` returns an environment's target or refuses an absent or failed one, and the repository's GitHub Environment is provisioned and limited to the source branch before any target is created or attached. The migration attaches only unambiguous legacy targets.
+
 - Added the E2E suite (`npm run test:e2e`). It boots the real application and HTTP middleware against a disposable loopback PostgreSQL database with every migration applied, replaces only external provider ports with recording fakes, and writes `artifacts/e2e/<commit>/report.json`. CI runs it in a new `E2E` job. The first scenarios cover the project environments API and migration. `ALPHACI_IGNORE_ENV_FILE=true` makes the app skip `.env` files, and `configureHttpApplication` installs the production middleware on an app built elsewhere.
 
 - Added project-owned ordered environments with stable IDs and slugs, append-only creation, display-name edits, session authorization, and a conservative legacy backfill. Projects without an unambiguous single production branch keep their legacy branch-based deployment path.

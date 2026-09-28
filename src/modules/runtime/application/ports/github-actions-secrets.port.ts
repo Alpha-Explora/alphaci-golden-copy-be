@@ -24,6 +24,18 @@ export interface GithubActionsSecretsPort {
     variableName: string,
     variableValue: string,
   ): Promise<void>;
+  /**
+   * Create or update the repository's GitHub Environment for a project
+   * environment and allow deployments only from its source branch. Resolves
+   * the app installation token itself; throws when the environment cannot be
+   * provisioned, so no workflow can reference an unprotected environment.
+   */
+  ensureDeploymentEnvironment(input: {
+    userId: string;
+    repoFullName: string;
+    environmentName: string;
+    sourceBranch: string;
+  }): Promise<void>;
 }
 
 export const GITHUB_ACTIONS_SECRETS = Symbol('GithubActionsSecrets');

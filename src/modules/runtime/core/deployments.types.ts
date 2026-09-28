@@ -94,6 +94,8 @@ export interface ProviderConnectionWithToken extends ProviderConnectionSummary {
 export interface DeploymentTargetSummary {
   id: string;
   projectId: string;
+  /** Project environment this target deploys; null on the legacy branch path. */
+  environmentId?: string | null;
   slot: EnvTargetSlot;
   ownershipMode: EnvOwnershipMode;
   provider: EnvProvider;

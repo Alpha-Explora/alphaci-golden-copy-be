@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -59,6 +60,16 @@ import {
   type DeploymentProviderResourcesTeardown,
   type ProviderResourcesTeardownResult,
 } from '../core/deployment-provisioning.contract';
+import {
+  EnvironmentTargetUnavailableError,
+  type DeploymentProjectEnvironment,
+  type EnvironmentDeploymentTarget,
+  type EnvironmentDeploymentTargetResolver,
+} from '#kernel/ports/deployment-runtime.port';
+import {
+  GITHUB_ACTIONS_SECRETS,
+  type GithubActionsSecretsPort,
+} from './ports/github-actions-secrets.port';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import type {
@@ -79,8 +90,24 @@ const EMPTY_PROVIDER_TARGET_POLICY: DeploymentProviderTargetPolicyResult = {
   providerMetadata: {},
 } as const;
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === '23505'
+  );
+}
+
 @Injectable()
-export class DeploymentTargetsService implements DeploymentProviderResourcesTeardown {
+export class DeploymentTargetsService
+  implements
+    DeploymentProviderResourcesTeardown,
+    EnvironmentDeploymentTargetResolver
+{
   private readonly logger = new Logger(DeploymentTargetsService.name);
 
   constructor(
@@ -112,12 +139,23 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    @Inject(GITHUB_ACTIONS_SECRETS)
+    private readonly githubActions?: GithubActionsSecretsPort,
   ) {}
 
-  async listDeploymentTargets(projectId: string, userId: string) {
+  async listDeploymentTargets(
+    projectId: string,
+    userId: string,
+    environmentId?: string,
+  ) {
     await this.getProjectOrThrow(projectId, userId);
+    if (environmentId !== undefined) this.requireEnvironmentId(environmentId);
     const targets =
-      await this.deploymentTargetsRepository.listDeploymentTargets(projectId);
+      await this.deploymentTargetsRepository.listDeploymentTargets(
+        projectId,
+        environmentId,
+      );
 
     // Enrich with copyable links: the live service URL and the provider
     // dashboard, so the UI never has to re-derive provider URL conventions.
@@ -131,10 +169,24 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
   async createDeploymentTarget(
     projectId: string,
     userId: string,
-    dto: CreateDeploymentTargetDto,
+    requested: CreateDeploymentTargetDto,
   ) {
     await this.assertProjectMutationAccess(projectId, userId);
     const project = await this.getProjectOrThrow(projectId, userId);
+    // Environment checks run before quota, provider, and GitHub calls, so a
+    // rejected request leaves nothing behind.
+    const environment =
+      requested.environmentId !== undefined
+        ? await this.availableEnvironment(
+            projectId,
+            requested.environmentId,
+            requested.slot,
+            requested.branchName,
+          )
+        : null;
+    const dto: CreateDeploymentTargetDto = environment
+      ? { ...requested, branchName: environment.sourceBranch }
+      : requested;
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     this.assertOwnershipModeAllowed(dto);
     try {
@@ -206,6 +258,10 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         }),
       ) ?? EMPTY_PROVIDER_TARGET_POLICY;
 
+    if (environment) {
+      await this.provisionGithubEnvironment(project, userId, environment);
+    }
+
     const target =
       dto.action === 'create'
         ? await this.clientRegistry.getClient(dto.provider).createTarget({
@@ -236,9 +292,10 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
             metadata: providerTargetPolicy.providerMetadata,
           };
 
-    const created =
-      await this.deploymentTargetsRepository.createDeploymentTarget(
-        buildCreateTargetPersistInput({
+    let created: DeploymentTargetSummary;
+    try {
+      created = await this.deploymentTargetsRepository.createDeploymentTarget({
+        ...buildCreateTargetPersistInput({
           projectId,
           dto,
           repoFullName: project.repoFullName,
@@ -246,7 +303,16 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
           providerTargetPolicy,
           deploymentStrategy,
         }),
-      );
+        environmentId: environment?.id ?? null,
+      });
+    } catch (error) {
+      if (environment && isUniqueViolation(error)) {
+        throw new ConflictException(
+          'This environment already has a ' + dto.slot + ' target.',
+        );
+      }
+      throw error;
+    }
     await this.recordTargetEvent({
       userId,
       projectId,
@@ -257,9 +323,206 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         targetId: created.id,
         provider: created.provider,
         slot: created.slot,
+        environmentId: created.environmentId ?? null,
       },
     });
     return created;
+  }
+
+  /**
+   * Operator mapping for a legacy target: attach it to an environment whose
+   * source branch it already deploys. The target ID is kept, so its env-var
+   * metadata and custom domains stay attached.
+   */
+  async attachEnvironment(
+    projectId: string,
+    targetId: string,
+    userId: string,
+    environmentId: unknown,
+  ): Promise<DeploymentTargetSummary> {
+    await this.assertProjectMutationAccess(projectId, userId);
+    const project = await this.getProjectOrThrow(projectId, userId);
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+    if (target.environmentId) {
+      if (target.environmentId === environmentId) return target;
+      throw new ConflictException(
+        'This target already belongs to another environment.',
+      );
+    }
+    const environment = await this.availableEnvironment(
+      projectId,
+      environmentId,
+      target.slot,
+      target.branchName,
+    );
+    await this.provisionGithubEnvironment(project, userId, environment);
+
+    let attached: DeploymentTargetSummary | null;
+    try {
+      attached = await this.deploymentTargetsRepository.attachEnvironment(
+        projectId,
+        targetId,
+        environment.id,
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException(
+          'This environment already has a ' + target.slot + ' target.',
+        );
+      }
+      throw error;
+    }
+    if (!attached) {
+      throw new ConflictException(
+        'The target changed while it was being attached. Reload and retry.',
+      );
+    }
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_updated',
+      title: 'Deployment target attached to an environment',
+      body:
+        attached.providerProjectName + ' now deploys ' + environment.slug + '.',
+      metadata: {
+        targetId: attached.id,
+        provider: attached.provider,
+        slot: attached.slot,
+        environmentId: environment.id,
+      },
+    });
+    return attached;
+  }
+
+  /** The configured target for an environment and slot, with its URLs. */
+  async getEnvironmentTarget(
+    projectId: string,
+    environmentId: string,
+    slot: string,
+    userId: string,
+  ) {
+    await this.getProjectOrThrow(projectId, userId);
+    this.requireEnvironmentId(environmentId);
+    const environment =
+      await this.projectReferenceLookup.findProjectEnvironment(
+        projectId,
+        environmentId,
+      );
+    if (!environment) throw new NotFoundException('Environment not found');
+    const target = await this.deploymentTargetsRepository.findEnvironmentTarget(
+      projectId,
+      environmentId,
+      this.requireTargetSlot(slot),
+    );
+    if (!target) {
+      throw new NotFoundException(
+        new EnvironmentTargetUnavailableError('absent').message,
+      );
+    }
+    if (target.status !== 'active') {
+      throw new ConflictException(
+        new EnvironmentTargetUnavailableError(target.status).message,
+      );
+    }
+    return {
+      ...target,
+      publicUrl: this.providerPublicUrl(target),
+      dashboardUrl: this.providerDashboardUrl(target),
+    };
+  }
+
+  /**
+   * Resolve the target a release must deploy to. There is no fallback: an
+   * absent, missing, or failed target stops the caller.
+   */
+  async resolve(input: {
+    projectId: string;
+    environmentId: string;
+    slot: EnvironmentDeploymentTarget['slot'];
+  }): Promise<EnvironmentDeploymentTarget> {
+    const target = await this.deploymentTargetsRepository.findEnvironmentTarget(
+      input.projectId,
+      input.environmentId,
+      input.slot,
+    );
+    if (!target) throw new EnvironmentTargetUnavailableError('absent');
+    if (target.status !== 'active') {
+      throw new EnvironmentTargetUnavailableError(target.status);
+    }
+    return {
+      id: target.id,
+      projectId: target.projectId,
+      environmentId: input.environmentId,
+      slot: target.slot,
+      provider: target.provider,
+      providerProjectId: target.providerProjectId,
+      branchName: target.branchName,
+    };
+  }
+
+  private requireEnvironmentId(environmentId: unknown): string {
+    if (
+      typeof environmentId !== 'string' ||
+      !UUID_PATTERN.test(environmentId)
+    ) {
+      throw new BadRequestException('environmentId must be a UUID');
+    }
+    return environmentId;
+  }
+
+  /** The environment a new target may use: this project's, on its branch, and free for the slot. */
+  private async availableEnvironment(
+    projectId: string,
+    environmentId: unknown,
+    slot: EnvTargetSlot,
+    branchName: string | undefined,
+  ): Promise<DeploymentProjectEnvironment> {
+    const id = this.requireEnvironmentId(environmentId);
+    const environment =
+      await this.projectReferenceLookup.findProjectEnvironment(projectId, id);
+    if (!environment) throw new NotFoundException('Environment not found');
+    const branch = branchName?.trim();
+    if (branch && branch !== environment.sourceBranch) {
+      throw new BadRequestException(
+        'The target branch must be the environment source branch (' +
+          environment.sourceBranch +
+          ').',
+      );
+    }
+    const existing =
+      await this.deploymentTargetsRepository.findEnvironmentTarget(
+        projectId,
+        environment.id,
+        slot,
+      );
+    if (existing) {
+      throw new ConflictException(
+        'This environment already has a ' + slot + ' target.',
+      );
+    }
+    return environment;
+  }
+
+  private async provisionGithubEnvironment(
+    project: DeploymentProjectReference,
+    userId: string,
+    environment: DeploymentProjectEnvironment,
+  ): Promise<void> {
+    if (!this.githubActions) {
+      throw new InternalServerErrorException(
+        'GitHub environment provisioning is not configured.',
+      );
+    }
+    await this.githubActions.ensureDeploymentEnvironment({
+      userId,
+      repoFullName: project.repoFullName,
+      environmentName: environment.slug,
+      sourceBranch: environment.sourceBranch,
+    });
   }
 
   updateProviderMetadata(
