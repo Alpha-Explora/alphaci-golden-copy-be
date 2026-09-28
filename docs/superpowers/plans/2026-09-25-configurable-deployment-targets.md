@@ -114,7 +114,7 @@ Keep changes to both `codex/configurable-deployment-targets` and production
 `main` in reviewed PRs.
 
 Merged: E1 (#104), R1 (#105), X0 (#114), E2 (#115), C1 (#116), E3a (#117),
-release history for the UI (#118), E3b (#120), H1 (#121), C2, W1
+release history for the UI (#118), E3b (#120), H1 (#121), C2 (#122), W1
 (`alphaci-workflow` #30), and W2 (`alphaci-workflow` #33). The remaining
 work runs in this order; the critical path is the lab run.
 
