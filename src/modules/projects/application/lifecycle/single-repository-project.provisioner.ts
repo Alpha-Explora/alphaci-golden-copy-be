@@ -140,6 +140,7 @@ export class SingleRepositoryProjectProvisioner {
         repoShape,
         projectTypeId: dto.projectTypeId,
         workflowRecipeId: dto.workflowRecipeId ?? null,
+        ...(dto.environments ? { environments: dto.environments } : {}),
         projectOptions: {
           ...this.support.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),

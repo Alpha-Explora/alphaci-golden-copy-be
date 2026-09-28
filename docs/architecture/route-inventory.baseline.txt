@@ -67,6 +67,7 @@ GET /api/v1/projects/{projectId}/deployment-targets/{targetId}/logs
 GET /api/v1/projects/{projectId}/deployment-targets/{targetId}/logs/stream
 GET /api/v1/projects/{projectId}/domains
 GET /api/v1/projects/{projectId}/env-vars
+GET /api/v1/projects/{projectId}/environments
 GET /api/v1/projects/{projectId}/qa-checklists
 GET /api/v1/projects/{projectId}/qa-returned-items
 GET /api/v1/projects/{projectId}/qa-runs
@@ -104,6 +105,7 @@ PATCH /api/v1/groups/{groupId}
 PATCH /api/v1/groups/{groupId}/members/{memberId}
 PATCH /api/v1/notifications/preferences
 PATCH /api/v1/projects/{projectId}/deployment-targets/{targetId}
+PATCH /api/v1/projects/{projectId}/environments/{environmentId}
 PATCH /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}
 PATCH /api/v1/qa-checklists/{id}
 PATCH /api/v1/repositories/{repositoryId}
@@ -149,6 +151,7 @@ POST /api/v1/projects/{projectId}/domains
 POST /api/v1/projects/{projectId}/domains/{domainId}/verify
 POST /api/v1/projects/{projectId}/env-vars/provision
 POST /api/v1/projects/{projectId}/env-vars/validate
+POST /api/v1/projects/{projectId}/environments
 POST /api/v1/projects/{projectId}/qa-runs
 POST /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}/request-retest
 POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen

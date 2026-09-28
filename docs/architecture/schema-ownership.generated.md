@@ -32,7 +32,7 @@ This map is generated from the owner and exact transition-reference data used by
 
 ## Explicit migration transition references
 
-These are exact file-to-schema.table allowances required for historical migrations to remain replayable. They are not blanket filename exemptions.
+These are exact file-to-schema.table allowances for historical migrations that must remain replayable and explicitly reviewed migration transitions. They are not blanket filename exemptions.
 
 | Migration file | Allowed transition references |
 |---|---|
@@ -56,6 +56,7 @@ These are exact file-to-schema.table allowances required for historical migratio
 | `projects/20260611200404_workflow_settings_preview.sql` | `identity.app_users` |
 | `projects/20260611202529_workflow_update_requests.sql` | `identity.app_users` |
 | `projects/20260613_project_sync_findings.sql` | `env_provisioning.project_deployment_targets` |
+| `projects/20260925050000_project_environments.sql` | `env_provisioning.project_deployment_targets` |
 | `runtime/20260608_env_provisioning.sql` | `identity.app_users`, `projects.provisioned_projects` |
 | `runtime/20260701_gcp_runtime_expand_contract.sql` | `billing_lifecycle.runtime_cost_summaries`, `identity.app_users`, `orgs.workspaces`, `projects.provisioned_projects` |
 

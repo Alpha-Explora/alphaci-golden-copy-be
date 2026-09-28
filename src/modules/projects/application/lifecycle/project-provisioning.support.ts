@@ -22,6 +22,7 @@ import type {
   CreateProjectDto,
 } from '../../api/dto/create-project.dto';
 import type { ProjectsRepository } from '../../infrastructure/projects.repository';
+import type { ProjectEnvironmentInput } from '../../domain/project-environment.policy';
 import {
   filterDeploymentProvisioningRequest,
   forceManagedProvisioning,
@@ -522,9 +523,38 @@ export class ProjectProvisioningSupport {
   }
 
   async createProjectRow(
-    input: Parameters<ProjectsRepository['create']>[0],
+    input: Parameters<ProjectsRepository['create']>[0] & {
+      environments?: ProjectEnvironmentInput[];
+    },
   ): Promise<Awaited<ReturnType<ProjectsRepository['create']>>> {
-    const row = await this.projectsRepository.create(input);
+    const { environments, ...projectInput } = input;
+    const row = await this.projectsRepository.create(projectInput);
+
+    if (environments) {
+      try {
+        await this.projectsRepository.createProjectEnvironments(
+          row.id,
+          environments,
+        );
+      } catch (error) {
+        try {
+          const deleted = await this.projectsRepository.deleteByIdAndUser(
+            row.id,
+            row.user_id,
+          );
+          if (!deleted) {
+            this.logger.warn(
+              `Compensation: failed to delete project row ${row.id} after environment insert failure`,
+            );
+          }
+        } catch (cleanupError) {
+          this.logger.warn(
+            `Compensation: failed to delete project row ${row.id} after environment insert failure: ${String(cleanupError)}`,
+          );
+        }
+        throw error;
+      }
+    }
 
     await this.hierarchyProjectLinkService?.ensureLink({
       projectId: row.id,

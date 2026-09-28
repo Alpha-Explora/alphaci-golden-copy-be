@@ -87,7 +87,7 @@ supabase/migrations/
 
 ## API surface
 
-The current compiled API route inventory contains 145 routes under `/api/v1`. The [route map](/architecture/route-map.generated.md) is generated from the checked-in route reference and is protected by the route inventory test.
+The current compiled API route inventory contains 176 routes under `/api/v1`. The [route map](/architecture/route-map.generated.md) is generated from the checked-in route reference and is protected by the route inventory contract.
 
 ## Verification
 

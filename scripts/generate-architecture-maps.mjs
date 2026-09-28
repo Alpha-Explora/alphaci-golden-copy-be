@@ -422,7 +422,7 @@ ${rows.join('\n')}
 
 ## Explicit migration transition references
 
-These are exact file-to-schema.table allowances required for historical migrations to remain replayable. They are not blanket filename exemptions.
+These are exact file-to-schema.table allowances for historical migrations that must remain replayable and explicitly reviewed migration transitions. They are not blanket filename exemptions.
 
 | Migration file | Allowed transition references |
 |---|---|

@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 173 current API routes."
+description: "Generated inventory of the 176 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **173 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **176 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -88,6 +88,7 @@ The current compiled API exposes **173 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/deployment-targets/{targetId}/logs/stream`
 - `GET /api/v1/projects/{projectId}/domains`
 - `GET /api/v1/projects/{projectId}/env-vars`
+- `GET /api/v1/projects/{projectId}/environments`
 - `GET /api/v1/projects/{projectId}/qa-checklists`
 - `GET /api/v1/projects/{projectId}/qa-returned-items`
 - `GET /api/v1/projects/{projectId}/qa-runs`
@@ -125,6 +126,7 @@ The current compiled API exposes **173 routes** under the global `/api/v1` prefi
 - `PATCH /api/v1/groups/{groupId}/members/{memberId}`
 - `PATCH /api/v1/notifications/preferences`
 - `PATCH /api/v1/projects/{projectId}/deployment-targets/{targetId}`
+- `PATCH /api/v1/projects/{projectId}/environments/{environmentId}`
 - `PATCH /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}`
 - `PATCH /api/v1/qa-checklists/{id}`
 - `PATCH /api/v1/repositories/{repositoryId}`
@@ -170,6 +172,7 @@ The current compiled API exposes **173 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{projectId}/domains/{domainId}/verify`
 - `POST /api/v1/projects/{projectId}/env-vars/provision`
 - `POST /api/v1/projects/{projectId}/env-vars/validate`
+- `POST /api/v1/projects/{projectId}/environments`
 - `POST /api/v1/projects/{projectId}/qa-runs`
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}/request-retest`
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen`

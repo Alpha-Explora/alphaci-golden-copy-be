@@ -35,8 +35,12 @@ function pairs(entries) {
   return new Set(entries);
 }
 
-/** Historical migrations that must remain replayable without changing data. */
+/** Exact cross-schema allowances for replayable history and reviewed migration transitions. */
 const LEGACY_MIGRATION_REFERENCES = new Map([
+  [
+    'projects/20260925050000_project_environments.sql',
+    pairs(['env_provisioning.project_deployment_targets']),
+  ],
   [
     'identity-access/20260606_domain_schema_bootstrap.sql',
     pairs([

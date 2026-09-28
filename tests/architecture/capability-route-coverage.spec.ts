@@ -301,6 +301,14 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'syncProjects', method: 'POST' },
       ],
     },
+    'src/modules/projects/api/project-environments.controller.ts': {
+      reason: 'project membership and mutation roles checked by the service',
+      routes: [
+        { handler: 'list', method: 'GET' },
+        { handler: 'add', method: 'POST' },
+        { handler: 'rename', method: 'PATCH' },
+      ],
+    },
     'src/modules/projects/api/workflows.controller.ts': {
       reason: 'project workflow surface',
       routes: [

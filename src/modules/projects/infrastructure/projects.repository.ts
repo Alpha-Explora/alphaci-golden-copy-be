@@ -4,6 +4,10 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import type {
+  ProjectEnvironmentInput,
+  ProjectEnvironmentRecord,
+} from '../domain/project-environment.policy';
 
 /**
  * Role-aware visibility predicate for a provisioned project (table aliased `pp`).
@@ -190,6 +194,97 @@ export class ProjectsRepository {
     }
 
     return row;
+  }
+
+  async createProjectEnvironments(
+    projectId: string,
+    environments: ProjectEnvironmentInput[],
+  ): Promise<ProjectEnvironmentRecord[]> {
+    if (environments.length === 0) return [];
+    const result = await this.databaseService.query<ProjectEnvironmentRecord>(
+      `
+        INSERT INTO projects.project_environments (
+          project_id, slug, display_name, position, source_branch, role, auto_deploy
+        )
+        SELECT $1, input.slug, input.display_name, input.ordinality - 1,
+               input.source_branch, input.role, input.ordinality = 1
+        FROM unnest($2::text[], $3::text[], $4::text[], $5::text[])
+          WITH ORDINALITY AS input(slug, display_name, source_branch, role, ordinality)
+        RETURNING id, slug, display_name AS "displayName", position,
+                  source_branch AS "sourceBranch", role, auto_deploy AS "autoDeploy";
+      `,
+      [
+        projectId,
+        environments.map((environment) => environment.slug),
+        environments.map((environment) => environment.displayName.trim()),
+        environments.map((environment) => environment.sourceBranch.trim()),
+        environments.map((environment) => environment.role),
+      ],
+    );
+    return result.rows;
+  }
+
+  async listProjectEnvironments(
+    projectId: string,
+  ): Promise<ProjectEnvironmentRecord[]> {
+    const result = await this.databaseService.query<ProjectEnvironmentRecord>(
+      `
+        SELECT id, slug, display_name AS "displayName", position,
+               source_branch AS "sourceBranch", role, auto_deploy AS "autoDeploy"
+        FROM projects.project_environments
+        WHERE project_id = $1
+        ORDER BY position ASC;
+      `,
+      [projectId],
+    );
+    return result.rows;
+  }
+
+  async appendProjectEnvironment(
+    projectId: string,
+    environment: ProjectEnvironmentInput,
+  ): Promise<ProjectEnvironmentRecord> {
+    const result = await this.databaseService.query<ProjectEnvironmentRecord>(
+      `
+        INSERT INTO projects.project_environments (
+          project_id, slug, display_name, position, source_branch, role, auto_deploy
+        )
+        SELECT $1, $2, $3, COALESCE(MAX(position) + 1, 0), $4, $5,
+               COALESCE(MAX(position) + 1, 0) = 0
+        FROM projects.project_environments
+        WHERE project_id = $1
+        RETURNING id, slug, display_name AS "displayName", position,
+                  source_branch AS "sourceBranch", role, auto_deploy AS "autoDeploy";
+      `,
+      [
+        projectId,
+        environment.slug,
+        environment.displayName.trim(),
+        environment.sourceBranch.trim(),
+        environment.role,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error('project_environments INSERT returned no row');
+    return row;
+  }
+
+  async renameProjectEnvironment(
+    projectId: string,
+    environmentId: string,
+    displayName: string,
+  ): Promise<ProjectEnvironmentRecord | null> {
+    const result = await this.databaseService.query<ProjectEnvironmentRecord>(
+      `
+        UPDATE projects.project_environments
+        SET display_name = $3, updated_at = NOW()
+        WHERE project_id = $1 AND id = $2
+        RETURNING id, slug, display_name AS "displayName", position,
+                  source_branch AS "sourceBranch", role, auto_deploy AS "autoDeploy";
+      `,
+      [projectId, environmentId, displayName.trim()],
+    );
+    return result.rows[0] ?? null;
   }
 
   private toCreateParams(data: CreateProvisionedProjectInput): unknown[] {

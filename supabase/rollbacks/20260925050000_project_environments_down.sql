@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS projects.project_environments;
