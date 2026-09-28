@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Inject,
@@ -13,6 +14,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
+import { ENVIRONMENT_PROMOTE_WORKFLOW_FILE } from '#kernel/config/pipeline-branches';
 import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER,
@@ -43,6 +45,10 @@ import {
   type EnvironmentDeploymentRecord,
   type ReleaseRecord,
 } from '../infrastructure/repositories/release-registry.repository';
+import {
+  GITHUB_ACTIONS_SECRETS,
+  type GithubActionsSecretsPort,
+} from './ports/github-actions-secrets.port';
 
 export interface RegisterReleaseInput {
   projectId: string;
@@ -76,6 +82,9 @@ export interface ReleaseRegistryView {
 
 const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
 const HOST_TOKEN_PREFIX = 'aoh_';
+// Providers a generated promotion workflow deploys to. Other targets pull
+// their assignment themselves, as on-prem hosts do.
+const WORKFLOW_DEPLOYED_PROVIDERS = new Set(['render', 'vercel']);
 
 function isUniqueViolation(error: unknown): boolean {
   return (
@@ -112,6 +121,9 @@ export class ReleaseRegistryService {
     @Optional()
     @Inject(WORKSPACE_ACCESS_PORT)
     private readonly workspaceAccess?: WorkspaceAccessPort,
+    @Optional()
+    @Inject(GITHUB_ACTIONS_SECRETS)
+    private readonly githubActions?: GithubActionsSecretsPort,
   ) {}
 
   async registerRelease(
@@ -286,6 +298,25 @@ export class ReleaseRegistryService {
     return this.transition(deployment, status, detail);
   }
 
+  /** CI reports a promoted deployment it is running for its own project. */
+  async reportPromotionDeployment(
+    projectId: string,
+    deploymentId: string,
+    status: DeploymentStatus,
+    detail: string | null,
+  ): Promise<EnvironmentDeploymentRecord> {
+    this.assertReleasesEnabled();
+    const deployment = await this.releases.findDeployment(deploymentId);
+    if (
+      !deployment ||
+      deployment.projectId !== projectId ||
+      deployment.trigger !== 'promotion'
+    ) {
+      throw new NotFoundException('Deployment not found');
+    }
+    return this.transition(deployment, status, detail);
+  }
+
   /** Deploy a release to the next ordered environment, on behalf of a signed-in user. */
   async promote(input: {
     projectId: string;
@@ -350,19 +381,20 @@ export class ReleaseRegistryService {
         ).map(({ slot }) => slot),
       ),
     ];
-    const targetIds: string[] = [];
+    const destinationTargets: Array<{ id: string; provider: string }> = [];
     for (const slot of slots) {
-      targetIds.push(
-        (await this.resolveTarget(input.projectId, destination.id, slot)).id,
+      destinationTargets.push(
+        await this.resolveTarget(input.projectId, destination.id, slot),
       );
     }
 
+    let deployment: EnvironmentDeploymentRecord;
     try {
-      return await this.releases.createPromotion({
+      deployment = await this.releases.createPromotion({
         projectId: input.projectId,
         environmentId: destination.id,
         releaseId: release.id,
-        targetIds,
+        targetIds: destinationTargets.map(({ id }) => id),
         requestedBy: input.userId,
       });
     } catch (error) {
@@ -372,6 +404,61 @@ export class ReleaseRegistryService {
         );
       }
       throw error;
+    }
+
+    if (
+      destinationTargets.every(({ provider }) =>
+        WORKFLOW_DEPLOYED_PROVIDERS.has(provider),
+      )
+    ) {
+      await this.dispatchPromotion(
+        project.repoFullName,
+        input.userId,
+        release,
+        deployment,
+      );
+    }
+    return deployment;
+  }
+
+  /**
+   * Start the generated promotion workflow for a managed destination. If
+   * GitHub refuses, the deployment is failed rather than left pending forever.
+   */
+  private async dispatchPromotion(
+    repoFullName: string,
+    userId: string,
+    release: ReleaseRecord,
+    deployment: EnvironmentDeploymentRecord,
+  ): Promise<void> {
+    try {
+      if (!this.githubActions) {
+        throw new Error('GitHub workflow dispatch is not configured');
+      }
+      await this.githubActions.dispatchWorkflow({
+        userId,
+        repoFullName,
+        workflowFile: ENVIRONMENT_PROMOTE_WORKFLOW_FILE,
+        ref: release.sourceBranch,
+        inputs: {
+          'release-id': release.id,
+          'deployment-id': deployment.id,
+          'environment-id': deployment.environmentId,
+        },
+      });
+    } catch (error) {
+      await this.releases.transitionDeployment({
+        deploymentId: deployment.id,
+        from: 'pending',
+        to: 'failed',
+        detail: ('Promotion workflow dispatch failed: ' + String(error)).slice(
+          0,
+          2000,
+        ),
+      });
+      throw new BadGatewayException(
+        'The promotion workflow could not be started, so the deployment was marked failed.',
+      );
     }
   }
 

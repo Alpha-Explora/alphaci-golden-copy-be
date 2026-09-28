@@ -553,6 +553,75 @@ describe('Release registry and promotion', () => {
         targetIds: [mainTarget],
       });
     });
+    it('starts the promotion workflow for a managed destination', async () => {
+      const project = await releaseProject();
+      const release = await devRelease(project);
+      const start = e2e.externalCalls.length;
+
+      const promoted = (
+        await promote(project, project.uat, release).expect(201)
+      ).body as Deployment;
+
+      const dispatches = e2e.externalCalls
+        .slice(start)
+        .filter(({ method }) => method === 'dispatchWorkflow')
+        .map(({ args }) => args[0]);
+      expect(dispatches).toEqual([
+        {
+          userId,
+          repoFullName: project.repo,
+          workflowFile: '30-alphaci-promote.yml',
+          ref: 'dev',
+          inputs: {
+            'release-id': release.releaseId,
+            'deployment-id': promoted.id,
+            'environment-id': project.uat,
+          },
+        },
+      ]);
+    });
+
+    it('fails the deployment when the promotion workflow cannot start, so it can be retried', async () => {
+      const project = await releaseProject();
+      const release = await devRelease(project);
+
+      e2e.providers.failWorkflowDispatch(true);
+      try {
+        await promote(project, project.uat, release).expect(502);
+      } finally {
+        e2e.providers.failWorkflowDispatch(false);
+      }
+      const [failed] = await e2e.query<{ status: string }>(
+        'SELECT status FROM env_provisioning.environment_deployments WHERE environment_id = $1',
+        [project.uat],
+      );
+      expect(required(failed).status).toBe('failed');
+
+      await promote(project, project.uat, release).expect(201);
+    });
+
+    it("lets CI report only its own project's promoted deployments, forward only", async () => {
+      const project = await releaseProject();
+      const other = await releaseProject();
+      const release = await devRelease(project);
+      const promoted = (
+        await promote(project, project.uat, release).expect(201)
+      ).body as Deployment;
+      const report = (by: Project, deploymentId: string, status: string) =>
+        request(e2e.http)
+          .post('/api/v1/ci/deployments/' + deploymentId + '/status')
+          .set(ci(by))
+          .send({ repoFullName: by.repo, status });
+
+      await report(other, promoted.id, 'deploying').expect(404);
+      await report(project, release.deployments[0]!.id, 'deploying').expect(
+        404,
+      );
+      await report(project, promoted.id, 'healthy').expect(409);
+      await report(project, promoted.id, 'deploying').expect(200);
+      await report(project, promoted.id, 'healthy').expect(200);
+      await report(project, promoted.id, 'failed').expect(409);
+    });
   });
 });
 

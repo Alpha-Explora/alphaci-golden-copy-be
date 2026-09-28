@@ -121,7 +121,8 @@ merged. The remaining slices run in this order:
 | 1 | X0 | `codex/e2e-suite` | Backend | E1 |
 | 2 | E2 | `codex/environment-targets` | Backend | E1, X0 |
 | 3 | C1 | `codex/onprem-release-contract` | Backend | E1, X0 |
-| 4 | E3 | `codex/environment-pipelines` | Backend | E2 |
+| 4 | E3a | `codex/environment-pipelines` | Backend | E2, C1 |
+| 4b | E3b | `codex/environment-project-creation` | Backend | E3a, W2 |
 | 5 | W2 | `codex/signed-onprem-release` | `alphaci-workflow` | W1, C1 |
 | 6 | H1 | `codex/onprem-host-agent` | Backend | C1 |
 | 7 | C2 | `codex/onprem-compose-provider` | Backend | C1, E3 |
@@ -298,7 +299,7 @@ as runtime acceptance evidence.
 
 ### Phase 3: generic promotion, signed delivery, and setup UI (E3, W2, H1, F1)
 
-- [ ] **E3**, backend PR based on E2: generate triggers and quality/deploy jobs
+- [x] **E3a**, backend PR based on E2 and C1: generate triggers and quality/deploy jobs
   from the project environment definition. Enable custom create-time
   environment arrays only after E2/E3 provisioning and generated callers honor
   the definition; retain E1's pre-write rejection until that path is verified.
@@ -311,6 +312,14 @@ as runtime acceptance evidence.
   the mixed-provider example. This phase restores custom create-time environment
   arrays only after complete environment-aware provisioning and generated
   callers are verified; E1's pre-write rejection remains until then.
+  Evidence: generated-workflow scenarios and actionlint on the generated files;
+  E2E promotion dispatch and promoted-deployment status scenarios.
+- [ ] **E3b**, backend PR based on E3a after W2: accept the ordered
+  `environments` array at project creation. Create each distinct source branch
+  once, store the environments, provision each GitHub Environment, create one
+  target per environment and slot, and generate the E3a pipeline. Remove E1's
+  create-time rejection in the same PR. Evidence: E2E creation with custom
+  names and a shared branch, with every provider call recorded.
 - [ ] **F1**, frontend PR to this plan's `codex/configurable-deployment-targets`
   after E3 merges: edit the complete ordered environment definition during
   project setup, starting from

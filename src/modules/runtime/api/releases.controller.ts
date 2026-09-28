@@ -160,6 +160,23 @@ export class ReleasesController {
     );
   }
 
+  /** Report a promoted deployment the generated promotion workflow is running. */
+  @Post('deployments/:deploymentId/status')
+  @HttpCode(200)
+  async reportPromotion(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('deploymentId', ParseUUIDPipe) deploymentId: string,
+    @Body() body: CiReportDeploymentStatusDto,
+  ): Promise<EnvironmentDeploymentRecord> {
+    const projectId = await this.authorize(authorization, body.repoFullName);
+    return this.releaseRegistry.reportPromotionDeployment(
+      projectId,
+      deploymentId,
+      body.status,
+      body.detail ?? null,
+    );
+  }
+
   private async authorize(
     authorization: string | undefined,
     repoFullName: string | undefined,

@@ -18,6 +18,10 @@ import {
   renderImageName,
   type RenderServiceBranch,
 } from './render-conventions';
+import {
+  legacyEnvironmentLabel,
+  type EnvironmentDeployInput,
+} from '#kernel/ports/workflow-fragment.port';
 
 function buildDockerJob(
   target: WorkflowFragmentTarget,
@@ -200,7 +204,37 @@ function providerDataString(
 /** Render's provider-owned workflow contribution. */
 export const renderWorkflowFragment: WorkflowFragment = {
   provider: 'render',
+  deploysBuiltImage: true,
   expandTargets: expandRenderTargets,
   build: (target, branch, context) =>
     buildRenderFragment(target, branch, context),
+  environmentDeployJob: (input, context) =>
+    renderEnvironmentDeployJob(input, context),
 };
+
+/**
+ * Deploy one environment's Render target: the digest built for this release,
+ * named by environment, GitHub Environment, and target ID. Nothing is read
+ * from the branch.
+ */
+function renderEnvironmentDeployJob(
+  input: EnvironmentDeployInput,
+  context: WorkflowFragmentContext,
+): Record<string, unknown> {
+  return {
+    needs: input.needs,
+    if: input.if,
+    uses: `${CENTRAL_WORKFLOW_BASE}/render-deploy.yml@${context.centralWorkflowRef}`,
+    with: {
+      'system-name': context.serviceName,
+      environment: legacyEnvironmentLabel(input.environment.role),
+      branch: input.environment.sourceBranch,
+      'environment-id': input.environment.id,
+      'environment-name': input.environment.slug,
+      'target-id': input.targetId,
+      'commit-sha': input.commitSha,
+      ...(input.artifact ? { artifact: input.artifact } : {}),
+    },
+    secrets: 'inherit',
+  };
+}
