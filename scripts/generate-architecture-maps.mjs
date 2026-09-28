@@ -77,6 +77,15 @@ const PROVIDERS = [
     availability: 'configuration-gated by GCP deployment settings',
   },
   {
+    id: 'onprem-compose',
+    label: 'On-prem host (Docker Compose)',
+    composition: 'src/modules/runtime/runtime.module.ts',
+    implementation: 'src/modules/runtime/infrastructure/providers/onprem/onprem-compose.provider.ts',
+    responsibilities: 'Customer-held host that pulls its environment\'s signed releases by digest; target records only, no provider calls',
+    slots: 'backend, frontend, standalone',
+    availability: 'configuration-gated by ONPREM_RELEASES_ENABLED',
+  },
+  {
     id: 'render',
     label: 'Render',
     composition: 'src/modules/runtime/runtime.module.ts',

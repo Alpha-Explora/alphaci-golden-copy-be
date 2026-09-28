@@ -95,11 +95,14 @@ export async function startApplication(
         answers: {
           createTarget: (input) => {
             providerTargets += 1;
+            // Like the real clients, report the account the project was
+            // created under; Vercel's CI secrets need it.
+            const { vercelOrgId } = input as { vercelOrgId?: string };
             return Promise.resolve({
               id: 'e2e-' + provider + '-' + String(providerTargets),
               name: (input as { projectName: string }).projectName,
               provider,
-              metadata: {},
+              metadata: vercelOrgId ? { vercelOrgId } : {},
             });
           },
         },

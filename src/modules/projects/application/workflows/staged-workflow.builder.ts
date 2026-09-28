@@ -1291,7 +1291,12 @@ function environmentDeployJob(
 const imageJobId = (slot: string) => 'image-' + slot;
 const releaseImageOutput = (slot: string) => 'image-' + slot;
 
-/** Slots whose target runs a container image built by this pipeline. */
+/**
+ * Slots whose target, in any environment, runs a container image built by
+ * this pipeline. A later environment can need an image the first one does
+ * not: a frontend on Vercel in test and on an on-prem host in production is
+ * built from source in test and pulled by digest in production.
+ */
 function containerSlots(
   registry: WorkflowFragmentRegistry,
   targets: StagedEnvironmentTarget[],
@@ -1303,6 +1308,19 @@ function containerSlots(
         .map(({ slot }) => slot),
     ),
   ];
+}
+
+/** The image reference a target deploys, if its provider deploys one. */
+function targetArtifact(
+  registry: WorkflowFragmentRegistry,
+  target: StagedEnvironmentTarget,
+  slots: string[],
+  reference: (slot: string) => string,
+): string | undefined {
+  return registry.deploysBuiltImage(target.provider) &&
+    slots.includes(target.slot)
+    ? reference(target.slot)
+    : undefined;
 }
 
 const CI_REQUEST_HEADERS = [
@@ -1323,7 +1341,14 @@ function buildEnvironmentPackageWorkflowFile(
     ({ environmentId }) => environmentId === first.id,
   );
   const onFirstBranch = branchIsOneOf([first.sourceBranch]);
-  const slots = containerSlots(registry, firstTargets);
+  // A release carries only slots the first environment has a target for.
+  const slots = containerSlots(registry, targets).filter((slot) =>
+    firstTargets.some((target) => target.slot === slot),
+  );
+  // An on-prem first environment is deployed and reported by its host.
+  const hostDelivered =
+    firstTargets.length > 0 &&
+    firstTargets.every(({ provider }) => registry.deliveredByHost(provider));
   const imageJobs = Object.fromEntries(
     slots.map((slot) => [
       imageJobId(slot),
@@ -1358,20 +1383,28 @@ function buildEnvironmentPackageWorkflowFile(
     ']';
 
   const deployJobs = Object.fromEntries(
-    firstTargets.map((target) => [
-      'deploy-' + first.slug + '-' + target.slot,
-      environmentDeployJob(ctx, registry, first, target, {
-        needs: [
-          'register-release',
-          ...(slots.includes(target.slot) ? [imageJobId(target.slot)] : []),
-        ],
-        if: onFirstBranch,
-        commitSha: HEAD_SHA_EXPR,
-        artifact: slots.includes(target.slot)
-          ? `\${{ needs.${imageJobId(target.slot)}.outputs.image-ref }}`
-          : undefined,
+    firstTargets
+      .filter(({ provider }) => !registry.deliveredByHost(provider))
+      .map((target) => {
+        const artifact = targetArtifact(
+          registry,
+          target,
+          slots,
+          (slot) => `\${{ needs.${imageJobId(slot)}.outputs.image-ref }}`,
+        );
+        return [
+          'deploy-' + first.slug + '-' + target.slot,
+          environmentDeployJob(ctx, registry, first, target, {
+            needs: [
+              'register-release',
+              ...(artifact ? [imageJobId(target.slot)] : []),
+            ],
+            if: onFirstBranch,
+            commitSha: HEAD_SHA_EXPR,
+            artifact,
+          }),
+        ];
       }),
-    ]),
   );
   const deployJobIds = Object.keys(deployJobs);
 
@@ -1424,7 +1457,11 @@ function buildEnvironmentPackageWorkflowFile(
                 'BODY=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg env "$SOURCE_ENVIRONMENT_ID" --arg branch "$SOURCE_BRANCH" --arg sha "$HEAD_SHA" --arg run "$GITHUB_RUN_ID" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --argjson artifacts "$ARTIFACTS" \'{repoFullName:$repo, sourceEnvironmentId:$env, sourceBranch:$branch, commitSha:$sha, artifacts:$artifacts, workflowRun:{provider:"github_actions", repo:$repo, runId:$run, url:$url}}\')',
                 `RESPONSE=$(curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases" ${CI_REQUEST_HEADERS} -d "$BODY")`,
                 "RELEASE_ID=$(printf '%s' \"$RESPONSE\" | jq -r '.releaseId')",
-                `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"deploying"}')"`,
+                ...(hostDelivered
+                  ? []
+                  : [
+                      `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"deploying"}')"`,
+                    ]),
                 'echo "release-id=$RELEASE_ID" >> "$GITHUB_OUTPUT"',
               ].join('\n'),
             },
@@ -1442,29 +1479,34 @@ function buildEnvironmentPackageWorkflowFile(
           secrets: 'inherit',
         },
         ...deployJobs,
-        'report-deployment': {
-          needs: ['register-release', ...deployJobIds],
-          if: "${{ always() && needs.register-release.result == 'success' }}",
-          runs_on: 'ubuntu-latest',
-          steps: [
-            {
-              name: 'Report the first environment deployment',
-              env: {
-                ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
-                ALPHACI_API_URL,
-                RELEASE_ID: '${{ needs.register-release.outputs.release-id }}',
-                RESULTS: "${{ join(needs.*.result, ' ') }}",
+        ...(hostDelivered
+          ? {}
+          : {
+              'report-deployment': {
+                needs: ['register-release', ...deployJobIds],
+                if: "${{ always() && needs.register-release.result == 'success' }}",
+                runs_on: 'ubuntu-latest',
+                steps: [
+                  {
+                    name: 'Report the first environment deployment',
+                    env: {
+                      ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                      ALPHACI_API_URL,
+                      RELEASE_ID:
+                        '${{ needs.register-release.outputs.release-id }}',
+                      RESULTS: "${{ join(needs.*.result, ' ') }}",
+                    },
+                    run: [
+                      'set -euo pipefail',
+                      'STATUS=healthy',
+                      'for RESULT in $RESULTS; do [ "$RESULT" = success ] || STATUS=failed; done',
+                      `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg status "$STATUS" '{repoFullName:$repo,status:$status}')"`,
+                      '[ "$STATUS" = healthy ]',
+                    ].join('\n'),
+                  },
+                ],
               },
-              run: [
-                'set -euo pipefail',
-                'STATUS=healthy',
-                'for RESULT in $RESULTS; do [ "$RESULT" = success ] || STATUS=failed; done',
-                `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg status "$STATUS" '{repoFullName:$repo,status:$status}')"`,
-                '[ "$STATUS" = healthy ]',
-              ].join('\n'),
-            },
-          ],
-        },
+            }),
         'report-results': reportingJob(
           'package',
           ['validate-access', 'build', 'register-release', ...deployJobIds],
@@ -1487,11 +1529,19 @@ function buildPromoteWorkflowFile(
   environments: StagedWorkflowEnvironment[],
   targets: StagedEnvironmentTarget[],
 ): StagedWorkflowFile {
-  const later = environments.slice(1);
   const slots = containerSlots(registry, targets);
+  // A host-delivered environment is never dispatched; its host pulls instead.
+  const workflowTargets = targets.filter(
+    ({ provider }) => !registry.deliveredByHost(provider),
+  );
+  const later = environments
+    .slice(1)
+    .filter(({ id }) =>
+      workflowTargets.some(({ environmentId }) => environmentId === id),
+    );
   const deployJobs = Object.fromEntries(
     later.flatMap((environment) =>
-      targets
+      workflowTargets
         .filter(({ environmentId }) => environmentId === environment.id)
         .map((target) => [
           'deploy-' + environment.slug + '-' + target.slot,
@@ -1499,9 +1549,13 @@ function buildPromoteWorkflowFile(
             needs: ['release'],
             if: `\${{ inputs.environment-id == '${environment.id}' }}`,
             commitSha: '${{ needs.release.outputs.commit-sha }}',
-            artifact: slots.includes(target.slot)
-              ? `\${{ needs.release.outputs.${releaseImageOutput(target.slot)} }}`
-              : undefined,
+            artifact: targetArtifact(
+              registry,
+              target,
+              slots,
+              (slot) =>
+                `\${{ needs.release.outputs.${releaseImageOutput(slot)} }}`,
+            ),
           }),
         ]),
     ),

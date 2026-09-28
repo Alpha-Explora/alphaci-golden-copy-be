@@ -7,7 +7,12 @@ import {
 } from './support/application';
 import { required } from './support/database';
 
-type Job = { if?: string; uses?: string; with?: Record<string, unknown> };
+type Job = {
+  if?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
+  steps?: Array<{ run?: string; env?: Record<string, string> }>;
+};
 type Workflow = { jobs: Record<string, Job> };
 
 /**
@@ -18,7 +23,11 @@ type Workflow = { jobs: Record<string, Job> };
  * environment's branch protected or a later one left unprotected; environments
  * sharing a target or GitHub Environment; the pipeline pushed to a branch it
  * does not run on, deploying a later environment on push, or naming a target
- * of another environment.
+ * of another environment. For the mixed example (hosted test and UAT,
+ * on-prem production): production given a hosted target or the other
+ * environments an on-prem one; an on-prem target calling a provider or
+ * GitHub; the image production pulls never being built because test does not
+ * need it; a workflow job deploying production.
  */
 describe('Project creation with environments', () => {
   let e2e: E2eApplication;
@@ -28,6 +37,11 @@ describe('Project creation with environments', () => {
   const installationToken = () => Promise.resolve('e2e-installation-token');
 
   beforeAll(async () => {
+    // Managed Vercel and on-prem hosts are on for the mixed example; every
+    // provider client is still a fake.
+    process.env['ALPHACI_VERCEL_TOKEN'] = 'e2e-vercel-token';
+    process.env['ALPHACI_VERCEL_TEAM_ID'] = 'e2e-vercel-team';
+    process.env['ONPREM_RELEASES_ENABLED'] = 'true';
     e2e = await startApplication({
       githubAnswers: {
         getInstallationAccessTokenForUser: installationToken,
@@ -90,6 +104,239 @@ describe('Project creation with environments', () => {
 
   afterAll(async () => {
     await e2e.close();
+    delete process.env['ALPHACI_VERCEL_TOKEN'];
+    delete process.env['ALPHACI_VERCEL_TEAM_ID'];
+    delete process.env['ONPREM_RELEASES_ENABLED'];
+  });
+
+  const pushesSince = (start: number) =>
+    e2e.externalCalls
+      .slice(start)
+      .filter(({ method }) => method === 'putFileContent')
+      .map(({ args }) => ({
+        path: args[3] as string,
+        content: args[4] as string,
+        branch: args[5] as string,
+      }));
+
+  it('creates hosted test and UAT with on-prem production, building every image production pulls', async () => {
+    const start = e2e.externalCalls.length;
+    const response = await agent
+      .post('/api/v1/projects')
+      .send({
+        repoName: 'e2e-mixed-' + String(Date.now()),
+        visibility: 'private',
+        projectTypeId: 'nestjs',
+        serviceName: 'shop',
+        workspaceId,
+        environments: [
+          {
+            slug: 'dev',
+            displayName: 'Test',
+            sourceBranch: 'dev',
+            role: 'non_production',
+          },
+          {
+            slug: 'uat',
+            displayName: 'UAT',
+            sourceBranch: 'uat',
+            role: 'non_production',
+          },
+          {
+            slug: 'main',
+            displayName: 'Production',
+            sourceBranch: 'main',
+            role: 'production',
+          },
+        ],
+        deploymentProvisioning: {
+          enabled: true,
+          targets: [
+            {
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              projectName: 'shop-api',
+            },
+            {
+              slot: 'frontend',
+              provider: 'vercel',
+              ownershipMode: 'flowci_managed',
+              projectName: 'shop-web',
+            },
+            {
+              slot: 'backend',
+              provider: 'onprem-compose',
+              ownershipMode: 'byo',
+              environmentSlug: 'main',
+            },
+            {
+              slot: 'frontend',
+              provider: 'onprem-compose',
+              ownershipMode: 'byo',
+              environmentSlug: 'main',
+            },
+          ],
+        },
+      })
+      .expect(201);
+    const projectId = (response.body as { id: string }).id;
+    expect(
+      (
+        response.body as {
+          deploymentProvisioning: { targets: Array<{ status: string }> };
+        }
+      ).deploymentProvisioning.targets.map(({ status }) => status),
+    ).toEqual(Array(6).fill('active'));
+
+    const targets = await e2e.query<{
+      id: string;
+      slug: string;
+      environment_id: string;
+      slot: string;
+      provider: string;
+    }>(
+      `SELECT target.id, environment.slug, target.environment_id, target.slot, target.provider
+         FROM env_provisioning.project_deployment_targets AS target
+         JOIN projects.project_environments AS environment ON environment.id = target.environment_id
+        WHERE target.project_id = $1
+        ORDER BY environment.position, target.slot`,
+      [projectId],
+    );
+    expect(
+      targets.map(({ slug, slot, provider }) => [slug, slot, provider]),
+    ).toEqual([
+      ['dev', 'backend', 'render'],
+      ['dev', 'frontend', 'vercel'],
+      ['uat', 'backend', 'render'],
+      ['uat', 'frontend', 'vercel'],
+      ['main', 'backend', 'onprem-compose'],
+      ['main', 'frontend', 'onprem-compose'],
+    ]);
+    const targetId = (slug: string, slot: string) =>
+      required(
+        targets.find((target) => target.slug === slug && target.slot === slot),
+      ).id;
+    const mainId = required(
+      targets.find(({ slug }) => slug === 'main'),
+    ).environment_id;
+
+    const calls = e2e.externalCalls.slice(start);
+    expect(
+      calls
+        .filter(({ method }) => method === 'createTarget')
+        .map(({ port }) => port)
+        .sort(),
+    ).toEqual([
+      'provider:render',
+      'provider:render',
+      'provider:vercel',
+      'provider:vercel',
+    ]);
+    expect(
+      calls
+        .filter(({ method }) => method === 'ensureDeploymentEnvironment')
+        .map(
+          ({ args }) =>
+            (args[0] as { environmentName: string }).environmentName,
+        ),
+    ).toEqual(['dev', 'dev', 'uat', 'uat']);
+
+    const pushes = pushesSince(start);
+    const pipeline = (path: string) =>
+      yaml.load(
+        required(
+          pushes.find((push) => push.path === path && push.branch === 'dev'),
+        ).content,
+      ) as Workflow;
+    const packaged = pipeline('.github/workflows/20-alphaci-package.yml');
+    expect(Object.keys(packaged.jobs)).toEqual(
+      expect.arrayContaining(['image-backend', 'image-frontend']),
+    );
+    const register = required(
+      packaged.jobs['register-release']?.steps?.[0]?.run,
+    );
+    expect(register).toContain('slot:"frontend"');
+    expect(packaged.jobs['deploy-dev-frontend']?.with?.['target-id']).toBe(
+      targetId('dev', 'frontend'),
+    );
+    expect(
+      packaged.jobs['deploy-dev-frontend']?.with?.['artifact'],
+    ).toBeUndefined();
+
+    const promoted = pipeline('.github/workflows/30-alphaci-promote.yml');
+    const deployJobs = Object.keys(promoted.jobs).filter((id) =>
+      id.startsWith('deploy-'),
+    );
+    expect(deployJobs.sort()).toEqual([
+      'deploy-uat-backend',
+      'deploy-uat-frontend',
+    ]);
+    expect(
+      required(
+        promoted.jobs['release']?.steps?.[0]?.env?.['KNOWN_ENVIRONMENTS'],
+      ).split(' '),
+    ).not.toContain(mainId);
+  });
+
+  it.each<
+    [
+      string,
+      { environments: string; environmentSlug?: string; provider: string },
+    ]
+  >([
+    [
+      'a target for an environment the project does not define',
+      {
+        environments: 'defined',
+        environmentSlug: 'staging',
+        provider: 'onprem-compose',
+      },
+    ],
+    [
+      'an on-prem target without project environments',
+      { environments: 'none', provider: 'onprem-compose' },
+    ],
+  ])('refuses %s before creating the repository', async (_case, change) => {
+    const start = e2e.externalCalls.length;
+    await agent
+      .post('/api/v1/projects')
+      .send({
+        repoName: 'e2e-refused-' + String(Date.now()),
+        visibility: 'private',
+        projectTypeId: 'nestjs',
+        serviceName: 'refused',
+        workspaceId,
+        ...(change.environments === 'defined'
+          ? {
+              environments: [
+                {
+                  slug: 'main',
+                  displayName: 'Production',
+                  sourceBranch: 'main',
+                  role: 'production',
+                },
+              ],
+            }
+          : {}),
+        deploymentProvisioning: {
+          enabled: true,
+          targets: [
+            {
+              slot: 'backend',
+              provider: change.provider,
+              ownershipMode: 'byo',
+              ...(change.environmentSlug
+                ? { environmentSlug: change.environmentSlug }
+                : {}),
+            },
+          ],
+        },
+      })
+      .expect(400);
+    expect(
+      e2e.externalCalls.slice(start).map(({ method }) => method),
+    ).not.toContain('createRepo');
   });
 
   it('stores the environments and provisions each one its own branch rules, target, and pipeline', async () => {

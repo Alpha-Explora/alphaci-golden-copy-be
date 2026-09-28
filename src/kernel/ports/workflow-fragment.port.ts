@@ -79,6 +79,12 @@ export interface WorkflowFragment {
   readonly provider: string;
   /** True when this provider deploys a container image the pipeline builds. */
   readonly deploysBuiltImage?: boolean;
+  /**
+   * True when a host pulls its own assignments, as an on-prem host does. The
+   * pipeline builds and registers the release; it has no deploy job to run
+   * and never reports the deployment.
+   */
+  readonly deliveredByHost?: boolean;
   expandTargets?(
     target: WorkflowTargetExpansionInput,
     context: WorkflowTargetExpansionContext,
@@ -155,6 +161,10 @@ export class WorkflowFragmentRegistry {
 
   deploysBuiltImage(provider: string): boolean {
     return this.fragmentsByProvider.get(provider)?.deploysBuiltImage === true;
+  }
+
+  deliveredByHost(provider: string): boolean {
+    return this.fragmentsByProvider.get(provider)?.deliveredByHost === true;
   }
 
   environmentDeployJob(

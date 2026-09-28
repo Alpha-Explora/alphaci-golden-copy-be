@@ -343,7 +343,11 @@ export class ProjectProvisioningSupport {
     slots: DeploymentProvisioningTargetDto['slot'][];
   }): Promise<DeploymentProvisioningResult> {
     const request = filterDeploymentProvisioningRequest(
-      forceManagedProvisioning(input.request),
+      forceManagedProvisioning(
+        input.request,
+        (provider) =>
+          this.workflowFragmentRegistry?.deliveredByHost(provider) ?? false,
+      ),
       input.slots,
     );
     if (!request?.enabled || request.targets.length === 0) {

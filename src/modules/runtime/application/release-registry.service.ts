@@ -37,10 +37,13 @@ import {
   type ReleaseSlot,
   type WorkflowRun,
 } from '../domain/release-manifest';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import {
   ReleaseRegistryRepository,
   allowedDeploymentTransitions,
+  type DeploymentDelivery,
   type DeploymentStatus,
   type EnvironmentDeploymentRecord,
   type ReleaseRecord,
@@ -82,9 +85,6 @@ export interface ReleaseRegistryView {
 
 const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
 const HOST_TOKEN_PREFIX = 'aoh_';
-// Providers a generated promotion workflow deploys to. Other targets pull
-// their assignment themselves, as on-prem hosts do.
-const WORKFLOW_DEPLOYED_PROVIDERS = new Set(['render', 'vercel']);
 
 function isUniqueViolation(error: unknown): boolean {
   return (
@@ -107,6 +107,10 @@ const sha256 = (value: string) =>
  * the preceding environment currently runs. CI tokens register, sign, and
  * report; they cannot promote. On-prem hosts pull their own environment's
  * assignments with a host token and report status.
+ *
+ * Each deployment is delivered one way, fixed when it is created: by the
+ * generated workflow, which CI reports, or by the environment's host, which
+ * the host reports. The environment's targets decide, and must agree.
  */
 @Injectable()
 export class ReleaseRegistryService {
@@ -118,6 +122,7 @@ export class ReleaseRegistryService {
     @Inject(ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER)
     private readonly targets: EnvironmentDeploymentTargetResolver,
     private readonly configService: ConfigService,
+    private readonly providerRegistry: DeploymentProviderRegistry<DeploymentProvider>,
     @Optional()
     @Inject(WORKSPACE_ACCESS_PORT)
     private readonly workspaceAccess?: WorkspaceAccessPort,
@@ -188,6 +193,7 @@ export class ReleaseRegistryService {
     for (const artifact of artifacts) {
       await this.resolveTarget(input.projectId, source.id, artifact.slot);
     }
+    const automaticDelivery = this.deliveryOf(sourceTargets, source.slug);
 
     try {
       const release = await this.releases.registerRelease({
@@ -198,6 +204,7 @@ export class ReleaseRegistryService {
         workflowRun: input.workflowRun,
         artifacts,
         automaticTargetIds: sourceTargets.map(({ id }) => id),
+        automaticDelivery,
       });
       return this.view(release);
     } catch (error) {
@@ -295,6 +302,7 @@ export class ReleaseRegistryService {
     await this.requireRelease(projectId, releaseId);
     const deployment = await this.releases.findAutomaticDeployment(releaseId);
     if (!deployment) throw new NotFoundException('Deployment not found');
+    this.assertWorkflowDelivered(deployment);
     return this.transition(deployment, status, detail);
   }
 
@@ -314,6 +322,7 @@ export class ReleaseRegistryService {
     ) {
       throw new NotFoundException('Deployment not found');
     }
+    this.assertWorkflowDelivered(deployment);
     return this.transition(deployment, status, detail);
   }
 
@@ -387,6 +396,7 @@ export class ReleaseRegistryService {
         await this.resolveTarget(input.projectId, destination.id, slot),
       );
     }
+    const delivery = this.deliveryOf(destinationTargets, destination.slug);
 
     let deployment: EnvironmentDeploymentRecord;
     try {
@@ -395,6 +405,7 @@ export class ReleaseRegistryService {
         environmentId: destination.id,
         releaseId: release.id,
         targetIds: destinationTargets.map(({ id }) => id),
+        delivery,
         requestedBy: input.userId,
       });
     } catch (error) {
@@ -406,11 +417,8 @@ export class ReleaseRegistryService {
       throw error;
     }
 
-    if (
-      destinationTargets.every(({ provider }) =>
-        WORKFLOW_DEPLOYED_PROVIDERS.has(provider),
-      )
-    ) {
+    // A host-delivered environment's host picks the assignment up itself.
+    if (delivery === 'workflow') {
       await this.dispatchPromotion(
         project.repoFullName,
         input.userId,
@@ -556,10 +564,46 @@ export class ReleaseRegistryService {
   ): Promise<EnvironmentDeploymentRecord> {
     const host = await this.requireHost(token);
     const deployment = await this.releases.findDeployment(deploymentId);
-    if (!deployment || deployment.environmentId !== host.environmentId) {
+    if (
+      !deployment ||
+      deployment.environmentId !== host.environmentId ||
+      deployment.delivery !== 'host'
+    ) {
       throw new NotFoundException('Deployment not found');
     }
     return this.transition(deployment, status, detail);
+  }
+
+  /** How an environment's targets are delivered. Mixing the two is refused. */
+  private deliveryOf(
+    targets: ReadonlyArray<{ provider: string }>,
+    environmentSlug: string,
+  ): DeploymentDelivery {
+    const deliveries = new Set(
+      targets.map(({ provider }) =>
+        this.providerRegistry.find(provider)?.capabilities.connectivity ===
+        'indirect'
+          ? 'host'
+          : 'workflow',
+      ),
+    );
+    if (deliveries.size > 1) {
+      throw new ConflictException(
+        environmentSlug +
+          ' has both on-prem and hosted targets; every target in an environment must be delivered the same way.',
+      );
+    }
+    return deliveries.has('host') ? 'host' : 'workflow';
+  }
+
+  private assertWorkflowDelivered(
+    deployment: EnvironmentDeploymentRecord,
+  ): void {
+    if (deployment.delivery === 'host') {
+      throw new ConflictException(
+        "This deployment runs on the environment's on-prem host, which reports its status.",
+      );
+    }
   }
 
   private async transition(

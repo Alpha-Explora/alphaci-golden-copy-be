@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
@@ -86,6 +87,8 @@ import {
 } from './core/provider-pack';
 import type { DeploymentProvider } from './core/deployment-provider.contract';
 import { createGcpProviderPack } from './infrastructure/providers/gcp/gcp-provider.pack';
+import { OnpremComposeDeploymentProvider } from './infrastructure/providers/onprem/onprem-compose.provider';
+import { createOnpremComposeProviderPack } from './infrastructure/providers/onprem/onprem-compose-provider.pack';
 import { createRenderProviderPack } from './infrastructure/providers/render/render-provider.pack';
 import { createVercelProviderPack } from './infrastructure/providers/vercel/vercel-provider.pack';
 import {
@@ -171,6 +174,21 @@ import {
       inject: [DeploymentProviderRegistry],
     },
     {
+      // Discoverable always; usable only where ONPREM_RELEASES_ENABLED turns
+      // on-prem hosts on, so existing on-prem targets keep generating valid
+      // pipelines even while the flag is off.
+      provide: OnpremComposeDeploymentProvider,
+      inject: [ConfigService, DeploymentProviderRegistry],
+      useFactory: (
+        configService: ConfigService,
+        registry: DeploymentProviderRegistry,
+      ) =>
+        new OnpremComposeDeploymentProvider(
+          configService.get<string>('ONPREM_RELEASES_ENABLED') === 'true',
+          registry,
+        ),
+    },
+    {
       provide: RUNTIME_PROVIDER_PACKS,
       useFactory: (
         renderProvider: DeploymentProvider,
@@ -183,6 +201,7 @@ import {
         vercelClient: VercelEnvClient,
         vercelCiSecretsInstaller: VercelCiSecretsService,
         gcpProvider: GcpDeploymentProvider,
+        onpremProvider: OnpremComposeDeploymentProvider,
         workflowFragments: readonly WorkflowFragment[],
       ) => [
         createRenderProviderPack({
@@ -205,6 +224,7 @@ import {
           ciSecretsInstaller: vercelCiSecretsInstaller,
         }),
         createGcpProviderPack({ provider: gcpProvider }),
+        createOnpremComposeProviderPack({ provider: onpremProvider }),
       ],
       inject: [
         RENDER_DEPLOYMENT_PROVIDER,
@@ -217,6 +237,7 @@ import {
         VercelEnvClient,
         VercelCiSecretsService,
         GcpDeploymentProvider,
+        OnpremComposeDeploymentProvider,
         WORKFLOW_FRAGMENTS,
       ],
     },

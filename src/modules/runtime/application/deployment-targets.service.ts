@@ -188,13 +188,42 @@ export class DeploymentTargetsService
       ? { ...requested, branchName: environment.sourceBranch }
       : requested;
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
-    this.assertOwnershipModeAllowed(dto);
-    try {
-      assertProviderSlotAllowed(
-        dto.provider,
-        dto.slot,
-        this.providerRegistry?.find(dto.provider),
+    const definition = this.providerRegistry?.find(dto.provider);
+    const availability = definition?.isEnabled();
+    if (definition && availability && !availability.enabled) {
+      throw new BadRequestException(
+        availability.reason ?? definition.label + ' is not available here.',
       );
+    }
+    // A host-delivered provider is the customer's own machine: it sits outside
+    // the managed-or-own-account choice, needs no connection, and is only a
+    // record here. The host pulls its environment's releases.
+    const hostDelivered = this.deliveredByHost(dto.provider);
+    if (hostDelivered) {
+      if (!environment) {
+        throw new BadRequestException(
+          (definition?.label ?? dto.provider) +
+            ' targets belong to a project environment; pass environmentId.',
+        );
+      }
+      if (dto.ownershipMode !== 'byo') {
+        throw new BadRequestException(
+          (definition?.label ?? dto.provider) +
+            " targets run on the customer's own host; use ownershipMode byo.",
+        );
+      }
+    } else {
+      this.assertOwnershipModeAllowed(dto);
+    }
+    if (environment) {
+      await this.assertEnvironmentDelivery(
+        projectId,
+        environment,
+        hostDelivered,
+      );
+    }
+    try {
+      assertProviderSlotAllowed(dto.provider, dto.slot, definition);
     } catch (error) {
       mapSlotViolation(error);
     }
@@ -221,11 +250,13 @@ export class DeploymentTargetsService
         ...providerPolicy.managedQuota,
       });
     }
-    const providerAuth = await this.resolveProviderToken(
-      dto.provider,
-      userId,
-      buildCreateTargetTokenInput(dto),
-    );
+    const providerAuth = hostDelivered
+      ? { token: '', connectionMetadata: {} }
+      : await this.resolveProviderToken(
+          dto.provider,
+          userId,
+          buildCreateTargetTokenInput(dto),
+        );
     const deploymentStrategy = this.deploymentStrategyResolver.resolve({
       provider: dto.provider,
       ownershipMode: dto.ownershipMode,
@@ -258,12 +289,20 @@ export class DeploymentTargetsService
         }),
       ) ?? EMPTY_PROVIDER_TARGET_POLICY;
 
-    if (environment) {
+    if (environment && !hostDelivered) {
       await this.provisionGithubEnvironment(project, userId, environment);
     }
 
-    const target =
-      dto.action === 'create'
+    const hostLabel =
+      dto.providerProjectName?.trim() || dto.projectName?.trim() || dto.slot;
+    const target = hostDelivered
+      ? {
+          id: hostLabel,
+          name: hostLabel,
+          provider: dto.provider,
+          metadata: {},
+        }
+      : dto.action === 'create'
         ? await this.clientRegistry.getClient(dto.provider).createTarget({
             token: providerAuth.token,
             repoFullName: project.repoFullName,
@@ -358,6 +397,11 @@ export class DeploymentTargetsService
       environmentId,
       target.slot,
       target.branchName,
+    );
+    await this.assertEnvironmentDelivery(
+      projectId,
+      environment,
+      this.deliveredByHost(target.provider),
     );
     await this.provisionGithubEnvironment(project, userId, environment);
 
@@ -1251,6 +1295,44 @@ export class DeploymentTargetsService
     provider: EnvProvider,
   ): DeploymentProviderPolicy | undefined {
     return this.providerRegistry?.find(provider)?.policy;
+  }
+
+  /** Whether a host pulls this provider's deployments instead of a workflow. */
+  private deliveredByHost(provider: EnvProvider): boolean {
+    return (
+      this.providerRegistry?.find(provider)?.capabilities.connectivity ===
+      'indirect'
+    );
+  }
+
+  /**
+   * An environment is delivered one way: all its targets by the workflow, or
+   * all by its host. A promotion creates one deployment for the environment,
+   * reported by one party.
+   */
+  private async assertEnvironmentDelivery(
+    projectId: string,
+    environment: DeploymentProjectEnvironment,
+    hostDelivered: boolean,
+  ): Promise<void> {
+    const existing =
+      await this.deploymentTargetsRepository.listDeploymentTargets(
+        projectId,
+        environment.id,
+      );
+    if (
+      existing.some(
+        ({ provider }) => this.deliveredByHost(provider) !== hostDelivered,
+      )
+    ) {
+      throw new ConflictException(
+        environment.slug +
+          (hostDelivered
+            ? ' already has hosted targets'
+            : ' already has on-prem targets') +
+          '; every target in an environment must be delivered the same way.',
+      );
+    }
   }
 
   private managedProviderConfig(

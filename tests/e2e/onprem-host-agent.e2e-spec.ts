@@ -230,16 +230,26 @@ describe('On-prem host agent', () => {
       ).id;
     const dev = await environment('dev', 0, 'non_production');
     const prod = await environment('main', 1, 'production');
-    for (const [environmentId, branch] of [
-      [dev, 'dev'],
-      [prod, 'main'],
+    // dev deploys through its workflow; production is the on-prem host's.
+    for (const [environmentId, branch, provider, ownership, strategy] of [
+      [dev, 'dev', 'render', 'flowci_managed', 'render_image_pushed'],
+      [prod, 'main', 'onprem-compose', 'byo', 'provider_native'],
     ] as const) {
       await e2e.query(
         `INSERT INTO env_provisioning.project_deployment_targets
            (project_id, environment_id, slot, ownership_mode, provider, provider_project_id,
             provider_project_name, repo_full_name, branch_name, deployment_strategy)
-         VALUES ($1, $2, 'backend', 'flowci_managed', 'render', $3, $3, $4, $5, 'render_image_pushed')`,
-        [projectId, environmentId, repo + '-' + branch, repo, branch],
+         VALUES ($1, $2, 'backend', $6, $7, $3, $3, $4, $5, $8)`,
+        [
+          projectId,
+          environmentId,
+          repo + '-' + branch,
+          repo,
+          branch,
+          ownership,
+          provider,
+          strategy,
+        ],
       );
     }
     const token = 'e2e_ci_' + randomBytes(16).toString('hex');

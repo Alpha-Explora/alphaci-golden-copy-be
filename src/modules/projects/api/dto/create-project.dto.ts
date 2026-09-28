@@ -64,6 +64,15 @@ export class DeploymentProvisioningTargetDto {
   @IsUUID()
   environmentId?: string;
 
+  /**
+   * Limits this target to one of the project's environments, replacing the
+   * target every other environment gets for the same slot. Omit it for a
+   * target every environment shares.
+   */
+  @IsOptional()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  environmentSlug?: string;
+
   @IsIn(['backend', 'frontend', 'standalone'])
   slot!: 'backend' | 'frontend' | 'standalone';
 

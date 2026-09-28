@@ -54,6 +54,7 @@ import type {
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { validateProjectEnvironmentDefinitions } from '../../domain/project-environment.policy';
+import { environmentTargetsProblem } from '../../domain/environment-deployment-targets.policy';
 
 export type * from './projects.service.types';
 
@@ -153,6 +154,14 @@ export class ProjectProvisioningApplicationService {
         );
       }
     }
+    const targetsProblem = environmentTargetsProblem(
+      dto.environments,
+      dto.deploymentProvisioning?.targets ?? [],
+      (provider) =>
+        this.support.workflowFragmentRegistry?.deliveredByHost(provider) ??
+        false,
+    );
+    if (targetsProblem) throw new BadRequestException(targetsProblem);
     await this.support.assertWithinQuota(userId, 'projects', 1, null);
     await this.support.workspaceGate.resolveWorkspaceIdForCreate(
       userId,

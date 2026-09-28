@@ -114,9 +114,9 @@ Keep changes to both `codex/configurable-deployment-targets` and production
 `main` in reviewed PRs.
 
 Merged: E1 (#104), R1 (#105), X0 (#114), E2 (#115), C1 (#116), E3a (#117),
-release history for the UI (#118), W1 (`alphaci-workflow` #30), and W2
-(`alphaci-workflow` #33). The remaining work runs in this order; the critical
-path is E3b, H1, C2, and the lab run.
+release history for the UI (#118), E3b (#120), H1 (#121), C2, W1
+(`alphaci-workflow` #30), and W2 (`alphaci-workflow` #33). The remaining
+work runs in this order; the critical path is the lab run.
 
 | Order | Slice | Branch | Repository | Needs merged first |
 |---|---|---|---|---|
@@ -349,7 +349,7 @@ as runtime acceptance evidence.
 
 ### Phase 4: on-prem provider and activation (C2)
 
-- [ ] **C2**, backend PR based on E3b and H1: add the `onprem-compose`
+- [x] **C2**, backend PR based on E3b and H1: add the `onprem-compose`
   provider pack and workflow fragment using the E2/E3 environment contract,
   register it behind `ONPREM_RELEASES_ENABLED`, and regenerate the provider
   map. Promotions to an on-prem target create the host assignment instead of
@@ -357,6 +357,35 @@ as runtime acceptance evidence.
   and W2 before any generated caller uses them. Evidence: E2E promotion to an
   on-prem target reaching the host assignment, and generated workflows for the
   mixed-provider example.
+  Evidence: E2E `release-registry` (on-prem promotion without dispatch,
+  host-only reporting, one delivery per environment, flag off) and
+  `project-creation-environments` (mixed example with per-environment
+  targets). The `@v1` check moves to the lab run, the first real caller.
+
+  C2 decisions:
+
+  - Each deployment records its delivery (`workflow` or `host`) when it is
+    created. CI may report only workflow deliveries; a host sees and reports
+    only host deliveries. An environment whose targets would mix the two is
+    refused at target creation, attachment, and project creation.
+  - A creation target may carry `environmentSlug`; it replaces that
+    environment's shared target for its slot. This is how the mixed example is
+    created in one request.
+  - The package workflow builds an image for every slot any environment's
+    container target needs, so a frontend on Vercel in test still has an image
+    for an on-prem production host. On-prem targets get no deploy job; an
+    on-prem first environment is reported by its host, not CI.
+  - On-prem targets are `byo` records with the `provider_native` strategy
+    and no provider client, GitHub Environment, or credentials.
+
+  Follow-ups:
+
+  - Environment projects have no workflow regeneration path. A target added
+    after creation that needs a new image slot (for example an on-prem
+    frontend where test uses Vercel) is not built until the pipeline is
+    regenerated. Add regeneration before F2 exposes adding targets.
+  - An automatic deployment that CI never reports stays in flight and blocks
+    the next registration for that environment.
 
 ### Phase 5: prove the mixed configuration on the laptop
 
