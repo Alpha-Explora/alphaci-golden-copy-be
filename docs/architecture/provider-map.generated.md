@@ -22,6 +22,7 @@ Providers are Runtime-owned plugins. A provider contribution pack groups its des
 | Provider id | Label | Responsibility | Supported slot | Availability |
 |---|---|---|---|---|
 | `gcp` | Google Cloud Platform | GCP deployment provider and Cloud Run/Artifact Registry provisioning | provider-defined deployment slots | configuration-gated by GCP deployment settings |
+| `onprem-compose` | On-prem host (Docker Compose) | Customer-held host that pulls its environment's signed releases by digest; target records only, no provider calls | backend, frontend, standalone | configuration-gated by ONPREM_RELEASES_ENABLED |
 | `render` | Render | Render deployment targets, environment variables, policy, and CI secret installation | backend | configuration-gated by environment provisioning settings |
 | `vercel` | Vercel | Vercel deployment targets, environment variables, preview lane, policy, and CI secret installation | frontend | configuration-gated by environment provisioning settings |
 

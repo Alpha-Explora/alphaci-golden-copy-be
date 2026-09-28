@@ -15,6 +15,9 @@ export type DeploymentStatus =
   | 'failed'
   | 'rolled_back';
 
+/** Who carries a deployment out: the generated workflow, or the environment's host. */
+export type DeploymentDelivery = 'workflow' | 'host';
+
 export interface ReleaseRecord {
   id: string;
   projectId: string;
@@ -37,6 +40,7 @@ export interface EnvironmentDeploymentRecord {
   environmentId: string;
   releaseId: string;
   trigger: 'automatic' | 'promotion';
+  delivery: DeploymentDelivery;
   targetIds: string[];
   status: DeploymentStatus;
   detail: string | null;
@@ -79,6 +83,7 @@ interface DeploymentRow {
   environment_id: string;
   release_id: string;
   trigger: 'automatic' | 'promotion';
+  delivery: DeploymentDelivery;
   target_ids: string[];
   status: DeploymentStatus;
   detail: string | null;
@@ -126,6 +131,7 @@ export class ReleaseRegistryRepository {
     workflowRun: WorkflowRun;
     artifacts: ReleaseArtifact[];
     automaticTargetIds: string[];
+    automaticDelivery: DeploymentDelivery;
   }): Promise<ReleaseRecord> {
     const releaseId = await this.databaseService.withTransaction(
       async (client) => {
@@ -158,13 +164,14 @@ export class ReleaseRegistryRepository {
         }
         await client.query(
           `INSERT INTO env_provisioning.environment_deployments
-           (project_id, environment_id, release_id, trigger, target_ids)
-         VALUES ($1, $2, $3, 'automatic', $4::uuid[])`,
+           (project_id, environment_id, release_id, trigger, target_ids, delivery)
+         VALUES ($1, $2, $3, 'automatic', $4::uuid[], $5)`,
           [
             input.projectId,
             input.sourceEnvironmentId,
             id,
             input.automaticTargetIds,
+            input.automaticDelivery,
           ],
         );
         return id;
@@ -232,12 +239,13 @@ export class ReleaseRegistryRepository {
     environmentId: string;
     releaseId: string;
     targetIds: string[];
+    delivery: DeploymentDelivery;
     requestedBy: string;
   }): Promise<EnvironmentDeploymentRecord> {
     const result = await this.databaseService.query<DeploymentRow>(
       `INSERT INTO env_provisioning.environment_deployments
-         (project_id, environment_id, release_id, trigger, target_ids, requested_by)
-       VALUES ($1, $2, $3, 'promotion', $4::uuid[], $5)
+         (project_id, environment_id, release_id, trigger, target_ids, requested_by, delivery)
+       VALUES ($1, $2, $3, 'promotion', $4::uuid[], $5, $6)
        RETURNING *`,
       [
         input.projectId,
@@ -245,6 +253,7 @@ export class ReleaseRegistryRepository {
         input.releaseId,
         input.targetIds,
         input.requestedBy,
+        input.delivery,
       ],
     );
     return toDeployment(requiredRow(result.rows[0]));
@@ -417,6 +426,7 @@ export class ReleaseRegistryRepository {
          JOIN env_provisioning.releases AS signed
            ON signed.id = deployment.release_id AND signed.verification_status = 'verified'
         WHERE deployment.environment_id = $1
+          AND deployment.delivery = 'host'
           AND deployment.status IN ('pending', 'deploying')
         ORDER BY deployment.created_at`,
       [environmentId],
@@ -477,6 +487,7 @@ function toDeployment(row: DeploymentRow): EnvironmentDeploymentRecord {
     environmentId: row.environment_id,
     releaseId: row.release_id,
     trigger: row.trigger,
+    delivery: row.delivery,
     targetIds: row.target_ids,
     status: row.status,
     detail: row.detail,

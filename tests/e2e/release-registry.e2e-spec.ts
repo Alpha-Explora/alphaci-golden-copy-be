@@ -31,6 +31,12 @@ const sha = (character: string) => character.repeat(40);
  * Immutable releases, signed manifests, explicit promotion between ordered
  * environments, and on-prem host polling, through the real CI-token, session,
  * and host-token boundaries.
+ *
+ * On-prem failure modes: an on-prem target that calls a provider or GitHub;
+ * an environment mixing on-prem and hosted targets; a promotion to an on-prem
+ * environment that starts a workflow; a CI token reporting a host's
+ * deployment, or a host seeing or reporting a workflow's; on-prem targets
+ * accepted while on-prem hosts are off.
  */
 describe('Release registry and promotion', () => {
   let e2e: E2eApplication;
@@ -38,7 +44,8 @@ describe('Release registry and promotion', () => {
   let userId: string;
   let sequence = 0;
 
-  async function releaseProject() {
+  /** dev, uat, and main; Render targets unless an environment is on-prem. */
+  async function releaseProject(onprem: Array<'uat' | 'main'> = []) {
     sequence += 1;
     const repo =
       'e2e-org/releases-' + String(Date.now()) + '-' + String(sequence);
@@ -64,19 +71,30 @@ describe('Release registry and promotion', () => {
     const dev = await environment('dev', 0, 'non_production');
     const uat = await environment('uat', 1, 'non_production');
     const main = await environment('main', 2, 'production');
-    const target = async (environmentId: string, branch: string) =>
-      required(
+    const target = async (environmentId: string, branch: string) => {
+      const host = (onprem as string[]).includes(branch);
+      return required(
         (
           await e2e.query<{ id: string }>(
             `INSERT INTO env_provisioning.project_deployment_targets
                (project_id, environment_id, slot, ownership_mode, provider, provider_project_id,
                 provider_project_name, repo_full_name, branch_name, deployment_strategy)
-             VALUES ($1, $2, 'backend', 'flowci_managed', 'render', $3, $3, $4, $5, 'render_image_pushed')
+             VALUES ($1, $2, 'backend', $6, $7, $3, $3, $4, $5, $8)
              RETURNING id`,
-            [projectId, environmentId, repo + '-' + branch, repo, branch],
+            [
+              projectId,
+              environmentId,
+              repo + '-' + branch,
+              repo,
+              branch,
+              host ? 'byo' : 'flowci_managed',
+              host ? 'onprem-compose' : 'render',
+              host ? 'provider_native' : 'render_image_pushed',
+            ],
           )
         )[0],
       ).id;
+    };
     const token = 'e2e_ci_' + randomBytes(16).toString('hex');
     await e2e.query(
       `INSERT INTO ci.project_ci_tokens (project_id, token_hash, token_prefix, status)
@@ -193,6 +211,36 @@ describe('Release registry and promotion', () => {
       )
       .send({ releaseId: release.releaseId });
 
+  const createTarget = (project: Project, body: Record<string, unknown>) =>
+    agent
+      .post('/api/v1/projects/' + project.projectId + '/deployment-targets')
+      .send(body);
+
+  const onpremTarget = (environmentId: string | undefined) => ({
+    action: 'create',
+    ...(environmentId ? { environmentId } : {}),
+    slot: 'backend',
+    ownershipMode: 'byo',
+    provider: 'onprem-compose',
+    projectName: 'lab-api',
+  });
+
+  const addHost = async (project: Project, environmentId: string) =>
+    (
+      (
+        await agent
+          .post(
+            '/api/v1/projects/' +
+              project.projectId +
+              '/environments/' +
+              environmentId +
+              '/hosts',
+          )
+          .send({ name: 'lab-' + environmentId.slice(0, 8) })
+          .expect(201)
+      ).body as { token: string }
+    ).token;
+
   async function releaseCount(projectId: string) {
     const [row] = await e2e.query<{ count: string }>(
       'SELECT count(*) FROM env_provisioning.releases WHERE project_id = $1',
@@ -239,6 +287,24 @@ describe('Release registry and promotion', () => {
           .get('/api/v1/onprem/assignments')
           .set({ Authorization: 'Bearer aoh_anything' })
           .expect(404);
+
+        const [environment] = await disabled.query<{ id: string }>(
+          `INSERT INTO projects.project_environments
+             (project_id, slug, display_name, position, source_branch, role, auto_deploy)
+           VALUES ($1, 'main', 'main', 0, 'main', 'production', true) RETURNING id`,
+          [required(project).id],
+        );
+        const refused = await signedIn.agent
+          .post(
+            '/api/v1/projects/' + required(project).id + '/deployment-targets',
+          )
+          .send(onpremTarget(required(environment).id))
+          .expect(400);
+        expect(JSON.stringify(refused.body)).toMatch(/not enabled/);
+        expect(await onpremDiscovery(signedIn.agent)).toMatchObject({
+          enabled: false,
+          capabilities: { connectivity: 'indirect' },
+        });
       } finally {
         await disabled.close();
       }
@@ -450,7 +516,7 @@ describe('Release registry and promotion', () => {
     });
 
     it('gives each host only its environment and moves deployments forward only', async () => {
-      const project = await releaseProject();
+      const project = await releaseProject(['uat']);
       const release = await devRelease(project);
       const promoted = (
         await promote(project, project.uat, release).expect(201)
@@ -514,10 +580,22 @@ describe('Release registry and promotion', () => {
       await status(uatHost.token, 'deploying').expect(201);
       await status(uatHost.token, 'healthy').expect(201);
       await status(uatHost.token, 'deploying').expect(409);
+
+      // dev is deployed by its workflow, so even dev's own host cannot see or
+      // report it.
+      await request(e2e.http)
+        .post(
+          '/api/v1/onprem/deployments/' +
+            release.deployments[0]!.id +
+            '/status',
+        )
+        .set(as(devHost.token))
+        .send({ status: 'failed' })
+        .expect(404);
     });
 
     it('refuses to promote to an environment without a target, then promotes once it has one', async () => {
-      const project = await releaseProject();
+      const project = await releaseProject(['uat', 'main']);
       const release = await devRelease(project);
       const uat = (await promote(project, project.uat, release).expect(201))
         .body as Deployment;
@@ -552,6 +630,84 @@ describe('Release registry and promotion', () => {
         environmentId: project.main,
         targetIds: [mainTarget],
       });
+    });
+
+    it('creates an on-prem target as a record only, and keeps each environment delivered one way', async () => {
+      const project = await releaseProject();
+      const start = e2e.externalCalls.length;
+
+      const created = await createTarget(
+        project,
+        onpremTarget(project.main),
+      ).expect(201);
+      expect(created.body).toMatchObject({
+        provider: 'onprem-compose',
+        providerProjectName: 'lab-api',
+        environmentId: project.main,
+        branchName: 'main',
+      });
+
+      await createTarget(project, onpremTarget(undefined)).expect(400);
+      await createTarget(project, {
+        ...onpremTarget(project.main),
+        slot: 'frontend',
+        ownershipMode: 'flowci_managed',
+      }).expect(400);
+      // uat already deploys a Render backend; an on-prem frontend would split it.
+      await createTarget(project, {
+        ...onpremTarget(project.uat),
+        slot: 'frontend',
+      }).expect(409);
+
+      expect(e2e.externalCalls.slice(start)).toEqual([]);
+      expect(await onpremDiscovery(agent)).toMatchObject({ enabled: true });
+    });
+
+    it('promotes to an on-prem environment without a workflow, and only its host reports it', async () => {
+      const project = await releaseProject();
+      const release = await devRelease(project);
+      const uat = (await promote(project, project.uat, release).expect(201))
+        .body as Deployment;
+      const reportCi = (deploymentId: string, status: string) =>
+        request(e2e.http)
+          .post('/api/v1/ci/deployments/' + deploymentId + '/status')
+          .set(ci(project))
+          .send({ repoFullName: project.repo, status });
+      await reportCi(uat.id, 'deploying').expect(200);
+      await reportCi(uat.id, 'healthy').expect(200);
+
+      await createTarget(project, onpremTarget(project.main)).expect(201);
+      const hostToken = await addHost(project, project.main);
+      const start = e2e.externalCalls.length;
+
+      const production = (
+        await promote(project, project.main, release).expect(201)
+      ).body as Deployment & { delivery: string };
+
+      expect(production.delivery).toBe('host');
+      expect(
+        e2e.externalCalls
+          .slice(start)
+          .filter(({ method }) => method === 'dispatchWorkflow'),
+      ).toEqual([]);
+      const assignments = await request(e2e.http)
+        .get('/api/v1/onprem/assignments')
+        .set({ Authorization: 'Bearer ' + hostToken })
+        .expect(200);
+      expect(
+        (assignments.body as Array<{ deploymentId: string }>).map(
+          ({ deploymentId }) => deploymentId,
+        ),
+      ).toEqual([production.id]);
+
+      await reportCi(production.id, 'deploying').expect(409);
+      for (const value of ['deploying', 'healthy']) {
+        await request(e2e.http)
+          .post('/api/v1/onprem/deployments/' + production.id + '/status')
+          .set({ Authorization: 'Bearer ' + hostToken })
+          .send({ status: value })
+          .expect(201);
+      }
     });
     it('starts the promotion workflow for a managed destination', async () => {
       const project = await releaseProject();
@@ -680,7 +836,20 @@ describe('Release registry and promotion', () => {
 });
 
 function randomUuid(): string {
-  const hex = randomBytes(16).toString('hex');
+  return uuidFrom(randomBytes(16).toString('hex'));
+}
+
+/** What provider discovery advertises about on-prem hosts. */
+async function onpremDiscovery(signedIn: SignedInAgent) {
+  const response = await signedIn
+    .get('/api/v1/deployment-providers')
+    .expect(200);
+  return (response.body as { providers: Array<{ id: string }> }).providers.find(
+    ({ id }) => id === 'onprem-compose',
+  );
+}
+
+function uuidFrom(hex: string): string {
   return (
     hex.slice(0, 8) +
     '-' +

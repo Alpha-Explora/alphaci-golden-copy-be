@@ -61,6 +61,7 @@ describe('DeploymentTargetsService', () => {
         return {
           label: 'Render',
           supportedSlots: ['backend', 'standalone'],
+          isEnabled: () => ({ enabled: true }),
           capabilities: {
             logFilters: ['level', 'type', 'text', 'instance'],
           },
@@ -89,6 +90,7 @@ describe('DeploymentTargetsService', () => {
         return {
           label: 'Vercel',
           supportedSlots: ['frontend'],
+          isEnabled: () => ({ enabled: true }),
           capabilities: {
             logFilters: ['level', 'type', 'text'],
           },

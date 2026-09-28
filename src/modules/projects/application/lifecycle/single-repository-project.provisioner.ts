@@ -10,6 +10,7 @@ import {
   withRepoShapeRootDirectory,
 } from '../../domain/deployment-provisioning.policy';
 import { normalizeRepoShape } from '../../scaffold.builder';
+import { targetsForEnvironment } from '../../domain/environment-deployment-targets.policy';
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import type { SetupProjectDto } from '../../api/dto/setup-project.dto';
 import type {
@@ -379,7 +380,10 @@ export class SingleRepositoryProjectProvisioner {
       const request = input.deploymentProvisioning
         ? {
             ...input.deploymentProvisioning,
-            targets: input.deploymentProvisioning.targets.map((target) => ({
+            targets: targetsForEnvironment(
+              input.deploymentProvisioning.targets,
+              environment.slug,
+            ).map((target) => ({
               ...target,
               environmentId: environment.id,
               branchName: environment.sourceBranch,
