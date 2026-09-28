@@ -462,6 +462,35 @@ export class ReleaseRegistryService {
     }
   }
 
+  /** Releases of a project the user can see, newest first. */
+  async listProjectReleases(
+    projectId: string,
+    userId: string,
+  ): Promise<ReleaseRegistryView[]> {
+    this.assertReleasesEnabled();
+    const project = await this.projects.findProjectReference(projectId, userId);
+    if (!project) throw new NotFoundException('Project not found');
+    const releases = await this.releases.listProjectReleases(projectId, 50);
+    return Promise.all(releases.map((release) => this.view(release)));
+  }
+
+  /** Deployment history of one environment the user can see, newest first. */
+  async listEnvironmentDeployments(
+    projectId: string,
+    environmentId: string,
+    userId: string,
+  ): Promise<EnvironmentDeploymentRecord[]> {
+    this.assertReleasesEnabled();
+    const project = await this.projects.findProjectReference(projectId, userId);
+    if (!project) throw new NotFoundException('Project not found');
+    const environment = await this.projects.findProjectEnvironment(
+      projectId,
+      environmentId,
+    );
+    if (!environment) throw new NotFoundException('Environment not found');
+    return this.releases.listEnvironmentDeployments(environment.id, 100);
+  }
+
   /** Register an on-prem host for one environment; the token is shown once. */
   async createHost(input: {
     projectId: string;

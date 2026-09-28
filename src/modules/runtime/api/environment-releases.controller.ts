@@ -1,4 +1,13 @@
-import { Body, Controller, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
@@ -17,6 +26,20 @@ import {
 @UseGuards(SessionAuthGuard, CapabilityGuard, SubscriptionGuard)
 export class EnvironmentReleasesController {
   constructor(private readonly releases: ReleaseRegistryService) {}
+
+  /** The environment's deployment history, newest first. */
+  @Get('deployments')
+  deployments(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('environmentId', ParseUUIDPipe) environmentId: string,
+  ) {
+    return this.releases.listEnvironmentDeployments(
+      projectId,
+      environmentId,
+      req.session.user!.id,
+    );
+  }
 
   /** Deploy a release to this environment from the one before it. */
   @Post('promotions')

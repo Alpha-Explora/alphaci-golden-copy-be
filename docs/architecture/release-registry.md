@@ -76,6 +76,11 @@ POST /projects/:projectId/environments/:environmentId/promotions with
 Deployment status moves pending → deploying → healthy, failed, or
 rolled_back; it never moves backwards.
 
+Signed-in users who can see a project also read GET
+/projects/:projectId/releases (its releases, newest first, each with its
+deployments) and GET /projects/:projectId/environments/:environmentId/deployments
+(that environment's deployment history, newest first).
+
 When every destination target is a managed provider (Render or Vercel),
 AlphaCI starts the repository's generated `30-alphaci-promote.yml` workflow on
 the release's source branch with the release, deployment, and environment

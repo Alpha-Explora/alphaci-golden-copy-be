@@ -284,6 +284,37 @@ export class ReleaseRegistryRepository {
     return result.rows.map(toDeployment);
   }
 
+  /** A project's releases, newest first. */
+  async listProjectReleases(
+    projectId: string,
+    limit: number,
+  ): Promise<ReleaseRecord[]> {
+    const result = await this.databaseService.query<ReleaseRow>(
+      `SELECT ${RELEASE_COLUMNS}
+         FROM env_provisioning.releases AS release
+        WHERE release.project_id = $1
+        ORDER BY release.created_at DESC
+        LIMIT $2`,
+      [projectId, limit],
+    );
+    return result.rows.map(toRelease);
+  }
+
+  /** One environment's deployments, newest first. */
+  async listEnvironmentDeployments(
+    environmentId: string,
+    limit: number,
+  ): Promise<EnvironmentDeploymentRecord[]> {
+    const result = await this.databaseService.query<DeploymentRow>(
+      `SELECT * FROM env_provisioning.environment_deployments
+        WHERE environment_id = $1
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT $2`,
+      [environmentId, limit],
+    );
+    return result.rows.map(toDeployment);
+  }
+
   /** Move a deployment on only from the status it was read in. */
   async transitionDeployment(input: {
     deploymentId: string;

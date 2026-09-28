@@ -622,6 +622,60 @@ describe('Release registry and promotion', () => {
       await report(project, promoted.id, 'healthy').expect(200);
       await report(project, promoted.id, 'failed').expect(409);
     });
+
+    it("shows signed-in users their project's releases and deployments, and hides others'", async () => {
+      const project = await releaseProject();
+      const release = await devRelease(project);
+      const promoted = (
+        await promote(project, project.uat, release).expect(201)
+      ).body as Deployment;
+
+      const releases = await agent
+        .get('/api/v1/projects/' + project.projectId + '/releases')
+        .expect(200);
+      expect(
+        (releases.body as Release[]).map(({ releaseId }) => releaseId),
+      ).toEqual([release.releaseId]);
+      const history = await agent
+        .get(
+          '/api/v1/projects/' +
+            project.projectId +
+            '/environments/' +
+            project.uat +
+            '/deployments',
+        )
+        .expect(200);
+      expect((history.body as Deployment[]).map(({ id }) => id)).toEqual([
+        promoted.id,
+      ]);
+
+      const [other] = await e2e.query<{ id: string }>(
+        'INSERT INTO identity.app_users (login, github_user_id) VALUES ($1, $1) RETURNING id',
+        ['e2e-release-other-' + String(Date.now())],
+      );
+      const [foreign] = await e2e.query<{ id: string }>(
+        `INSERT INTO projects.provisioned_projects
+           (user_id, repo_full_name, template_id, service_name, workflow_path, status)
+         VALUES ($1, $2, 'node-api', 'api', '.github/workflows/ci.yml', 'provisioned')
+         RETURNING id`,
+        [required(other).id, 'e2e-org/foreign-releases-' + String(Date.now())],
+      );
+      await agent
+        .get('/api/v1/projects/' + required(foreign).id + '/releases')
+        .expect(404);
+      await agent
+        .get(
+          '/api/v1/projects/' +
+            required(foreign).id +
+            '/environments/' +
+            project.uat +
+            '/deployments',
+        )
+        .expect(404);
+      await request(e2e.http)
+        .get('/api/v1/projects/' + project.projectId + '/releases')
+        .expect(401);
+    });
   });
 });
 

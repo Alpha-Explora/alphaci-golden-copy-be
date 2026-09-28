@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 185 current API routes."
+description: "Generated inventory of the 187 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **185 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **187 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -91,12 +91,14 @@ The current compiled API exposes **185 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/env-vars`
 - `GET /api/v1/projects/{projectId}/environments`
 - `GET /api/v1/projects/{projectId}/environments/{environmentId}/deployment-targets/{slot}`
+- `GET /api/v1/projects/{projectId}/environments/{environmentId}/deployments`
 - `GET /api/v1/projects/{projectId}/qa-checklists`
 - `GET /api/v1/projects/{projectId}/qa-returned-items`
 - `GET /api/v1/projects/{projectId}/qa-runs`
 - `GET /api/v1/projects/{projectId}/qa-runs/current`
 - `GET /api/v1/projects/{projectId}/qa-runs/{runId}`
 - `GET /api/v1/projects/{projectId}/qa-runs/{runId}/report`
+- `GET /api/v1/projects/{projectId}/releases`
 - `GET /api/v1/projects/{projectId}/workspace/branches`
 - `GET /api/v1/projects/{projectId}/workspace/compare`
 - `GET /api/v1/projects/{projectId}/workspace/files`
