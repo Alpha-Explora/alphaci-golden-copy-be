@@ -339,12 +339,13 @@ as runtime acceptance evidence.
   release ID, pinned commit, image digests, and migration version when present.
   Update docs and workflow validation. No CI job receives host credentials.
   Evidence: `alphaci-workflow` #33; actionlint and the shared canonical vector.
-- [ ] **H1**, backend PR based on C1: package a Linux agent under
+- [x] **H1**, backend PR based on C1: package a Linux agent under
   `deploy/onprem/agent`. It polls outbound, verifies the pinned public key,
   pulls by digest, applies Compose, checks health, rolls back, and reports
   status. Run it from a systemd service and timer inside WSL. Evidence:
   signed-release, tamper, and rollback scenarios against the E2E backend and
   a local registry, then the lab run on Ubuntu.
+  Evidence: E2E `onprem-host-agent` (agent in a container, Docker stubbed).
 
 ### Phase 4: on-prem provider and activation (C2)
 
