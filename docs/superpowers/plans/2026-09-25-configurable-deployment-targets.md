@@ -73,28 +73,32 @@ to the customer host.
   `dev` is a working branch without hosted infrastructure. Render can fan out
   to a `main` service. Provider packs for on-prem are not registered.
 
-## Parallel implementation and pull requests
+## Implementation order and pull requests
 
-One Luna agent owns one PR in one Codex-managed isolated Git checkout. Run up
-to three implementation agents concurrently while the root agent reviews
-contracts and diffs. This plan uses a dedicated
+Implement inline in each repository's single main checkout, one slice at a
+time, with no extra checkouts or parallel agents. For each slice: fetch,
+create the slice branch from `origin/codex/configurable-deployment-targets`,
+implement, verify, push, open the PR, and merge it before starting the next
+slice. A slice
+therefore always starts with its dependencies merged, so no PR stacks on
+another. Before switching branches, commit or stash the checkout's current
+work; the backend checkout's `codex/golden-copy-trunk` keeps its unrelated
+local commits.
+
+This plan uses a dedicated
 `codex/configurable-deployment-targets` integration branch in the backend,
 frontend, and `alphaci-workflow` repositories. Each branch was created from its
 current `main` on 2026-09-25; these branches are not repository defaults and do
 not change the repositories' default-branch setting. Only PRs for this plan
 target the relevant repository's `codex/configurable-deployment-targets`;
-unrelated work continues to target `main`. A dependent PR initially targets
-the preceding branch in its own repository; retarget it to
-`codex/configurable-deployment-targets` after the lower PR merges. Independent
-PRs target the plan integration branch. When the planned work is ready for
+unrelated work continues to target `main`. When the planned work is ready for
 production, open a release PR from each plan integration branch to that
 repository's `main`. Link cross-repository dependencies in PR
-descriptions; Git cannot stack branches across repositories. Keep incomplete
-capabilities gated.
+descriptions. Keep incomplete capabilities gated.
 
 **Baseline:** the focused deployment plan, ADR-0012, and host guide landed on
-`main` as PR #100 at `4575e1c`; PR #101 closed Phase 0 at `1db35f6`. The plan
-The integration branches were created from these `main` commits: backend
+`main` as PR #100 at `4575e1c`; PR #101 closed Phase 0 at `1db35f6`. The
+integration branches were created from these `main` commits: backend
 `1db35f6`, frontend `572a8fe`, and central workflows `5031605`. The repositories
 keep `main` as their GitHub default branch; later `main` updates remain separate
 until an explicit integration or release PR. The backend's 12 prior local-only
@@ -103,41 +107,38 @@ commits are preserved on
 frontend's untracked pnpm files remain untouched. Existing backend PR #75 and
 frontend PR #41 still target the older `codex/golden-copy-trunk` branch and are
 unrelated to this plan's new `codex/configurable-deployment-targets` branches.
-The earlier backend checkout already holds `codex/onprem-react-image`, so
-Phase 1 R1 uses the fresh branch `codex/onprem-react-image-phase1`, from the
-same initial commit as the plan integration branch.
 
 GitHub reports all three plan integration branches as unprotected. This plan's
 PR targeting is therefore a workflow convention, not a server-enforced policy.
 Keep changes to both `codex/configurable-deployment-targets` and production
 `main` in reviewed PRs.
 
-| Stack | PR branches in merge order | Repository | Dependency |
-|---|---|---|---|
-| Environment core | E1 `codex/project-environments` -> E2 `codex/environment-targets` -> E3 `codex/environment-pipelines` | Backend | Start from `codex/configurable-deployment-targets` |
-| On-prem control | C1 `codex/onprem-release-contract` -> C2 `codex/onprem-compose-provider` -> C3 `codex/mixed-deployment-activation` | Backend | C1 from E1; C2 from E3 after C1 merges; C3 from C2 |
-| Host package | H1 `codex/onprem-host-agent` -> H2 `codex/onprem-windows-host` | Backend | H1 from C1; H2 from H1 |
-| Central workflows | W1 `codex/configurable-managed-workflows` -> W2 `codex/signed-onprem-release` | `alphaci-workflow` | W1 from `codex/configurable-deployment-targets`; W2 consumes C1 API |
-| React image | R1 `codex/onprem-react-image-phase1` | Backend | Independent `codex/configurable-deployment-targets` |
-| Product UI | F1 `codex/project-environment-setup` -> F2 `codex/environment-operations` | Frontend | F1 after E3 merges and consumes its complete project-environment creation contract; F2 after F1 and E2/E3 |
+E1 (backend #104), R1 (backend #105), and W1 (`alphaci-workflow` #30) are
+merged. The remaining slices run in this order:
 
-The useful parallel waves are **E1 + W1 + R1**, then **E2 + C1 + X0**, then
-**E3 + W2 + H1**, then **C2 + F1 + H2**, then **F2**. Cross-stack work may use a
-contract from an open PR, but its merge waits for that dependency to land. F1
-starts only after E3 merges the complete environment-aware project-creation
-contract. C3 stays draft until the central `@v1` tag includes W2, the host
-package and UI are merged, and the mixed deployment acceptance run passes.
+| Order | Slice | Branch | Repository | Needs merged first |
+|---|---|---|---|---|
+| 1 | X0 | `codex/e2e-suite` | Backend | E1 |
+| 2 | E2 | `codex/environment-targets` | Backend | E1, X0 |
+| 3 | C1 | `codex/onprem-release-contract` | Backend | E1, X0 |
+| 4 | E3 | `codex/environment-pipelines` | Backend | E2 |
+| 5 | W2 | `codex/signed-onprem-release` | `alphaci-workflow` | W1, C1 |
+| 6 | H1 | `codex/onprem-host-agent` | Backend | C1 |
+| 7 | C2 | `codex/onprem-compose-provider` | Backend | C1, E3 |
+| 8 | F1 | `codex/project-environment-setup` | Frontend | E3 |
+| 9 | H2 | `codex/onprem-windows-host` | Backend | H1 |
+| 10 | F2 | `codex/environment-operations` | Frontend | F1, E2, E3 |
+| 11 | C3 | `codex/mixed-deployment-activation` | Backend | C2, H2, R1, F2, W2 |
+
+C3 stays draft until the central `@v1` tag includes W2 and the mixed
+deployment acceptance run passes.
 
 #### Implementation rules
 
-The critical path is E1, E2, E3, C2, C3. Every other lane depends only on a
-frozen contract, so it starts as soon as that contract exists.
-
-- Merge a PR into the integration branch as soon as CI is green and the root
-  review passes, then start the next slice from the integration branch. Stack
-  on an open PR head only when the next slice needs that code before it merges.
-- Brief each agent with its contract row, base branch, code seams, and done
-  criteria. The agent reads the files it changes and their callers.
+- Merge a PR into the integration branch once CI is green and review passes,
+  then start the next slice from the updated integration branch.
+- Start from the slice's contract row and done criteria. Read the files it
+  changes and their callers.
 - Before coding, list the slice's failure modes in the PR description. Each
   failure mode gets one assertion in the X0 E2E suite, or a real-database
   integration test when HTTP cannot reach it cheaply. Nothing else gets a test.
@@ -150,13 +151,12 @@ frozen contract, so it starts as soon as that contract exists.
   actionlint.
 - Iterate with typecheck and the targeted test file. Run lint, the full test
   suite, and the touched `check:*` gates once before pushing; CI repeats them.
-- Implementation PRs do not edit this plan; the root agent ticks tasks and
-  links evidence after merges. Regenerate `*.generated.md` files only when a PR
-  changes their inputs, and again after a rebase.
+- Each slice PR ticks its own task here and links its evidence in one line.
+  Regenerate `*.generated.md` files only when a PR changes their inputs.
 - Squash each PR to one Conventional Commit. Extend existing validators and
   scripts; add no new scripts, gates, or refactors outside the slice.
-- The root agent reviews each PR once for correctness, security, and contract
-  drift. Only P0 and P1 findings block; list the rest as PR follow-ups.
+- Review each PR once for correctness, security, and contract drift before
+  merging. Only P0 and P1 findings block; list the rest as PR follow-ups.
 - Checks that need hosted providers, the WSL host, or the Windows Server VM
   wait for the Phase 5 lab run. Each PR adds its scenario to that checklist.
 
@@ -218,6 +218,7 @@ signing and registration; W1 does not add host credentials to a deploy job.
   disposable database; list/add/rename metadata behavior for legacy-created
   projects, including two environments on one branch; and pre-write rejection
   of custom create-time arrays while legacy creation remains unchanged.
+  Merged as #104 `97b980f`; its runtime evidence comes from X0.
 - [ ] **W1**, central workflow PR to this plan's `codex/configurable-deployment-targets`:
   extend existing `docker-build.yml`, `release.yml`, `render-deploy.yml`, and
   `vercel-deploy.yml` only as required for pinned commits, environment IDs,
@@ -229,12 +230,14 @@ signing and registration; W1 does not add host credentials to a deploy job.
   contract checks cover optional target identity and immutable image references
   while legacy defaults remain intact. Generated caller behavior and promotion
   evidence are verified with E3/W2 acceptance.
+  Merged as `alphaci-workflow` #30 `0259d34`.
 - [ ] **R1**, backend PR to this plan's `codex/configurable-deployment-targets`:
   add a static-serving Dockerfile to the generated React scaffold and a
   reproducible GHCR build path. Keep Vercel deployment available. Scan the
   exact pushed image digest and fail on HIGH or
   CRITICAL vulnerabilities. Evidence: successful build and scan with the image
   digest tied to the scaffold revision.
+  Merged as #105 `2bd98f8`; the build and scan run is pending.
 
 R1 images are candidate artifacts only. They are not eligible for on-prem
 release or host deployment until W2 signs a release manifest naming the image
@@ -281,7 +284,7 @@ as runtime acceptance evidence.
   for projects without on-prem targets. Evidence: authorization and manifest
   behavior at the API boundary.
 - [ ] **X0**, backend PR to this plan's `codex/configurable-deployment-targets`,
-  alongside E2 and C1: add the shared E2E suite. It starts the Nest app against
+  before E2 and C1: add the shared E2E suite. It starts the Nest app against
   the disposable loopback PostgreSQL fixture, applies migrations, signs in a
   test user, and drives the HTTP API. External providers are recording fakes
   behind their existing ports. `npm run test:e2e` writes
