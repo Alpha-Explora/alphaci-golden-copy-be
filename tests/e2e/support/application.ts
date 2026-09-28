@@ -6,7 +6,6 @@ import request from 'supertest';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { CI_PROJECT_PORT } from '#kernel/ports/ci-project.port';
-import { DEPLOYMENT_PROVISIONING_FACADE } from '#kernel/ports/deployment-runtime.port';
 import { GITHUB_PROJECT_PORT } from '#kernel/ports/github.port';
 import { AppModule } from '../../../src/app.module';
 import { configureHttpApplication } from '../../../src/main';
@@ -54,7 +53,14 @@ const GITHUB_SYNC_MEMBERS = {
  * Boot the real AppModule and HTTP middleware against the E2E database. Only
  * external provider ports are replaced, with recording fakes.
  */
-export async function startApplication(): Promise<E2eApplication> {
+export async function startApplication(
+  options: {
+    /** Extra GitHub port calls a scenario expects, recorded then answered. */
+    githubAnswers?: Record<string, (...args: unknown[]) => unknown>;
+    /** Extra CI port calls a scenario expects, recorded then answered. */
+    ciAnswers?: Record<string, (...args: unknown[]) => unknown>;
+  } = {},
+): Promise<E2eApplication> {
   const databaseUrl = process.env['E2E_APP_DATABASE_URL'] ?? '';
   const externalCalls: RecordedCall[] = [];
   let githubEnvironmentsFail = false;
@@ -63,6 +69,8 @@ export async function startApplication(): Promise<E2eApplication> {
 
   const githubActions = recordingPort('githubActions', externalCalls, {
     answers: {
+      setActionsSecretStrict: () => Promise.resolve(),
+      setActionsVariableStrict: () => Promise.resolve(),
       ensureDeploymentEnvironment: () =>
         githubEnvironmentsFail
           ? Promise.reject(
@@ -96,11 +104,16 @@ export async function startApplication(): Promise<E2eApplication> {
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(GITHUB_PROJECT_PORT)
-    .useValue(recordingPort('github', externalCalls, GITHUB_SYNC_MEMBERS))
+    .useValue(
+      recordingPort('github', externalCalls, {
+        ...GITHUB_SYNC_MEMBERS,
+        answers: options.githubAnswers ?? {},
+      }),
+    )
     .overrideProvider(CI_PROJECT_PORT)
-    .useValue(recordingPort('ci', externalCalls))
-    .overrideProvider(DEPLOYMENT_PROVISIONING_FACADE)
-    .useValue(recordingPort('deploymentProvisioning', externalCalls))
+    .useValue(
+      recordingPort('ci', externalCalls, { answers: options.ciAnswers ?? {} }),
+    )
     .overrideProvider(GITHUB_ACTIONS_SECRETS)
     .useValue(githubActions)
     .overrideProvider(PROVIDER_CLIENT_REGISTRY)

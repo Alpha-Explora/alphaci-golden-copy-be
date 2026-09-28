@@ -34,8 +34,9 @@ The project API supports:
 - These APIs manage environment metadata only. They do not create branches or
   change generated deploy workflows; project provisioning continues through
   the legacy fixed path.
-- Project creation rejects an ordered `environments` array before repository or
-  GitHub writes until E3 provides environment-aware provisioning.
+- Project creation accepts an ordered `environments` array for
+  single-repository projects (see below). Other repository shapes reject one
+  before any repository or GitHub write.
 
 The environment definition accepts complete ordered lists and requires exactly
 one production environment at any position. The editable `dev → uat → main`
@@ -97,3 +98,14 @@ The migration attaches an existing target only when exactly one environment of
 its project uses the target's branch and the target is the only one for that
 project, slot, and branch. Every other target keeps a null `environmentId`
 and its existing branch-based behavior until an operator attaches it.
+
+## Creating a project with environments
+
+A single-repository project created with an `environments` list stores the
+environments in the given order, creates each distinct source branch once
+from `main`, and protects every branch except the first environment's
+(`main` is always protected). It then provisions one target per environment
+and requested slot through the environment-aware target path, which also
+provisions each GitHub Environment, and finally generates the environments
+pipeline, naming those environment and target IDs, and pushes it to every
+source branch. The response lists the branches actually created.

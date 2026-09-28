@@ -213,7 +213,7 @@ describe('Project environments API', () => {
     expect(await storedEnvironments(projectId)).toEqual([]);
   });
 
-  it('rejects a create-time environment list before any external write', async () => {
+  it('rejects a create-time environment list for a microservices repository before any external write', async () => {
     const [before] = await e2e.query<{ count: string }>(
       'SELECT count(*) FROM projects.provisioned_projects',
     );
@@ -226,6 +226,7 @@ describe('Project environments API', () => {
         visibility: 'private',
         projectTypeId: 'node-api',
         serviceName: 'api',
+        repoShape: 'microservices',
         environments: [
           production,
           {
@@ -239,7 +240,7 @@ describe('Project environments API', () => {
       .expect(400);
 
     expect(JSON.stringify(response.body)).toContain(
-      'Custom project environments are not yet supported',
+      'supported for single-repository projects',
     );
     expect(e2e.externalCalls.slice(callsBefore)).toEqual([]);
     const [after] = await e2e.query<{ count: string }>(

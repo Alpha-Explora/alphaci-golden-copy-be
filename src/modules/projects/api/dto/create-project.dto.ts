@@ -60,6 +60,10 @@ export class DeploymentProvisioningTargetDto {
   @IsIn(['create', 'register_existing'])
   action?: 'create' | 'register_existing';
 
+  @IsOptional()
+  @IsUUID()
+  environmentId?: string;
+
   @IsIn(['backend', 'frontend', 'standalone'])
   slot!: 'backend' | 'frontend' | 'standalone';
 

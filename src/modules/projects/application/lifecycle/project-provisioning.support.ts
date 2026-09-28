@@ -47,6 +47,10 @@ import type {
   StagedWorkflowFile,
 } from '../workflows/index';
 import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import type {
+  StagedEnvironmentTarget,
+  StagedWorkflowEnvironment,
+} from '../workflows/staged-workflow.builder';
 
 export type WorkflowFilePusher = (
   accessToken: string,
@@ -78,6 +82,8 @@ export interface WorkflowBundleOptions {
   workflowVariant?: 'backend' | 'frontend' | undefined;
   centralWorkflowRef?: string | undefined;
   hasTestsDirectory?: boolean | undefined;
+  environments?: StagedWorkflowEnvironment[] | undefined;
+  environmentTargets?: StagedEnvironmentTarget[] | undefined;
 }
 
 /**
@@ -243,14 +249,16 @@ export class ProjectProvisioningSupport {
       );
     }
 
-    return this.workflowFiles.pushWorkflowFile(
+    // Through the GitHub port, like every other repository write, so the
+    // push uses its retrying client and can be replaced at the port.
+    return this.githubService.putFileContent(
       accessToken,
       owner,
       repo,
       filePath,
       content,
-      commitMessage,
       branch,
+      commitMessage,
     );
   }
 

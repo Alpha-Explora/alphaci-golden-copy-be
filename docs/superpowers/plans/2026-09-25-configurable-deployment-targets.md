@@ -318,12 +318,13 @@ as runtime acceptance evidence.
   callers are verified; E1's pre-write rejection remains until then.
   Evidence: generated-workflow scenarios and actionlint on the generated files;
   E2E promotion dispatch and promoted-deployment status scenarios.
-- [ ] **E3b**, backend PR based on E3a after W2: accept the ordered
+- [x] **E3b**, backend PR based on E3a after W2: accept the ordered
   `environments` array at project creation. Create each distinct source branch
   once, store the environments, provision each GitHub Environment, create one
   target per environment and slot, and generate the E3a pipeline. Remove E1's
   create-time rejection in the same PR. Evidence: E2E creation with custom
   names and a shared branch, with every provider call recorded.
+  Evidence: E2E `project-creation-environments` (single-repository shape).
 - [ ] **F1**, frontend PR to this plan's `codex/configurable-deployment-targets`
   after E3 merges: edit the complete ordered environment definition during
   project setup, starting from
