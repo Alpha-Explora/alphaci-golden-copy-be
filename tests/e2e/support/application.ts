@@ -1,3 +1,5 @@
+import type { AddressInfo } from 'node:net';
+
 import { BadGatewayException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -35,6 +37,8 @@ export interface E2eApplication {
     sql: string,
     params?: unknown[],
   ): Promise<T[]>;
+  /** Listen on all interfaces so a container can reach the API; returns the port. */
+  listen(): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -156,6 +160,10 @@ export async function startApplication(
       },
     },
     query,
+    async listen() {
+      await app.listen(0, '0.0.0.0');
+      return (app.getHttpServer() as { address(): AddressInfo }).address().port;
+    },
     async signIn() {
       const agent = request.agent(http);
       await agent.post('/api/v1/auth/dev/quick-login').expect(201);

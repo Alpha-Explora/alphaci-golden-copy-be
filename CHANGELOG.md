@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added the on-prem host agent (`deploy/onprem/agent`): a bash poll cycle run by a systemd timer that fetches this host's assignments, verifies each manifest's canonical hash and ECDSA P-256 signature against the pinned public key before pulling, refuses artifacts not pinned by digest, pulls by digest, applies Compose, checks health, reports status, and restores the previous release when the new one fails. `install.sh` installs it on Ubuntu or WSL.
+
 - Added project creation with environments for single-repository projects: the ordered `environments` list is stored, each distinct source branch is created once, every branch but the first environment's is protected, each environment gets its own target and GitHub Environment, and the generated pipeline names them. Other repository shapes still reject an `environments` list before any write. Workflow files for new repositories are pushed through the GitHub port.
 
 - Added signed-in release history: `GET /projects/:projectId/releases` and `GET /projects/:projectId/environments/:environmentId/deployments`, for the environment operations view.

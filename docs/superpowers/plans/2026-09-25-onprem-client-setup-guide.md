@@ -57,8 +57,14 @@ the trust, TLS, and secret files are still pending.
 5. Run `sudo systemctl enable --now docker`. Verify with `sudo docker info --format '{{.OperatingSystem}}'`, `docker compose version`, `docker buildx version`, and `sudo docker run --rm hello-world`. The operating system must be Ubuntu, not Docker Desktop.
 6. Install Cosign using [Sigstore's Ubuntu package instructions](https://docs.sigstore.dev/cosign/system_config/installation/) and check `cosign version`. Create `/opt/alphaci/{bin,trust,secrets,tls,releases}` and restrict `secrets/` to root. Add the test trust, TLS, and secret files from section 3, steps 7 to 9, once the release and credentials exist.
 7. Keep WSL's default NAT networking (do not set `networkingMode=mirrored`), so the laptop behaves like Server 2022.
-8. Register the laptop as the production environment's target for disposable React and .NET lab projects after the planned provider and agent exist. In the example template, this environment is named `main`; `dev` and `uat` stay on Vercel and Render. Do not point a client's production project at the laptop.
-9. Run the acceptance checks in section 4 after the planned release workflow and agent exist. For the reboot check, restart Windows and sign in; on the laptop the scheduled task may run as your user, only when signed in.
+8. Install the agent: copy `deploy/onprem/agent` from the backend repository into Ubuntu and run `sudo ./install.sh`. It installs `/opt/alphaci/bin/alphaci-agent` and a systemd timer that runs one poll every 30 seconds, and keeps an existing `/opt/alphaci/agent.env`. Then write, as root:
+   - `/opt/alphaci/agent.env`: the AlphaCI API URL and the paths below (see `agent.env.example`);
+   - `/opt/alphaci/secrets/host-token`: the token returned once by `POST /projects/:projectId/environments/:environmentId/hosts`;
+   - `/opt/alphaci/trust/release-signing.pub.pem`: the AlphaCI release-signing public key (`gcloud kms keys versions get-public-key` for the signing key version);
+   - `/opt/alphaci/compose/compose.yaml`: the application, whose services use `${ALPHACI_IMAGE_BACKEND}`, `${ALPHACI_IMAGE_FRONTEND}`, or `${ALPHACI_IMAGE_STANDALONE}` as their image.
+   Check with `systemctl list-timers alphaci-agent.timer` and `journalctl -u alphaci-agent`.
+9. Register the laptop as the production environment's target for disposable React and .NET lab projects once the on-prem provider exists (C2). In the example template, this environment is named `main`; `dev` and `uat` stay on Vercel and Render. Do not point a client's production project at the laptop.
+10. Run the acceptance checks in section 4. For the reboot check, restart Windows and sign in; on the laptop the scheduled task may run as your user, only when signed in.
 
 The laptop lane proves the pipeline, signing, pulling, Compose, rollback, and
 reboot recovery. It does not prove Server 2022 networking, client proxies and
