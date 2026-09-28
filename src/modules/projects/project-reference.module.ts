@@ -37,18 +37,22 @@ class ProjectReferenceLookupAdapter implements DeploymentProjectReferenceLookup 
     projectId: string,
     environmentId: string,
   ): Promise<DeploymentProjectEnvironment | null> {
+    const environments = await this.listProjectEnvironments(projectId);
+    return environments.find(({ id }) => id === environmentId) ?? null;
+  }
+
+  async listProjectEnvironments(
+    projectId: string,
+  ): Promise<DeploymentProjectEnvironment[]> {
     const environments =
       await this.projectsRepository.listProjectEnvironments(projectId);
-    const environment = environments.find(({ id }) => id === environmentId);
-    return environment
-      ? {
-          id: environment.id,
-          slug: environment.slug,
-          sourceBranch: environment.sourceBranch,
-          role: environment.role,
-          position: environment.position,
-        }
-      : null;
+    return environments.map((environment) => ({
+      id: environment.id,
+      slug: environment.slug,
+      sourceBranch: environment.sourceBranch,
+      role: environment.role,
+      position: environment.position,
+    }));
   }
 }
 

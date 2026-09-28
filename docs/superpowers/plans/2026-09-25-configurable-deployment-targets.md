@@ -280,11 +280,12 @@ as runtime acceptance evidence.
   keep separate secrets and destinations; no unprotected environment is
   created implicitly by the first workflow run.
   Evidence: E2E `deployment-target-environments` scenarios and backfill run.
-- [ ] **C1**, backend PR based on E1: define project/host-scoped release API,
+- [x] **C1**, backend PR based on E1: define project/host-scoped release API,
   signed-manifest schema, outbound polling, status, and token boundaries using
   environment ID, source commit, and immutable slot artifacts. Keep it inactive
   for projects without on-prem targets. Evidence: authorization and manifest
   behavior at the API boundary.
+  Evidence: E2E `release-registry` scenarios; host API off unless enabled.
 - [x] **X0**, backend PR to this plan's `codex/configurable-deployment-targets`,
   before E2 and C1: add the shared E2E suite. It starts the Nest app against
   the disposable loopback PostgreSQL fixture, applies migrations, signs in a

@@ -180,6 +180,10 @@ export interface DeploymentProjectReferenceLookup {
     projectId: string,
     environmentId: string,
   ): Promise<DeploymentProjectEnvironment | null>;
+  /** The project's environments in position order. */
+  listProjectEnvironments(
+    projectId: string,
+  ): Promise<DeploymentProjectEnvironment[]>;
 }
 
 export const DEPLOYMENT_PROJECT_REFERENCE_LOOKUP = Symbol(

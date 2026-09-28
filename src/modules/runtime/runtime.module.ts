@@ -14,6 +14,10 @@ import { WorkspacesModule } from '#modules/identity-access/workspaces/workspaces
 import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { DeploymentTargetsController } from './api/deployment-targets.controller';
 import { EnvironmentDeploymentTargetsController } from './api/environment-deployment-targets.controller';
+import { EnvironmentReleasesController } from './api/environment-releases.controller';
+import { OnpremAgentController } from './api/onprem-agent.controller';
+import { ReleaseRegistryService } from './application/release-registry.service';
+import { ReleaseRegistryRepository } from './infrastructure/repositories/release-registry.repository';
 import { ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER } from '#kernel/ports/deployment-runtime.port';
 import { DeploymentTargetsRepository } from './infrastructure/repositories/deployment-targets.repository';
 import { DeploymentTargetsService } from './application/deployment-targets.service';
@@ -118,6 +122,8 @@ import {
     ProviderConnectionsController,
     DeploymentTargetsController,
     EnvironmentDeploymentTargetsController,
+    EnvironmentReleasesController,
+    OnpremAgentController,
     EnvVarsController,
     CustomDomainsController,
   ],
@@ -141,6 +147,8 @@ import {
     },
     ProviderConnectionsService,
     DeploymentTargetsService,
+    ReleaseRegistryRepository,
+    ReleaseRegistryService,
     {
       provide: ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER,
       useExisting: DeploymentTargetsService,

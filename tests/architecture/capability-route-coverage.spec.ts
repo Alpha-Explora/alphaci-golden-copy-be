@@ -218,6 +218,17 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       routes: [
         { handler: 'startRelease', method: 'POST' },
         { handler: 'getRelease', method: 'GET' },
+        { handler: 'attachManifest', method: 'PUT' },
+        { handler: 'reportDeployment', method: 'POST' },
+      ],
+    },
+    'src/modules/runtime/api/onprem-agent.controller.ts': {
+      // An on-prem host polling with its environment-scoped host token: no
+      // signed-in subject, and gated by ONPREM_RELEASES_ENABLED instead.
+      reason: 'on-prem host agent surface',
+      routes: [
+        { handler: 'assignments', method: 'GET' },
+        { handler: 'reportStatus', method: 'POST' },
       ],
     },
     'src/modules/pipelines/github/api/github-webhook.controller.ts': {
