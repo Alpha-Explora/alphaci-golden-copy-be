@@ -144,10 +144,14 @@ export class ProjectProvisioningApplicationService {
           'Invalid project environments: ' + violation.replaceAll('_', ' '),
         );
       }
-
-      throw new BadRequestException(
-        'Custom project environments are not yet supported during provisioning. Create the project without an environments list until environment-aware provisioning is available.',
-      );
+      const shape = normalizeRepoShape(dto.repoShape);
+      if (shape === 'microservices' || shape === 'multi-repo') {
+        throw new BadRequestException(
+          'Custom project environments are supported for single-repository projects. Create a ' +
+            shape +
+            ' project without an environments list for now.',
+        );
+      }
     }
     await this.support.assertWithinQuota(userId, 'projects', 1, null);
     await this.support.workspaceGate.resolveWorkspaceIdForCreate(

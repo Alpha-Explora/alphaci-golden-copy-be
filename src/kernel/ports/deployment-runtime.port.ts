@@ -94,6 +94,8 @@ export interface DeploymentProvisioningEnvSet {
 
 export interface DeploymentProvisioningTarget {
   action?: DeploymentProvisioningAction;
+  /** Project environment this target deploys; set by environment-aware creation. */
+  environmentId?: string;
   slot: DeploymentSlot;
   provider: DeploymentProvider;
   ownershipMode: DeploymentOwnershipMode;

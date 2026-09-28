@@ -13,6 +13,10 @@ import {
   type DeploymentWorkflowTarget,
   type StagedWorkflowFile,
 } from './index';
+import type {
+  StagedEnvironmentTarget,
+  StagedWorkflowEnvironment,
+} from './staged-workflow.builder';
 import type { DeploymentProviderId as DeploymentProvider } from '#kernel/ports/deployment-runtime.port';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 
@@ -61,6 +65,9 @@ export class ProjectWorkflowFilesService {
      * BYO/setup repos and monorepo roots (their tests live under packages/).
      */
     hasTestsDirectory?: boolean | undefined;
+    /** Project environments; when set, the pipeline is generated from them. */
+    environments?: StagedWorkflowEnvironment[] | undefined;
+    environmentTargets?: StagedEnvironmentTarget[] | undefined;
   }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
     const {
       templateId,
@@ -75,6 +82,8 @@ export class ProjectWorkflowFilesService {
       workflowVariant,
       centralWorkflowRef,
       hasTestsDirectory,
+      environments,
+      environmentTargets,
     } = options;
 
     const template = await this.catalogService.getTemplateById(templateId);
@@ -96,6 +105,8 @@ export class ProjectWorkflowFilesService {
         ...(workflowVariant !== undefined && { workflowVariant }),
         ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
         ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
+        ...(environments?.length && { environments }),
+        ...(environmentTargets && { environmentTargets }),
       },
       this.workflowFragmentRegistry,
     );

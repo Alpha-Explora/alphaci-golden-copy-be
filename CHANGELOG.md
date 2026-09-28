@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added project creation with environments for single-repository projects: the ordered `environments` list is stored, each distinct source branch is created once, every branch but the first environment's is protected, each environment gets its own target and GitHub Environment, and the generated pipeline names them. Other repository shapes still reject an `environments` list before any write. Workflow files for new repositories are pushed through the GitHub port.
+
 - Added signed-in release history: `GET /projects/:projectId/releases` and `GET /projects/:projectId/environments/:environmentId/deployments`, for the environment operations view.
 
 - Added pipelines generated from project environments. With environments configured, access and quality run on every distinct source branch, only the first environment builds, registers, signs, and deploys on push, and the new `30-alphaci-promote.yml` deploys a registered release's pinned commit and image digests to the one later environment it is dispatched for. Promoting to a Render or Vercel destination now dispatches that workflow, marking the deployment failed if GitHub refuses, and `POST /ci/deployments/:id/status` lets it report the promoted deployment. Projects without environments keep their fixed pipeline.
