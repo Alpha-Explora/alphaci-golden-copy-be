@@ -8,6 +8,7 @@ describe('RenderCiSecretsService', () => {
     setActionsSecretStrict: jest.fn(),
     setActionsVariableStrict: jest.fn(),
     ensureDeploymentEnvironment: jest.fn(),
+    dispatchWorkflow: jest.fn(),
   };
 
   const baseTarget: DeploymentTargetSummary = {

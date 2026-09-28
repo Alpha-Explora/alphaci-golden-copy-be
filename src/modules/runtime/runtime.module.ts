@@ -252,6 +252,7 @@ import {
           githubService.setActionsVariableStrict(...args),
         ensureDeploymentEnvironment: (input) =>
           githubService.ensureDeploymentEnvironment(input),
+        dispatchWorkflow: (input) => githubService.dispatchWorkflow(input),
       }),
     },
     {

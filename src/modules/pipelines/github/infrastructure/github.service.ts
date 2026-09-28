@@ -2252,17 +2252,11 @@ export class GithubService
     environmentName: string;
     sourceBranch: string;
   }): Promise<void> {
-    const token = await this.getInstallationAccessTokenForUserRepo(
+    const token = await this.requireInstallationToken(
       input.userId,
       input.repoFullName,
+      'its deployment environment cannot be provisioned',
     );
-    if (!token) {
-      throw new BadGatewayException(
-        'The GitHub app is not installed for ' +
-          input.repoFullName +
-          ', so its deployment environment cannot be provisioned.',
-      );
-    }
     const headers = {
       Authorization: 'Bearer ' + token,
       Accept: 'application/vnd.github+json',
@@ -2337,6 +2331,71 @@ export class GithubService
       });
       if (!added.ok) await fail('the branch policy', added);
     }
+  }
+
+  /** Start a workflow_dispatch run; GitHub answers 204 when it accepts it. */
+  async dispatchWorkflow(input: {
+    userId: string;
+    repoFullName: string;
+    workflowFile: string;
+    ref: string;
+    inputs: Record<string, string>;
+  }): Promise<void> {
+    const token = await this.requireInstallationToken(
+      input.userId,
+      input.repoFullName,
+      'its workflow cannot be dispatched',
+    );
+    const response = await this.http.fetchWithRetry(
+      'https://api.github.com/repos/' +
+        input.repoFullName +
+        '/actions/workflows/' +
+        encodeURIComponent(input.workflowFile) +
+        '/dispatches',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: input.ref, inputs: input.inputs }),
+      },
+    );
+    if (!response.ok) {
+      throw new BadGatewayException(
+        'GitHub refused to dispatch ' +
+          input.workflowFile +
+          ' on ' +
+          input.repoFullName +
+          ' (' +
+          String(response.status) +
+          '): ' +
+          (await response.text()),
+      );
+    }
+  }
+
+  private async requireInstallationToken(
+    userId: string,
+    repoFullName: string,
+    consequence: string,
+  ): Promise<string> {
+    const token = await this.getInstallationAccessTokenForUserRepo(
+      userId,
+      repoFullName,
+    );
+    if (!token) {
+      throw new BadGatewayException(
+        'The GitHub app is not installed for ' +
+          repoFullName +
+          ', so ' +
+          consequence +
+          '.',
+      );
+    }
+    return token;
   }
 
   /**

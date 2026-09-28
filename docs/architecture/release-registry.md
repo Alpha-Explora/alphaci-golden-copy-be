@@ -55,6 +55,9 @@ release's identity or artifacts, and to a verified release's manifest.
 CI tokens can register, sign, read, and report their own project's releases.
 They cannot promote, approve, or change what production runs.
 
+- POST /ci/deployments/:deploymentId/status reports a promoted deployment
+  that the generated promotion workflow runs for its own project.
+
 ## Promotion (signed-in session)
 
 POST /projects/:projectId/environments/:environmentId/promotions with
@@ -72,6 +75,27 @@ POST /projects/:projectId/environments/:environmentId/promotions with
 
 Deployment status moves pending → deploying → healthy, failed, or
 rolled_back; it never moves backwards.
+
+When every destination target is a managed provider (Render or Vercel),
+AlphaCI starts the repository's generated `30-alphaci-promote.yml` workflow on
+the release's source branch with the release, deployment, and environment
+IDs. If GitHub refuses the dispatch, the deployment is marked failed, so the
+promotion can be retried.
+
+## Generated pipelines
+
+A project generated with environments gets its triggers from them. Access
+and quality run on every distinct source branch. The package stage builds
+and deploys only the first environment, on a push to its branch: it builds
+each container image once, registers the release, has it signed by the
+central `sign-release.yml` workflow, deploys it to the first environment's
+targets, and reports the result. A push to a later environment's branch runs
+the checks and deploys nothing. The promotion workflow deploys a release to
+the one later environment it was dispatched for, using the release's pinned
+commit and image digests, and reports the result. Every deploy job names its
+environment ID, GitHub Environment, and target ID; none is chosen from the
+branch. Projects without environments keep the fixed `dev → uat → main`
+pipeline.
 
 ## On-prem hosts (host token)
 

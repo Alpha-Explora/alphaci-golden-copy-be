@@ -1,11 +1,11 @@
 {
-  "routeCount": 184,
+  "routeCount": 185,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "478fa50ca94e91ca198d6d6a9151002d83e9edb147a0b326ba8d3c7d6cb6151e",
+  "referenceSha256": "56db536d240c7b089e5839bf6c98f932d34e79bf3486e1e2e0581f3476cc28fc",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "478fa50ca94e91ca198d6d6a9151002d83e9edb147a0b326ba8d3c7d6cb6151e",
+  "baselineSha256": "56db536d240c7b089e5839bf6c98f932d34e79bf3486e1e2e0581f3476cc28fc",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -87,6 +87,12 @@
         "POST /api/v1/projects/{projectId}/environments/{environmentId}/hosts",
         "POST /api/v1/projects/{projectId}/environments/{environmentId}/promotions",
         "PUT /api/v1/ci/releases/{releaseId}/manifest"
+      ]
+    },
+    {
+      "reason": "Promotion workflow status: the generated promotion workflow reports the promoted deployment it runs for its own project.",
+      "routes": [
+        "POST /api/v1/ci/deployments/{deploymentId}/status"
       ]
     }
   ]

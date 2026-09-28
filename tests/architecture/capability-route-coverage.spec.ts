@@ -220,6 +220,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'getRelease', method: 'GET' },
         { handler: 'attachManifest', method: 'PUT' },
         { handler: 'reportDeployment', method: 'POST' },
+        { handler: 'reportPromotion', method: 'POST' },
       ],
     },
     'src/modules/runtime/api/onprem-agent.controller.ts': {

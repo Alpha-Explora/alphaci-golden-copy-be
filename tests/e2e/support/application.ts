@@ -27,6 +27,8 @@ export interface E2eApplication {
   providers: {
     /** Make GitHub Environment provisioning fail until reset. */
     failGithubEnvironments(fail: boolean): void;
+    /** Make GitHub workflow dispatch fail until reset. */
+    failWorkflowDispatch(fail: boolean): void;
   };
   /** Sign in through the real loopback quick-login session flow. */
   signIn(): Promise<{ agent: SignedInAgent; userId: string }>;
@@ -56,6 +58,7 @@ export async function startApplication(): Promise<E2eApplication> {
   const databaseUrl = process.env['E2E_APP_DATABASE_URL'] ?? '';
   const externalCalls: RecordedCall[] = [];
   let githubEnvironmentsFail = false;
+  let workflowDispatchFails = false;
   let providerTargets = 0;
 
   const githubActions = recordingPort('githubActions', externalCalls, {
@@ -64,6 +67,12 @@ export async function startApplication(): Promise<E2eApplication> {
         githubEnvironmentsFail
           ? Promise.reject(
               new BadGatewayException('E2E: GitHub rejected the environment.'),
+            )
+          : Promise.resolve(),
+      dispatchWorkflow: () =>
+        workflowDispatchFails
+          ? Promise.reject(
+              new BadGatewayException('E2E: GitHub refused the dispatch.'),
             )
           : Promise.resolve(),
     },
@@ -128,6 +137,9 @@ export async function startApplication(): Promise<E2eApplication> {
     providers: {
       failGithubEnvironments(fail) {
         githubEnvironmentsFail = fail;
+      },
+      failWorkflowDispatch(fail) {
+        workflowDispatchFails = fail;
       },
     },
     query,

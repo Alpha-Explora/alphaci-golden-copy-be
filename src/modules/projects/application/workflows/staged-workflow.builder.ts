@@ -17,6 +17,7 @@ import type {
   ToolchainUiVerification,
 } from '#kernel/ports/toolchain-fragment.port';
 import {
+  ENVIRONMENT_PROMOTE_WORKFLOW_FILE,
   HOSTED_BRANCHES,
   PIPELINE_BRANCHES,
 } from '#kernel/config/pipeline-branches';
@@ -28,7 +29,8 @@ export type WorkflowStage =
   | 'quality'
   | 'package'
   | 'verify'
-  | 'guard';
+  | 'guard'
+  | 'promote';
 
 export interface StagedWorkflowFile {
   stage: WorkflowStage;
@@ -346,7 +348,35 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
    * Leave unset for existing/BYO repositories whose layout is unknown.
    */
   hasTestsDirectory?: boolean;
+  /**
+   * The project's environments. When set, the pipeline is generated from
+   * them: every source branch runs the quality stages, only the first
+   * environment deploys on push, and later environments deploy only when
+   * AlphaCI dispatches the promotion workflow for a registered release.
+   */
+  environments?: StagedWorkflowEnvironment[];
+  /** The deployment target of each environment and slot, for environments mode. */
+  environmentTargets?: StagedEnvironmentTarget[];
 }
+
+export interface StagedWorkflowEnvironment {
+  id: string;
+  slug: string;
+  sourceBranch: string;
+  position: number;
+  role: 'production' | 'non_production';
+}
+
+export interface StagedEnvironmentTarget {
+  environmentId: string;
+  slot: 'backend' | 'frontend' | 'standalone';
+  targetId: string;
+  provider: 'render' | 'vercel';
+}
+
+/** The promotion workflow AlphaCI dispatches, relative to .github/workflows. */
+export const PROMOTE_WORKFLOW_FILE = ENVIRONMENT_PROMOTE_WORKFLOW_FILE;
+const PROMOTE_WORKFLOW_NAME = 'ALPHACI 5 Promote';
 
 type DeployBranch = WorkflowFragmentBranch;
 
@@ -392,6 +422,8 @@ interface StagedWorkflowContext {
   isBackend: boolean;
   hasTestsDirectory: boolean | undefined;
   names: StagedNames;
+  /** Branches that run the pipeline: the environments' source branches, or the fixed flow. */
+  branches: readonly string[];
 }
 
 function resolveStagedNames(
@@ -478,7 +510,39 @@ function resolveStagedContext(
     isBackend,
     hasTestsDirectory: dto.hasTestsDirectory,
     names: resolveStagedNames(dto.workflowVariant),
+    branches: environmentBranches(dto.environments) ?? PIPELINE_BRANCHES,
   };
+}
+
+// Branch names go into workflow expressions, so only plain ref characters.
+const SAFE_BRANCH = /^[A-Za-z0-9._/-]{1,255}$/;
+
+function orderedEnvironments(
+  environments: StagedWorkflowEnvironment[],
+): StagedWorkflowEnvironment[] {
+  const ordered = [...environments].sort((a, b) => a.position - b.position);
+  for (const environment of ordered) {
+    if (!SAFE_BRANCH.test(environment.sourceBranch)) {
+      throw new Error(
+        'Environment ' +
+          environment.slug +
+          ' has a source branch that cannot be used in a workflow: ' +
+          environment.sourceBranch,
+      );
+    }
+  }
+  return ordered;
+}
+
+function environmentBranches(
+  environments: StagedWorkflowEnvironment[] | undefined,
+): string[] | undefined {
+  if (!environments?.length) return undefined;
+  return [
+    ...new Set(
+      orderedEnvironments(environments).map(({ sourceBranch }) => sourceBranch),
+    ),
+  ];
 }
 
 function buildAccessWorkflowFile(
@@ -493,8 +557,8 @@ function buildAccessWorkflowFile(
     yaml: dumpWorkflow({
       name: accessName,
       on: {
-        push: { branches: [...PIPELINE_BRANCHES] },
-        pull_request: { branches: [...PIPELINE_BRANCHES] },
+        push: { branches: [...ctx.branches] },
+        pull_request: { branches: [...ctx.branches] },
         workflow_dispatch: {},
       },
       permissions: { contents: 'read' },
@@ -543,7 +607,7 @@ function resolveToolchain(ctx: StagedWorkflowContext): ToolchainFragmentResult {
     centralWorkflowRef: ctx.centralWorkflowRef,
     checkoutRef: HEAD_SHA_EXPR,
     hasTestsDirectory: ctx.hasTestsDirectory,
-    buildBranchCondition: branchIsOneOf(PIPELINE_BRANCHES),
+    buildBranchCondition: branchIsOneOf(ctx.branches),
     policyJobId: BRANCH_POLICY_JOB_ID,
     accessJobId: VALIDATE_ACCESS_JOB_ID,
   });
@@ -1034,6 +1098,9 @@ export function buildStagedWorkflowBundle(
 ): StagedWorkflowBundle {
   const ctx = resolveStagedContext(template, dto);
   const toolchain = resolveToolchain(ctx);
+  if (dto.environments?.length) {
+    return buildEnvironmentWorkflowBundle(ctx, toolchain, dto);
+  }
   const deploymentPlan = buildPackageDeploymentPlan(
     dto.deploymentTargets ?? [],
     ctx.serviceName,
@@ -1124,7 +1191,417 @@ export function buildStagedWorkflowBundle(
  * read-only; the write steps are gated to `push` events so the guard still
  * detects and fails without attempting writes.
  */
-export function buildEnvGuardWorkflowFile(): StagedWorkflowFile {
+/**
+ * The pipeline for a project with configured environments.
+ *
+ * Access and quality run on every environment's source branch. The package
+ * stage builds and deploys only the FIRST environment, on a push to its
+ * branch: it builds each container image once, registers an immutable release
+ * with AlphaCI, has it signed, and deploys that release to the first
+ * environment's targets. A push to any later environment's branch runs the
+ * checks and stops. Later environments receive a release only when AlphaCI
+ * dispatches the promotion workflow after a signed-in promotion, which deploys
+ * the release's pinned commit and image digests to that environment's own
+ * targets. There is no branch-to-target inference anywhere: every deploy job
+ * names its environment ID, GitHub Environment, and target ID.
+ */
+function buildEnvironmentWorkflowBundle(
+  ctx: StagedWorkflowContext,
+  toolchain: ToolchainFragmentResult,
+  dto: StagedWorkflowOptions,
+): StagedWorkflowBundle {
+  const environments = orderedEnvironments(dto.environments ?? []);
+  const targets = dto.environmentTargets ?? [];
+  for (const target of targets) {
+    if (!environments.some(({ id }) => id === target.environmentId)) {
+      throw new Error(
+        'Deployment target ' +
+          target.targetId +
+          ' names an unknown environment.',
+      );
+    }
+  }
+
+  const files: StagedWorkflowFile[] = [
+    buildAccessWorkflowFile(ctx),
+    buildQualityWorkflowFile(ctx, toolchain),
+    buildEnvironmentPackageWorkflowFile(ctx, toolchain, environments, targets),
+  ];
+  if (dto.workflowVariant !== 'frontend') {
+    files.push(buildPromoteWorkflowFile(ctx, environments, targets));
+    files.push(buildEnvGuardWorkflowFile(ctx.branches));
+  }
+
+  return {
+    workflowFiles: files,
+    metadata: files.map((file) => ({
+      stage: file.stage,
+      name: file.name,
+      path: file.path,
+      gated: file.gated,
+    })),
+  };
+}
+
+const LEGACY_ENVIRONMENT_LABEL = {
+  production: 'production',
+  non_production: 'uat',
+} as const;
+
+/** A reusable deploy call for one environment target, fully identified. */
+function environmentDeployJob(
+  ctx: StagedWorkflowContext,
+  environment: StagedWorkflowEnvironment,
+  target: StagedEnvironmentTarget,
+  input: {
+    needs: string[];
+    if: string;
+    commitSha: string;
+    artifact: string | undefined;
+  },
+) {
+  const identity = {
+    'environment-id': environment.id,
+    'environment-name': environment.slug,
+    'target-id': target.targetId,
+  };
+  if (target.provider === 'vercel') {
+    return {
+      needs: input.needs,
+      if: input.if,
+      uses: `${CENTRAL_WORKFLOW_BASE}/vercel-deploy.yml@${ctx.centralWorkflowRef}`,
+      with: {
+        'system-name': ctx.serviceName,
+        'working-directory': ctx.servicePath,
+        environment: LEGACY_ENVIRONMENT_LABEL[environment.role],
+        'checkout-ref': input.commitSha,
+        'git-branch': environment.sourceBranch,
+        ...identity,
+      },
+      secrets: 'inherit',
+    };
+  }
+  return {
+    needs: input.needs,
+    if: input.if,
+    uses: `${CENTRAL_WORKFLOW_BASE}/render-deploy.yml@${ctx.centralWorkflowRef}`,
+    with: {
+      'system-name': ctx.serviceName,
+      environment: LEGACY_ENVIRONMENT_LABEL[environment.role],
+      branch: environment.sourceBranch,
+      ...identity,
+      'commit-sha': input.commitSha,
+      ...(input.artifact ? { artifact: input.artifact } : {}),
+    },
+    secrets: 'inherit',
+  };
+}
+
+const imageJobId = (slot: string) => 'image-' + slot;
+const releaseImageOutput = (slot: string) => 'image-' + slot;
+
+/** Slots whose target runs a container image built by this pipeline. */
+function containerSlots(targets: StagedEnvironmentTarget[]): string[] {
+  return [
+    ...new Set(
+      targets
+        .filter(({ provider }) => provider === 'render')
+        .map(({ slot }) => slot),
+    ),
+  ];
+}
+
+const CI_REQUEST_HEADERS = [
+  '-H "Authorization: Bearer $ALPHACI_TOKEN"',
+  '-H "Content-Type: application/json"',
+].join(' ');
+
+function buildEnvironmentPackageWorkflowFile(
+  ctx: StagedWorkflowContext,
+  toolchain: ToolchainFragmentResult,
+  environments: StagedWorkflowEnvironment[],
+  targets: StagedEnvironmentTarget[],
+): StagedWorkflowFile {
+  const { packageName, qualityName, fileSuffix } = ctx.names;
+  const first = environments[0]!;
+  const firstTargets = targets.filter(
+    ({ environmentId }) => environmentId === first.id,
+  );
+  const onFirstBranch = branchIsOneOf([first.sourceBranch]);
+  const slots = containerSlots(firstTargets);
+  const imageJobs = Object.fromEntries(
+    slots.map((slot) => [
+      imageJobId(slot),
+      {
+        needs: ['build'],
+        if: onFirstBranch,
+        uses: `${CENTRAL_WORKFLOW_BASE}/docker-build.yml@${ctx.centralWorkflowRef}`,
+        with: {
+          'working-directory': ctx.servicePath,
+          'image-name': ctx.serviceName + '-' + slot,
+          'push-image': true,
+          'checkout-ref': HEAD_SHA_EXPR,
+          'pipeline-branch': first.sourceBranch,
+        },
+        secrets: 'inherit',
+      },
+    ]),
+  );
+  const imageEnv = Object.fromEntries(
+    slots.map((slot) => [
+      'IMAGE_' + slot.toUpperCase(),
+      `\${{ needs.${imageJobId(slot)}.outputs.image-ref }}`,
+    ]),
+  );
+  const artifactsProgram =
+    '[' +
+    slots
+      .map(
+        (slot) => `{slot:"${slot}",reference:env.IMAGE_${slot.toUpperCase()}}`,
+      )
+      .join(',') +
+    ']';
+
+  const deployJobs = Object.fromEntries(
+    firstTargets.map((target) => [
+      'deploy-' + first.slug + '-' + target.slot,
+      environmentDeployJob(ctx, first, target, {
+        needs: [
+          'register-release',
+          ...(slots.includes(target.slot) ? [imageJobId(target.slot)] : []),
+        ],
+        if: onFirstBranch,
+        commitSha: HEAD_SHA_EXPR,
+        artifact: slots.includes(target.slot)
+          ? `\${{ needs.${imageJobId(target.slot)}.outputs.image-ref }}`
+          : undefined,
+      }),
+    ]),
+  );
+  const deployJobIds = Object.keys(deployJobs);
+
+  return {
+    stage: 'package',
+    name: packageName,
+    path: `.github/workflows/20-alphaci-package${fileSuffix}.yml`,
+    gated: true,
+    yaml: dumpWorkflow({
+      name: packageName,
+      'run-name': INHERITED_RUN_NAME,
+      on: {
+        workflow_run: { workflows: [qualityName], types: ['completed'] },
+        workflow_dispatch: {},
+      },
+      permissions: { contents: 'read', packages: 'write' },
+      env: {
+        ALPHACI_VALIDATE_URL,
+        ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
+      },
+      jobs: withPipelineContext({
+        [UPSTREAM_WORK_JOB_ID]: upstreamWorkCheckJob(),
+        'validate-access': {
+          needs: [UPSTREAM_WORK_JOB_ID],
+          if: CHAINED_STAGE_GATE,
+          ...validationJob('package'),
+        },
+        build: toolchain.packageBuildJob,
+        ...imageJobs,
+        'register-release': {
+          needs: ['build', ...Object.keys(imageJobs)],
+          if: onFirstBranch,
+          runs_on: 'ubuntu-latest',
+          outputs: { 'release-id': '${{ steps.register.outputs.release-id }}' },
+          steps: [
+            {
+              name: 'Register the release with AlphaCI',
+              id: 'register',
+              env: {
+                ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                ALPHACI_API_URL,
+                HEAD_SHA: HEAD_SHA_EXPR,
+                SOURCE_ENVIRONMENT_ID: first.id,
+                SOURCE_BRANCH: first.sourceBranch,
+                ...imageEnv,
+              },
+              run: [
+                'set -euo pipefail',
+                `ARTIFACTS=$(jq -n '${artifactsProgram}')`,
+                'BODY=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg env "$SOURCE_ENVIRONMENT_ID" --arg branch "$SOURCE_BRANCH" --arg sha "$HEAD_SHA" --arg run "$GITHUB_RUN_ID" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --argjson artifacts "$ARTIFACTS" \'{repoFullName:$repo, sourceEnvironmentId:$env, sourceBranch:$branch, commitSha:$sha, artifacts:$artifacts, workflowRun:{provider:"github_actions", repo:$repo, runId:$run, url:$url}}\')',
+                `RESPONSE=$(curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases" ${CI_REQUEST_HEADERS} -d "$BODY")`,
+                "RELEASE_ID=$(printf '%s' \"$RESPONSE\" | jq -r '.releaseId')",
+                `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"deploying"}')"`,
+                'echo "release-id=$RELEASE_ID" >> "$GITHUB_OUTPUT"',
+              ].join('\n'),
+            },
+          ],
+        },
+        'sign-release': {
+          needs: ['register-release'],
+          uses: `${CENTRAL_WORKFLOW_BASE}/sign-release.yml@${ctx.centralWorkflowRef}`,
+          with: {
+            'release-id': '${{ needs.register-release.outputs.release-id }}',
+            'api-url': ALPHACI_API_URL,
+          },
+          secrets: 'inherit',
+        },
+        ...deployJobs,
+        'report-deployment': {
+          needs: ['register-release', ...deployJobIds],
+          if: "${{ always() && needs.register-release.result == 'success' }}",
+          runs_on: 'ubuntu-latest',
+          steps: [
+            {
+              name: 'Report the first environment deployment',
+              env: {
+                ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                ALPHACI_API_URL,
+                RELEASE_ID: '${{ needs.register-release.outputs.release-id }}',
+                RESULTS: "${{ join(needs.*.result, ' ') }}",
+              },
+              run: [
+                'set -euo pipefail',
+                'STATUS=healthy',
+                'for RESULT in $RESULTS; do [ "$RESULT" = success ] || STATUS=failed; done',
+                `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg status "$STATUS" '{repoFullName:$repo,status:$status}')"`,
+                '[ "$STATUS" = healthy ]',
+              ].join('\n'),
+            },
+          ],
+        },
+        'report-results': reportingJob(
+          'package',
+          ['validate-access', 'build', 'register-release', ...deployJobIds],
+          { workJobIds: ['build'] },
+        ),
+      }),
+    }),
+  };
+}
+
+/**
+ * Deploys a registered release to one later environment. AlphaCI dispatches
+ * it after a promotion; the inputs name the release, the deployment record,
+ * and the destination environment. The commit and image digests come from
+ * the release itself, so nothing is rebuilt for a container target.
+ */
+function buildPromoteWorkflowFile(
+  ctx: StagedWorkflowContext,
+  environments: StagedWorkflowEnvironment[],
+  targets: StagedEnvironmentTarget[],
+): StagedWorkflowFile {
+  const later = environments.slice(1);
+  const slots = containerSlots(targets);
+  const deployJobs = Object.fromEntries(
+    later.flatMap((environment) =>
+      targets
+        .filter(({ environmentId }) => environmentId === environment.id)
+        .map((target) => [
+          'deploy-' + environment.slug + '-' + target.slot,
+          environmentDeployJob(ctx, environment, target, {
+            needs: ['release'],
+            if: `\${{ inputs.environment-id == '${environment.id}' }}`,
+            commitSha: '${{ needs.release.outputs.commit-sha }}',
+            artifact: slots.includes(target.slot)
+              ? `\${{ needs.release.outputs.${releaseImageOutput(target.slot)} }}`
+              : undefined,
+          }),
+        ]),
+    ),
+  );
+  const knownEnvironments = later.map(({ id }) => id).join(' ');
+
+  return {
+    stage: 'promote',
+    name: PROMOTE_WORKFLOW_NAME,
+    path: '.github/workflows/' + PROMOTE_WORKFLOW_FILE,
+    gated: false,
+    yaml: dumpWorkflow({
+      name: PROMOTE_WORKFLOW_NAME,
+      'run-name': 'Promote ${{ inputs.release-id }}',
+      on: {
+        workflow_dispatch: {
+          inputs: {
+            'release-id': { required: true, type: 'string' },
+            'deployment-id': { required: true, type: 'string' },
+            'environment-id': { required: true, type: 'string' },
+          },
+        },
+      },
+      permissions: { contents: 'read' },
+      concurrency: {
+        group: 'alphaci-promote-${{ inputs.environment-id }}',
+        'cancel-in-progress': false,
+      },
+      jobs: {
+        release: {
+          runs_on: 'ubuntu-latest',
+          outputs: {
+            'commit-sha': '${{ steps.release.outputs.commit-sha }}',
+            ...Object.fromEntries(
+              slots.map((slot) => [
+                releaseImageOutput(slot),
+                `\${{ steps.release.outputs.${releaseImageOutput(slot)} }}`,
+              ]),
+            ),
+          },
+          steps: [
+            {
+              name: 'Read the release and start the deployment',
+              id: 'release',
+              env: {
+                ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                ALPHACI_API_URL,
+                RELEASE_ID: '${{ inputs.release-id }}',
+                DEPLOYMENT_ID: '${{ inputs.deployment-id }}',
+                ENVIRONMENT_ID: '${{ inputs.environment-id }}',
+                KNOWN_ENVIRONMENTS: knownEnvironments,
+              },
+              run: [
+                'set -euo pipefail',
+                'case " $KNOWN_ENVIRONMENTS " in *" $ENVIRONMENT_ID "*) ;; *) echo "::error::Unknown environment $ENVIRONMENT_ID"; exit 1 ;; esac',
+                'RELEASE=$(curl -sf --max-time 30 -G "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID" --data-urlencode "repo=$GITHUB_REPOSITORY" -H "Authorization: Bearer $ALPHACI_TOKEN")',
+                'echo "commit-sha=$(printf \'%s\' "$RELEASE" | jq -r \'.commitSha\')" >> "$GITHUB_OUTPUT"',
+                ...slots.map(
+                  (slot) =>
+                    `echo "${releaseImageOutput(slot)}=$(printf '%s' "$RELEASE" | jq -r '.artifacts[] | select(.slot == "${slot}") | .image + "@" + .digest')" >> "$GITHUB_OUTPUT"`,
+                ),
+                `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/deployments/$DEPLOYMENT_ID/status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"deploying"}')"`,
+              ].join('\n'),
+            },
+          ],
+        },
+        ...deployJobs,
+        'report-deployment': {
+          needs: ['release', ...Object.keys(deployJobs)],
+          if: '${{ always() }}',
+          runs_on: 'ubuntu-latest',
+          steps: [
+            {
+              name: 'Report the promoted deployment',
+              env: {
+                ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                ALPHACI_API_URL,
+                DEPLOYMENT_ID: '${{ inputs.deployment-id }}',
+                RESULTS: "${{ join(needs.*.result, ' ') }}",
+              },
+              run: [
+                'set -euo pipefail',
+                'STATUS=healthy',
+                'for RESULT in $RESULTS; do case "$RESULT" in success|skipped) ;; *) STATUS=failed ;; esac; done',
+                `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/deployments/$DEPLOYMENT_ID/status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg status "$STATUS" '{repoFullName:$repo,status:$status}')"`,
+                '[ "$STATUS" = healthy ]',
+              ].join('\n'),
+            },
+          ],
+        },
+      },
+    }),
+  };
+}
+
+export function buildEnvGuardWorkflowFile(
+  branches: readonly string[] = PIPELINE_BRANCHES,
+): StagedWorkflowFile {
   const detectScript = [
     "MATCHES=$(git ls-files | grep -E '(^|/)\\.env(\\.[^/]*)?$' | grep -Ev '(^|/)\\.env\\.(example|sample|template)$' || true)",
     'if [ -z "$MATCHES" ]; then',
@@ -1188,8 +1665,8 @@ export function buildEnvGuardWorkflowFile(): StagedWorkflowFile {
     yaml: dumpWorkflow({
       name: ENV_GUARD_WORKFLOW_NAME,
       on: {
-        push: { branches: [...PIPELINE_BRANCHES] },
-        pull_request: { branches: [...PIPELINE_BRANCHES] },
+        push: { branches: [...branches] },
+        pull_request: { branches: [...branches] },
       },
       permissions: {
         contents: 'write',

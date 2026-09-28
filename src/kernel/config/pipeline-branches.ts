@@ -91,3 +91,10 @@ export const PROVISIONED_BRANCHES: readonly string[] = [
   DEFAULT_BRANCH,
   ...BRANCHES_CREATED_ON_PROVISION,
 ];
+
+/**
+ * The generated workflow that deploys a promoted release to a later project
+ * environment. The workflow generator writes it and Runtime dispatches it, so
+ * the file name is declared once here.
+ */
+export const ENVIRONMENT_PROMOTE_WORKFLOW_FILE = '30-alphaci-promote.yml';
