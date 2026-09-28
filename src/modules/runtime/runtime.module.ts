@@ -16,6 +16,7 @@ import { DeploymentTargetsController } from './api/deployment-targets.controller
 import { EnvironmentDeploymentTargetsController } from './api/environment-deployment-targets.controller';
 import { EnvironmentReleasesController } from './api/environment-releases.controller';
 import { OnpremAgentController } from './api/onprem-agent.controller';
+import { ProjectReleasesController } from './api/project-releases.controller';
 import { ReleaseRegistryService } from './application/release-registry.service';
 import { ReleaseRegistryRepository } from './infrastructure/repositories/release-registry.repository';
 import { ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER } from '#kernel/ports/deployment-runtime.port';
@@ -124,6 +125,7 @@ import {
     EnvironmentDeploymentTargetsController,
     EnvironmentReleasesController,
     OnpremAgentController,
+    ProjectReleasesController,
     EnvVarsController,
     CustomDomainsController,
   ],

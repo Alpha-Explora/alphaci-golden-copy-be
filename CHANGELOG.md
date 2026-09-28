@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added signed-in release history: `GET /projects/:projectId/releases` and `GET /projects/:projectId/environments/:environmentId/deployments`, for the environment operations view.
+
 - Added pipelines generated from project environments. With environments configured, access and quality run on every distinct source branch, only the first environment builds, registers, signs, and deploys on push, and the new `30-alphaci-promote.yml` deploys a registered release's pinned commit and image digests to the one later environment it is dispatched for. Promoting to a Render or Vercel destination now dispatches that workflow, marking the deployment failed if GitHub refuses, and `POST /ci/deployments/:id/status` lets it report the promoted deployment. Projects without environments keep their fixed pipeline.
 
 - Added the release registry. CI registers an immutable release (full commit SHA, per-slot `image@sha256` artifacts, workflow run) for the project's first environment with `POST /ci/releases` and `sourceEnvironmentId`, attaches its signed manifest with `PUT /ci/releases/:id/manifest` (canonical RFC 8785 hash recomputed and checked), and reports the first environment's automatic deployment. Signed-in users promote a verified release to the next environment only when the preceding environment runs it and every destination target resolves; production promotion needs an admin or delegated lead. On-prem hosts, off unless `ONPREM_RELEASES_ENABLED=true`, poll `GET /onprem/assignments` and report status with an environment-scoped host token. The legacy branch release request is unchanged. The manifest JSON Schema is in `docs/architecture/onprem-release-manifest-schema.json`.
