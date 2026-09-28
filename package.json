@@ -41,7 +41,7 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./tests/e2e/jest-e2e.json",
+    "test:e2e": "jest --config ./tests/e2e/jest-e2e.json --runInBand",
     "db:hierarchy:verify": "node scripts/hierarchy-migrations.cjs verify",
     "db:hierarchy:apply": "node scripts/hierarchy-migrations.cjs apply",
     "check:github-teams": "node --env-file=.env -r ts-node/register scripts/check-github-team-setup.ts",

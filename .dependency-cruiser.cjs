@@ -181,7 +181,8 @@ module.exports = {
           "(^|/)\\.[^/]+\\.(js|cjs|mjs|ts)$",
           "(^|/)tsconfig\\.json$",
           "\\.module\\.ts$",
-          "(^|/)main\\.ts$"
+          "(^|/)main\\.ts$",
+          "^tests/e2e/support/app-environment\\.ts$"
         ]
       },
       "to": {}

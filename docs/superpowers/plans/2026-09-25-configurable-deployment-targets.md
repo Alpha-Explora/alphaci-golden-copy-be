@@ -203,7 +203,7 @@ signing and registration; W1 does not add host credentials to a deploy job.
 
 ### Phase 1: environment identity and reusable foundations (E1, W1, R1)
 
-- [ ] **E1**, backend PR to this plan's `codex/configurable-deployment-targets`:
+- [x] **E1**, backend PR to this plan's `codex/configurable-deployment-targets`:
   add project-owned ordered environment records and API with stable ID,
   immutable slug, display name,
   source branch, role, and exactly one production environment. Accept additions
@@ -219,6 +219,7 @@ signing and registration; W1 does not add host credentials to a deploy job.
   projects, including two environments on one branch; and pre-write rejection
   of custom create-time arrays while legacy creation remains unchanged.
   Merged as #104 `97b980f`; its runtime evidence comes from X0.
+  Evidence: X0 E2E report (API, backfill, rerun, rollback, pre-write rejection).
 - [ ] **W1**, central workflow PR to this plan's `codex/configurable-deployment-targets`:
   extend existing `docker-build.yml`, `release.yml`, `render-deploy.yml`, and
   `vercel-deploy.yml` only as required for pinned commits, environment IDs,
@@ -283,7 +284,7 @@ as runtime acceptance evidence.
   environment ID, source commit, and immutable slot artifacts. Keep it inactive
   for projects without on-prem targets. Evidence: authorization and manifest
   behavior at the API boundary.
-- [ ] **X0**, backend PR to this plan's `codex/configurable-deployment-targets`,
+- [x] **X0**, backend PR to this plan's `codex/configurable-deployment-targets`,
   before E2 and C1: add the shared E2E suite. It starts the Nest app against
   the disposable loopback PostgreSQL fixture, applies migrations, signs in a
   test user, and drives the HTTP API. External providers are recording fakes
@@ -291,6 +292,7 @@ as runtime acceptance evidence.
   `artifacts/e2e/<commit>/report.json` with the commit, commands, and
   per-scenario results, and CI runs it. The first scenarios cover E1's
   deferred acceptance. Evidence: the report for the X0 commit.
+  Evidence: 19 scenarios pass locally and in the CI `E2E` job (`e2e-report`).
 
 ### Phase 3: generic promotion, signed delivery, and setup UI (E3, W2, H1, F1)
 

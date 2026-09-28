@@ -30,6 +30,9 @@ import { PlatformOpsModule } from '#modules/platform-ops/platform-ops.module.js'
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
+      // The E2E suite sets this so a developer's local credentials can never
+      // reach a test run; every value then comes from the process environment.
+      ignoreEnvFile: process.env['ALPHACI_IGNORE_ENV_FILE'] === 'true',
       cache: true,
       load: [appConfig],
       // validateEnv runs unconditionally in all environments so that
