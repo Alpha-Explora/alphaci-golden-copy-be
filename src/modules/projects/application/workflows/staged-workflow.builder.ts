@@ -1437,6 +1437,8 @@ function buildEnvironmentPackageWorkflowFile(
         },
         'sign-release': {
           needs: ['register-release'],
+          // Keyless Cloud KMS signing exchanges the job's OIDC token.
+          permissions: { contents: 'read', 'id-token': 'write' },
           uses: `${CENTRAL_WORKFLOW_BASE}/sign-release.yml@${ctx.centralWorkflowRef}`,
           with: {
             'release-id': '${{ needs.register-release.outputs.release-id }}',

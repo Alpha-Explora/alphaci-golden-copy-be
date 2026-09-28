@@ -136,6 +136,9 @@ describe('pipeline generated from project environments', () => {
     expect(packageStage.jobs['sign-release']?.uses).toMatch(
       /sign-release\.yml@v1$/,
     );
+    expect(packageStage.jobs['sign-release']).toMatchObject({
+      permissions: { 'id-token': 'write' },
+    });
   });
 
   it('promotes only the dispatched later environment, from the release digest', () => {
