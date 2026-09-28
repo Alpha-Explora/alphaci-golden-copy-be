@@ -121,12 +121,44 @@ Keep changes to both `codex/configurable-deployment-targets` and production
 | React image | R1 `codex/onprem-react-image-phase1` | Backend | Independent `codex/configurable-deployment-targets` |
 | Product UI | F1 `codex/project-environment-setup` -> F2 `codex/environment-operations` | Frontend | F1 after E3 merges and consumes its complete project-environment creation contract; F2 after F1 and E2/E3 |
 
-The useful parallel waves are **E1 + W1 + R1**, then **E2 + C1**, then **E3**,
-then **W2 + H1 + F1 + C2**, then **H2 + F2**. Cross-stack work may use a
+The useful parallel waves are **E1 + W1 + R1**, then **E2 + C1 + X0**, then
+**E3 + W2 + H1**, then **C2 + F1 + H2**, then **F2**. Cross-stack work may use a
 contract from an open PR, but its merge waits for that dependency to land. F1
 starts only after E3 merges the complete environment-aware project-creation
 contract. C3 stays draft until the central `@v1` tag includes W2, the host
 package and UI are merged, and the mixed deployment acceptance run passes.
+
+#### Implementation rules
+
+The critical path is E1, E2, E3, C2, C3. Every other lane depends only on a
+frozen contract, so it starts as soon as that contract exists.
+
+- Merge a PR into the integration branch as soon as CI is green and the root
+  review passes, then start the next slice from the integration branch. Stack
+  on an open PR head only when the next slice needs that code before it merges.
+- Brief each agent with its contract row, base branch, code seams, and done
+  criteria. The agent reads the files it changes and their callers.
+- Before coding, list the slice's failure modes in the PR description. Each
+  failure mode gets one assertion in the X0 E2E suite, or a real-database
+  integration test when HTTP cannot reach it cheaply. Nothing else gets a test.
+- Fake only external systems (GitHub, Render, Vercel, GHCR, KMS) at their
+  existing ports, and record what they received. Do not mock backend
+  repositories or services.
+- Do not write DTO or validator unit tests, mock-echo service tests, snapshots
+  of generated YAML or SQL text, or tests of private helpers. For generated
+  workflows, parse the YAML, assert which jobs deploy on which trigger, and run
+  actionlint.
+- Iterate with typecheck and the targeted test file. Run lint, the full test
+  suite, and the touched `check:*` gates once before pushing; CI repeats them.
+- Implementation PRs do not edit this plan; the root agent ticks tasks and
+  links evidence after merges. Regenerate `*.generated.md` files only when a PR
+  changes their inputs, and again after a rebase.
+- Squash each PR to one Conventional Commit. Extend existing validators and
+  scripts; add no new scripts, gates, or refactors outside the slice.
+- The root agent reviews each PR once for correctness, security, and contract
+  drift. Only P0 and P1 findings block; list the rest as PR follow-ups.
+- Checks that need hosted providers, the WSL host, or the Windows Server VM
+  wait for the Phase 5 lab run. Each PR adds its scenario to that checklist.
 
 ### Phase 0: integrate the baseline and lock the contracts
 
@@ -218,7 +250,8 @@ not mark Phase 1 complete until repeatable evidence is saved for:
   database; authenticated list/add/rename of environment metadata for a
   legacy-created project, including two environments sharing one branch;
   custom create-time arrays are rejected before external writes, and legacy
-  project creation and existing deployment paths remain unchanged.
+  project creation and existing deployment paths remain unchanged. X0
+  produces this evidence.
 - W1 with E3 callers: a generated caller passes nonstandard environment and
   target IDs, a full source SHA, and an immutable container digest; Render uses
   the digest, Vercel records its deployment ID, and a legacy caller still works.
@@ -247,6 +280,15 @@ as runtime acceptance evidence.
   environment ID, source commit, and immutable slot artifacts. Keep it inactive
   for projects without on-prem targets. Evidence: authorization and manifest
   behavior at the API boundary.
+- [ ] **X0**, backend PR to this plan's `codex/configurable-deployment-targets`,
+  alongside E2 and C1: add the shared E2E suite. It starts the Nest app against
+  the disposable loopback PostgreSQL fixture, applies migrations, signs in a
+  test user, and drives the HTTP API. External providers are recording fakes
+  behind their existing ports. `npm run test:e2e` writes
+  `artifacts/e2e/<commit>/report.json` with the commit, commands, and
+  per-scenario results, and CI runs it. The first scenarios cover E1's
+  deferred acceptance. Evidence: the report for the X0 commit.
+
 ### Phase 3: generic promotion, signed delivery, and setup UI (E3, W2, H1, F1)
 
 - [ ] **E3**, backend PR based on E2: generate triggers and quality/deploy jobs
