@@ -49,9 +49,12 @@ signed release manifest; CI holds no host credentials.
 Existing projects retain their present branches, targets, and deployment
 behavior. An additive migration records their effective environment identities
 without silently adding paid `dev` services or changing their providers.
-New projects see the editable example above. Before generated workflows name a
-GitHub Environment, provision and configure it explicitly; GitHub can otherwise
-create an unprotected environment on first workflow use.
+Legacy project creation remains unchanged. Until E2/E3 make provisioning
+environment-aware, project creation rejects a custom `environments` array
+before any external writes; the environment APIs can still maintain metadata
+for projects created through the legacy path. Before generated workflows name
+a GitHub Environment, provision and configure it explicitly; GitHub can
+otherwise create an unprotected environment on first workflow use.
 
 This first delivery covers **customer applications**. AlphaCI platform hosting
 stays managed. `onprem-k8s` and self-managed AlphaCI platform hosting remain
@@ -74,37 +77,88 @@ to the customer host.
 
 One Luna agent owns one PR in one Codex-managed isolated Git checkout. Run up
 to three implementation agents concurrently while the root agent reviews
-contracts and diffs. A dependent PR initially targets the preceding branch in its own
-repository; retarget it to `main` after the lower PR merges. Independent PRs
-target `main`. Link cross-repository dependencies in PR descriptions; Git
-cannot stack branches across repositories. Keep incomplete capabilities gated.
+contracts and diffs. This plan uses a dedicated
+`codex/configurable-deployment-targets` integration branch in the backend,
+frontend, and `alphaci-workflow` repositories. Each branch was created from its
+current `main` on 2026-09-25; these branches are not repository defaults and do
+not change the repositories' default-branch setting. Only PRs for this plan
+target the relevant repository's `codex/configurable-deployment-targets`;
+unrelated work continues to target `main`. A dependent PR initially targets
+the preceding branch in its own repository; retarget it to
+`codex/configurable-deployment-targets` after the lower PR merges. Independent
+PRs target the plan integration branch. When the planned work is ready for
+production, open a release PR from each plan integration branch to that
+repository's `main`. Link cross-repository dependencies in PR
+descriptions; Git cannot stack branches across repositories. Keep incomplete
+capabilities gated.
 
-**Baseline gate:** implementation has not started. The focused deployment plan,
-ADR-0012, and host guide landed on `main` as PR #100 at `4575e1c`; its
-documentation, boundary, and full CI checks passed. The original backend local
-`main` still contains prior local-only commits and untracked `artifacts/`; do
-not use it as an implementation base. Create fresh isolated checkouts from
-the current remote `main`. The frontend's prior `codex/golden-copy-trunk`
-commits remain on that branch; its untracked pnpm files and backend
-`artifacts/` remain untouched. Two earlier backend isolated checkouts for
-target routing and the React image were clean at `cdb78ae` when inspected;
-check their ownership and base again before reusing them. Fetch and confirm
-all three remote heads again when implementation begins.
+**Baseline:** the focused deployment plan, ADR-0012, and host guide landed on
+`main` as PR #100 at `4575e1c`; PR #101 closed Phase 0 at `1db35f6`. The plan
+The integration branches were created from these `main` commits: backend
+`1db35f6`, frontend `572a8fe`, and central workflows `5031605`. The repositories
+keep `main` as their GitHub default branch; later `main` updates remain separate
+until an explicit integration or release PR. The backend's 12 prior local-only
+commits are preserved on
+`codex/archive-main-before-phase1`; its untracked `artifacts/` and the
+frontend's untracked pnpm files remain untouched. Existing backend PR #75 and
+frontend PR #41 still target the older `codex/golden-copy-trunk` branch and are
+unrelated to this plan's new `codex/configurable-deployment-targets` branches.
+The earlier backend checkout already holds `codex/onprem-react-image`, so
+Phase 1 R1 uses the fresh branch `codex/onprem-react-image-phase1`, from the
+same initial commit as the plan integration branch.
+
+GitHub reports all three plan integration branches as unprotected. This plan's
+PR targeting is therefore a workflow convention, not a server-enforced policy.
+Keep changes to both `codex/configurable-deployment-targets` and production
+`main` in reviewed PRs.
 
 | Stack | PR branches in merge order | Repository | Dependency |
 |---|---|---|---|
-| Environment core | E1 `codex/project-environments` -> E2 `codex/environment-targets` -> E3 `codex/environment-pipelines` | Backend | Start from reconciled `main` |
+| Environment core | E1 `codex/project-environments` -> E2 `codex/environment-targets` -> E3 `codex/environment-pipelines` | Backend | Start from `codex/configurable-deployment-targets` |
 | On-prem control | C1 `codex/onprem-release-contract` -> C2 `codex/onprem-compose-provider` -> C3 `codex/mixed-deployment-activation` | Backend | C1 from E1; C2 from E3 after C1 merges; C3 from C2 |
 | Host package | H1 `codex/onprem-host-agent` -> H2 `codex/onprem-windows-host` | Backend | H1 from C1; H2 from H1 |
-| Central workflows | W1 `codex/configurable-managed-workflows` -> W2 `codex/signed-onprem-release` | `alphaci-workflow` | W1 from its updated `main`; W2 consumes C1 API |
-| React image | R1 `codex/onprem-react-image` | Backend | Independent updated `main` |
-| Product UI | F1 `codex/project-environment-setup` -> F2 `codex/environment-operations` | Frontend | F1 consumes E1 API; F2 consumes E2/E3 APIs |
+| Central workflows | W1 `codex/configurable-managed-workflows` -> W2 `codex/signed-onprem-release` | `alphaci-workflow` | W1 from `codex/configurable-deployment-targets`; W2 consumes C1 API |
+| React image | R1 `codex/onprem-react-image-phase1` | Backend | Independent `codex/configurable-deployment-targets` |
+| Product UI | F1 `codex/project-environment-setup` -> F2 `codex/environment-operations` | Frontend | F1 after E3 merges and consumes its complete project-environment creation contract; F2 after F1 and E2/E3 |
 
-The useful parallel waves are **E1 + W1 + R1**, then **E2 + C1 + F1**, then
-**E3 + W2 + H1**, then **C2 + H2 + F2**. Cross-stack work may use a contract
-from an open PR, but its merge waits for that dependency to land. C3 stays
-draft until the central `@v1` tag includes W2, the host package and UI are
-merged, and the mixed deployment acceptance run passes.
+The useful parallel waves are **E1 + W1 + R1**, then **E2 + C1 + X0**, then
+**E3 + W2 + H1**, then **C2 + F1 + H2**, then **F2**. Cross-stack work may use a
+contract from an open PR, but its merge waits for that dependency to land. F1
+starts only after E3 merges the complete environment-aware project-creation
+contract. C3 stays draft until the central `@v1` tag includes W2, the host
+package and UI are merged, and the mixed deployment acceptance run passes.
+
+#### Implementation rules
+
+The critical path is E1, E2, E3, C2, C3. Every other lane depends only on a
+frozen contract, so it starts as soon as that contract exists.
+
+- Merge a PR into the integration branch as soon as CI is green and the root
+  review passes, then start the next slice from the integration branch. Stack
+  on an open PR head only when the next slice needs that code before it merges.
+- Brief each agent with its contract row, base branch, code seams, and done
+  criteria. The agent reads the files it changes and their callers.
+- Before coding, list the slice's failure modes in the PR description. Each
+  failure mode gets one assertion in the X0 E2E suite, or a real-database
+  integration test when HTTP cannot reach it cheaply. Nothing else gets a test.
+- Fake only external systems (GitHub, Render, Vercel, GHCR, KMS) at their
+  existing ports, and record what they received. Do not mock backend
+  repositories or services.
+- Do not write DTO or validator unit tests, mock-echo service tests, snapshots
+  of generated YAML or SQL text, or tests of private helpers. For generated
+  workflows, parse the YAML, assert which jobs deploy on which trigger, and run
+  actionlint.
+- Iterate with typecheck and the targeted test file. Run lint, the full test
+  suite, and the touched `check:*` gates once before pushing; CI repeats them.
+- Implementation PRs do not edit this plan; the root agent ticks tasks and
+  links evidence after merges. Regenerate `*.generated.md` files only when a PR
+  changes their inputs, and again after a rebase.
+- Squash each PR to one Conventional Commit. Extend existing validators and
+  scripts; add no new scripts, gates, or refactors outside the slice.
+- The root agent reviews each PR once for correctness, security, and contract
+  drift. Only P0 and P1 findings block; list the rest as PR follow-ups.
+- Checks that need hosted providers, the WSL host, or the Windows Server VM
+  wait for the Phase 5 lab run. Each PR adds its scenario to that checklist.
 
 ### Phase 0: integrate the baseline and lock the contracts
 
@@ -128,16 +182,20 @@ behavior for legacy projects until their environment mapping is explicit.
 
 | Slice | Public contract | Required invariant |
 |---|---|---|
-| E1 | `GET /projects/:projectId/environments` returns ordered `{id, slug, displayName, position, sourceBranch, role, autoDeploy}` records. `POST` adds an environment; `PATCH /:environmentId` changes its display name. Project creation accepts an ordered `environments` array. `role` is `production` or `non_production`; test/UAT are display names, not fixed roles. | UUID `id` and slug are permanent; slug and position are unique per project; position is contiguous; exactly one environment is production; `autoDeploy` is read-only and true only at position zero. Source branches may repeat. Live source-branch, order, role, slug, and delete changes are rejected until a migration flow exists. Session auth and project authorization match deployment-target routes. |
+| E1 | `GET /projects/:projectId/environments` returns ordered `{id, slug, displayName, position, sourceBranch, role, autoDeploy}` metadata records. `POST` appends one environment and `PATCH /:environmentId` changes its display name; these are metadata-only operations and cannot initialize or reorder a complete environment set. Project creation temporarily rejects a supplied custom `environments` array before any external writes; requests without one retain legacy creation behavior. The environment APIs maintain metadata for existing and legacy-created projects. `role` is `production` or `non_production`; test/UAT are display names, not fixed roles. | UUID `id` and slug are permanent; slug and position are unique per project; position is contiguous; exactly one environment is production; `autoDeploy` is read-only and true only at position zero. Source branches may repeat. Live source-branch, order, role, slug, and delete changes are rejected until a migration flow exists. Session auth and project authorization match deployment-target routes. Keep the create-time array rejection until E2/E3 provide and verify complete environment-aware provisioning and generated deployment behavior. |
 | E2 | Target create/list/update responses include `environmentId`; the target key is `(projectId, environmentId, slot)`, with one provider and stable target ID. A branch remains an environment's source setting and is never used to choose a target. | Reject duplicate, absent, missing, or failed targets without fallback. Keep env-var metadata and custom domains attached to their existing target IDs during migration; provider-specific environment labels are configuration on that target. Provision and protect the named GitHub Environment before a generated workflow references it. |
 | C1 | A new-mode `POST /ci/releases` registers a project-scoped immutable release with a UUID, full source commit SHA, source environment ID, per-slot artifact digests, and workflow provenance. `GET /ci/releases/:id` reads it. A session-authenticated `POST /projects/:projectId/environments/:environmentId/promotions` with `{releaseId}` creates a deployment of that release to the next ordered environment. Retain the current CI request/opaque ID response as a legacy compatibility path until callers migrate. | CI tokens may register and inspect their project's package but cannot promote, approve, or change a production pin. Release build/verification state and per-environment deployment/health/rollback state are separate persistent records. Promotion checks the immediately preceding environment's pinned release, target identity, authorization, and immutable artifacts. Only the first environment may deploy automatically. |
 | C1 manifest | Canonical signed payload: `schemaVersion`, `releaseId`, `projectId`, `sourceEnvironmentId`, `sourceBranch`, full `commitSha`, `createdAt`, `artifacts[{slot, image, digest}]`, optional `migrations[{id, checksum, mode}]`, and `workflowRun{provider, repo, runId, url}`. Envelope: manifest hash plus `signature{algorithm, keyId, value}`. A host assignment separately names destination environment and target IDs. | Container artifact references use `image@sha256:<64 hex>`; floating tags are refused. The host verifies the signature with its pinned public key before pulling any artifact. Neither manifest nor assignment contains host secrets. Vercel records its own deployment ID from the pinned commit rather than claiming the same image digest. |
 | W1 | Preserve existing reusable-workflow inputs, defaults, and outputs. Add optional string `environment-id`, `environment-name`, and `target-id` to managed deploy/release workflows. Keep existing `commit-sha`/`checkout-ref`, `artifact`, `image-digest`, and Vercel deployment outputs; expose a canonical digest image reference from `docker-build.yml`. New-mode callers provide the IDs, a full pinned SHA, and digest for container targets explicitly. | Legacy callers continue their current path when new IDs are absent. New-mode callers never resolve an environment or target from branch text and never fall back to DEV/UAT/MAIN credentials. The caller validates the provisioned, protected GitHub Environment and exact target before invoking deployment. Branch pushes to later environments can run quality gates but cannot call deployment; explicit promotion supplies the release ID. Render and Compose reuse the same digest; Vercel checks out the pinned SHA and records its distinct deployment ID. |
 
-E1 backfill uses effective project branches and target settings. If those
-settings cannot unambiguously identify one production environment, leave that
-project on the legacy compatibility path and require an operator mapping;
-never guess from the name `main` or change its current deployment behavior.
+E1 backfill uses effective project branches and target settings only when they
+identify the environment set, its order, and its single production role without
+guessing. Existing target rows have no authoritative order field, and prior
+code derived some provider environment labels from branch names. Therefore
+multi-branch projects and projects whose only production signal is a
+branch-derived `main` or `production` label remain on the legacy compatibility
+path until an operator maps them. Never infer production from the name `main`
+or change existing deployment behavior.
 E2 then attaches legacy target rows to the resolved environment IDs without
 replacing target IDs. E3 owns generated caller changes: W1 alone does not
 remove the current fixed `dev`/`uat`/`main` enumeration. W2 owns manifest
@@ -145,26 +203,68 @@ signing and registration; W1 does not add host credentials to a deploy job.
 
 ### Phase 1: environment identity and reusable foundations (E1, W1, R1)
 
-- [ ] **E1**, backend PR to `main`: add project-owned ordered environment
-  records and API with stable ID, immutable slug, display name, source branch,
-  role, and exactly one production environment. Accept additions and display
-  name changes; reject destructive edits until a migration flow exists. Backfill
-  existing projects without changing their branches, targets, or hosted costs.
-  Evidence: additive migration on a disposable database and API behavior for
-  legacy and custom projects, including two environments on one branch.
-- [ ] **W1**, central workflow PR to `main`: extend existing `docker-build.yml`,
-  `release.yml`, `render-deploy.yml`, and `vercel-deploy.yml` only where their
-  contracts need pinned commit, environment ID, target ID, or artifact output.
+- [ ] **E1**, backend PR to this plan's `codex/configurable-deployment-targets`:
+  add project-owned ordered environment records and API with stable ID,
+  immutable slug, display name,
+  source branch, role, and exactly one production environment. Accept additions
+  and display-name changes through the environment API; reject destructive
+  edits until a migration flow exists. Preserve legacy project creation and
+  reject a supplied custom `environments` array before external writes until
+  environment-aware provisioning is delivered in E2/E3. Backfill only
+  projects whose stored targets identify an environment set, order, and
+  production role without branch-derived guesses. Keep other projects on their
+  existing deployment path and require an operator mapping; do not change
+  branches, targets, or hosted costs. Evidence: additive migration on a
+  disposable database; list/add/rename metadata behavior for legacy-created
+  projects, including two environments on one branch; and pre-write rejection
+  of custom create-time arrays while legacy creation remains unchanged.
+- [ ] **W1**, central workflow PR to this plan's `codex/configurable-deployment-targets`:
+  extend existing `docker-build.yml`, `release.yml`, `render-deploy.yml`, and
+  `vercel-deploy.yml` only as required for pinned commits, environment IDs,
+  target IDs, or artifact outputs.
   Remove fixed test/UAT/main secret or branch assumptions from managed deploy
   selection. Require a validated GitHub Environment identifier from the
   caller. Update contract docs, catalog, and validation lists; avoid a new
-  reusable workflow when an existing one fits. Evidence: reusable callers
-  accept nonstandard names and immutable release references.
-- [ ] **R1**, backend PR to `main`: add a static-serving Dockerfile to the
-  generated React scaffold and reproducible GHCR build path. Keep Vercel
-  deployment available. Evidence: image digest tied to the scaffold revision.
+  reusable workflow when an existing one fits. Evidence: static workflow
+  contract checks cover optional target identity and immutable image references
+  while legacy defaults remain intact. Generated caller behavior and promotion
+  evidence are verified with E3/W2 acceptance.
+- [ ] **R1**, backend PR to this plan's `codex/configurable-deployment-targets`:
+  add a static-serving Dockerfile to the generated React scaffold and a
+  reproducible GHCR build path. Keep Vercel deployment available. Scan the
+  exact pushed image digest and fail on HIGH or
+  CRITICAL vulnerabilities. Evidence: successful build and scan with the image
+  digest tied to the scaffold revision.
 
-### Phase 2: targets, release API, and setup UI (E2, C1, F1)
+R1 images are candidate artifacts only. They are not eligible for on-prem
+release or host deployment until W2 signs a release manifest naming the image
+digest and registers that manifest through C1. A successful R1 scan does not
+replace W2 signing and registration.
+
+#### Deferred Phase 1 end-to-end acceptance
+
+Defer runtime end-to-end runs while Phase 1 is under implementation review. Do
+not mark Phase 1 complete until repeatable evidence is saved for:
+
+- E1: migration, safe backfill and rollback on a disposable PostgreSQL
+  database; authenticated list/add/rename of environment metadata for a
+  legacy-created project, including two environments sharing one branch;
+  custom create-time arrays are rejected before external writes, and legacy
+  project creation and existing deployment paths remain unchanged. X0
+  produces this evidence.
+- W1 with E3 callers: a generated caller passes nonstandard environment and
+  target IDs, a full source SHA, and an immutable container digest; Render uses
+  the digest, Vercel records its deployment ID, and a legacy caller still works.
+- R1: a generated React project installs from its committed lockfile, builds
+  and serves the static image, and the GHCR workflow scans the exact published
+  digest before reporting it.
+
+The saved artifact must identify the commit and reproducible commands and
+include the relevant workflow run, migration/API output, image digest, scanner
+result, and container health result. Static checks and code review do not count
+as runtime acceptance evidence.
+
+### Phase 2: targets and release API (E2, C1)
 
 - [ ] **E2**, backend PR based on E1: key deployment targets and environment
   variables by environment ID and slot, rather than branch alone. Make provider
@@ -180,22 +280,37 @@ signing and registration; W1 does not add host credentials to a deploy job.
   environment ID, source commit, and immutable slot artifacts. Keep it inactive
   for projects without on-prem targets. Evidence: authorization and manifest
   behavior at the API boundary.
-- [ ] **F1**, frontend PR to its own `main`: edit the ordered environment set
-  during project setup, starting from the editable `dev/uat/main` template.
-  Read E1's API, display the actual created branches, and remove frontend-only
-  branch-rank constants. Existing projects display their effective legacy
-  configuration without automatic changes.
+- [ ] **X0**, backend PR to this plan's `codex/configurable-deployment-targets`,
+  alongside E2 and C1: add the shared E2E suite. It starts the Nest app against
+  the disposable loopback PostgreSQL fixture, applies migrations, signs in a
+  test user, and drives the HTTP API. External providers are recording fakes
+  behind their existing ports. `npm run test:e2e` writes
+  `artifacts/e2e/<commit>/report.json` with the commit, commands, and
+  per-scenario results, and CI runs it. The first scenarios cover E1's
+  deferred acceptance. Evidence: the report for the X0 commit.
 
-### Phase 3: generic promotion and signed delivery (E3, W2, H1)
+### Phase 3: generic promotion, signed delivery, and setup UI (E3, W2, H1, F1)
 
 - [ ] **E3**, backend PR based on E2: generate triggers and quality/deploy jobs
-  from the project environment definition. Only the first project environment
+  from the project environment definition. Enable custom create-time
+  environment arrays only after E2/E3 provisioning and generated callers honor
+  the definition; retain E1's pre-write rejection until that path is verified.
+  Only the first project environment
   auto-deploys on a source-branch push. Promotion is an explicit, authorized
   release operation that carries the pinned commit and slot artifacts to the
   next environment, verifies its target and health, and records its outcome. Keep
   optional branch PRs separate from deployment promotion. Evidence: generated
   workflows for nonstandard names, shared branches, managed-only projects, and
-  the mixed-provider example.
+  the mixed-provider example. This phase restores custom create-time environment
+  arrays only after complete environment-aware provisioning and generated
+  callers are verified; E1's pre-write rejection remains until then.
+- [ ] **F1**, frontend PR to this plan's `codex/configurable-deployment-targets`
+  after E3 merges: edit the complete ordered environment definition during
+  project setup, starting from
+  the editable `dev/uat/main` template and using E3's environment-aware
+  project-creation contract. Display the actual created branches and remove
+  frontend-only branch-rank constants. Existing projects display their
+  effective legacy configuration without automatic changes.
 - [ ] **W2**, central workflow PR based on W1: add the missing reusable
   on-prem manifest-signing and registration workflow, or extend `release.yml`
   if its contract can remain host-neutral. Sign with the AlphaCI Cloud KMS
