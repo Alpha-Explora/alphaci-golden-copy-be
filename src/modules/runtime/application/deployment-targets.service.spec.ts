@@ -14,6 +14,7 @@ describe('DeploymentTargetsService', () => {
   const projectReferenceLookup = {
     findProjectReference: jest.fn(),
     findProjectEnvironment: jest.fn(),
+    listProjectEnvironments: jest.fn(),
   };
   const deploymentTargetsRepository = {
     createDeploymentTarget: jest.fn(),

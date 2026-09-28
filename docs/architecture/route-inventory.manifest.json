@@ -1,11 +1,11 @@
 {
-  "routeCount": 178,
+  "routeCount": 184,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "330a1f1ff84d5a7c921020906269f66b1d8ad62f8afe7346ada4d568767638ff",
+  "referenceSha256": "478fa50ca94e91ca198d6d6a9151002d83e9edb147a0b326ba8d3c7d6cb6151e",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "330a1f1ff84d5a7c921020906269f66b1d8ad62f8afe7346ada4d568767638ff",
+  "baselineSha256": "478fa50ca94e91ca198d6d6a9151002d83e9edb147a0b326ba8d3c7d6cb6151e",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -76,6 +76,17 @@
       "routes": [
         "GET /api/v1/projects/{projectId}/environments/{environmentId}/deployment-targets/{slot}",
         "PUT /api/v1/projects/{projectId}/deployment-targets/{targetId}/environment"
+      ]
+    },
+    {
+      "reason": "Release registry: CI registers immutable releases and attaches their signed manifest, signed-in users promote a release to the next environment and register on-prem hosts, and a host polls its environment's assignments and reports status with a host token.",
+      "routes": [
+        "GET /api/v1/onprem/assignments",
+        "POST /api/v1/ci/releases/{releaseId}/deployment-status",
+        "POST /api/v1/onprem/deployments/{deploymentId}/status",
+        "POST /api/v1/projects/{projectId}/environments/{environmentId}/hosts",
+        "POST /api/v1/projects/{projectId}/environments/{environmentId}/promotions",
+        "PUT /api/v1/ci/releases/{releaseId}/manifest"
       ]
     }
   ]

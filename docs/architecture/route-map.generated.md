@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 178 current API routes."
+description: "Generated inventory of the 184 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **178 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **184 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -73,6 +73,7 @@ The current compiled API exposes **178 routes** under the global `/api/v1` prefi
 - `GET /api/v1/me/groups`
 - `GET /api/v1/notifications`
 - `GET /api/v1/notifications/preferences`
+- `GET /api/v1/onprem/assignments`
 - `GET /api/v1/projects`
 - `GET /api/v1/projects/{id}/audit`
 - `GET /api/v1/projects/{id}/ci-runs`
@@ -141,6 +142,7 @@ The current compiled API exposes **178 routes** under the global `/api/v1` prefi
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/auth/onboarding/complete`
 - `POST /api/v1/ci/releases`
+- `POST /api/v1/ci/releases/{releaseId}/deployment-status`
 - `POST /api/v1/ci/report`
 - `POST /api/v1/ci/validate`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/archive`
@@ -158,6 +160,7 @@ The current compiled API exposes **178 routes** under the global `/api/v1` prefi
 - `POST /api/v1/groups/{groupId}/systems`
 - `POST /api/v1/groups/{groupId}/transfer`
 - `POST /api/v1/notifications/{id}/read`
+- `POST /api/v1/onprem/deployments/{deploymentId}/status`
 - `POST /api/v1/projects`
 - `POST /api/v1/projects/setup`
 - `POST /api/v1/projects/sync`
@@ -174,6 +177,8 @@ The current compiled API exposes **178 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{projectId}/env-vars/provision`
 - `POST /api/v1/projects/{projectId}/env-vars/validate`
 - `POST /api/v1/projects/{projectId}/environments`
+- `POST /api/v1/projects/{projectId}/environments/{environmentId}/hosts`
+- `POST /api/v1/projects/{projectId}/environments/{environmentId}/promotions`
 - `POST /api/v1/projects/{projectId}/qa-runs`
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}/request-retest`
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen`
@@ -192,6 +197,7 @@ The current compiled API exposes **178 routes** under the global `/api/v1` prefi
 - `POST /api/v1/workflows/generate`
 - `POST /api/v1/workspaces/{workspaceId}/members`
 - `POST /api/v1/workspaces/{workspaceId}/qa-checklists`
+- `PUT /api/v1/ci/releases/{releaseId}/manifest`
 - `PUT /api/v1/projects/{projectId}/deployment-targets/{targetId}/environment`
 - `PUT /api/v1/qa-checklists/{id}/items`
 - `PUT /api/v1/qa-checklists/{id}/projects`
