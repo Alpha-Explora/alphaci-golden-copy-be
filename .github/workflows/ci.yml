@@ -88,3 +88,27 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_DB_CA_CERT: ${{ secrets.SUPABASE_DB_CA_CERT }}
         run: npm test -- --ci --runInBand tests/integration/database.integration.spec.ts
+
+  e2e:
+    name: E2E (HTTP API and PostgreSQL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: E2E suite
+        run: npm run test:e2e -- --ci
+
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: artifacts/e2e/
+          if-no-files-found: warn

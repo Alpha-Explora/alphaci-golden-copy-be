@@ -27,12 +27,23 @@ import { postgresSslConfig } from '#kernel/db/postgres-ssl.config.js';
  * only the final listen step remains in bootstrap().
  */
 export async function createHttpApplication(): Promise<NestExpressApplication> {
-  const logger = new Logger('Bootstrap');
-
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
+  return configureHttpApplication(app);
+}
 
+/**
+ * Install the production middleware stack on an already constructed app.
+ *
+ * The E2E suite builds the app through a testing module so it can replace
+ * external provider ports, then calls this to get the same sessions, body
+ * parsing, validation, and error envelope that production serves.
+ */
+export function configureHttpApplication(
+  app: NestExpressApplication,
+): NestExpressApplication {
+  const logger = new Logger('Bootstrap');
   const configService = app.get(ConfigService);
   const appCfg = configService.getOrThrow<AppConfig>('app');
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added the E2E suite (`npm run test:e2e`). It boots the real application and HTTP middleware against a disposable loopback PostgreSQL database with every migration applied, replaces only external provider ports with recording fakes, and writes `artifacts/e2e/<commit>/report.json`. CI runs it in a new `E2E` job. The first scenarios cover the project environments API and migration. `ALPHACI_IGNORE_ENV_FILE=true` makes the app skip `.env` files, and `configureHttpApplication` installs the production middleware on an app built elsewhere.
+
 - Added project-owned ordered environments with stable IDs and slugs, append-only creation, display-name edits, session authorization, and a conservative legacy backfill. Projects without an unambiguous single production branch keep their legacy branch-based deployment path.
 
 - Added proposed ADR-0012 (configurable deployment targets) and a consolidated on-premises setup plan. Customer projects can choose a provider per slot and branch: the first planned mix uses Vercel/Render for `dev` (test) and `uat`, then customer-hosted `onprem-compose` for `main`. AlphaCI platform hosting stays managed in this delivery; `onprem-k8s` and self-managed platform hosting are later options. The plan replaces the Kubernetes-only on-premises report and diagram.
