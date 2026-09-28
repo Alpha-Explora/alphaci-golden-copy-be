@@ -1,0 +1,41 @@
+# Example /opt/alphaci/compose/compose.yaml for one frontend and one backend
+# behind Caddy. The customer owns this file; copy it, then adjust services,
+# ports, and application settings. The agent supplies each release's images as
+# ALPHACI_IMAGE_<SLOT> (image@sha256 digests) and reads ALPHACI_HOSTNAME from
+# /opt/alphaci/agent.env.
+#
+# Application secrets stay on the host in /opt/alphaci/secrets/<service>.env
+# (mode 600, owned by root). AlphaCI never sees them.
+name: alphaci
+
+services:
+  frontend:
+    image: ${ALPHACI_IMAGE_FRONTEND:?the release has no frontend image}
+    restart: unless-stopped
+    # The generated React image serves on 8080 without root.
+    expose: ["8080"]
+
+  backend:
+    image: ${ALPHACI_IMAGE_BACKEND:?the release has no backend image}
+    restart: unless-stopped
+    # The generated .NET image listens on 8080.
+    expose: ["8080"]
+    env_file:
+      - path: /opt/alphaci/secrets/backend.env
+        required: false
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    environment:
+      ALPHACI_HOSTNAME: ${ALPHACI_HOSTNAME:?set ALPHACI_HOSTNAME in /opt/alphaci/agent.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/alphaci/tls:/tls:ro
+      - caddy-data:/data
+    depends_on: [frontend, backend]
+
+volumes:
+  caddy-data: {}

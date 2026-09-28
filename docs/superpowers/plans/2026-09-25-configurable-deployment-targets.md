@@ -114,9 +114,10 @@ Keep changes to both `codex/configurable-deployment-targets` and production
 `main` in reviewed PRs.
 
 Merged: E1 (#104), R1 (#105), X0 (#114), E2 (#115), C1 (#116), E3a (#117),
-release history for the UI (#118), E3b (#120), H1 (#121), C2 (#122), W1
-(`alphaci-workflow` #30), and W2 (`alphaci-workflow` #33). The remaining
-work runs in this order; the critical path is the lab run.
+release history for the UI (#118), E3b (#120), H1 (#121), C2 (#122), F2
+(frontend #68), F1 (frontend #69), W1 (`alphaci-workflow` #30), and W2
+(`alphaci-workflow` #33). H2 is packaged and waits for its laptop run. The
+remaining work is the lab run, H2's laptop and VM checks, and the release.
 
 | Order | Slice | Branch | Repository | Needs merged first |
 |---|---|---|---|---|
@@ -395,16 +396,22 @@ as runtime acceptance evidence.
   push, explicit promotion, pinned source identity, provider isolation,
   install, upgrade, rejected signature, failed-health rollback, and restart
   recovery of the WSL host. Record a repeatable report tied to the commit.
-- [ ] **F2**, frontend PR: show each environment in order with its targets per
+- [x] **F2**, frontend PR: show each environment in order with its targets per
   slot, current release (commit, image digests), deployment history, and an
   explicit Promote action with the backend's reason when it is refused and a
   confirmation for production. Do not collapse non-production environments
   into UAT. Show on-prem host settings only when the on-prem provider is
   enabled.
-- [ ] **F1**, frontend PR after E3b: edit the complete ordered environment
+  Evidence: frontend #68; model test for ordering, current release, the
+  promotion offer, and host delivery. Browser check in the lab run.
+- [x] **F1**, frontend PR after E3b: edit the complete ordered environment
   definition during project setup, starting from the editable `dev/uat/main`
   template, and display the branches actually created. Existing projects keep
   their effective legacy configuration.
+  Evidence: frontend #69; model test for validation, one production, and the
+  payload. The editor is opt-in until the central `v1` includes W2's signing
+  workflow, because environment pipelines call it. Runs grouping still ranks
+  branches by the fixed `dev, uat, main` order; unknown branches sort after.
 
 ### Phase 6: client readiness (H2)
 
@@ -413,6 +420,12 @@ as runtime acceptance evidence.
   firewall, and support bundle. Evidence: install, restart, and rerun on the
   laptop without manual repair, then the Phase 5 checks on a Windows Server
   2022 VM with nested virtualization.
+  Packaged: `deploy/onprem/windows` (install, start, uninstall, support
+  export), `deploy/onprem/compose` (Caddy example), and
+  `alphaci-agent support-bundle`. Checked: both PowerShell parsers, the
+  port-forward logic with `-WhatIf`, `docker compose config`, `caddy
+  validate`, and the E2E support-bundle scenario (no host token). Still to
+  tick: the elevated install, restart, and rerun on the laptop, then the VM.
 - [ ] Move the [host setup guide](2026-09-25-onprem-client-setup-guide.md) to
   a current-state runbook after those checks pass; mark ADR-0012 accepted
   only for the delivered scope.

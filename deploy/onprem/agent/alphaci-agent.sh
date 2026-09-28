@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # AlphaCI on-prem release agent: one poll cycle. systemd runs it on a timer.
+# `alphaci-agent support-bundle` instead writes a diagnostics archive.
 #
 # It only makes outbound calls. It asks AlphaCI for this host's environment
 # assignments, verifies each signed release manifest with the pinned public
@@ -26,7 +27,6 @@ DOCKER="${ALPHACI_DOCKER:-docker}"
 HEALTH_TIMEOUT="${ALPHACI_HEALTH_TIMEOUT:-120}"
 API="${ALPHACI_API_URL%/}"
 API="${API%/api/v1}"
-TOKEN="$(tr -d '[:space:]' < "$ALPHACI_HOST_TOKEN_FILE")"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$STATE_DIR"
@@ -116,6 +116,44 @@ deploy() {
   fi
 }
 
+# support_bundle: the agent log and timer, the running release, Compose state
+# and recent container logs, and the agent's settings with secret values
+# redacted, as one archive. It never reads the host token or the secrets
+# directory. Container logs are the application's own output: review the
+# archive before sending it.
+support_bundle() {
+  local out="${ALPHACI_SUPPORT_DIR:-/opt/alphaci/support}" name dir envfile
+  name="alphaci-support-$(date -u +%Y%m%dT%H%M%SZ)"
+  dir="$WORK/$name"
+  mkdir -p "$dir" "$out"
+  { date -u; uname -srm; "$DOCKER" version --format 'docker {{.Server.Version}}' 2>&1 || true; } > "$dir/host.txt"
+  env | grep '^ALPHACI_' |
+    sed -E 's/^([A-Z0-9_]*(TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=.*/\1=<redacted>/' |
+    sort > "$dir/settings.txt"
+  journalctl -u alphaci-agent.service -n 500 --no-pager > "$dir/agent.log" 2>&1 ||
+    echo "journalctl is unavailable on this host" > "$dir/agent.log"
+  systemctl list-timers alphaci-agent.timer --no-pager > "$dir/timer.txt" 2>&1 || true
+  envfile="$STATE_DIR/current.env"
+  if [ -f "$envfile" ]; then
+    cp "$envfile" "$dir/release.env"
+  else
+    echo "No release has been deployed on this host." > "$dir/release.env"
+    envfile="$WORK/empty.env"
+    : > "$envfile"
+  fi
+  compose "$envfile" ps -a > "$dir/compose-ps.txt" 2>&1 || true
+  compose "$envfile" logs --no-color --timestamps --tail 200 > "$dir/compose-logs.txt" 2>&1 || true
+  tar -czf "$out/$name.tar.gz" -C "$WORK" "$name"
+  chmod 600 "$out/$name.tar.gz"
+  echo "$out/$name.tar.gz"
+}
+
+if [ "${1:-}" = support-bundle ]; then
+  support_bundle
+  exit 0
+fi
+
+TOKEN="$(tr -d '[:space:]' < "$ALPHACI_HOST_TOKEN_FILE")"
 curl -fsS --max-time 30 "$API/api/v1/onprem/assignments" \
   -H "Authorization: Bearer $TOKEN" -o "$WORK/assignments.json"
 count=$(jq 'length' "$WORK/assignments.json")

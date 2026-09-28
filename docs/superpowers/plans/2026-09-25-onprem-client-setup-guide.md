@@ -57,14 +57,16 @@ the trust, TLS, and secret files are still pending.
 5. Run `sudo systemctl enable --now docker`. Verify with `sudo docker info --format '{{.OperatingSystem}}'`, `docker compose version`, `docker buildx version`, and `sudo docker run --rm hello-world`. The operating system must be Ubuntu, not Docker Desktop.
 6. Install Cosign using [Sigstore's Ubuntu package instructions](https://docs.sigstore.dev/cosign/system_config/installation/) and check `cosign version`. Create `/opt/alphaci/{bin,trust,secrets,tls,releases}` and restrict `secrets/` to root. Add the test trust, TLS, and secret files from section 3, steps 7 to 9, once the release and credentials exist.
 7. Keep WSL's default NAT networking (do not set `networkingMode=mirrored`), so the laptop behaves like Server 2022.
-8. Install the agent: copy `deploy/onprem/agent` from the backend repository into Ubuntu and run `sudo ./install.sh`. It installs `/opt/alphaci/bin/alphaci-agent` and a systemd timer that runs one poll every 30 seconds, and keeps an existing `/opt/alphaci/agent.env`. Then write, as root:
+8. Install the agent: copy `deploy/onprem` from the backend repository into Ubuntu's own filesystem (for example `~/onprem`, not `/mnt/c`) and run `sudo ./agent/install.sh`. It installs `/opt/alphaci/bin/alphaci-agent`, a systemd timer that runs one poll every 30 seconds, and the Compose examples, and keeps an existing `/opt/alphaci/agent.env` and `compose.yaml`. Then write, as root:
    - `/opt/alphaci/agent.env`: the AlphaCI API URL and the paths below (see `agent.env.example`);
    - `/opt/alphaci/secrets/host-token`: the token returned once by `POST /projects/:projectId/environments/:environmentId/hosts`;
    - `/opt/alphaci/trust/release-signing.pub.pem`: the AlphaCI release-signing public key (`gcloud kms keys versions get-public-key` for the signing key version);
    - `/opt/alphaci/compose/compose.yaml`: the application, whose services use `${ALPHACI_IMAGE_BACKEND}`, `${ALPHACI_IMAGE_FRONTEND}`, or `${ALPHACI_IMAGE_STANDALONE}` as their image.
+     Start from `compose.example.yaml` and `Caddyfile.example`, which the installer places beside it; set `ALPHACI_HOSTNAME` in `agent.env`. For the laptop, put a self-signed or internal-CA certificate in `/opt/alphaci/tls/` or use `tls internal` in the Caddyfile.
    Check with `systemctl list-timers alphaci-agent.timer` and `journalctl -u alphaci-agent`.
-9. Register the laptop as the production environment's target for disposable React and .NET lab projects once the on-prem provider exists (C2). In the example template, this environment is named `main`; `dev` and `uat` stay on Vercel and Render. Do not point a client's production project at the laptop.
-10. Run the acceptance checks in section 4. For the reboot check, restart Windows and sign in; on the laptop the scheduled task may run as your user, only when signed in.
+9. Register the laptop as the production environment's target for disposable React and .NET lab projects: create the project with an `onprem-compose` target limited to `main` (`environmentSlug: "main"`), then register the host from the project's Hosting tab or `POST .../environments/:environmentId/hosts`. `dev` and `uat` stay on Vercel and Render. Do not point a client's production project at the laptop.
+10. In an administrator PowerShell, from `deploy/onprem/windows`: `.\Install-AlphaCIHost.ps1 -Distro Ubuntu -ClientSubnets LocalSubnet -OnlyWhenSignedIn`. It keeps the distro running while you are signed in, forwards 443 to it, and allows only your local subnet.
+11. Run the acceptance checks in section 4. For the reboot check, restart Windows and sign in; on the laptop the task runs as your user only while signed in.
 
 The laptop lane proves the pipeline, signing, pulling, Compose, rollback, and
 reboot recovery. It does not prove Server 2022 networking, client proxies and
@@ -110,10 +112,10 @@ Run as administrator in PowerShell unless a step says WSL.
 7. WSL: create `/opt/alphaci/{bin,trust,secrets,tls,releases}`. Copy `alphaci.pub` to `trust/` and the certificate and key to `tls/`. Set `secrets/` to `chmod 700` and every file in it to `chmod 600`, owned by root.
 8. WSL: write `secrets/ghcr-token` and `secrets/agent-token`, then `docker login ghcr.io -u <machine-account> --password-stdin < /opt/alphaci/secrets/ghcr-token`.
 9. WSL: the client operator writes one `secrets/<app>.env` per application (connection strings, API keys).
-10. *Proposed:* run `Install-AlphaCIHost.ps1 -HostId <id> -ApiUrl <url> -Distro Ubuntu-24.04 -ServiceAccount alphaci-svc`. It is safe to rerun and does steps 11 to 13.
-11. Scheduled task at startup, as `alphaci-svc`, "run whether the user is signed in or not", restart on failure: `wsl.exe -d Ubuntu-24.04 -u root -- /opt/alphaci/bin/alphaci-agent run`. The long-running agent keeps the WSL instance alive; a task running as SYSTEM cannot see the service account's distro.
-12. Port forward, refreshed at every start because the WSL address changes: read the address with `wsl -d Ubuntu-24.04 hostname -I`, then `netsh interface portproxy add v4tov4 listenport=443 listenaddress=0.0.0.0 connectport=443 connectaddress=<wsl-ip>` (delete the old rule first).
-13. Firewall: `New-NetFirewallRule -DisplayName "AlphaCI HTTPS" -Direction Inbound -Protocol TCP -LocalPort 443 -RemoteAddress <client-subnets> -Action Allow`.
+10. From `deploy/onprem/windows`, as an administrator: `.\Install-AlphaCIHost.ps1 -Distro Ubuntu-24.04 -ServiceAccount <DOMAIN>\alphaci-svc -ClientSubnets <client-subnets>`. It asks once for the service account's password and is safe to rerun. It does steps 11 to 13.
+11. Scheduled task **AlphaCI Host**, at startup, as `alphaci-svc` whether or not anyone is signed in, not elevated, restarting on failure. It starts the distro, records its address in `C:\ProgramData\AlphaCI\wsl-address.txt`, and holds it running so WSL never stops it for being idle. The agent itself runs on its systemd timer inside the distro. A task running as SYSTEM cannot see the service account's distro, which is why this one runs as the account.
+12. Scheduled task **AlphaCI Port Forward**, as SYSTEM, at startup and every minute: points a `netsh interface portproxy` rule for each port at the recorded address. The WSL address changes whenever the distro restarts; the rule is changed only when it is wrong.
+13. Firewall rule **AlphaCI TCP 443**: inbound TCP 443 only from `-ClientSubnets`.
 
 ## 4. Acceptance checks
 
@@ -130,11 +132,11 @@ Run as administrator in PowerShell unless a step says WSL.
 ## 5. Day-2 operations
 
 - **Upgrade:** push to the configured source branch, pass its first environment, then explicitly promote that pinned release to production; the agent applies the approved manifest.
-- **Rollback:** approve an earlier release in AlphaCI, or on the host run *proposed* `alphaci-agent rollback`.
+- **Rollback:** promote an earlier release in AlphaCI. A release that fails its health check is rolled back by the agent automatically.
 - **Rotate:** GHCR token every 90 days (`docker login` again); agent token from AlphaCI; certificates before expiry (replace files, `docker compose restart caddy`).
 - **Signing key rotation:** add the new public key to `trust/` on every host before signing with it; remove the old key after the last old release is retired.
-- **Support bundle:** *proposed* `alphaci-agent support-bundle` collects agent logs, `docker compose ps`, recent container logs, and the current manifest, without secrets.
-- **Uninstall:** export and verify a backup of application data, disable the scheduled task, remove the portproxy and firewall rules, then `docker compose down`. Run `wsl --unregister Ubuntu-24.04` only after the client approves permanent deletion of all data in that distro.
+- **Support bundle:** on Windows, `.\Export-AlphaCIHostSupport.ps1` writes a zip to the desktop with the task history, port forwards, firewall rules, host logs, WSL status, and the agent's own bundle. Inside WSL alone, `sudo alphaci-agent support-bundle` writes `/opt/alphaci/support/alphaci-support-<time>.tar.gz`: the agent log and timer, the running release's image references, `docker compose ps`, the last 200 container log lines, and the agent settings with token, secret, and password values redacted. Neither reads the host token or `secrets/`. Container logs are the application's own output, so review the archive before sending it.
+- **Uninstall:** export and verify a backup of application data, run `.\Uninstall-AlphaCIHost.ps1` (removes the tasks, port forwards, and firewall rules), then `docker compose down` inside WSL. Run `wsl --unregister Ubuntu-24.04` only after the client approves permanent deletion of all data in that distro.
 
 ## 6. Troubleshooting
 
