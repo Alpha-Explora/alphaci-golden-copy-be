@@ -1355,6 +1355,13 @@ function buildEnvironmentPackageWorkflowFile(
       {
         needs: ['build'],
         if: onFirstBranch,
+        // docker-build's scan job uploads SARIF; a reusable workflow that
+        // asks for more than its caller grants fails at startup.
+        permissions: {
+          contents: 'read',
+          packages: 'write',
+          'security-events': 'write',
+        },
         uses: `${CENTRAL_WORKFLOW_BASE}/docker-build.yml@${ctx.centralWorkflowRef}`,
         with: {
           'working-directory': ctx.servicePath,

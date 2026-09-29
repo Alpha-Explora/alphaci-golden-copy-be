@@ -211,6 +211,10 @@ function buildPackageJson(packageName: string, stack: string): string {
   const pkg = {
     name: packageName,
     version: '0.1.0',
+    // An application is never published. license-checker's
+    // --excludePrivatePackages also relies on this; without it the app itself
+    // reports an UNKNOWN license and fails License Compliance.
+    private: true,
     scripts,
     dependencies: {} as Record<string, string>,
     devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
@@ -1043,6 +1047,7 @@ function buildPackagePackageJson(packageName: string, stack: string): string {
   const pkg = {
     name: packageName,
     version: '0.1.0',
+    private: true,
     scripts: {
       build: 'tsc -p tsconfig.build.json',
       test: 'jest',

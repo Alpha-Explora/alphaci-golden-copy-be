@@ -10,6 +10,8 @@ import type {
 } from '../core/deployment-provisioning.contract';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { EnvLane, EnvVarScope } from '../core/deployments.types';
+import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
+import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import { DeploymentProviderPolicyRegistry } from '../domain/deployment-provider.policy';
 import { EnvVarsService } from './env-vars.service';
 import {
@@ -73,6 +75,8 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     private readonly ciSecretsInstallers: ProviderCiSecretsInstallerRegistryPort,
     @Optional()
     private readonly providerPolicyRegistry?: DeploymentProviderPolicyRegistry,
+    @Optional()
+    private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {}
 
   async provisionForProject(
@@ -231,6 +235,14 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
      * the thing that was missing.
      */
     if (!ciSecretsInstaller) {
+      // A provider whose credentials stay outside AlphaCI (an on-prem host
+      // pulls its releases) has nothing to install; that is not a skip.
+      if (
+        this.providerRegistry?.find(input.target.provider)?.capabilities
+          .credentialCustody === 'external'
+      ) {
+        return input.target.providerMetadata;
+      }
       this.logger.warn(
         `No CI secrets installer is registered for provider "${input.target.provider}". ` +
           `Deployment jobs generated for ${input.repoFullName} will read secrets that nothing installs.`,
@@ -792,8 +804,22 @@ export class ProjectDeploymentProvisioningService implements DeploymentProvision
     dockerfilePath?: unknown;
     imageUrl?: unknown;
   }): Record<string, string | null> {
+    // Only these keys. Copying every string field also copied the stored
+    // row's status ('active') over the result's 'created', so every
+    // successful target was reported as not provisioned.
+    const keys = [
+      'renderServiceType',
+      'renderRuntime',
+      'renderInstanceType',
+      'renderRegion',
+      'renderEnvironmentName',
+      'dockerContext',
+      'dockerfilePath',
+      'imageUrl',
+    ] as const;
     const metadata: Record<string, string | null> = {};
-    for (const [key, value] of Object.entries(target)) {
+    for (const key of keys) {
+      const value = target[key];
       if (typeof value === 'string' || value === null) {
         metadata[key] = value;
       }

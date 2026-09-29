@@ -10,6 +10,7 @@ import { required } from './support/database';
 type Job = {
   if?: string;
   uses?: string;
+  permissions?: Record<string, string>;
   with?: Record<string, unknown>;
   steps?: Array<{ run?: string; env?: Record<string, string> }>;
 };
@@ -27,7 +28,9 @@ type Workflow = { jobs: Record<string, Job> };
  * on-prem production): production given a hosted target or the other
  * environments an on-prem one; an on-prem target calling a provider or
  * GitHub; the image production pulls never being built because test does not
- * need it; a workflow job deploying production.
+ * need it; a workflow job deploying production; an image job granting less
+ * than the central docker-build scan needs, which GitHub refuses at startup;
+ * a created target reported as not provisioned.
  */
 describe('Project creation with environments', () => {
   let e2e: E2eApplication;
@@ -187,7 +190,7 @@ describe('Project creation with environments', () => {
           deploymentProvisioning: { targets: Array<{ status: string }> };
         }
       ).deploymentProvisioning.targets.map(({ status }) => status),
-    ).toEqual(Array(6).fill('active'));
+    ).toEqual(Array(6).fill('created'));
 
     const targets = await e2e.query<{
       id: string;
@@ -253,6 +256,12 @@ describe('Project creation with environments', () => {
     expect(Object.keys(packaged.jobs)).toEqual(
       expect.arrayContaining(['image-backend', 'image-frontend']),
     );
+    for (const id of ['image-backend', 'image-frontend']) {
+      expect(packaged.jobs[id]?.permissions).toMatchObject({
+        packages: 'write',
+        'security-events': 'write',
+      });
+    }
     const register = required(
       packaged.jobs['register-release']?.steps?.[0]?.run,
     );
