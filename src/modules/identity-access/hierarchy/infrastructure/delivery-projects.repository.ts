@@ -174,6 +174,36 @@ export class DeliveryProjectsRepository {
     return this.toRecord(row, counts.get(row.id) ?? 0);
   }
 
+  /**
+   * ALL delivery projects under a system, any status — used to decide
+   * whether a system is now empty (mirrors the ghost-cleanup migration's own
+   * NOT EXISTS check: archived delivery projects still count as "not
+   * empty", only their absence does).
+   */
+  async countBySystem(systemId: string): Promise<number> {
+    const result = await this.databaseService.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM hierarchy.delivery_projects WHERE system_id = $1;`,
+      [systemId],
+    );
+    return result.rows[0]?.count ?? 0;
+  }
+
+  /**
+   * Hard-deletes one delivery project row. Called only after every one of
+   * its repository rows has already been explicitly deleted (each one may
+   * first need its linked AlphaCI project disconnected) — hierarchy.
+   * repositories.delivery_project_id is ON DELETE CASCADE, but relying on
+   * that here would skip the per-repository disconnectProject step this
+   * flow requires. Returns false if the row was already gone.
+   */
+  async deleteById(deliveryProjectId: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `DELETE FROM hierarchy.delivery_projects WHERE id = $1;`,
+      [deliveryProjectId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   private toRecord(
     row: DeliveryProjectRow,
     repositoryCount: number,

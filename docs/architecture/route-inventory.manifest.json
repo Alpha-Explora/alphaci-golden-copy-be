@@ -1,11 +1,11 @@
 {
-  "routeCount": 182,
+  "routeCount": 183,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "a69518f50c8ad7d9caca71508a61ff5d30de54b80a710f0ceb68d946816dc769",
+  "referenceSha256": "e06dcb6a9d7f96fcd064c98478881072ec493cfbafe30d65125859bc4848c59a",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "a69518f50c8ad7d9caca71508a61ff5d30de54b80a710f0ceb68d946816dc769",
+  "baselineSha256": "e06dcb6a9d7f96fcd064c98478881072ec493cfbafe30d65125859bc4848c59a",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -87,6 +87,12 @@
       "reason": "Vercel Protection Bypass for Automation: reinstall a target's CI secrets by hand",
       "routes": [
         "POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/reinstall-secrets"
+      ]
+    },
+    {
+      "reason": "Delete a Project (delivery project) together with every repository inside it, reusing disconnectProject's GitHub/Render/Vercel/Sonar teardown per repository.",
+      "routes": [
+        "DELETE /api/v1/delivery-projects/{deliveryProjectId}"
       ]
     }
   ]

@@ -524,6 +524,24 @@ export class ProjectsRepository implements ProjectVisibilityLookup {
     return result.rows.length > 0;
   }
 
+  /**
+   * Whether the project row exists at all, regardless of who is asking. Only
+   * for telling "gone" apart from "not yours" after a user-scoped lookup
+   * missed -- never for authorizing anything.
+   */
+  async existsById(id: string): Promise<boolean> {
+    const result = await this.databaseService.query<{ found: 1 }>(
+      `
+        SELECT 1 AS found
+        FROM projects.provisioned_projects
+        WHERE id = $1
+        LIMIT 1;
+      `,
+      [id],
+    );
+    return result.rows.length > 0;
+  }
+
   async updateStatus(
     id: string,
     status: ProvisionedProjectStatus,

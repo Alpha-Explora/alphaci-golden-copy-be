@@ -108,6 +108,7 @@ export const HIERARCHY_EVENT_CODES = {
   deliveryProjectCreated: 'hierarchy.delivery_project.created',
   deliveryProjectUpdated: 'hierarchy.delivery_project.updated',
   deliveryProjectArchived: 'hierarchy.delivery_project.archived',
+  deliveryProjectDeleted: 'hierarchy.delivery_project.deleted',
   repositoryCreated: 'hierarchy.repository.created',
   repositoryArchived: 'hierarchy.repository.archived',
   repositoryMoved: 'hierarchy.repository.moved',
