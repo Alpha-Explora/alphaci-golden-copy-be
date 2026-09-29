@@ -1483,7 +1483,13 @@ function buildEnvironmentPackageWorkflowFile(
             'release-id': '${{ needs.register-release.outputs.release-id }}',
             'api-url': ALPHACI_API_URL,
           },
-          secrets: 'inherit',
+          // Named, not `inherit`: inheriting only works between repositories
+          // of one organization, and the central workflows live in another.
+          secrets: {
+            ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+            ALPHACI_RELEASE_SIGNING_KEY:
+              '${{ secrets.ALPHACI_RELEASE_SIGNING_KEY }}',
+          },
         },
         ...deployJobs,
         ...(hostDelivered

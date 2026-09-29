@@ -148,6 +148,9 @@ describe('pipeline generated from project environments', () => {
     );
     expect(packageStage.jobs['sign-release']).toMatchObject({
       permissions: { 'id-token': 'write' },
+      secrets: {
+        ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+      },
     });
   });
 
