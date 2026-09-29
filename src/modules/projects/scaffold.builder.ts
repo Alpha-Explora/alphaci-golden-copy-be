@@ -752,6 +752,9 @@ function buildDockerfile(nodeVersion: string, stack: string): string {
     'WORKDIR /app',
     'ENV NODE_ENV=production',
     'ENV PORT=3000',
+    // Base image tags lag Alpine security fixes; the release scan blocks
+    // fixable HIGH and CRITICAL findings, so take them at build time.
+    'RUN apk upgrade --no-cache',
     'RUN addgroup -S nodejs && adduser -S flowci -G nodejs',
     'COPY --from=builder /app/package*.json ./',
     'RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi',
@@ -788,6 +791,11 @@ function buildReactDockerfile(): string {
     'RUN npm run build',
     '',
     'FROM nginxinc/nginx-unprivileged:1.29.4-alpine3.23 AS runner',
+    // Base image tags lag Alpine security fixes; the release scan blocks
+    // fixable HIGH and CRITICAL findings, so take them at build time.
+    'USER root',
+    'RUN apk upgrade --no-cache',
+    'USER 101',
     'COPY nginx.conf /etc/nginx/conf.d/default.conf',
     'COPY --from=builder /app/dist /usr/share/nginx/html',
     'EXPOSE 8080',
