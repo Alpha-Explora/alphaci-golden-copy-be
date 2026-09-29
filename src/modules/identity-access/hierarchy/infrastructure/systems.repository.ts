@@ -158,6 +158,20 @@ export class SystemsRepository {
     return this.toRecord(row, counts.get(row.id) ?? 0);
   }
 
+  /**
+   * Hard-deletes one system row. Called only once its last delivery project
+   * has been deleted (see DeliveryProjectsRepository.countBySystem) — a
+   * system with any remaining delivery project (any status) is left alone.
+   * Returns false if the row was already gone.
+   */
+  async deleteById(systemId: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `DELETE FROM hierarchy.systems WHERE id = $1;`,
+      [systemId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   private toRecord(row: SystemRow, deliveryProjectCount: number): SystemRecord {
     return {
       id: row.id,

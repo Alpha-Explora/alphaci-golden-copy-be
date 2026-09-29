@@ -142,6 +142,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
           { handler: 'getDeliveryProject', method: 'GET' },
           { handler: 'updateDeliveryProject', method: 'PATCH' },
           { handler: 'archiveDeliveryProject', method: 'POST' },
+          { handler: 'deleteDeliveryProject', method: 'DELETE' },
           { handler: 'createRepository', method: 'POST' },
           { handler: 'listRepositories', method: 'GET' },
         ],

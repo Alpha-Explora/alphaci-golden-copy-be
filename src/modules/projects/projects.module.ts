@@ -31,6 +31,7 @@ import {
   PROJECT_PROVISIONING_PORT,
   ProjectLifecycleService,
 } from './application/lifecycle/project-lifecycle.service';
+import { ProjectLifecyclePortAdapter } from './application/lifecycle/project-lifecycle-port.adapter';
 import { ProjectPreviewsApplicationService } from './application/dashboard/project-previews.service';
 import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 import { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
@@ -75,6 +76,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
       useExisting: ProjectProvisioningApplicationService,
     },
     ProjectLifecycleService,
+    ProjectLifecyclePortAdapter,
     SonarCloudSetupService,
     ProjectDashboardService,
     ProjectWorkflowsService,
@@ -96,6 +98,10 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     SessionAuthGuard,
     SubscriptionGuard,
   ],
-  exports: [ProjectProvisioningService, ProjectReconciliationService],
+  exports: [
+    ProjectProvisioningService,
+    ProjectReconciliationService,
+    ProjectLifecyclePortAdapter,
+  ],
 })
 export class ProjectsModule {}

@@ -238,6 +238,22 @@ export class RepositoriesRepository {
     return result.rows[0]?.count ?? 0;
   }
 
+  /**
+   * Hard-deletes one repository row (used by delivery-project delete, after
+   * its linked AlphaCI project — if any — has already been disconnected).
+   * FK CASCADE on hierarchy.repository_assignments and
+   * hierarchy.repository_configuration_changes (and, transitively,
+   * hierarchy.github_access_sync) removes everything hanging off it; no
+   * separate cleanup is needed. Returns false if the row was already gone.
+   */
+  async deleteById(repositoryId: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `DELETE FROM hierarchy.repositories WHERE id = $1;`,
+      [repositoryId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async archive(repositoryId: string): Promise<RepositoryRecord | null> {
     const result = await this.databaseService.query<RepositoryRow>(
       `
