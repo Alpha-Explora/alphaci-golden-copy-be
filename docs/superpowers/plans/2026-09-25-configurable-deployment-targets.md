@@ -396,6 +396,14 @@ as runtime acceptance evidence.
   push, explicit promotion, pinned source identity, provider isolation,
   install, upgrade, rejected signature, failed-health rollback, and restart
   recovery of the WSL host. Record a repeatable report tied to the commit.
+  **Lab progress (2026-09-29, laptop, React only, dev and main both on the WSL
+  host):** a push to `dev` runs quality, builds and scans the image,
+  registers the release, and signs it (run 36564833472 in
+  Alphaexplora-Sandbox/alphaci-lab-react); the agent verified the signature and
+  reached the image pull, which needs a GHCR credential on the host. Found and
+  fixed on the way: backend #124 and #125, workflow #34 and #35. Remaining: the
+  pull, promotion to main, tamper, rollback, reboot, mixed Vercel/Render
+  test/UAT, and .NET.
 - [x] **F2**, frontend PR: show each environment in order with its targets per
   slot, current release (commit, image digests), deployment history, and an
   explicit Promote action with the backend's reason when it is refused and a
