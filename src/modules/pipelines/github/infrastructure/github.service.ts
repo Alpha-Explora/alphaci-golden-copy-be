@@ -24,6 +24,7 @@ import {
   type GitHubOpenPullRequestResult,
   type GithubOrganizationMember,
   type GithubOrganizationPort,
+  type GithubBranchProtectionSummary,
   type GithubProjectPort,
   type GithubRepositoryDeletedEvent,
   type GithubTeamMembershipChangedEvent,
@@ -1312,6 +1313,46 @@ export class GithubService
         required_pull_request_reviews?: unknown;
       };
       return payload.required_pull_request_reviews != null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getBranchProtectionSummary(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    branch: string,
+  ): Promise<GithubBranchProtectionSummary | null> {
+    try {
+      const response = await this.http.fetchWithRetry(
+        `https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`,
+        { headers: this.http.workspaceHeaders(accessToken) },
+      );
+
+      // 404 is GitHub's documented answer for "no protection on this branch",
+      // where force pushes and deletions are allowed by default.
+      if (response.status === 404) {
+        return {
+          protected: false,
+          pullRequestRequired: false,
+          allowForcePushes: true,
+          allowDeletions: true,
+        };
+      }
+      if (!response.ok) return null;
+
+      const payload = (await response.json()) as {
+        required_pull_request_reviews?: unknown;
+        allow_force_pushes?: { enabled?: boolean };
+        allow_deletions?: { enabled?: boolean };
+      };
+      return {
+        protected: true,
+        pullRequestRequired: payload.required_pull_request_reviews != null,
+        allowForcePushes: payload.allow_force_pushes?.enabled ?? false,
+        allowDeletions: payload.allow_deletions?.enabled ?? false,
+      };
     } catch {
       return null;
     }

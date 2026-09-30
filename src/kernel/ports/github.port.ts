@@ -333,6 +333,16 @@ export interface GithubProjectPort {
     repo: string,
     branch: string,
   ): Promise<boolean | null>;
+  /**
+   * Protection facts for one branch. `null` means "could not determine"
+   * (never a guess); a confirmed 404 is an unprotected branch.
+   */
+  getBranchProtectionSummary(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    branch: string,
+  ): Promise<GithubBranchProtectionSummary | null>;
   createBranch(
     accessToken: string,
     owner: string,
@@ -569,6 +579,14 @@ export interface GithubOrganizationPort {
   getOrganizationProvisioningContextByLogin(
     orgLogin: string,
   ): Promise<{ accessToken: string; ownerLogin: string }>;
+}
+
+export interface GithubBranchProtectionSummary {
+  /** False only for a confirmed 404 (no protection rule at all). */
+  protected: boolean;
+  pullRequestRequired: boolean;
+  allowForcePushes: boolean;
+  allowDeletions: boolean;
 }
 
 export const GITHUB_PROJECT_PORT = Symbol('GithubProjectPort');

@@ -409,7 +409,9 @@ export class ProjectsController {
       id,
       userId,
     ) ?? this.projectsService.getProjectReference(id, userId));
-    return this.deploymentDriftQuery.runDetection(project);
+    return this.deploymentDriftQuery.runDetection(project, {
+      githubAccessToken: req.session.githubAccessToken ?? null,
+    });
   }
 
   @Post(':id/drift/:findingId/repair')

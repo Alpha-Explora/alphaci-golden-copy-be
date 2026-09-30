@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { ProjectDriftRepairService } from './project-drift-repair.handler';
 
@@ -81,6 +85,103 @@ describe('ProjectDriftRepairService', () => {
       capabilityResolver as never,
     );
   }
+
+  describe('repair_branch_protection', () => {
+    const githubService = { applyBranchProtection: jest.fn() };
+    const branchFinding = (overrides: Record<string, unknown> = {}) => ({
+      id: 'finding-bp',
+      projectId: 'project-1',
+      targetId: null,
+      source: 'github_live',
+      severity: 'error',
+      code: 'branch_protection_missing',
+      message: 'uat unprotected',
+      details: { branch: 'uat', repoFullName: 'tone/orders-api' },
+      status: 'active',
+      detectedAt: '2026-06-13T00:00:00.000Z',
+      resolvedAt: null,
+      ...overrides,
+    });
+    function serviceWithGithub() {
+      return new ProjectDriftRepairService(
+        { ...projectsRepository, findAppRole } as never,
+        findingsRepository as never,
+        ciService,
+        deploymentTargetsRepository,
+        projectWorkflowsService as never,
+        auditEventsService as never,
+        notificationEventsService as never,
+        capabilityResolver as never,
+        githubService as never,
+      );
+    }
+    const findAppRole = jest.fn();
+    const repairAs = (role: string, token: string | null = 'gh-token') => {
+      findAppRole.mockResolvedValue(role);
+      return serviceWithGithub().repair(
+        'project-1',
+        'finding-bp',
+        'user-1',
+        'repair_branch_protection',
+        token,
+      );
+    };
+
+    beforeEach(() => {
+      findingsRepository.findByIdForProject.mockResolvedValue(branchFinding());
+    });
+
+    it.each(['lead', 'admin'])('re-applies protection for %s', async (role) => {
+      await expect(repairAs(role)).resolves.toMatchObject({
+        status: 'completed',
+        result: { branch: 'uat' },
+      });
+      expect(githubService.applyBranchProtection).toHaveBeenCalledWith(
+        'gh-token',
+        'tone',
+        'orders-api',
+        'uat',
+      );
+      expect(findingsRepository.markStatus).toHaveBeenCalledWith(
+        'finding-bp',
+        'resolved',
+      );
+    });
+
+    it.each(['member', 'qa'])(
+      'refuses %s and never touches GitHub',
+      async (role) => {
+        await expect(repairAs(role)).rejects.toThrow(ForbiddenException);
+        expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+        expect(findingsRepository.markStatus).not.toHaveBeenCalled();
+      },
+    );
+
+    it('refuses a finding that is not a uat/main protection finding', async () => {
+      findingsRepository.findByIdForProject.mockResolvedValue(
+        branchFinding({ code: 'branch_dev_protected' }),
+      );
+
+      await expect(repairAs('lead')).rejects.toThrow(
+        'does not support finding',
+      );
+      expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+    });
+
+    it('refuses to repair dev even if a finding names it', async () => {
+      findingsRepository.findByIdForProject.mockResolvedValue(
+        branchFinding({ details: { branch: 'dev' } }),
+      );
+
+      await expect(repairAs('lead')).rejects.toThrow(BadRequestException);
+      expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+    });
+
+    it('needs a GitHub session', async () => {
+      await expect(repairAs('lead', null)).rejects.toThrow(BadRequestException);
+      expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+    });
+  });
 
   it('rotates a CI token without returning the raw token value', async () => {
     const response = await createService().repair(

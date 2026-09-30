@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -25,6 +26,12 @@ import {
   type ProjectDriftRepairResponse,
 } from '#kernel/ports/deployment-runtime.port';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
+import { PROTECTED_BRANCHES } from '#kernel/config/pipeline-branches';
+import { canRepairBranchProtection } from '../../domain/drift-repair-access.rules';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { ProjectWorkflowsService } from '../workflows/project-workflows.service';
 
@@ -57,6 +64,9 @@ export class ProjectDriftRepairService {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService?: GithubProjectPort,
   ) {}
 
   async repair(
@@ -113,6 +123,8 @@ export class ProjectDriftRepairService {
         return this.rotateCiToken(ctx);
       case 'detach_target':
         return this.detachTarget(ctx);
+      case 'repair_branch_protection':
+        return this.repairBranchProtection(ctx, project.repo_full_name);
       case 'regenerate_workflow_preview':
         return this.regenerateWorkflowPreview(ctx);
       case 'create_workflow_update_pr':
@@ -139,6 +151,69 @@ export class ProjectDriftRepairService {
       },
     });
     return this.completed(ctx.findingId, ctx.action, 'Finding marked ignored');
+  }
+
+  /**
+   * Re-applies protection to one uat/main branch. Only ever runs on explicit
+   * request, and only for lead/admin (allow-list on the global app_role).
+   * It cannot un-protect `dev`, so branch_dev_protected is not repairable.
+   */
+  private async repairBranchProtection(
+    ctx: DriftRepairContext,
+    repoFullName: string,
+  ): Promise<ProjectDriftRepairResponse> {
+    const role = await this.projectsRepository.findAppRole(ctx.userId);
+    if (!canRepairBranchProtection(role)) {
+      throw new ForbiddenException(
+        'Only a team lead or admin can repair branch protection',
+      );
+    }
+    this.assertCode(
+      ctx.finding,
+      [
+        'branch_protection_missing',
+        'branch_force_push_allowed',
+        'branch_deletion_allowed',
+      ],
+      ctx.action,
+    );
+    const branch = ctx.finding.details['branch'];
+    const protectedBranches: readonly string[] = PROTECTED_BRANCHES;
+    if (typeof branch !== 'string' || !protectedBranches.includes(branch)) {
+      throw new BadRequestException('Finding does not name a protected branch');
+    }
+    const [owner, repo] = repoFullName.split('/');
+    if (!ctx.githubAccessToken || !this.githubService || !owner || !repo) {
+      throw new BadRequestException(
+        'A GitHub session is required to repair branch protection',
+      );
+    }
+    await this.githubService.applyBranchProtection(
+      ctx.githubAccessToken,
+      owner,
+      repo,
+      branch,
+    );
+    await this.findingsRepository.markStatus(ctx.findingId, 'resolved');
+    await this.recordRepairEvent({
+      userId: ctx.userId,
+      projectId: ctx.projectId,
+      eventCode: 'drift_repair_completed',
+      title: 'Branch protection re-applied',
+      body: `Protection was re-applied to ${branch}.`,
+      metadata: {
+        findingId: ctx.findingId,
+        action: ctx.action,
+        findingCode: ctx.finding.code,
+        branch,
+      },
+    });
+    return this.completed(
+      ctx.findingId,
+      ctx.action,
+      'Branch protection re-applied',
+      { branch },
+    );
   }
 
   private async rotateCiToken(

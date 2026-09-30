@@ -9,6 +9,14 @@ import {
   type CiTokenStatusLookup,
   type ProjectTokenStatus,
 } from '#kernel/ports/ci-project.port';
+import {
+  GITHUB_PROJECT_PORT,
+  type GithubProjectPort,
+} from '#kernel/ports/github.port';
+import {
+  PIPELINE_BRANCHES,
+  PROTECTED_BRANCHES,
+} from '#kernel/config/pipeline-branches';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import { EnvVarsRepository } from '../infrastructure/repositories/env-vars.repository';
 import type {
@@ -144,6 +152,9 @@ export class ProjectDriftService implements DeploymentDriftQuery {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    @Inject(GITHUB_PROJECT_PORT)
+    private readonly githubService?: GithubProjectPort,
   ) {}
 
   async listFindings(
@@ -163,6 +174,7 @@ export class ProjectDriftService implements DeploymentDriftQuery {
 
   async runDetection(
     project: DeploymentProjectReference,
+    options?: { githubAccessToken?: string | null },
   ): Promise<DeploymentDriftResponse> {
     const { projectId } = project;
     if (!this.enabled()) {
@@ -180,6 +192,12 @@ export class ProjectDriftService implements DeploymentDriftQuery {
       null;
 
     const findings = this.buildFindings(project, targets, envMetadata, ciToken);
+    findings.push(
+      ...(await this.buildBranchProtectionFindings(
+        project,
+        options?.githubAccessToken,
+      )),
+    );
     return {
       enabled: true,
       mode: 'local_snapshot',
@@ -234,6 +252,106 @@ export class ProjectDriftService implements DeploymentDriftQuery {
         message: `Environment key ${env.key} last failed to provision.`,
         details: { key: env.key, lane: env.lane, gitBranch: env.gitBranch },
       });
+    }
+
+    return findings;
+  }
+
+  /**
+   * Live, read-only probe of the branch model (persona spec 8.7): `dev` must
+   * stay pushable, `uat` and `main` must require a pull request and refuse
+   * force pushes and deletions.
+   *
+   * Reports only positive evidence. A branch whose protection cannot be read
+   * (no token, API error) yields no finding: "unknown" is not "drifted".
+   * Never re-applies protection; repair is a separate, explicit, role-gated
+   * action.
+   */
+  private async buildBranchProtectionFindings(
+    project: DeploymentProjectReference,
+    githubAccessToken: string | null | undefined,
+  ): Promise<ProjectDriftFindingInput[]> {
+    if (!githubAccessToken || !this.githubService) {
+      return [];
+    }
+    const [owner, repo] = project.repoFullName.split('/');
+    if (!owner || !repo) {
+      return [];
+    }
+
+    const finding = (
+      severity: 'warning' | 'error',
+      code: string,
+      branch: string,
+      message: string,
+    ): ProjectDriftFindingInput => ({
+      projectId: project.projectId,
+      source: 'github_live',
+      severity,
+      code,
+      message,
+      details: { branch, repoFullName: project.repoFullName },
+    });
+    const findings: ProjectDriftFindingInput[] = [];
+
+    const workingBranch = PIPELINE_BRANCHES[0];
+    const working = await this.githubService.getBranchProtectionSummary(
+      githubAccessToken,
+      owner,
+      repo,
+      workingBranch,
+    );
+    if (working?.pullRequestRequired) {
+      findings.push(
+        finding(
+          'warning',
+          'branch_dev_protected',
+          workingBranch,
+          `Branch ${workingBranch} requires pull requests, but developers must be able to push to it directly.`,
+        ),
+      );
+    }
+
+    for (const branch of PROTECTED_BRANCHES) {
+      const summary = await this.githubService.getBranchProtectionSummary(
+        githubAccessToken,
+        owner,
+        repo,
+        branch,
+      );
+      if (!summary) {
+        continue;
+      }
+      if (!summary.pullRequestRequired) {
+        findings.push(
+          finding(
+            'error',
+            'branch_protection_missing',
+            branch,
+            `Branch ${branch} does not require a pull request to change.`,
+          ),
+        );
+      }
+      if (summary.allowForcePushes) {
+        findings.push(
+          finding(
+            'warning',
+            'branch_force_push_allowed',
+            branch,
+            `Branch ${branch} allows force pushes.`,
+          ),
+        );
+      }
+      if (summary.allowDeletions) {
+        findings.push(
+          finding(
+            'warning',
+            'branch_deletion_allowed',
+            branch,
+            `Branch ${branch} can be deleted.`,
+          ),
+        );
+      }
     }
 
     return findings;

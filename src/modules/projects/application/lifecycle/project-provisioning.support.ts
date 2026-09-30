@@ -81,6 +81,8 @@ export interface WorkflowBundleOptions {
   workflowVariant?: 'backend' | 'frontend' | undefined;
   centralWorkflowRef?: string | undefined;
   hasTestsDirectory?: boolean | undefined;
+  /** `owner/repo` of the paired frontend/backend repository (multi-repo only). See StagedWorkflowOptions. */
+  siblingRepoFullName?: string | undefined;
 }
 
 /**

@@ -61,6 +61,8 @@ export class ProjectWorkflowFilesService {
      * BYO/setup repos and monorepo roots (their tests live under packages/).
      */
     hasTestsDirectory?: boolean | undefined;
+    /** `owner/repo` of the paired frontend/backend repository (multi-repo only). See StagedWorkflowOptions. */
+    siblingRepoFullName?: string | undefined;
   }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
     const {
       templateId,
@@ -75,6 +77,7 @@ export class ProjectWorkflowFilesService {
       workflowVariant,
       centralWorkflowRef,
       hasTestsDirectory,
+      siblingRepoFullName,
     } = options;
 
     const template = await this.catalogService.getTemplateById(templateId);
@@ -96,6 +99,7 @@ export class ProjectWorkflowFilesService {
         ...(workflowVariant !== undefined && { workflowVariant }),
         ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
         ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
+        ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
       },
       this.workflowFragmentRegistry,
     );

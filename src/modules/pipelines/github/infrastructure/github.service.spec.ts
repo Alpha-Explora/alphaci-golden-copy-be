@@ -1819,6 +1819,57 @@ describe('GithubService', () => {
       expect(body.required_status_checks).toBeNull();
     });
 
+    describe('getBranchProtectionSummary', () => {
+      it('reads the protection facts of a protected branch', async () => {
+        fetchMock.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              required_pull_request_reviews: {
+                required_approving_review_count: 1,
+              },
+              allow_force_pushes: { enabled: false },
+              allow_deletions: { enabled: true },
+            }),
+        });
+
+        await expect(
+          service.getBranchProtectionSummary('t', 'tone', 'orders-api', 'uat'),
+        ).resolves.toEqual({
+          protected: true,
+          pullRequestRequired: true,
+          allowForcePushes: false,
+          allowDeletions: true,
+        });
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://api.github.com/repos/tone/orders-api/branches/uat/protection',
+          expect.anything(),
+        );
+      });
+
+      it('treats a 404 as an unprotected branch', async () => {
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
+
+        await expect(
+          service.getBranchProtectionSummary('t', 'tone', 'orders-api', 'dev'),
+        ).resolves.toEqual({
+          protected: false,
+          pullRequestRequired: false,
+          allowForcePushes: true,
+          allowDeletions: true,
+        });
+      });
+
+      it('returns null, never a guess, when protection cannot be read', async () => {
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
+
+        await expect(
+          service.getBranchProtectionSummary('t', 'tone', 'orders-api', 'uat'),
+        ).resolves.toBeNull();
+      });
+    });
+
     it('does not throw when branch protection fails', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
