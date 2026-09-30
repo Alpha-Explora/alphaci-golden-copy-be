@@ -31,7 +31,7 @@ export class MicroservicesProjectProvisioner {
   constructor(private readonly support: ProjectProvisioningSupport) {}
   async createMicroservicesProject(
     userId: string,
-    _userLogin: string,
+    userLogin: string,
     repositoryCreationToken: string,
     provisioningToken: string,
     provisioningOwnerLogin: string | undefined,
@@ -185,14 +185,13 @@ export class MicroservicesProjectProvisioner {
         effectiveDeploymentProvisioning,
       });
 
-      await this.support.recordProductEvent({
-        userId,
+      await this.support.notifyProjectCreated({
+        workspaceId: backendRow.workspace_id ?? null,
+        creatorUserId: userId,
+        creatorLogin: userLogin,
         projectId: backendRow.id,
-        eventCode: 'project_created',
-        title: 'Project created',
-        body: `${repoFullName} is now tracked by ALPHACI.`,
+        repoFullName,
         metadata: {
-          repoFullName,
           repoShape: 'microservices',
           projectTypeId: backend.projectTypeId,
         },

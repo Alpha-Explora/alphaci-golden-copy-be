@@ -204,6 +204,22 @@ export interface GitHubComparisonCommit {
 }
 
 /**
+ * Who GitHub attributes a single commit to, for best-effort "author of
+ * record" notifications — never a full commit view.
+ *
+ * `login` is null when the commit is not linked to a GitHub account (a bot, a
+ * squash-merge service account, or a git author email GitHub could not
+ * match) — callers should treat that the same as "unknown" and not retry.
+ * `isMergeCommit` is true when the commit has more than one parent; callers
+ * attributing a defect or a change to "the person who wrote it" should skip
+ * merge commits rather than crediting whoever happened to click merge.
+ */
+export interface GitHubCommitAuthor {
+  login: string | null;
+  isMergeCommit: boolean;
+}
+
+/**
  * What a pull request from `head` into `base` would contain, before one exists.
  *
  * `status` is GitHub's own word for how the two branches relate: `identical`
@@ -477,6 +493,17 @@ export interface GithubProjectPort {
     workflowFile: string,
     ref: string,
   ): Promise<GitHubDispatchWorkflowResult>;
+  /**
+   * Who GitHub attributes `sha` to, and whether it is a merge commit. Null
+   * when the commit does not exist on this repository (or the token cannot
+   * see it) — GitHub does not distinguish the two, and neither does the
+   * caller.
+   */
+  getCommitAuthor(
+    accessToken: string,
+    repoFullName: string,
+    sha: string,
+  ): Promise<GitHubCommitAuthor | null>;
 }
 
 /**

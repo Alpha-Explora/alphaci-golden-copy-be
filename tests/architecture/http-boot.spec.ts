@@ -53,6 +53,12 @@ const { QaAutomationDispatchService } =
   require('../../src/modules/projects/application/qa-runs/qa-automation-dispatch.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-automation-dispatch.service.js');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaCommitResolutionService } =
+  require('../../src/modules/projects/application/qa-runs/qa-commit-resolution.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-commit-resolution.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectProvisioningApplicationService } =
+  require('../../src/modules/projects/application/lifecycle/project-provisioning-application.service.js') as typeof import('../../src/modules/projects/application/lifecycle/project-provisioning-application.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { NotificationEventPublisher } =
   require('../../src/kernel/events/platform-event-publisher.js') as typeof import('../../src/kernel/events/platform-event-publisher.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -257,6 +263,43 @@ describe('HTTP application boot', () => {
       expect(auditEventPublisher).toBeInstanceOf(AuditEventPublisher);
       expect(injected).toBeInstanceOf(AuditEventPublisher);
       expect(injected).toBe(auditEventPublisher);
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  /*
+   * Phase 2 notification fan-out depends on two things that unit tests build
+   * by hand and a passing boot cannot prove: the commit-author lookup needs
+   * the global platform-admin port, and project_created needs the real
+   * NotificationEventPublisher inside the provisioning support object.
+   */
+  it('wires the returned-to-dev author lookup and the project_created fan-out', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      // Private fields are compile-time only; read them through `unknown`.
+      const resolved: unknown = app.get(QaCommitResolutionService, {
+        strict: false,
+      });
+      const resolution = resolved as {
+        platformAdmin?: { findUserIdByGithubLogin?: unknown };
+      };
+      expect(typeof resolution.platformAdmin?.findUserIdByGithubLogin).toBe(
+        'function',
+      );
+
+      const provisioningResolved: unknown = app.get(
+        ProjectProvisioningApplicationService,
+        { strict: false },
+      );
+      const provisioning = provisioningResolved as {
+        support: { notificationEventPublisher?: unknown };
+      };
+      expect(provisioning.support.notificationEventPublisher).toBe(
+        app.get(NotificationEventPublisher, { strict: false }),
+      );
     } finally {
       await app.close();
     }

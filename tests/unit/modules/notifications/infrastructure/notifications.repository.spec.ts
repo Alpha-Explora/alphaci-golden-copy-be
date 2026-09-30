@@ -25,6 +25,9 @@ describe('NotificationsRepository', () => {
           event_code: 'workflow_pr_created',
           read_at: null,
           created_at: new Date('2026-06-14T00:00:00.000Z'),
+          project_id: 'project-1',
+          delivery_project_id: 'delivery-1',
+          group_id: 'group-1',
         },
         {
           id: 'notification-2',
@@ -33,6 +36,9 @@ describe('NotificationsRepository', () => {
           event_code: 'deployment_completed',
           read_at: '2026-06-14T01:00:00.000Z',
           created_at: '2026-06-14T00:30:00.000Z',
+          project_id: 'project-2',
+          delivery_project_id: null,
+          group_id: null,
         },
       ],
     });
@@ -47,6 +53,9 @@ describe('NotificationsRepository', () => {
           eventCode: 'workflow_pr_created',
           readAt: null,
           createdAt: '2026-06-14T00:00:00.000Z',
+          projectId: 'project-1',
+          groupId: 'group-1',
+          deliveryProjectId: 'delivery-1',
         },
         {
           id: 'notification-2',
@@ -55,6 +64,9 @@ describe('NotificationsRepository', () => {
           eventCode: 'deployment_completed',
           readAt: '2026-06-14T01:00:00.000Z',
           createdAt: '2026-06-14T00:30:00.000Z',
+          projectId: 'project-2',
+          groupId: null,
+          deliveryProjectId: null,
         },
       ],
       unreadCount: 1,
@@ -63,6 +75,47 @@ describe('NotificationsRepository', () => {
       expect.stringContaining('FROM notifications.notifications'),
       ['user-1'],
     );
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('LEFT JOIN hierarchy.repositories');
+    expect(sql).toContain('hr.provisioned_project_id = n.project_id');
+  });
+
+  it('returns null ids for a notification with no project or an unfiled one', async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'n-1',
+          title: 't',
+          body: 'b',
+          event_code: 'x',
+          read_at: null,
+          created_at: '2026-06-14T00:00:00.000Z',
+          project_id: null,
+          delivery_project_id: null,
+          group_id: null,
+        },
+        {
+          id: 'n-2',
+          title: 't',
+          body: 'b',
+          event_code: 'x',
+          read_at: null,
+          created_at: '2026-06-14T00:00:00.000Z',
+          project_id: 'project-9',
+          delivery_project_id: undefined,
+          group_id: undefined,
+        },
+      ],
+    });
+
+    const { items } = await repository.listForUser('user-1');
+
+    expect(
+      items.map((i) => [i.projectId, i.groupId, i.deliveryProjectId]),
+    ).toEqual([
+      [null, null, null],
+      ['project-9', null, null],
+    ]);
   });
 
   it('marks a notification read for the owning user', async () => {

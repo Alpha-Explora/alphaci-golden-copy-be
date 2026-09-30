@@ -233,6 +233,11 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
     pairs(['projects.provisioned_projects']),
   ],
   [
+    'src/modules/platform-ops/notifications/infrastructure/notifications.repository.ts',
+    // Read-time deep-link join (spec 8.6): notification -> project -> folder.
+    pairs(['hierarchy.repositories']),
+  ],
+  [
     'src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts',
     pairs(['identity.app_users']),
   ],

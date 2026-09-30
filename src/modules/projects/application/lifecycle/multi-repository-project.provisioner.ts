@@ -24,7 +24,7 @@ export class MultiRepositoryProjectProvisioner {
   constructor(private readonly support: ProjectProvisioningSupport) {}
   async createMultiRepoProject(
     userId: string,
-    _userLogin: string,
+    userLogin: string,
     repositoryCreationToken: string,
     provisioningToken: string,
     provisioningOwnerLogin: string | undefined,
@@ -107,6 +107,26 @@ export class MultiRepositoryProjectProvisioner {
       backendRow: backendProvision.row,
       beRepoFullName,
       frontend: frontendProvision,
+    });
+
+    // ONE announcement per logical project, not one per repository. The
+    // response already treats the backend row and repo as the project's
+    // identity (id / repoFullName), the pair shares one delivery-project
+    // folder so deep links resolve identically from either row, and the user
+    // performed a single "create project" action.
+    await this.support.notifyProjectCreated({
+      workspaceId: backendProvision.row.workspace_id ?? null,
+      creatorUserId: userId,
+      creatorLogin: userLogin,
+      projectId: backendProvision.row.id,
+      repoFullName: beRepoFullName,
+      metadata: {
+        repoShape: 'multi-repo',
+        projectTypeId: backend.projectTypeId,
+        ...(frontendProvision.feRepoFullName
+          ? { secondaryRepoFullName: frontendProvision.feRepoFullName }
+          : {}),
+      },
     });
 
     return buildMultiRepoCreateResponse({

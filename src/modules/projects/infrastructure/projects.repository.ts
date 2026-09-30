@@ -409,6 +409,49 @@ export class ProjectsRepository
     return result.rows.map((row) => row.id);
   }
 
+  /** Active workspace members whose persona is 'lead' or 'member' (developer). */
+  async listWorkspaceLeadAndDeveloperIds(
+    workspaceId: string,
+  ): Promise<string[]> {
+    const result = await this.databaseService.query<{ id: string }>(
+      `
+        SELECT DISTINCT u.id
+        FROM orgs.workspace_members m
+        JOIN identity.app_users u ON u.id = m.user_id
+        WHERE m.workspace_id = $1
+          AND m.member_status = 'active'
+          AND u.app_role IN ('lead', 'member');
+      `,
+      [workspaceId],
+    );
+    return result.rows.map((row) => row.id);
+  }
+
+  /** Active workspace members whose persona is 'qa'. */
+  async listWorkspaceQaIds(workspaceId: string): Promise<string[]> {
+    const result = await this.databaseService.query<{ id: string }>(
+      `
+        SELECT DISTINCT u.id
+        FROM orgs.workspace_members m
+        JOIN identity.app_users u ON u.id = m.user_id
+        WHERE m.workspace_id = $1
+          AND m.member_status = 'active'
+          AND u.app_role = 'qa';
+      `,
+      [workspaceId],
+    );
+    return result.rows.map((row) => row.id);
+  }
+
+  /** The GitHub login recorded for a user, or null if the user is unknown. */
+  async findUserLogin(userId: string): Promise<string | null> {
+    const result = await this.databaseService.query<{ login: string }>(
+      `SELECT login FROM identity.app_users WHERE id = $1 LIMIT 1;`,
+      [userId],
+    );
+    return result.rows[0]?.login ?? null;
+  }
+
   /**
    * The columns the team project explorer needs for every project a
    * workspace owns. Capped like the other workspace-wide reads; a team with

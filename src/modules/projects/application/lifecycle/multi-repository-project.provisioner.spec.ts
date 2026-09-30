@@ -53,6 +53,7 @@ function fakeSupport() {
     projectDeploymentProvisioningService: {
       crossLinkServiceUrls: jest.fn().mockResolvedValue(undefined),
     },
+    notifyProjectCreated: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -301,5 +302,75 @@ describe('MultiRepositoryProjectProvisioner', () => {
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
       deliveryProjectId: 'dp-given',
     });
+  });
+
+  it('announces the pair once, against the backend row, naming both repos', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-fe',
+        ownerLogin: 'org',
+        repoName: 'orders-fe',
+      });
+    support.createProjectRow
+      .mockResolvedValueOnce({
+        row: { id: 'proj-be', workspace_id: 'ws-1' },
+        deliveryProjectId: null,
+      })
+      .mockResolvedValueOnce({
+        row: { id: 'proj-fe', workspace_id: 'ws-1' },
+        deliveryProjectId: null,
+      });
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      multiRepoDto as never,
+    );
+
+    expect(support.notifyProjectCreated).toHaveBeenCalledTimes(1);
+    expect(support.notifyProjectCreated).toHaveBeenCalledWith({
+      workspaceId: 'ws-1',
+      creatorUserId: 'user-1',
+      creatorLogin: 'tone',
+      projectId: 'proj-be',
+      repoFullName: 'org/orders-be',
+      metadata: expect.objectContaining({
+        repoShape: 'multi-repo',
+        secondaryRepoFullName: 'org/orders-fe',
+      }),
+    });
+  });
+
+  it('still announces once when the frontend repository fails', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockRejectedValueOnce(new Error('GitHub 500'));
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      multiRepoDto as never,
+    );
+
+    expect(support.notifyProjectCreated).toHaveBeenCalledTimes(1);
   });
 });

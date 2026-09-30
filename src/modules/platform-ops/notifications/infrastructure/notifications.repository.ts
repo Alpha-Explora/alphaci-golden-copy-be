@@ -15,6 +15,9 @@ interface NotificationRow {
   event_code: string;
   read_at: string | Date | null;
   created_at: string | Date;
+  project_id: string | null;
+  delivery_project_id: string | null;
+  group_id: string | null;
 }
 
 interface NotificationPreferencesRow {
@@ -31,10 +34,21 @@ export class NotificationsRepository {
   async listForUser(userId: string): Promise<NotificationsResponse> {
     const result = await this.databaseService.query<NotificationRow>(
       `
-        SELECT id, title, body, event_code, read_at, created_at
-        FROM notifications.notifications
-        WHERE user_id = $1
-        ORDER BY created_at DESC
+        SELECT
+          n.id,
+          n.title,
+          n.body,
+          n.event_code,
+          n.read_at,
+          n.created_at,
+          n.project_id,
+          hr.delivery_project_id,
+          hr.group_id
+        FROM notifications.notifications n
+        LEFT JOIN hierarchy.repositories hr
+          ON hr.provisioned_project_id = n.project_id
+        WHERE n.user_id = $1
+        ORDER BY n.created_at DESC
         LIMIT 50;
       `,
       [userId],
@@ -75,15 +89,30 @@ export class NotificationsRepository {
   ): Promise<NotificationItem> {
     const result = await this.databaseService.query<NotificationRow>(
       `
-        INSERT INTO notifications.notifications (
-          user_id,
-          project_id,
-          event_code,
-          title,
-          body
+        WITH inserted AS (
+          INSERT INTO notifications.notifications (
+            user_id,
+            project_id,
+            event_code,
+            title,
+            body
+          )
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id, title, body, event_code, read_at, created_at, project_id
         )
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, title, body, event_code, read_at, created_at;
+        SELECT
+          i.id,
+          i.title,
+          i.body,
+          i.event_code,
+          i.read_at,
+          i.created_at,
+          i.project_id,
+          hr.delivery_project_id,
+          hr.group_id
+        FROM inserted i
+        LEFT JOIN hierarchy.repositories hr
+          ON hr.provisioned_project_id = i.project_id;
       `,
       [
         input.userId,
@@ -169,6 +198,9 @@ export class NotificationsRepository {
       eventCode: row.event_code,
       readAt: this.toIsoStringOrNull(row.read_at),
       createdAt: this.toIsoString(row.created_at),
+      projectId: row.project_id ?? null,
+      groupId: row.group_id ?? null,
+      deliveryProjectId: row.delivery_project_id ?? null,
     };
   }
 

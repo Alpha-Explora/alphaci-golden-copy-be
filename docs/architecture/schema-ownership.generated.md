@@ -79,6 +79,7 @@ These are exact source-file allowances for current cross-context reads or shared
 | `src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts` | `billing.user_subscriptions`, `identity.app_users`, `projects.provisioned_projects` |
 | `src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts` | `projects.provisioned_projects` |
 | `src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts` | `identity.app_users` |
+| `src/modules/platform-ops/notifications/infrastructure/notifications.repository.ts` | `hierarchy.repositories` |
 | `src/modules/projects/infrastructure/projects.repository.ts` | `hierarchy.repositories`, `hierarchy.repository_assignments`, `identity.app_users`, `identity.platform_admins`, `orgs.workspace_members` |
 | `src/modules/runtime/infrastructure/repositories/deployment-targets.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |
 | `src/modules/runtime/infrastructure/repositories/env-vars.repository.ts` | `orgs.workspace_members`, `projects.provisioned_projects` |

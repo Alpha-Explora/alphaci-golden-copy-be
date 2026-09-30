@@ -2030,4 +2030,68 @@ describe('GithubService', () => {
       ).rejects.toThrow('GitHub pull request creation failed (403)');
     });
   });
+
+  describe('getCommitAuthor', () => {
+    const respond = (status: number, body: unknown) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: () => Promise.resolve(body),
+      text: () => Promise.resolve(JSON.stringify(body)),
+      headers: new Headers(),
+    });
+
+    it('maps a single-parent commit linked to a GitHub account', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(200, {
+          author: { login: 'tone' },
+          parents: [{ sha: 'p1' }],
+        }),
+      );
+
+      const result = await service.getCommitAuthor(
+        'token',
+        'org/repo',
+        'a'.repeat(40),
+      );
+
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        `https://api.github.com/repos/org/repo/commits/${'a'.repeat(40)}`,
+      );
+      expect(result).toEqual({ login: 'tone', isMergeCommit: false });
+    });
+
+    it('flags a commit with more than one parent as a merge commit', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(200, {
+          author: { login: 'tone' },
+          parents: [{ sha: 'p1' }, { sha: 'p2' }],
+        }),
+      );
+
+      const result = await service.getCommitAuthor('token', 'org/repo', 'sha');
+
+      expect(result).toEqual({ login: 'tone', isMergeCommit: true });
+    });
+
+    it('reports a null login when the commit is not linked to a GitHub account', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(200, {
+          author: null,
+          parents: [{ sha: 'p1' }],
+        }),
+      );
+
+      const result = await service.getCommitAuthor('token', 'org/repo', 'sha');
+
+      expect(result).toEqual({ login: null, isMergeCommit: false });
+    });
+
+    it('returns null rather than a gateway error when the commit is not found', async () => {
+      fetchMock.mockResolvedValueOnce(respond(404, { message: 'Not Found' }));
+
+      await expect(
+        service.getCommitAuthor('token', 'org/repo', 'gone'),
+      ).resolves.toBeNull();
+    });
+  });
 });

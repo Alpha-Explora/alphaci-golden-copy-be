@@ -9,6 +9,10 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
+import {
+  PLATFORM_ADMIN_PORT,
+  type PlatformAdminPort,
+} from '#kernel/ports/platform-admin.port';
 import type { QaCommitSource } from './qa-runs.contracts';
 
 export interface QaResolvedCommit {
@@ -37,7 +41,48 @@ export class QaCommitResolutionService {
     private readonly deploymentHistory: DeploymentHistoryQuery,
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService: GithubProjectPort,
+    @Inject(PLATFORM_ADMIN_PORT)
+    private readonly platformAdmin: PlatformAdminPort,
   ) {}
+
+  /**
+   * Best-effort: the ALPHACI user id of whoever GitHub attributes `sha` to.
+   * Null when the commit has no linked GitHub account, is a merge commit, the
+   * lookup fails, or that login maps to no identity.app_users row. Never
+   * throws: a broken attribution must not break the caller's real work.
+   * `readAsUserId` only selects the read token (installation-per-user-repo).
+   */
+  async resolveCommitAuthorUserId(
+    repoFullName: string,
+    readAsUserId: string,
+    sha: string,
+    oauthToken: string | null,
+  ): Promise<string | null> {
+    try {
+      const token = await this.resolveReadToken(
+        repoFullName,
+        readAsUserId,
+        oauthToken,
+      );
+      if (!token) {
+        return null;
+      }
+      const commit = await this.githubService.getCommitAuthor(
+        token,
+        repoFullName,
+        sha,
+      );
+      if (!commit || commit.isMergeCommit || !commit.login) {
+        return null;
+      }
+      return await this.platformAdmin.findUserIdByGithubLogin(commit.login);
+    } catch (error) {
+      this.logger.debug(
+        `Could not resolve the author of ${repoFullName}@${sha}: ${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
 
   async resolve(
     project: DeploymentProjectReference,

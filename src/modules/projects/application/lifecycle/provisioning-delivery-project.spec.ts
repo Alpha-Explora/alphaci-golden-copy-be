@@ -56,6 +56,10 @@ const makeProjectsRepository = () =>
     // than throw before the deliveryProjectId gate is even reached.
     isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
     canCreateInWorkspace: jest.fn().mockResolvedValue(true),
+    listWorkspaceLeadAndDeveloperIds: jest
+      .fn()
+      .mockResolvedValue(['lead-1', 'dev-1']),
+    findUserLogin: jest.fn().mockResolvedValue('tone'),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>
@@ -84,7 +88,10 @@ const baseDto = {
   workspaceId: 'w1',
 };
 
-function makeService(hierarchyProjectLinkService: ProjectLinkPort) {
+function makeService(
+  hierarchyProjectLinkService: ProjectLinkPort,
+  notificationEventPublisher?: { record: jest.Mock },
+) {
   const githubService = makeGithubService();
   const projectsRepository = makeProjectsRepository();
   const ciService = makeCiService();
@@ -99,7 +106,7 @@ function makeService(hierarchyProjectLinkService: ProjectLinkPort) {
     undefined,
     undefined,
     undefined,
-    undefined,
+    notificationEventPublisher as never,
     undefined,
     hierarchyProjectLinkService,
     undefined,
@@ -242,5 +249,116 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
     expect(
       githubService.getInstallationAccessTokenForUserRepo,
     ).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProjectProvisioningApplicationService, project_created fan-out (single repository)', () => {
+  const link = (): ProjectLinkPort => ({
+    getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+    ensureLink: jest.fn().mockResolvedValue(null),
+    assertDeliveryProjectAvailableForCreate: jest.fn(),
+  });
+
+  const recipients = (record: jest.Mock) =>
+    record.mock.calls
+      .map(([call]) => call as { userId: string; eventCode: string })
+      .filter((call) => call.eventCode === 'project_created')
+      .map((call) => call.userId)
+      .sort();
+
+  it('createProject notifies the creator, leads and developers once each', async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const { service, projectsRepository } = makeService(link(), { record });
+    (projectsRepository.create as jest.Mock).mockResolvedValue({
+      id: 'project-1',
+      workspace_id: 'w1',
+    });
+
+    await service.createProject('user-1', 'octocat', 'gh-token', baseDto);
+
+    expect(recipients(record)).toEqual(['dev-1', 'lead-1', 'user-1']);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        title: 'New project created: owner/repo',
+        body: expect.stringContaining('@octocat created project owner/repo'),
+      }),
+    );
+  });
+
+  it('createProject does not double-notify a creator who is also a lead', async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const { service, projectsRepository } = makeService(link(), { record });
+    (projectsRepository.create as jest.Mock).mockResolvedValue({
+      id: 'project-1',
+      workspace_id: 'w1',
+    });
+    (
+      projectsRepository.listWorkspaceLeadAndDeveloperIds as jest.Mock
+    ).mockResolvedValue(['user-1', 'dev-1']);
+
+    await service.createProject('user-1', 'octocat', 'gh-token', baseDto);
+
+    expect(recipients(record)).toEqual(['dev-1', 'user-1']);
+  });
+
+  it('createProject succeeds even when the recipient lookup throws', async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const { service, projectsRepository } = makeService(link(), { record });
+    (
+      projectsRepository.listWorkspaceLeadAndDeveloperIds as jest.Mock
+    ).mockRejectedValue(new Error('db down'));
+    (projectsRepository.create as jest.Mock).mockResolvedValue({
+      id: 'project-1',
+      workspace_id: 'w1',
+    });
+
+    await expect(
+      service.createProject('user-1', 'octocat', 'gh-token', baseDto),
+    ).resolves.toMatchObject({ id: 'project-1' });
+  });
+
+  it('setupProject fans out using the login read back from the user record', async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const { service, projectsRepository, githubService } = makeService(link(), {
+      record,
+    });
+    (projectsRepository.create as jest.Mock).mockResolvedValue({
+      id: 'project-1',
+      workspace_id: 'w1',
+    });
+    (
+      githubService as unknown as {
+        getInstallationAccessTokenForUserRepo: jest.Mock;
+      }
+    ).getInstallationAccessTokenForUserRepo.mockResolvedValue('install-token');
+    (githubService as unknown as Record<string, jest.Mock>)[
+      'getInstallationOwnerLogin'
+    ]?.mockResolvedValue('owner');
+    Object.assign(githubService, {
+      branchExists: jest.fn().mockResolvedValue(true),
+      getRepo: jest.fn().mockResolvedValue({ defaultBranch: 'main' }),
+      listBranches: jest
+        .fn()
+        .mockResolvedValue([
+          { name: 'main', protected: false, commitSha: 's' },
+        ]),
+      requiresPullRequestToPush: jest.fn().mockResolvedValue(false),
+    });
+
+    await service.setupProject('user-1', 'gh-token', {
+      templateId: 'be-nestjs',
+      serviceName: 'api',
+      repoFullName: 'owner/repo',
+      workspaceId: 'w1',
+    });
+
+    expect(projectsRepository.findUserLogin).toHaveBeenCalledWith('user-1');
+    expect(recipients(record)).toEqual(['dev-1', 'lead-1', 'user-1']);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining('@tone created project owner/repo'),
+      }),
+    );
   });
 });

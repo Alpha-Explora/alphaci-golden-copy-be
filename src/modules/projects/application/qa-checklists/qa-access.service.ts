@@ -101,4 +101,18 @@ export class QaAccessService {
   async listWorkspaceLeadIds(workspaceId: string): Promise<string[]> {
     return this.projectsRepository.listWorkspaceLeadIds(workspaceId);
   }
+
+  /** Active workspace members whose persona is 'lead' or 'member' (developer). */
+  async listWorkspaceLeadAndDeveloperIds(
+    workspaceId: string,
+  ): Promise<string[]> {
+    return this.projectsRepository.listWorkspaceLeadAndDeveloperIds(
+      workspaceId,
+    );
+  }
+
+  /** Active workspace members whose persona is 'qa'. */
+  async listWorkspaceQaIds(workspaceId: string): Promise<string[]> {
+    return this.projectsRepository.listWorkspaceQaIds(workspaceId);
+  }
 }
