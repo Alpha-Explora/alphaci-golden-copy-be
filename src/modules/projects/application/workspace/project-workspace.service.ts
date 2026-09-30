@@ -29,6 +29,7 @@ import {
 import {
   canCreatePullRequest,
   canMergeViaWorkspace,
+  visibleBranchesFor,
 } from '#kernel/rules/persona-access.rules';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { extractFailureExcerpt } from './extract-failure-excerpt';
@@ -160,17 +161,39 @@ export class ProjectWorkspaceService {
     projectId: string,
     userId: string,
     oauthToken: string | null,
+    viewerLogin: string | null = null,
   ): Promise<ProjectBranchesResponse> {
     const { repoFullName, token } = await this.context(
       projectId,
       userId,
       oauthToken,
     );
-    const branches = await this.githubService.listBranches(token, repoFullName);
+    const all = await this.githubService.listBranches(token, repoFullName);
+    const role = await this.projectsRepository.findAppRole(userId);
 
+    // Head-commit authors only matter for a developer's own-branch match;
+    // never fail (or spend a request) for anyone else.
+    let authors: Map<string, string | null> | null = null;
+    if (role === 'member' && viewerLogin) {
+      try {
+        authors = await this.githubService.listBranchHeadAuthors(
+          token,
+          repoFullName,
+        );
+      } catch (error) {
+        this.logger.debug(
+          `Branch author lookup failed; matching own branches by name only: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    // pickDefaultBranch runs on the full list so the default stays main even
+    // for roles that cannot see it.
     return {
-      defaultBranch: this.pickDefaultBranch(branches),
-      branches,
+      defaultBranch: this.pickDefaultBranch(all),
+      branches: visibleBranchesFor(role, viewerLogin, all, authors),
     };
   }
 

@@ -1444,6 +1444,52 @@ export class GithubService
     }));
   }
 
+  async listBranchHeadAuthors(
+    accessToken: string,
+    repoFullName: string,
+  ): Promise<Map<string, string | null>> {
+    const [owner, name] = repoFullName.split('/');
+    const response = await this.http.fetchWithRetry(
+      'https://api.github.com/graphql',
+      {
+        method: 'POST',
+        headers: {
+          ...this.http.workspaceHeaders(accessToken),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query:
+            'query($owner:String!,$name:String!){repository(owner:$owner,name:$name){refs(refPrefix:"refs/heads/",first:100){nodes{name target{... on Commit{author{user{login}}}}}}}}',
+          variables: { owner, name },
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new BadGatewayException(
+        `GitHub branch authors failed (${String(response.status)})`,
+      );
+    }
+    const payload = (await response.json()) as {
+      data?: {
+        repository?: {
+          refs?: {
+            nodes?: Array<{
+              name: string;
+              target?: { author?: { user?: { login?: string } | null } };
+            }>;
+          };
+        };
+      };
+    };
+    const nodes = payload.data?.repository?.refs?.nodes;
+    if (!nodes) {
+      throw new BadGatewayException('GitHub branch authors returned no refs');
+    }
+    return new Map(
+      nodes.map((n) => [n.name, n.target?.author?.user?.login ?? null]),
+    );
+  }
+
   /**
    * One directory listing, or one file's contents, at a ref.
    *
