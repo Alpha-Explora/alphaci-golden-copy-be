@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { ProjectWorkspaceService } from './project-workspace.service';
 import type { GithubService } from '#modules/pipelines/github/infrastructure/github.service';
 import type { ProjectsRepository } from '../../infrastructure/projects.repository';
 import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher';
+import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 
 const ROW = { repo_full_name: 'Alpha-Explora/orders-api' };
 
@@ -16,10 +18,14 @@ function build(
     row?: unknown;
     installationToken?: string | null;
     github?: Partial<GithubService>;
+    appRole?: PlatformAppRole;
   } = {},
 ) {
   const findByIdAndUser = jest.fn(() =>
     Promise.resolve('row' in overrides ? overrides.row : ROW),
+  );
+  const findAppRole = jest.fn(() =>
+    Promise.resolve(overrides.appRole ?? 'lead'),
   );
   const getInstallationAccessTokenForUserRepo = jest.fn(() =>
     Promise.resolve(
@@ -57,10 +63,39 @@ function build(
     ),
     listPullRequests: jest.fn(() => Promise.resolve([])),
     getPullRequestFiles: jest.fn(() => Promise.resolve([])),
+    // Default base is a non-production branch so the merge-role gate does
+    // not interfere with tests unrelated to it; the production-branch and
+    // role-forbidden paths are exercised explicitly below.
+    getPullRequest: jest.fn(() =>
+      Promise.resolve({
+        number: 7,
+        title: 'PR',
+        state: 'open',
+        draft: false,
+        merged: false,
+        htmlUrl: 'https://github.com/o/r/pull/7',
+        headRef: 'feature',
+        baseRef: 'uat',
+        author: null,
+        authorAvatarUrl: null,
+        createdAt: '',
+        updatedAt: '',
+        additions: null,
+        deletions: null,
+        changedFiles: null,
+        mergeable: true,
+        mergeableState: 'clean',
+        headSha: 'sha123',
+        body: null,
+      }),
+    ),
     ...overrides.github,
   } as unknown as GithubService;
 
-  const repository = { findByIdAndUser } as unknown as ProjectsRepository;
+  const repository = {
+    findByIdAndUser,
+    findAppRole,
+  } as unknown as ProjectsRepository;
   const recordProjectEvent = jest.fn(() => Promise.resolve());
   const audit = { recordProjectEvent } as unknown as AuditEventPublisher;
 
@@ -69,8 +104,13 @@ function build(
     github,
     recordProjectEvent,
     findByIdAndUser,
+    findAppRole,
     getInstallationAccessTokenForUserRepo,
   };
+}
+
+async function caught(promise: Promise<unknown>): Promise<unknown> {
+  return promise.catch((error: unknown) => error);
 }
 
 describe('ProjectWorkspaceService', () => {
@@ -350,7 +390,11 @@ describe('ProjectWorkspaceService', () => {
   });
 
   describe('create pull request', () => {
-    const INPUT = { base: 'main', head: 'feature', title: '  Add login  ' };
+    // Not 'main': that base is refused for every role (see the dedicated
+    // tests below), so the other tests in this block — which are about
+    // token/title/body/audit behaviour, not the base-branch gate — use a
+    // non-production branch.
+    const INPUT = { base: 'uat', head: 'feature', title: '  Add login  ' };
     const CREATED = {
       created: true as const,
       pullRequest: { number: 7, htmlUrl: 'https://github.com/o/r/pull/7' },
@@ -367,7 +411,7 @@ describe('ProjectWorkspaceService', () => {
       expect(openPullRequest).toHaveBeenCalledWith(
         'gho_user',
         'Alpha-Explora/orders-api',
-        { title: 'Add login', base: 'main', head: 'feature', draft: false },
+        { title: 'Add login', base: 'uat', head: 'feature', draft: false },
       );
       expect(getInstallationAccessTokenForUserRepo).not.toHaveBeenCalled();
     });
@@ -459,6 +503,61 @@ describe('ProjectWorkspaceService', () => {
       ).resolves.toEqual(refusal);
       expect(recordProjectEvent).not.toHaveBeenCalled();
     });
+
+    it('refuses a pull request into main for every role, including lead/admin', async () => {
+      const openPullRequest = jest.fn();
+      const { service } = build({
+        appRole: 'admin',
+        github: { openPullRequest } as unknown as Partial<GithubService>,
+      });
+
+      const error = await caught(
+        service.createPullRequest('p1', 'u1', 'gho_user', {
+          ...INPUT,
+          base: 'main',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'MAIN_PR_RESTRICTED',
+      });
+      expect(openPullRequest).not.toHaveBeenCalled();
+    });
+
+    it('refuses a qa persona opening a pull request into a non-production branch', async () => {
+      const openPullRequest = jest.fn();
+      const { service } = build({
+        appRole: 'qa',
+        github: { openPullRequest } as unknown as Partial<GithubService>,
+      });
+
+      const error = await caught(
+        service.createPullRequest('p1', 'u1', 'gho_user', INPUT),
+      );
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'PR_ROLE_FORBIDDEN',
+      });
+      expect(openPullRequest).not.toHaveBeenCalled();
+    });
+
+    it.each(['admin', 'lead', 'member'] as const)(
+      'allows %s to open a pull request into a non-production branch',
+      async (appRole) => {
+        const { service } = build({
+          appRole,
+          github: {
+            openPullRequest: jest.fn(() => Promise.resolve(CREATED)),
+          } as unknown as Partial<GithubService>,
+        });
+
+        await expect(
+          service.createPullRequest('p1', 'u1', 'gho_user', INPUT),
+        ).resolves.toEqual(CREATED);
+      },
+    );
   });
 
   describe('merge pull request', () => {
@@ -528,5 +627,77 @@ describe('ProjectWorkspaceService', () => {
       ).resolves.toEqual(refusal);
       expect(recordProjectEvent).not.toHaveBeenCalled();
     });
+
+    it('is a 404 when the pull request itself cannot be found', async () => {
+      const mergePullRequest = jest.fn();
+      const { service } = build({
+        github: {
+          mergePullRequest,
+          getPullRequest: jest.fn(() => Promise.resolve(null)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge'),
+      ).rejects.toThrow(NotFoundException);
+      expect(mergePullRequest).not.toHaveBeenCalled();
+    });
+
+    it('refuses a merge into main for every role, including lead/admin — that only happens via QA Studio', async () => {
+      const mergePullRequest = jest.fn();
+      const { service } = build({
+        appRole: 'admin',
+        github: {
+          mergePullRequest,
+          getPullRequest: jest.fn(() =>
+            Promise.resolve({ number: 7, baseRef: 'main', headRef: 'uat' }),
+          ),
+        } as unknown as Partial<GithubService>,
+      });
+
+      const error = await caught(
+        service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge'),
+      );
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'MAIN_MERGE_VIA_QA_STUDIO',
+      });
+      expect(mergePullRequest).not.toHaveBeenCalled();
+    });
+
+    it('refuses a qa persona merging a pull request into a non-production branch', async () => {
+      const mergePullRequest = jest.fn();
+      const { service } = build({
+        appRole: 'qa',
+        github: { mergePullRequest } as unknown as Partial<GithubService>,
+      });
+
+      const error = await caught(
+        service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge'),
+      );
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'PR_ROLE_FORBIDDEN',
+      });
+      expect(mergePullRequest).not.toHaveBeenCalled();
+    });
+
+    it.each(['admin', 'lead', 'member'] as const)(
+      'allows %s to merge a pull request into a non-production branch',
+      async (appRole) => {
+        const { service } = build({
+          appRole,
+          github: {
+            mergePullRequest: jest.fn(() => Promise.resolve(MERGED)),
+          } as unknown as Partial<GithubService>,
+        });
+
+        await expect(
+          service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge'),
+        ).resolves.toEqual(MERGED);
+      },
+    );
   });
 });

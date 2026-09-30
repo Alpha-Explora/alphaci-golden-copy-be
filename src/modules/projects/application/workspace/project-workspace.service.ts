@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -8,6 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
+import { QA_PROMOTION_TARGET_BRANCH } from '#kernel/config/pipeline-branches';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import type {
   GitHubBranchComparison,
@@ -24,6 +26,10 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
+import {
+  canCreatePullRequest,
+  canMergeViaWorkspace,
+} from '#kernel/rules/persona-access.rules';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { extractFailureExcerpt } from './extract-failure-excerpt';
 
@@ -413,6 +419,15 @@ export class ProjectWorkspaceService {
    * the person who merged, and anyone who could merely SEE the project could
    * merge into its protected branches through the App's write access. With
    * the person's token, GitHub checks their own permission on the repository.
+   *
+   * Gated on the pull request's own base branch and the caller's global
+   * persona (see persona-access.rules.ts): merging into the production
+   * branch is never allowed here, for any role — that happens only through
+   * QA Studio's "Ready for production" gate (qa-promotion.service.ts). For
+   * every other base, only admin/lead/member may merge; qa never merges a
+   * pull request. The base is read fresh from GitHub on every call rather
+   * than trusted from a prior list/detail read, the same reasoning
+   * QaPromotionService.merge already applies to uat's head sha.
    */
   async mergePullRequest(
     projectId: string,
@@ -427,6 +442,37 @@ export class ProjectWorkspaceService {
       oauthToken,
       'merge pull requests',
     );
+
+    const pullRequest = await this.githubService.getPullRequest(
+      token,
+      repoFullName,
+      pullNumber,
+    );
+    if (!pullRequest) {
+      throw new NotFoundException(
+        `Pull request #${String(pullNumber)} was not found in ${repoFullName}.`,
+      );
+    }
+
+    if (pullRequest.baseRef === QA_PROMOTION_TARGET_BRANCH) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'MAIN_MERGE_VIA_QA_STUDIO',
+        message:
+          'Merges into main go through QA Studio (Ready for production).',
+      });
+    }
+
+    const role = await this.projectsRepository.findAppRole(userId);
+    if (!canMergeViaWorkspace(role, pullRequest.baseRef)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PR_ROLE_FORBIDDEN',
+        message: 'Your role cannot merge pull requests in this project.',
+      });
+    }
 
     const result = await this.githubService.mergePullRequest(
       token,
@@ -491,6 +537,12 @@ export class ProjectWorkspaceService {
    * let that person approve their own change. It also makes GitHub the judge
    * of who may open one — a caller without write access to the repository is
    * refused by GitHub, and that refusal is passed back as its sentence.
+   *
+   * Gated on `input.base` and the caller's global persona (see
+   * persona-access.rules.ts): a pull request into the production branch is
+   * never opened here, for any role — main is reached only by the promotion
+   * flow and merged from QA Studio. For every other base, only
+   * admin/lead/member may open one; qa never opens a pull request.
    */
   async createPullRequest(
     projectId: string,
@@ -509,6 +561,26 @@ export class ProjectWorkspaceService {
       userId,
       oauthToken,
     );
+
+    if (input.base === QA_PROMOTION_TARGET_BRANCH) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'MAIN_PR_RESTRICTED',
+        message:
+          'Pull requests into main are opened by the promotion flow and merged from QA Studio.',
+      });
+    }
+
+    const role = await this.projectsRepository.findAppRole(userId);
+    if (!canCreatePullRequest(role, input.base)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PR_ROLE_FORBIDDEN',
+        message: 'Your role cannot open pull requests in this project.',
+      });
+    }
 
     const result = await this.githubService.openPullRequest(
       token,

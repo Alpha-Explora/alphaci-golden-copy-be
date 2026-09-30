@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -22,15 +23,14 @@ import {
   type GithubProjectPort,
   type GithubRepoDeleteErrorCode,
 } from '#kernel/ports/github.port';
-import {
-  WORKSPACE_ACCESS_PORT,
-  type WorkspaceAccessPort,
-  type WorkspaceRole,
-} from '#kernel/ports/workspaces.port';
+import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import type { DisconnectProjectDto } from '../../api/dto/disconnect-project.dto';
 import type { SetupProjectDto } from '../../api/dto/setup-project.dto';
-import { ProjectsRepository } from '../../infrastructure/projects.repository';
+import {
+  ProjectsRepository,
+  type ProvisionedProjectRow,
+} from '../../infrastructure/projects.repository';
 import type {
   CreateProjectResponse,
   DisconnectProjectResponse,
@@ -79,9 +79,6 @@ export class ProjectLifecycleService {
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService: GithubProjectPort,
     @Optional()
-    @Inject(WORKSPACE_ACCESS_PORT)
-    private readonly workspaceAccessService?: WorkspaceAccessPort,
-    @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventPublisher?: NotificationEventPublisher,
@@ -116,6 +113,33 @@ export class ProjectLifecycleService {
     return this.provisioningPort.setupProject(userId, accessToken, dto);
   }
 
+  /**
+   * Disconnect a project — every variant, including the plain, non-
+   * destructive default.
+   *
+   * app_role is the sole authority here now (see persona-access.rules.ts):
+   * admin/lead only, for every variant. This replaces the previous stored
+   * per-workspace-role check (WorkspaceAccessPort.assertProjectRole), which
+   * (a) let a stored 'member' role disconnect non-destructively — a global
+   * app_role of 'member' or 'qa' no longer can, regardless of their stored
+   * workspace role — and (b) silently PASSED when the caller had no
+   * membership row at all, rather than refusing. Visibility is checked
+   * first and separately, with the codebase's usual role-aware predicate
+   * (global admin / owner / any active workspace member / assigned
+   * repository) — a project this user cannot see answers 404, never
+   * confirming it exists; a visible project the caller's persona may not
+   * touch answers 403. Both fail closed: no visible row and no resolvable
+   * role are treated as "not allowed", never as "allowed by default".
+   *
+   * The resolved project row is reused for everything below rather than
+   * re-queried with a stored-role-restricted predicate — that predicate
+   * encoded a DIFFERENT authority (orgs.workspace_members.role) than the one
+   * now guarding this method, and re-deriving it here would reintroduce
+   * exactly the app_role/workspace_role mismatch this replaces (see
+   * qa-access.service.ts's own doc comment on the same distinction). The
+   * destructive opt-ins (deleteGithubRepo + confirmRepoName,
+   * deleteProviderResources, deleteSonarProject) are unchanged.
+   */
   async disconnectProject(
     projectId: string,
     userId: string,
@@ -125,22 +149,27 @@ export class ProjectLifecycleService {
     const deleteGithubRepo = options?.deleteGithubRepo === true;
     const deleteProviderResources = options?.deleteProviderResources === true;
     const deleteSonarProject = options?.deleteSonarProject === true;
-    const destructive =
-      deleteGithubRepo || deleteProviderResources || deleteSonarProject;
-    // Use the same role set for the application fast-fail and SQL predicate.
-    // The repository check remains the fail-closed enforcement point when
-    // optional application wiring is absent.
-    const destructiveRoles: WorkspaceRole[] = ['admin', 'delegated_lead'];
 
-    try {
-      await this.assertProjectMutationAccess(
-        projectId,
-        userId,
-        destructive ? destructiveRoles : undefined,
-      );
-    } catch (error) {
+    const project = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!project) {
       await this.maybeRejectGithubDelete(deleteGithubRepo, userId, projectId);
-      throw error;
+      throw new NotFoundException(
+        `Project '${projectId}' not found or does not belong to the current user.`,
+      );
+    }
+
+    const role = await this.projectsRepository.findAppRole(userId);
+    if (!canManageProjectLifecycle(role)) {
+      await this.maybeRejectGithubDelete(deleteGithubRepo, userId, projectId);
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Only a lead or admin may disconnect this project.',
+      });
     }
 
     const { githubRepoDeleted, githubRepoDeleteError } =
@@ -150,7 +179,7 @@ export class ProjectLifecycleService {
         userId,
         options,
         githubAccessToken,
-        destructiveRoles,
+        project,
       );
 
     /*
@@ -182,29 +211,6 @@ export class ProjectLifecycleService {
       });
     }
 
-    /*
-     * Render/Vercel and SonarCloud follow the same rule: a failure keeps the
-     * project. That matters most for deployments - the project row's FK
-     * cascade removes the deployment targets, and with them the only record
-     * of the provider ids, so a local delete after a failed provider delete
-     * would leave live services nobody can find again. Retrying is safe: both
-     * providers answer an already-deleted resource as deleted, and SonarCloud
-     * reports a missing project as not found.
-     */
-    const project =
-      deleteProviderResources || deleteSonarProject
-        ? await this.projectsRepository.findByIdAndUser(
-            projectId,
-            userId,
-            destructiveRoles,
-          )
-        : null;
-    if ((deleteProviderResources || deleteSonarProject) && !project) {
-      throw new NotFoundException(
-        `Project '${projectId}' not found or does not belong to the current user.`,
-      );
-    }
-
     const alreadyDone = githubRepoDeleted
       ? ' The GitHub repository was already deleted - untick "also delete on GitHub" before trying again.'
       : '';
@@ -217,20 +223,18 @@ export class ProjectLifecycleService {
         )
       : undefined;
 
-    const sonarProjectDeleted =
-      deleteSonarProject && project
-        ? await this.deleteSonarProjectOrThrow(
-            projectId,
-            userId,
-            project.repo_full_name,
-            alreadyDone,
-          )
-        : undefined;
+    const sonarProjectDeleted = deleteSonarProject
+      ? await this.deleteSonarProjectOrThrow(
+          projectId,
+          userId,
+          project.repo_full_name,
+          alreadyDone,
+        )
+      : undefined;
 
     const deleted = await this.projectsRepository.deleteByIdAndUser(
       projectId,
       userId,
-      destructive ? destructiveRoles : undefined,
     );
     if (!deleted) {
       throw new NotFoundException(
@@ -419,7 +423,7 @@ export class ProjectLifecycleService {
       projectId,
       eventCode: 'project_github_repo_delete_rejected',
       title: 'GitHub repository deletion rejected',
-      body: 'Insufficient workspace role for deleteGithubRepo=true (owner/admin required).',
+      body: 'The project is not visible to this user, or their global persona is not admin/lead (required for deleteGithubRepo=true).',
       metadata: { reason: 'insufficient_role' },
     });
   }
@@ -430,7 +434,7 @@ export class ProjectLifecycleService {
     userId: string,
     options: DisconnectProjectDto | undefined,
     githubAccessToken: string | null | undefined,
-    destructiveRoles: WorkspaceRole[],
+    project: ProvisionedProjectRow,
   ): Promise<{
     githubRepoDeleted: boolean;
     githubRepoDeleteError?: {
@@ -440,25 +444,6 @@ export class ProjectLifecycleService {
   }> {
     if (!deleteGithubRepo) {
       return { githubRepoDeleted: false };
-    }
-
-    const project = await this.projectsRepository.findByIdAndUser(
-      projectId,
-      userId,
-      destructiveRoles,
-    );
-    if (!project) {
-      await this.recordProductEvent({
-        userId,
-        projectId,
-        eventCode: 'project_github_repo_delete_rejected',
-        title: 'GitHub repository deletion rejected',
-        body: `Project '${projectId}' was not found, does not belong to the current user, or the current workspace role does not permit deleting its GitHub repository (owner/admin required).`,
-        metadata: { reason: 'not_found_or_insufficient_role' },
-      });
-      throw new NotFoundException(
-        `Project '${projectId}' not found or does not belong to the current user.`,
-      );
     }
 
     const repoFullName = project.repo_full_name;
@@ -563,18 +548,6 @@ export class ProjectLifecycleService {
       });
       return { githubRepoDeleted: false, githubRepoDeleteError: deleteError };
     }
-  }
-
-  private async assertProjectMutationAccess(
-    projectId: string,
-    userId: string,
-    roles: WorkspaceRole[] = ['admin', 'delegated_lead', 'member'],
-  ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(
-      projectId,
-      userId,
-      roles,
-    );
   }
 
   private async recordProductEvent(input: {

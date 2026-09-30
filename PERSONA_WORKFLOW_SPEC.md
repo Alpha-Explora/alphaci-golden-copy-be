@@ -1,0 +1,276 @@
+# AlphaCI Enterprise: Persona Architecture, Branch Scoping & Notification Specification
+
+## 1. Executive Summary
+
+This document serves as the single source of truth for role boundaries, branch visibility, pull request routing, and notification fan-out within AlphaCI Enterprise.
+
+The platform coordinates three distinct engineering personas around a single continuous delivery pipeline:
+1. **Team Lead (Product Owner)**: Governance, requirement definition, workspace management, and production release gatekeeper.
+2. **QA Team**: Independent quality assurance, manual & automated preview testing, defect reporting, and release certification.
+3. **Developer**: Feature development, CI pipeline verification, defect remediation, and promotion to UAT.
+
+---
+
+## 2. Persona Role Definitions & Hierarchy
+
+Authorization in AlphaCI is driven by the global `identity.app_users.app_role` column (synced from GitHub Organization teams):
+
+| Persona | Wire `appRole` | UI Badge Label | GitHub Team Slug | Core Responsibilities |
+| :--- | :--- | :--- | :--- | :--- |
+| **Team Lead (Product Owner)** | `lead` (or `admin`: GitHub org owners and platform admins) | `Team lead` | `team-lead` | Creates Project Folders, attaches repositories, authors QA checklists, audits logs, manages team members, inspects UAT content in QA Studio, and **merges UAT to main (production)**. |
+| **QA Team** | `qa` | `QA Team` | `qa-team` | Tests live preview deployments on `uat` inside QA Studio, executes automated Playwright suites, records defect severity, **returns defective items to developers**, and signs off builds. |
+| **Developer** | `member` | `Developer` | `developers` | Builds features, pushes code to `dev`, opens promotion PRs from `dev` to `uat`, monitors CI stage runs, and resolves defects via the **"My QA items"** card on Project Overview. |
+
+---
+
+## 3. Feature Separation Matrix
+
+| Feature Area | Specific Action | Team Lead (Product Owner) | QA Team | Developer | Enforcement Mechanism |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Project Creation** | Create Project Folder | **Allowed** | Restricted | Restricted | `isGlobalCreatorRole(appRole)` |
+| | Provision New Project / Stack | **Allowed** | Restricted | Restricted | `isGlobalProjectCreator(userId)` |
+| | Archive / Delete Project (incl. a Project folder with its repositories) | **Allowed** | Restricted | Restricted | `canManageProjectLifecycle(appRole)` in `ProjectLifecycleService.disconnectProject`; folder delete `DELETE /delivery-projects/:id` |
+| **Repository Management** | Create Repository under Project | **Allowed** | Restricted | Restricted | `assertGlobalCreatorRole(userId)` |
+| | Move Repository between Folders | **Allowed** | Restricted | Restricted | `useMoveRepositoryViewModel` |
+| **QA Checklists** | Create / Edit Checklist Template | **Allowed** | Read-Only | Read-Only | `QaChecklistsService.assertManage` |
+| | Share Checklist to Project | **Allowed** | Read-Only | Read-Only | `useFolderChecklistsViewModel` |
+| **QA Studio (UAT)** | Access QA Studio (`#qa`) | **Allowed (UAT)** | **Allowed (Primary)** | Restricted (Hidden) | `QA_STUDIO_ROLES` (`['qa', 'lead', 'admin']`) |
+| | Live Preview Canvas (Desktop/Tablet/Phone) | Can View & Test | Can View & Test | Restricted | `useStudioViewportViewModel` |
+| | Trigger Playwright Tests | Can Trigger | Can Trigger | Restricted | `roleCanDispatch(appRole)` |
+| **Verification Execution** | Mark Items (`Passed`, `Failed`, `Blocked`) | Can Execute | **Primary Role** | Read-Only | `run-item.tsx` |
+| | Send Back to Dev (`Returned to dev`) | Can Execute | **Primary Role** | Restricted | `canSetReturnedToDev(role)` |
+| | Sign Off Run (`Approved`, `Rejected`, `Conditional`) | Can Sign Off | **Primary Role** | Restricted | `canSignOff(role)` |
+| | Export QA Report (PDF / Markdown) | Can Export | Can Export | Read-Only | `useQaExportViewModel` |
+| **Developer Resolution** | View "My QA items" Card (Overview) | Read-Only | Read-Only | **Primary Role** | `my-qa-items-card.tsx` |
+| | `Mark fixed & request re-test` | Can Submit | Restricted | **Primary Role** | `canRequestRetest(role)` |
+| **Release Promotion** | View "Ready for Production" Gate | Can View | Can View | Read-Only | `promotion-card.tsx` |
+| | **`Merge to main`** (Release to Production) | **Authorized (Sole)** | Restricted (Hidden) | Restricted (Hidden) | `canMergeQaPromotion(role)` (HTTP 403 for others) |
+| **CI/CD & Code** | CI Stage Stepper & Tool Logs (`Runs` Tab) | Summary View | Summary View | **Deep Debug View** | `runs-by-branch.ts` |
+| | Create PR: `<own-branch> → dev` | Allowed | Restricted | **Primary Role** | `CreatePullRequestView` |
+| | Create PR: `dev → uat` | Allowed | Restricted | **Primary Role** | `CreatePullRequestView` / Automated CI job |
+| | Create PR: `* → main` | Restricted | Restricted | Restricted | `canCreatePullRequest` → 403 `MAIN_PR_RESTRICTED` for every role; only the CI `promote-to-main` job opens `uat → main` |
+| **Hosting & Secrets** | View Target URLs & Logs | Can View | Can View | Can View | `hosting-tab.tsx` |
+| | Reinstall Deployment Secrets | **Authorized** | Restricted | Restricted | FE `canReinstallDeploymentSecrets(appRole)`; BE `canManageProjectLifecycle(appRole)` → 403 `PROJECT_ROLE_FORBIDDEN` |
+| | Manage Environment Variables | **Full Access** | Restricted | Restricted | `canManageEnvVars(appRole)` → 403 `ENV_VARS_LEAD_ONLY`; Environment tab hidden for others |
+| **Team Administration** | Manage Members & Workspace Roles | **Full Access** | Restricted | Restricted | `group-members.service.ts` |
+| **Inbox & Notifications** | Receives "Project Created" Alert | **Yes** | Optional | **Yes** | `NotificationEventsService.record` |
+| | Receives "Returned to Dev" Alert | Yes (Owner) | No (Sender) | **Yes** | `qa.item.returned_to_dev` |
+| | Receives "Re-test Requested" Alert | Read-Only | **Yes** | No (Sender) | `qa.item.retest_requested` |
+
+---
+
+## 4. Branch Visibility & Scoping Rules
+
+To maintain high developer velocity while preventing visual noise and accidental branch tampering:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        BRANCH VISIBILITY MATRIX                        │
+├────────────────────────────────────────────────────────────────────────┤
+│  Persona     │ Visible Branches in UI Dropdowns                        │
+├──────────────┼─────────────────────────────────────────────────────────┤
+│  Developer   │ [dev] + [Own feature branches]                          │
+│  QA Team     │ [dev], [uat], [main] (Canonical rungs only)             │
+│  Team Lead   │ [All branches] (Full repository oversight)              │
+│  Pipeline    │ [dev], [uat], [main] (Runs swimlane grouping)           │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Developers (`member`)**:
+   - Filtered in `GET /projects/:projectId/workspace/branches`.
+   - Returns the shared working branch (`dev`) and branches authored by that developer (`feature/<login>-*` or commit author match).
+   - In-progress branches of peer developers are filtered out of individual selector dropdowns.
+
+2. **QA Team (`qa`)**:
+   - Filtered in `GET /projects/:projectId/workspace/branches`.
+   - Returns strictly `dev`, `uat`, and `main`. QA is never exposed to personal developer feature branches.
+   - QA Studio is locked to `uat` (`QA_BRANCH = 'uat'`).
+
+3. **Team Lead (`lead` / `admin`)**:
+   - Receives all branches across the entire repository to enable code reviews, auditing, and troubleshooting.
+
+4. **Workflows & Runs Tab**:
+   - Enforces `runs-by-branch.ts`: Groups workflow runs strictly by the three promotion rungs (`dev`, `uat`, `main`).
+   - Feature branch runs and pull request merge refs (`refs/pull/*/merge`) are omitted from the main pipeline tab.
+
+---
+
+## 5. Pull Request & Promotion Pipeline
+
+### Linear Promotion Flow
+Code strictly flows forward:
+`feature/*` → `dev` → `uat` → `main`
+
+### Developer PR Rules
+- **Hop 1 (Feature Integration)**:
+  - `head`: Developer's feature branch (e.g. `feature/order-summary`)
+  - `base`: **`dev`**
+  - Triggered manually by developer. Merged once peer review and CI tests pass.
+- **Hop 2 (Promotion to QA)**:
+  - `head`: **`dev`**
+  - `base`: **`uat`**
+  - Auto-generated by CI (`promote-to-uat` job) upon successful `dev` build, or opened manually by developer.
+  - Merged by developer or lead once CI tests pass.
+  - Merging triggers automated UAT deployment on Render / Vercel.
+- **Hop 3 (Production Release Gate)**:
+  - `head`: **`uat`**
+  - `base`: **`main`**
+  - **Nobody opens or merges this PR by hand.** The CI `promote-to-main` job opens it automatically after a `uat` build; `createPullRequest` refuses base `main` (403 `MAIN_PR_RESTRICTED`) and the generic merge endpoint refuses it (403 `MAIN_MERGE_VIA_QA_STUDIO`) for every role.
+  - Controlled strictly inside QA Studio via the **"Ready for production"** card.
+  - The **`Merge to main`** button becomes active **only when 100% of shared QA checklists are signed off as `APPROVED` on UAT's current head SHA**.
+  - Merged solely by **Team Lead** or **Admin**.
+
+---
+
+## 6. QA Defect Resolution: "Returned to Dev" Loop
+
+```
+                       QA Studio (uat)
+                 QA selects "Returned to dev"
+                             │
+       ┌─────────────────────┴─────────────────────┐
+       ▼                                           ▼
+Defect Metadata Recorded                Notification Dispatched
+- Severity: Blocker / Major / Minor     Event: qa.item.returned_to_dev
+- Failure notes                         Sent to: Project Owner & Developers
+- Reproduction steps                    Delivered to: /inbox + sidebar badge
+                             │
+                             ▼
+                 Project Overview Tab
+                 "My QA items" Card
+                 - Developer inspects notes & repro steps
+                 - Developer fixes code and pushes
+                 - Clicks "Mark fixed & request re-test"
+                             │
+                             ▼
+                 QA Re-tests in QA Studio
+                 - Verifies fix on new UAT commit
+                 - Marks item "Passed"
+```
+
+---
+
+## 7. Project Creation Notification Fan-Out
+
+### The Requirement:
+When a Team Lead / Product Owner provisions a project under a Workspace/Team, a notification must be dispatched to:
+1. All **Team Leads** (`app_role = 'lead'`) of that workspace.
+2. All **Developers** (`app_role = 'member'`) of that workspace.
+
+### Technical Implementation Blueprint:
+
+#### Step 1: Database Query (`ProjectsRepository`)
+```ts
+async listWorkspaceLeadAndDeveloperIds(workspaceId: string): Promise<string[]> {
+  const result = await this.databaseService.query<{ id: string }>(
+    `
+      SELECT DISTINCT u.id
+      FROM orgs.workspace_members m
+      JOIN identity.app_users u ON u.id = m.user_id
+      WHERE m.workspace_id = $1
+        AND m.member_status = 'active'
+        AND u.app_role IN ('lead', 'member');
+    `,
+    [workspaceId],
+  );
+  return result.rows.map((row) => row.id);
+}
+```
+
+#### Step 2: Fan-Out Notification Helper (`ProjectProvisioningSupport`)
+```ts
+async notifyProjectCreated(input: {
+  workspaceId: string;
+  creatorUserId: string;
+  creatorLogin: string;
+  projectId: string;
+  repoFullName: string;
+  repoShape: string;
+}): Promise<void> {
+  const notifications = this.notificationEventPublisher;
+  if (!notifications || !input.workspaceId) return;
+
+  const recipientIds = await this.projectsRepository.listWorkspaceLeadAndDeveloperIds(input.workspaceId);
+  const deduplicated = [...new Set(recipientIds)];
+
+  await Promise.all(
+    deduplicated.map((userId) =>
+      notifications.record({
+        userId,
+        projectId: input.projectId,
+        eventCode: 'project_created',
+        title: `New project created: ${input.repoFullName}`,
+        body: `@${input.creatorLogin} created project ${input.repoFullName}. It is now tracked and ready for development.`,
+      }),
+    ),
+  );
+}
+```
+
+#### Step 3: Wire into All Provisioning Shapes:
+- `single-repository-project.provisioner.ts` (Single repo creation and setup)
+- `multi-repository-project.provisioner.ts` (Full-stack paired `-fe` and `-be` repos)
+- `microservices-project.provisioner.ts` (Service mesh provisioner)
+
+---
+
+## 8. Additional Recommended Implementations
+
+Based on comprehensive inspection of the current codebase, the following 7 enhancements are recommended:
+
+### 1. Backend PR Route Enforcement (`project-workspace.service.ts`)
+- **Status**: Implemented (Phase 1). Per §3 this applies to every role, not only `member`: base `main` → 403 `MAIN_PR_RESTRICTED`; `qa` may not open or merge pull requests at all → 403 `PR_ROLE_FORBIDDEN`. The generic merge endpoint also refuses base `main` (403 `MAIN_MERGE_VIA_QA_STUDIO`), so QA Studio's gate is the only path to production. Rules live in `src/kernel/rules/persona-access.rules.ts` (BE) and mirror FE `canCreatePullRequest` / `canMergeViaWorkspace`.
+
+### 2. Role-Gated Branch Listing API (`project-workspace.service.ts`)
+- **Current State**: `listBranches` returns all GitHub branches unfiltered.
+- **Improvement**:
+  - `role === 'qa'`: Filter to `['dev', 'uat', 'main']`.
+  - `role === 'member'`: Filter to `['dev']` + branches where branch name matches `feature/<login>-*` or author login matches user.
+  - `role === 'lead'`: Return all branches.
+
+### 3. Developer Defect Notification Recipient Targeting (`qa-runs.service.ts`)
+- **Current State**: `ownerAndLeadRecipients` notifies `project.user_id` and leads on `returned_to_dev`.
+- **Improvement**: Explicitly include the developer who authored the commit under test on UAT, ensuring the engineer who wrote the bug receives the alert directly.
+
+### 4. PR Preset Mode Selector in Frontend UI (`create-pull-request-view.tsx`)
+- **Current State**: Generic base/head dropdowns.
+- **Improvement**: Add radio/pill presets for developers:
+  - `[Feature → Dev]` (Auto-fills `base: dev`)
+  - `[Dev → UAT]` (Auto-fills `head: dev, base: uat`)
+  - Disables manual selection of `main`.
+
+### 5. Multi-Repo Promotion PR Pairing (`multi-repository-project.steps.ts`)
+- **Current State**: Promotion PRs run per repository.
+- **Improvement**: When promoting full-stack project folders (`testfinals`), cross-link the frontend and backend promotion PRs in the PR body so both services deploy in lockstep.
+
+### 6. Notification Center Deep-Links (`notifications-inbox-view.tsx`)
+- **Current State**: Clicking a notification opens the project overview.
+- **Improvement**:
+  - `qa.item.returned_to_dev` → deep-links to `/projects/[id]#overview` with the "My QA items" card highlighted.
+  - `project_created` → deep-links directly into the project folder.
+  - `qa.run.signed_off` → deep-links to `/projects/[id]#qa`.
+
+### 7. Branch Protection Verification Probe (`project-provisioning.support.ts`)
+- **Current State**: Branch protection rules are configured during provisioning.
+- **Improvement**: Add a drift probe verifying that `dev` remains pushable while `uat` and `main` remain protected against direct pushes and deletions.
+
+---
+
+## 9. Implementation Status (2026-09-30)
+
+Authority for persona gates is the global `identity.app_users.app_role` (platform admins resolve to `admin`), always as an allow-list. Workspace scoping is still required: the user must be the project owner, an active member of its workspace, or assigned to one of its repositories.
+
+| Phase | Scope | Status |
+|---|---|---|
+| 0 | Delete a Project folder with its repositories (BE #127, FE #70); ghost repositories removed and `provisioned_project_id` cascades on delete | Done |
+| 1 | Merge into `main` only via QA Studio; no manual PRs into `main`; QA cannot open/merge PRs; env vars, reinstall secrets and disconnect on `app_role` lead/admin | Done |
+| 2 | §7 project-created fan-out; §6 returned-to-dev reaches developers, re-test reaches QA; §8.6 notification deep-links | Not started |
+| 3 | §4 / §8.2 role-filtered branch list; §8.4 PR presets; Runs tab summary vs deep debug | Not started |
+| 4 | §8.5 FE/BE promotion PR pairing (real location: `staged-workflow.builder.ts` + `alphaci-workflow/.github/workflows/promotion.yml`); §8.7 branch-protection drift probe (protection is applied in the provisioners) | Not started |
+
+Known code-vs-spec gaps still open (spec is the intended behaviour):
+- §3 Mark Items: the backend lets `member` update items whose persona is `developer`/`all` (`qa-run-access.rules.ts`); spec says Developer is read-only.
+- §3 "Ready for Production" card: rendered only inside QA Studio, which Developers cannot open; spec says Developers can view it.
+- §3 "My QA items": shown to every role and lists project-wide items, not the caller's.
+- Custom domains and the remaining deployment-target actions still authorize on the stored workspace role, not `app_role`.
+- GitHub branch protection uses `restrictions: null`, so a user with write access can still merge `uat → main` directly on github.com; ALPHACI itself no longer offers that path.

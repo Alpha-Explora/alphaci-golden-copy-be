@@ -214,7 +214,6 @@ export class ProjectsService {
       this,
       this.projectsRepository,
       this.githubService,
-      this.workspaceAccessService,
       this.auditEventsService,
       this.notificationEventPublisher,
       this.auditEventPublisher,
