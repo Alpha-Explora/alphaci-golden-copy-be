@@ -43,6 +43,7 @@ export class ProjectWorkspaceController {
       projectId,
       this.requireUserId(req),
       this.oauthToken(req),
+      this.viewerLogin(req),
     );
   }
 

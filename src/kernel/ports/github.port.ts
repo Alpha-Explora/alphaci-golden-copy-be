@@ -379,6 +379,15 @@ export interface GithubProjectPort {
     accessToken: string,
     repoFullName: string,
   ): Promise<GitHubBranchSummary[]>;
+  /**
+   * Head-commit author login per branch, in ONE GraphQL request (first 100
+   * refs, matching listBranches' page). A branch whose author has no GitHub
+   * account maps to null. Throws on API failure; callers degrade.
+   */
+  listBranchHeadAuthors(
+    accessToken: string,
+    repoFullName: string,
+  ): Promise<Map<string, string | null>>;
   listRepoContents(
     accessToken: string,
     repoFullName: string,

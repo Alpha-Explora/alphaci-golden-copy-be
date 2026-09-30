@@ -53,6 +53,7 @@ function build(
         { name: 'main', protected: true, commitSha: 'b' },
       ]),
     ),
+    listBranchHeadAuthors: jest.fn(() => Promise.resolve(new Map())),
     listRepoContents: jest.fn(() =>
       Promise.resolve({ path: '', ref: 'main', entries: [], file: null }),
     ),
@@ -128,6 +129,64 @@ describe('ProjectWorkspaceService', () => {
       });
       await expect(service.listBranches('p1', 'u1', 'gho_x')).rejects.toThrow();
       expect(getInstallationAccessTokenForUserRepo).not.toHaveBeenCalled();
+    });
+
+    it('lists every branch for a lead and keeps the default branch', async () => {
+      const { service } = build({ appRole: 'lead' });
+      const result = await service.listBranches('p1', 'u1', 'gho_x', 'alice');
+      expect(result.branches.map((x) => x.name)).toEqual(['develop', 'main']);
+      expect(result.defaultBranch).toBe('main');
+    });
+
+    it('hides main from a member and queries authors once', async () => {
+      const { service, github } = build({
+        appRole: 'member',
+        github: {
+          listBranches: jest.fn(() =>
+            Promise.resolve([
+              { name: 'dev', protected: false, commitSha: 'a' },
+              { name: 'main', protected: true, commitSha: 'b' },
+              { name: 'fix/x', protected: false, commitSha: 'c' },
+            ]),
+          ),
+          listBranchHeadAuthors: jest.fn(() =>
+            Promise.resolve(new Map([['fix/x', 'Alice']])),
+          ),
+        } as unknown as Partial<GithubService>,
+      });
+      const result = await service.listBranches('p1', 'u1', 'gho_x', 'alice');
+      expect(result.branches.map((x) => x.name)).toEqual(['dev', 'fix/x']);
+      expect(result.defaultBranch).toBe('main');
+      expect(github.listBranchHeadAuthors).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to name matching when the author lookup fails', async () => {
+      const { service } = build({
+        appRole: 'member',
+        github: {
+          listBranches: jest.fn(() =>
+            Promise.resolve([
+              { name: 'dev', protected: false, commitSha: 'a' },
+              { name: 'feature/alice-a', protected: false, commitSha: 'b' },
+              { name: 'fix/x', protected: false, commitSha: 'c' },
+            ]),
+          ),
+          listBranchHeadAuthors: jest.fn(() =>
+            Promise.reject(new Error('rate limited')),
+          ),
+        } as unknown as Partial<GithubService>,
+      });
+      const result = await service.listBranches('p1', 'u1', 'gho_x', 'alice');
+      expect(result.branches.map((x) => x.name)).toEqual([
+        'dev',
+        'feature/alice-a',
+      ]);
+    });
+
+    it('does not query authors for non-members', async () => {
+      const { service, github } = build({ appRole: 'qa' });
+      await service.listBranches('p1', 'u1', 'gho_x', 'alice');
+      expect(github.listBranchHeadAuthors).not.toHaveBeenCalled();
     });
 
     it('prefers the installation token over the caller OAuth token', async () => {

@@ -1,4 +1,8 @@
-import { QA_PROMOTION_TARGET_BRANCH } from '#kernel/config/pipeline-branches';
+import {
+  PIPELINE_BRANCHES,
+  QA_BRANCH,
+  QA_PROMOTION_TARGET_BRANCH,
+} from '#kernel/config/pipeline-branches';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 
 /**
@@ -40,6 +44,9 @@ import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
  *     provider secrets, disconnecting a project entirely) — §3's "Hosting &
  *     Secrets" and "Team Administration" rows list these as lead/admin
  *     "Full Access", everyone else "Restricted".
+ *   visibleBranchesFor: role-filtered branch LISTING (§4). A listing filter
+ *     only, not enforcement: other endpoints that accept an arbitrary ref
+ *     are deliberately unchanged.
  */
 
 const WORKSPACE_PULL_REQUEST_ROLES: readonly PlatformAppRole[] = [
@@ -99,4 +106,61 @@ export function canManageEnvVars(role: PlatformAppRole): boolean {
  */
 export function canManageProjectLifecycle(role: PlatformAppRole): boolean {
   return PROJECT_MANAGEMENT_ROLES.includes(role);
+}
+
+/** The working tier developers push to; first rung of the promotion flow. */
+const WORKING_BRANCH = PIPELINE_BRANCHES[0];
+
+/**
+ * Whether the branch is named `feature/<login>-*`, the convention that marks a
+ * developer's own branch. Case-insensitive because GitHub logins are.
+ */
+function isOwnFeatureBranch(name: string, login: string): boolean {
+  return name.toLowerCase().startsWith(`feature/${login.toLowerCase()}-`);
+}
+
+/**
+ * The branches `role` may see in the workspace branch list (§4, allow-list,
+ * fail closed).
+ *
+ *   admin, lead: every branch.
+ *   qa:          only the pipeline rungs (dev, uat, main) that exist.
+ *   member:      dev and uat (uat is the base of the dev -> uat promotion PR;
+ *                main is never shown) plus the developer's own branches - a
+ *                `feature/<login>-*` name, or a branch whose head commit was
+ *                authored by `login`.
+ *   anything else: dev only.
+ *
+ * `authorByBranch` maps branch name to the head commit's author login, or is
+ * null when that lookup was unavailable; the name convention alone then
+ * decides ownership. Order of `branches` is preserved.
+ */
+export function visibleBranchesFor<T extends { name: string }>(
+  role: string,
+  login: string | null,
+  branches: readonly T[],
+  authorByBranch: ReadonlyMap<string, string | null> | null,
+): T[] {
+  switch (role) {
+    case 'admin':
+    case 'lead':
+      return [...branches];
+    case 'qa':
+      return branches.filter((b) =>
+        (PIPELINE_BRANCHES as readonly string[]).includes(b.name),
+      );
+    case 'member': {
+      const wanted = login?.trim().toLowerCase() ?? '';
+      return branches.filter((b) => {
+        if (b.name === WORKING_BRANCH || b.name === QA_BRANCH) return true;
+        // main is never a Developer's branch, even when they authored its head.
+        if (isProductionBranch(b.name)) return false;
+        if (!wanted) return false;
+        if (isOwnFeatureBranch(b.name, wanted)) return true;
+        return authorByBranch?.get(b.name)?.toLowerCase() === wanted;
+      });
+    }
+    default:
+      return branches.filter((b) => b.name === WORKING_BRANCH);
+  }
 }
