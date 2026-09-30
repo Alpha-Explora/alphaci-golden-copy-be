@@ -373,4 +373,73 @@ describe('MultiRepositoryProjectProvisioner', () => {
 
     expect(support.notifyProjectCreated).toHaveBeenCalledTimes(1);
   });
+
+  it('gives each repository its sibling full name so promotion PRs can be paired', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-fe',
+        ownerLogin: 'org',
+        repoName: 'orders-fe',
+      });
+    support.createProjectRow
+      .mockResolvedValueOnce({
+        row: { id: 'proj-be' },
+        deliveryProjectId: null,
+      })
+      .mockResolvedValueOnce({
+        row: { id: 'proj-fe' },
+        deliveryProjectId: null,
+      });
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      multiRepoDto as never,
+    );
+
+    const siblingOf = (serviceName: string) =>
+      support.buildWorkflowBundle.mock.calls
+        .map(
+          ([call]) =>
+            call as { serviceName: string; siblingRepoFullName?: string },
+        )
+        .find((call) => call.serviceName === serviceName)?.siblingRepoFullName;
+    expect(siblingOf('orders-be')).toBe('org/orders-fe');
+    expect(siblingOf('orders-fe')).toBe('org/orders-be');
+  });
+
+  it('passes no sibling when the owner cannot be predicted', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/me/orders-be',
+        ownerLogin: 'me',
+        repoName: 'orders-be',
+      })
+      .mockRejectedValueOnce(new Error('stop'));
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      undefined,
+      multiRepoDto as never,
+    );
+
+    for (const [call] of support.buildWorkflowBundle.mock.calls) {
+      expect(call).not.toHaveProperty('siblingRepoFullName');
+    }
+  });
 });

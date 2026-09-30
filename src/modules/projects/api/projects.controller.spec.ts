@@ -560,7 +560,11 @@ describe('ProjectsController', () => {
       'project-1',
     );
 
-    expect(driftService.runDetection).toHaveBeenCalledWith(projectReference);
+    // The session's GitHub token rides along so the live branch-protection
+    // probe can run; a session without one gets local checks only.
+    expect(driftService.runDetection).toHaveBeenCalledWith(projectReference, {
+      githubAccessToken: null,
+    });
     expect(result).toMatchObject({
       mode: 'local_snapshot',
       findings: [],

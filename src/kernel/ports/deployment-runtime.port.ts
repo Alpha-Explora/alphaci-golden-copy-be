@@ -29,7 +29,7 @@ export type DeploymentHistoryStatus =
 export type DeploymentHistoryMode = 'local_mock' | 'live' | 'unavailable';
 export type DeploymentDriftSeverity = 'info' | 'warning' | 'error';
 export type DeploymentDriftStatus = 'active' | 'resolved' | 'ignored';
-export type DeploymentDriftSource = 'local_snapshot';
+export type DeploymentDriftSource = 'local_snapshot' | 'github_live';
 export type EnvVarProvisionStatus = 'provisioned' | 'failed';
 
 /**
@@ -289,8 +289,13 @@ export interface DeploymentDriftQuery {
   listFindings(
     project: DeploymentProjectReference,
   ): Promise<DeploymentDriftResponse>;
+  /**
+   * `githubAccessToken` is optional: with it, detection also runs the live
+   * branch-protection probe; without it only local-snapshot checks run.
+   */
   runDetection(
     project: DeploymentProjectReference,
+    options?: { githubAccessToken?: string | null },
   ): Promise<DeploymentDriftResponse>;
 }
 
@@ -467,6 +472,7 @@ export type ProjectDriftRepairAction =
   | 'create_workflow_update_pr'
   | 'rotate_ci_token'
   | 'detach_target'
+  | 'repair_branch_protection'
   | 'mark_ignored';
 
 export interface ProjectDriftRepairResponse {

@@ -347,6 +347,19 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
    * Leave unset for existing/BYO repositories whose layout is unknown.
    */
   hasTestsDirectory?: boolean;
+  /**
+   * `owner/repo` of the paired frontend/backend repository, multi-repo
+   * projects only. Threaded into the generated promote-to-uat /
+   * promote-to-main jobs' `sibling-repo` input so `promotion.yml` can
+   * cross-link this promotion PR with the sibling's matching one (§8.5).
+   *
+   * Left undefined for every other repo shape, and for multi-repo callers
+   * that predate this field. `promotionJob` below omits the `sibling-repo`
+   * key from the generated `with:` block entirely when this is undefined —
+   * not an empty string — so a single-repo pipeline's generated YAML is
+   * byte-for-byte unchanged.
+   */
+  siblingRepoFullName?: string;
 }
 
 type DeployBranch = WorkflowFragmentBranch;
@@ -392,6 +405,7 @@ interface StagedWorkflowContext {
   stack: WorkflowTemplate['stack'];
   isBackend: boolean;
   hasTestsDirectory: boolean | undefined;
+  siblingRepoFullName: string | undefined;
   names: StagedNames;
 }
 
@@ -478,6 +492,7 @@ function resolveStagedContext(
     stack: template.stack,
     isBackend,
     hasTestsDirectory: dto.hasTestsDirectory,
+    siblingRepoFullName: dto.siblingRepoFullName,
     names: resolveStagedNames(dto.workflowVariant),
   };
 }
@@ -1024,6 +1039,7 @@ function buildPackageWorkflowFile(
           ctx.serviceName,
           ctx.centralWorkflowRef,
           deploymentPlan.promotionNeeds.dev,
+          ctx.siblingRepoFullName,
         ),
         'promote-to-main': promotionJob(
           'uat-to-main',
@@ -1031,6 +1047,7 @@ function buildPackageWorkflowFile(
           ctx.serviceName,
           ctx.centralWorkflowRef,
           deploymentPlan.promotionNeeds.uat,
+          ctx.siblingRepoFullName,
         ),
         'report-results': reportingJob(
           'package',
@@ -1651,6 +1668,7 @@ function promotionJob(
   serviceName: string,
   centralWorkflowRef: string,
   additionalNeeds: string[] = [],
+  siblingRepoFullName?: string,
 ) {
   const needs = ['build', ...additionalNeeds];
   const conditions = [
@@ -1685,6 +1703,11 @@ function promotionJob(
       direction,
       'system1-name': serviceName,
       'pipeline-result': 'success',
+      // Omitted entirely (not sent as "") when there is no sibling, so a
+      // single-repo pipeline's generated YAML is byte-for-byte unchanged.
+      ...(siblingRepoFullName !== undefined && {
+        'sibling-repo': siblingRepoFullName,
+      }),
     },
     secrets: {
       PR_TOKEN:

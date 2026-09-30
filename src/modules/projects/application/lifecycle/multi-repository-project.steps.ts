@@ -111,8 +111,22 @@ export async function buildMultiRepoBackendBundle(input: {
   backend: MicroserviceSlotDto;
   dto: CreateProjectDto;
   effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
+  /**
+   * `owner/repo` of the paired frontend repository, so the generated
+   * promotion jobs can cross-link with it (§8.5). Undefined when the owner
+   * cannot be predicted yet (see resolveMultiRepoSiblingNames) - the
+   * generated pipeline then carries no `sibling-repo` input at all, same as
+   * before this feature existed.
+   */
+  siblingRepoFullName?: string;
 }): Promise<MultiRepoWorkflowBundle> {
-  const { support, backend, dto, effectiveDeploymentProvisioning } = input;
+  const {
+    support,
+    backend,
+    dto,
+    effectiveDeploymentProvisioning,
+    siblingRepoFullName,
+  } = input;
   const templateId = support.resolveTemplateId(
     backend.projectTypeId,
     backend.workflowRecipeId,
@@ -139,6 +153,7 @@ export async function buildMultiRepoBackendBundle(input: {
       '.',
       support.workflowFragmentRegistry,
     ),
+    ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
   });
 
   return {
@@ -153,8 +168,16 @@ export async function buildMultiRepoFrontendBundle(input: {
   frontend: MicroserviceSlotDto;
   dto: CreateProjectDto;
   effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
+  /** `owner/repo` of the paired backend repository. See buildMultiRepoBackendBundle. */
+  siblingRepoFullName?: string;
 }): Promise<MultiRepoWorkflowBundle> {
-  const { support, frontend, dto, effectiveDeploymentProvisioning } = input;
+  const {
+    support,
+    frontend,
+    dto,
+    effectiveDeploymentProvisioning,
+    siblingRepoFullName,
+  } = input;
   const templateId = support.resolveTemplateId(
     frontend.projectTypeId,
     frontend.workflowRecipeId,
@@ -172,6 +195,7 @@ export async function buildMultiRepoFrontendBundle(input: {
       '.',
       support.workflowFragmentRegistry,
     ),
+    ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
   });
 
   return {
@@ -457,6 +481,8 @@ export async function provisionMultiRepoFrontend(input: {
    * (personal workspace, or no hierarchy port wired up).
    */
   pairDeliveryProjectId: string | null;
+  /** `owner/repo` of the paired backend repository. See buildMultiRepoBackendBundle. */
+  siblingRepoFullName?: string;
 }): Promise<MultiRepoFrontendProvision> {
   const {
     support,
@@ -470,6 +496,7 @@ export async function provisionMultiRepoFrontend(input: {
     feRepoName,
     effectiveDeploymentProvisioning,
     pairDeliveryProjectId,
+    siblingRepoFullName,
   } = input;
 
   let feRepoFullName: string | undefined;
@@ -484,6 +511,7 @@ export async function provisionMultiRepoFrontend(input: {
       frontend,
       dto,
       effectiveDeploymentProvisioning,
+      ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
     });
     const repo = await createMultiRepoGithubRepo({
       support,

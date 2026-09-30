@@ -98,6 +98,117 @@ describe('ProjectDriftService', () => {
     expect(findingsRepository.replaceActiveFindings).not.toHaveBeenCalled();
   });
 
+  describe('branch protection probe', () => {
+    const compliant = {
+      protected: true,
+      pullRequestRequired: true,
+      allowForcePushes: false,
+      allowDeletions: false,
+    };
+    const unprotected = {
+      protected: false,
+      pullRequestRequired: false,
+      allowForcePushes: true,
+      allowDeletions: true,
+    };
+    const github = { getBranchProtectionSummary: jest.fn() };
+
+    function serviceWithGithub() {
+      return new ProjectDriftService(
+        findingsRepository as never,
+        deploymentTargetsRepository as never,
+        envVarsRepository as never,
+        ciTokensRepository,
+        capabilityResolver as never,
+        github as never,
+      );
+    }
+    function protection(byBranch: Record<string, unknown>) {
+      github.getBranchProtectionSummary.mockImplementation(
+        (_t: string, _o: string, _r: string, branch: string) =>
+          Promise.resolve(byBranch[branch]),
+      );
+    }
+    async function branchCodes(token: string | null = 'gh-token') {
+      const response = await serviceWithGithub().runDetection(
+        projectReference,
+        { githubAccessToken: token },
+      );
+      return response.findings
+        .filter((finding) => finding.source === 'github_live')
+        .map(
+          (finding) => `${finding.code}:${String(finding.details['branch'])}`,
+        );
+    }
+
+    it('reports nothing when dev is pushable and uat/main are protected', async () => {
+      protection({ dev: unprotected, uat: compliant, main: compliant });
+
+      await expect(branchCodes()).resolves.toEqual([]);
+    });
+
+    it('flags a dev branch that requires pull requests', async () => {
+      protection({ dev: compliant, uat: compliant, main: compliant });
+
+      await expect(branchCodes()).resolves.toEqual([
+        'branch_dev_protected:dev',
+      ]);
+    });
+
+    it('flags uat and main that are unprotected', async () => {
+      protection({ dev: unprotected, uat: unprotected, main: compliant });
+
+      await expect(branchCodes()).resolves.toEqual([
+        'branch_protection_missing:uat',
+        'branch_force_push_allowed:uat',
+        'branch_deletion_allowed:uat',
+      ]);
+    });
+
+    it('flags force push and deletion allowed on an otherwise protected branch', async () => {
+      protection({
+        dev: unprotected,
+        uat: compliant,
+        main: { ...compliant, allowForcePushes: true, allowDeletions: true },
+      });
+
+      await expect(branchCodes()).resolves.toEqual([
+        'branch_force_push_allowed:main',
+        'branch_deletion_allowed:main',
+      ]);
+    });
+
+    it('reports nothing for a branch whose protection could not be read', async () => {
+      protection({ dev: null, uat: null, main: null });
+
+      await expect(branchCodes()).resolves.toEqual([]);
+    });
+
+    it('skips the live probe without a token, and never writes protection', async () => {
+      protection({ dev: compliant, uat: unprotected, main: unprotected });
+
+      await expect(branchCodes(null)).resolves.toEqual([]);
+      expect(github.getBranchProtectionSummary).not.toHaveBeenCalled();
+    });
+
+    it('marks these findings as live GitHub reads', async () => {
+      protection({ dev: unprotected, uat: unprotected, main: compliant });
+      const response = await serviceWithGithub().runDetection(
+        projectReference,
+        { githubAccessToken: 'gh-token' },
+      );
+
+      expect(response.findings).toContainEqual(
+        expect.objectContaining({
+          code: 'branch_protection_missing',
+          source: 'github_live',
+          severity: 'error',
+          details: { branch: 'uat', repoFullName: 'tone/orders-api' },
+        }),
+      );
+    });
+  });
+
   it('produces stable local findings without live provider calls', async () => {
     ciTokensRepository.findProjectTokenStatus.mockResolvedValueOnce(null);
     deploymentTargetsRepository.listDeploymentTargets.mockResolvedValueOnce([

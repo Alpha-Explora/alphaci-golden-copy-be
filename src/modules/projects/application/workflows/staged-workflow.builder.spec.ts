@@ -1908,3 +1908,74 @@ describe('no chained stage can cancel another branch', () => {
     expect(parsed.concurrency?.['cancel-in-progress']).toBe(false);
   });
 });
+
+describe('promotion PR pairing input (sibling-repo)', () => {
+  const promotionJobs = (options: { siblingRepoFullName?: string } = {}) => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      ...options,
+    });
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    return {
+      bundle,
+      toUat: pkg.jobs['promote-to-uat'],
+      toMain: pkg.jobs['promote-to-main'],
+    };
+  };
+
+  it('passes the sibling repo to both promotion hops for a multi-repo pair', () => {
+    const { toUat, toMain } = promotionJobs({
+      siblingRepoFullName: 'org/orders-fe',
+    });
+
+    expect(toUat?.with?.['sibling-repo']).toBe('org/orders-fe');
+    expect(toMain?.with?.['sibling-repo']).toBe('org/orders-fe');
+  });
+
+  it('omits the input entirely for single-repo pipelines', () => {
+    const { toUat, toMain } = promotionJobs();
+
+    expect(Object.keys(toUat?.with ?? {})).toEqual([
+      'pipeline-kind',
+      'direction',
+      'system1-name',
+      'pipeline-result',
+    ]);
+    expect(toMain?.with).not.toHaveProperty('sibling-repo');
+  });
+
+  it('leaves every generated file byte-for-byte identical when there is no sibling', () => {
+    const plain = promotionJobs().bundle.workflowFiles.map((f) => f.yaml);
+    const explicitUndefined = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    }).workflowFiles.map((f) => f.yaml);
+
+    expect(explicitUndefined).toEqual(plain);
+    expect(plain.join('\n')).not.toContain('sibling-repo');
+  });
+
+  it('changes nothing but the two sibling-repo lines when a sibling is set', () => {
+    const before = promotionJobs().bundle.workflowFiles.map((f) => f.yaml);
+    const after = promotionJobs({
+      siblingRepoFullName: 'org/orders-fe',
+    }).bundle.workflowFiles.map((f) => f.yaml);
+
+    expect(
+      after.map((y) => y.split('\n').length - before[0]!.split('\n').length),
+    ).toBeDefined();
+    const strip = (y: string) =>
+      y
+        .split('\n')
+        .filter((line) => !line.includes('sibling-repo'))
+        .join('\n');
+    expect(after.map(strip)).toEqual(before);
+    expect(
+      after
+        .join('\n')
+        .split('\n')
+        .filter((l) => l.includes('sibling-repo')),
+    ).toHaveLength(2);
+  });
+});
