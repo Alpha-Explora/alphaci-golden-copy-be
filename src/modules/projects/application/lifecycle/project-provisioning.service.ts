@@ -9,6 +9,7 @@ import type {
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
+  type WorkspaceProjectSummaryRow,
 } from '../../infrastructure/projects.repository';
 import { normalizeRepoShape } from '../../scaffold.builder';
 import { CatalogService } from '../catalog/catalog.service';
@@ -58,22 +59,30 @@ export class ProjectProvisioningService implements ProjectLookupPort {
         .projectTypes.map((type) => [type.id, type.kind]),
     );
 
-    return rows.map((row) => ({
-      id: row.id,
-      name:
-        row.service_name?.trim() ||
-        row.repo_name?.trim() ||
-        row.repo_full_name?.split('/')[1] ||
-        row.id,
-      repoFullName: row.repo_full_name,
-      role: projectRole(
-        row.repo_shape,
-        row.project_type_id ? kindByType.get(row.project_type_id) : undefined,
-      ),
-      status: row.status,
-      repoShape: row.repo_shape,
-    }));
+    return rows.map((row) => toWorkspaceProjectSummary(row, kindByType));
   }
+}
+
+/** One project row as the summary other contexts see, role derived from its stack. */
+export function toWorkspaceProjectSummary(
+  row: WorkspaceProjectSummaryRow,
+  kindByType: ReadonlyMap<string, 'frontend' | 'backend' | undefined>,
+): WorkspaceProjectSummary {
+  return {
+    id: row.id,
+    name:
+      row.service_name?.trim() ||
+      row.repo_name?.trim() ||
+      row.repo_full_name?.split('/')[1] ||
+      row.id,
+    repoFullName: row.repo_full_name,
+    role: projectRole(
+      row.repo_shape,
+      row.project_type_id ? kindByType.get(row.project_type_id) : undefined,
+    ),
+    status: row.status,
+    repoShape: row.repo_shape,
+  };
 }
 
 /**

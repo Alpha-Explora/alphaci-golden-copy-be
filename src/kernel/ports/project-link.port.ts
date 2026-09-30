@@ -30,8 +30,28 @@ export interface EnsureLinkResult {
   deliveryProjectId: string;
 }
 
+/** The delivery project ("Project" folder) a repository project is filed under. */
+export interface ProjectFolderLink {
+  deliveryProjectId: string;
+  groupId: string;
+  name: string;
+  /** Non-archived repository rows of the delivery project, oldest first. */
+  repositories: Array<{
+    /** Null when the repository row is not linked to an AlphaCI project. */
+    projectId: string | null;
+    name: string;
+    repoFullName: string | null;
+  }>;
+}
+
 export interface ProjectLinkPort {
   getLinkedRepositoryId(projectId: string): Promise<string | null>;
+  /**
+   * The delivery project this project is filed under with its sibling
+   * repositories, or null when the project has no hierarchy row. Unlike
+   * getLinkedRepositoryId this lets a database failure propagate.
+   */
+  getProjectFolder(projectId: string): Promise<ProjectFolderLink | null>;
   ensureLink(input: EnsureProjectLinkInput): Promise<EnsureLinkResult | null>;
   /**
    * User-facing gate for a caller-supplied `deliveryProjectId` on project

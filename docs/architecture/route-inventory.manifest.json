@@ -1,11 +1,11 @@
 {
-  "routeCount": 183,
+  "routeCount": 184,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "e06dcb6a9d7f96fcd064c98478881072ec493cfbafe30d65125859bc4848c59a",
+  "referenceSha256": "341ede0b70648fd42aa81add2c96c24e3951c25da046719cedac517f4fda1d4c",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "e06dcb6a9d7f96fcd064c98478881072ec493cfbafe30d65125859bc4848c59a",
+  "baselineSha256": "341ede0b70648fd42aa81add2c96c24e3951c25da046719cedac517f4fda1d4c",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -93,6 +93,12 @@
       "reason": "Delete a Project (delivery project) together with every repository inside it, reusing disconnectProject's GitHub/Render/Vercel/Sonar teardown per repository.",
       "routes": [
         "DELETE /api/v1/delivery-projects/{deliveryProjectId}"
+      ]
+    },
+    {
+      "reason": "Read-only list of the sibling repositories of the Project (delivery project) a project is filed under, for the project page repository switcher.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/folder"
       ]
     }
   ]

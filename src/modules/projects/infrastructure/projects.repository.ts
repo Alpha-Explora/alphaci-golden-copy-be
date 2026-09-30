@@ -58,6 +58,16 @@ function projectVisibilitySql(userParam: string): string {
     )`;
 }
 
+export interface WorkspaceProjectSummaryRow {
+  id: string;
+  repo_full_name: string | null;
+  service_name: string | null;
+  repo_name: string | null;
+  repo_shape: string | null;
+  project_type_id: string | null;
+  status: string;
+}
+
 export type ProvisionedProjectStatus =
   | 'provisioning'
   | 'provisioned'
@@ -485,6 +495,29 @@ export class ProjectsRepository
         LIMIT 500;
       `,
       [workspaceId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Summary columns for the given projects that `userId` may see, under the
+   * same visibility predicate as findByIdAndUser's default read. Projects the
+   * caller cannot see are simply absent from the result.
+   */
+  async listVisibleSummariesByIds(
+    ids: string[],
+    userId: string,
+  ): Promise<WorkspaceProjectSummaryRow[]> {
+    if (ids.length === 0) return [];
+    const result = await this.databaseService.query<WorkspaceProjectSummaryRow>(
+      `
+        SELECT pp.id, pp.repo_full_name, pp.service_name, pp.repo_name,
+               pp.repo_shape, pp.project_type_id, pp.status
+        FROM projects.provisioned_projects AS pp
+        WHERE pp.id = ANY($1::uuid[])
+          AND (${projectVisibilitySql('$2')});
+      `,
+      [ids, userId],
     );
     return result.rows;
   }

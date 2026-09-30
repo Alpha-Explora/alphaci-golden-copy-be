@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 import type {
   EnsureLinkResult,
+  ProjectFolderLink,
   ProjectLinkPort,
 } from '#kernel/ports/project-link.port';
 import { DeliveryProjectsRepository } from '../../infrastructure/delivery-projects.repository';
@@ -71,6 +72,11 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
       );
       return null;
     }
+  }
+
+  /** See ProjectLinkPort.getProjectFolder. Errors propagate on purpose. */
+  getProjectFolder(projectId: string): Promise<ProjectFolderLink | null> {
+    return this.repository.findProjectFolder(projectId);
   }
 
   /**

@@ -154,6 +154,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
   it('rejects an invalid deliveryProjectId before resolving GitHub provisioning, and never calls the GitHub port', async () => {
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+      getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertDeliveryProjectAvailableForCreate: jest
         .fn()
@@ -184,6 +185,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
   it('does not call the deliveryProjectId gate at all when none is given, and still reaches GitHub', async () => {
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+      getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertDeliveryProjectAvailableForCreate: jest.fn(),
     };
@@ -203,6 +205,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
     const calls: string[] = [];
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+      getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertDeliveryProjectAvailableForCreate: jest.fn(async () => {
         calls.push('gate');
@@ -229,6 +232,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
   it('setupProject validates deliveryProjectId before resolveSetupProvisioningToken (its first GitHub call)', async () => {
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+      getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertDeliveryProjectAvailableForCreate: jest
         .fn()
@@ -255,6 +259,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
 describe('ProjectProvisioningApplicationService, project_created fan-out (single repository)', () => {
   const link = (): ProjectLinkPort => ({
     getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+    getProjectFolder: jest.fn().mockResolvedValue(null),
     ensureLink: jest.fn().mockResolvedValue(null),
     assertDeliveryProjectAvailableForCreate: jest.fn(),
   });

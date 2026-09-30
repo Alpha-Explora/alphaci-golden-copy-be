@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import type { ProjectFolderLink } from '#kernel/ports/project-link.port';
 
 export interface LinkProjectInput {
   projectId: string;
@@ -54,6 +55,56 @@ export class HierarchyProjectLinkRepository {
       [projectId],
     );
     return result.rows[0]?.id ?? null;
+  }
+
+  /**
+   * The delivery project a project is filed under, with every non-archived
+   * repository row of it (the project's own row included while it is active).
+   * Null when the project has no hierarchy repository row.
+   */
+  async findProjectFolder(
+    projectId: string,
+  ): Promise<ProjectFolderLink | null> {
+    const result = await this.databaseService.query<{
+      delivery_project_id: string;
+      group_id: string;
+      delivery_project_name: string;
+      provisioned_project_id: string | null;
+      repository_name: string | null;
+      repo_full_name: string | null;
+    }>(
+      `
+        SELECT
+          dp.id    AS delivery_project_id,
+          dp.group_id,
+          dp.name  AS delivery_project_name,
+          r.provisioned_project_id,
+          r.name   AS repository_name,
+          r.repo_full_name
+        FROM hierarchy.repositories self
+        JOIN hierarchy.delivery_projects dp ON dp.id = self.delivery_project_id
+        LEFT JOIN hierarchy.repositories r
+          ON r.delivery_project_id = dp.id
+         AND r.status <> 'archived'
+        WHERE self.provisioned_project_id = $1
+        ORDER BY r.created_at, r.id;
+      `,
+      [projectId],
+    );
+    const first = result.rows[0];
+    if (!first) return null;
+    return {
+      deliveryProjectId: first.delivery_project_id,
+      groupId: first.group_id,
+      name: first.delivery_project_name,
+      repositories: result.rows
+        .filter((row) => row.repository_name || row.repo_full_name)
+        .map((row) => ({
+          projectId: row.provisioned_project_id,
+          name: row.repository_name ?? row.repo_full_name ?? '',
+          repoFullName: row.repo_full_name,
+        })),
+    };
   }
 
   /**

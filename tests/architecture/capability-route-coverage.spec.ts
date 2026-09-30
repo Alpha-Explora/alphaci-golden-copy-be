@@ -267,6 +267,10 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'setupPullRequest', method: 'POST' },
       ],
     },
+    'src/modules/projects/api/project-folder.controller.ts': {
+      reason: 'project folder (repository switcher) surface',
+      routes: [{ handler: 'getProjectFolder', method: 'GET' }],
+    },
     'src/modules/projects/api/project-workspace.controller.ts': {
       reason: 'project workspace surface',
       routes: [
