@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import { WorkspaceAccessService } from './workspace-access.service';
 import type { WorkspacesRepository } from '../infrastructure/workspaces.repository';
@@ -11,7 +7,6 @@ describe('WorkspaceAccessService', () => {
   const repository = {
     findMembership: jest.fn(),
     findProjectMembership: jest.fn(),
-    countOwners: jest.fn(),
   } as unknown as jest.Mocked<WorkspacesRepository>;
 
   let service: WorkspaceAccessService;
@@ -69,29 +64,5 @@ describe('WorkspaceAccessService', () => {
     await expect(
       service.assertProjectRole('project-1', 'user-1', ['viewer']),
     ).resolves.toBeNull();
-  });
-
-  it('blocks demoting the last owner', async () => {
-    repository.countOwners.mockResolvedValue(1);
-
-    await expect(
-      service.assertCanChangeOwnerRole(
-        'workspace-1',
-        { workspaceId: 'workspace-1', userId: 'owner-1', role: 'admin' },
-        'delegated_lead',
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('blocks removing the last owner', async () => {
-    repository.countOwners.mockResolvedValue(1);
-
-    await expect(
-      service.assertCanRemoveMember('workspace-1', {
-        workspaceId: 'workspace-1',
-        userId: 'owner-1',
-        role: 'admin',
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

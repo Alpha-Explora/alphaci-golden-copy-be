@@ -1,11 +1,11 @@
 {
-  "routeCount": 184,
+  "routeCount": 181,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "341ede0b70648fd42aa81add2c96c24e3951c25da046719cedac517f4fda1d4c",
+  "referenceSha256": "95ad783400b61f720c888d1042400ab56f390bed40ede2a3027fd1b165322d7c",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "341ede0b70648fd42aa81add2c96c24e3951c25da046719cedac517f4fda1d4c",
+  "baselineSha256": "95ad783400b61f720c888d1042400ab56f390bed40ede2a3027fd1b165322d7c",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -99,6 +99,14 @@
       "reason": "Read-only list of the sibling repositories of the Project (delivery project) a project is filed under, for the project page repository switcher.",
       "routes": [
         "GET /api/v1/projects/{projectId}/folder"
+      ]
+    },
+    {
+      "reason": "Retired the legacy workspace-member write routes: team membership is managed only through the hierarchy groups routes (lead/admin-gated, offboarding revokes assignments). GET /workspaces/{workspaceId}/members stays read-only.",
+      "removedRoutes": [
+        "POST /api/v1/workspaces/{workspaceId}/members",
+        "PATCH /api/v1/workspaces/{workspaceId}/members/{memberId}",
+        "DELETE /api/v1/workspaces/{workspaceId}/members/{memberId}"
       ]
     }
   ]

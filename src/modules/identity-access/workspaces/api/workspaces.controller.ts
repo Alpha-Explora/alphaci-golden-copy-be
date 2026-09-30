@@ -1,11 +1,7 @@
 import {
-  Body,
   Controller,
-  Delete,
   Get,
   Param,
-  Patch,
-  Post,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -17,7 +13,6 @@ import {
   RequiresCapability,
 } from '#kernel/composition/index.js';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
-import type { WorkspaceRole } from '../infrastructure/workspaces.repository';
 import { WorkspacesService } from '../application/workspaces.service';
 
 @Controller('workspaces')
@@ -37,47 +32,6 @@ export class WorkspacesController {
     return this.workspacesService.listMembers(
       workspaceId,
       this.requireUserId(req),
-    );
-  }
-
-  @Post(':workspaceId/members')
-  addMember(
-    @Req() req: Request,
-    @Param('workspaceId') workspaceId: string,
-    @Body() body: { loginOrEmail: string; role: WorkspaceRole },
-  ) {
-    return this.workspacesService.addMember(
-      workspaceId,
-      this.requireUserId(req),
-      body,
-    );
-  }
-
-  @Patch(':workspaceId/members/:memberId')
-  updateMemberRole(
-    @Req() req: Request,
-    @Param('workspaceId') workspaceId: string,
-    @Param('memberId') memberId: string,
-    @Body() body: { role: WorkspaceRole },
-  ) {
-    return this.workspacesService.updateMemberRole(
-      workspaceId,
-      this.requireUserId(req),
-      memberId,
-      body.role,
-    );
-  }
-
-  @Delete(':workspaceId/members/:memberId')
-  removeMember(
-    @Req() req: Request,
-    @Param('workspaceId') workspaceId: string,
-    @Param('memberId') memberId: string,
-  ) {
-    return this.workspacesService.removeMember(
-      workspaceId,
-      this.requireUserId(req),
-      memberId,
     );
   }
 
