@@ -635,6 +635,64 @@ export class ProjectProvisioningSupport {
     }
   }
 
+  /**
+   * Announces a created project (spec section 7): the creator, every active
+   * workspace lead and every active workspace developer get ONE notification
+   * each, deduplicated. This replaces the old creator-only notification, so
+   * nobody gets two; the single audit row is unchanged.
+   *
+   * Never throws into provisioning: failures are logged and swallowed.
+   */
+  async notifyProjectCreated(input: {
+    workspaceId: string | null;
+    creatorUserId: string;
+    creatorLogin: string;
+    projectId: string;
+    repoFullName: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      await (
+        this.auditEventPublisher ?? this.auditEventsService
+      )?.recordProjectEvent({
+        actorUserId: input.creatorUserId,
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        eventCode: 'project_created',
+        message: 'Project created',
+        metadata: { repoFullName: input.repoFullName, ...input.metadata },
+      });
+
+      const notifications = this.notificationEventPublisher;
+      if (!notifications) {
+        return;
+      }
+
+      const teamIds = input.workspaceId
+        ? await this.projectsRepository.listWorkspaceLeadAndDeveloperIds(
+            input.workspaceId,
+          )
+        : [];
+      const recipients = [...new Set([...teamIds, input.creatorUserId])];
+
+      await Promise.all(
+        recipients.map((userId) =>
+          notifications.record({
+            userId,
+            projectId: input.projectId,
+            eventCode: 'project_created',
+            title: `New project created: ${input.repoFullName}`,
+            body: `@${input.creatorLogin} created project ${input.repoFullName}. It is now tracked and ready for development.`,
+          }),
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `project_created announcement failed for ${input.repoFullName}: ${String(error)}`,
+      );
+    }
+  }
+
   recordProductEvent(input: {
     userId: string;
     projectId: string | null;

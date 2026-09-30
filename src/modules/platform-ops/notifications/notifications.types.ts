@@ -5,6 +5,16 @@ export interface NotificationItem {
   eventCode: string;
   readAt: string | null;
   createdAt: string;
+  /**
+   * Deep-link data (spec 8.6). The frontend derives routes from eventCode plus
+   * these ids; the API never returns frontend URLs. groupId and
+   * deliveryProjectId are resolved at read time through
+   * hierarchy.repositories.provisioned_project_id and are null when the
+   * project is not filed under a folder (or the project is gone).
+   */
+  projectId: string | null;
+  groupId: string | null;
+  deliveryProjectId: string | null;
 }
 
 export interface NotificationsResponse {

@@ -23,9 +23,10 @@ function fakeSupport() {
       applyBranchProtection: jest.fn().mockResolvedValue(undefined),
     },
     pushStarterFiles: jest.fn().mockResolvedValue(undefined),
-    createProjectRow: jest
-      .fn()
-      .mockResolvedValue({ row: { id: 'proj-be' }, deliveryProjectId: null }),
+    createProjectRow: jest.fn().mockResolvedValue({
+      row: { id: 'proj-be', workspace_id: 'ws-1' },
+      deliveryProjectId: null,
+    }),
     workspaceGate: {
       resolveWorkspaceIdForCreate: jest.fn().mockResolvedValue('ws-1'),
     },
@@ -46,7 +47,7 @@ function fakeSupport() {
       status: 'skipped',
       targets: [],
     }),
-    recordProductEvent: jest.fn().mockResolvedValue(undefined),
+    notifyProjectCreated: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -127,7 +128,7 @@ describe('MicroservicesProjectProvisioner', () => {
   it('creates one shared chain for the pair, named after the shared repo, and links both slots to it', async () => {
     const support = fakeSupport();
     support.createProjectRow.mockResolvedValueOnce({
-      row: { id: 'proj-be' },
+      row: { id: 'proj-be', workspace_id: 'ws-1' },
       deliveryProjectId: 'dp-shared',
     });
     const provisioner = new MicroservicesProjectProvisioner(support as never);
@@ -157,7 +158,7 @@ describe('MicroservicesProjectProvisioner', () => {
   it('links both slots to an explicit deliveryProjectId instead of auto-creating a chain', async () => {
     const support = fakeSupport();
     support.createProjectRow.mockResolvedValueOnce({
-      row: { id: 'proj-be' },
+      row: { id: 'proj-be', workspace_id: 'ws-1' },
       deliveryProjectId: 'dp-given',
     });
     const provisioner = new MicroservicesProjectProvisioner(support as never);
@@ -177,5 +178,49 @@ describe('MicroservicesProjectProvisioner', () => {
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
       deliveryProjectId: 'dp-given',
     });
+  });
+
+  it('announces the project once, using the session login', async () => {
+    const support = fakeSupport();
+    const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+    await provisioner.createMicroservicesProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      packedShapeDto as never,
+    );
+
+    expect(support.notifyProjectCreated).toHaveBeenCalledTimes(1);
+    expect(support.notifyProjectCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        creatorUserId: 'user-1',
+        creatorLogin: 'tone',
+        projectId: 'proj-be',
+        repoFullName: 'org/orders',
+      }),
+    );
+  });
+
+  it('does not announce a project that failed to provision', async () => {
+    const support = fakeSupport();
+    support.pushWorkflowFiles.mockRejectedValueOnce(new Error('GitHub 500'));
+    const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+    await expect(
+      provisioner.createMicroservicesProject(
+        'user-1',
+        'tone',
+        'token',
+        'prov-token',
+        'org',
+        packedShapeDto as never,
+      ),
+    ).rejects.toThrow('GitHub 500');
+
+    expect(support.notifyProjectCreated).not.toHaveBeenCalled();
   });
 });

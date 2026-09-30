@@ -187,6 +187,8 @@ const makeAccess = (overrides: Partial<jest.Mocked<QaAccessService>> = {}) =>
     findVisibleProject: jest.fn().mockResolvedValue(projectRow()),
     findAppRole: jest.fn().mockResolvedValue('member' as PlatformAppRole),
     listWorkspaceLeadIds: jest.fn().mockResolvedValue([]),
+    listWorkspaceLeadAndDeveloperIds: jest.fn().mockResolvedValue([]),
+    listWorkspaceQaIds: jest.fn().mockResolvedValue([]),
     ...overrides,
   }) as unknown as jest.Mocked<QaAccessService>;
 
@@ -198,6 +200,7 @@ const makeCommitResolution = (
       commitSha: 'a'.repeat(40),
       commitSource: 'deployment',
     }),
+    resolveCommitAuthorUserId: jest.fn().mockResolvedValue(null),
     ...overrides,
   }) as unknown as jest.Mocked<QaCommitResolutionService>;
 
@@ -1340,5 +1343,173 @@ describe('QaRunsService — assembleRun automation wiring', () => {
     const run = await service.getById('project-1', actor.userId, 'run-1');
 
     expect(run.items[0]?.automated).toBeNull();
+  });
+});
+
+describe('QaRunsService notification recipients', () => {
+  const returnedItem = itemRow({
+    status: 'in_progress',
+    defect_severity: 'major',
+    target_persona: 'all',
+  });
+
+  const returnToDev = async (options: {
+    access?: Partial<jest.Mocked<QaAccessService>>;
+    commitResolution?: Partial<jest.Mocked<QaCommitResolutionService>>;
+    actorOverride?: QaRunActorContext;
+  }) => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const updated = itemRow({
+      ...returnedItem,
+      status: 'returned_to_dev',
+      defect_severity: 'major',
+    });
+    const commitResolution = makeCommitResolution(options.commitResolution);
+    const { service } = makeService({
+      repository: makeRepository({
+        findItemForRun: jest.fn().mockResolvedValue(returnedItem),
+        updateItem: jest.fn().mockResolvedValue(updated),
+        listItemsByRunId: jest.fn().mockResolvedValue([updated]),
+      }),
+      access: makeAccess({
+        findAppRole: jest.fn().mockResolvedValue('qa'),
+        ...options.access,
+      }),
+      commitResolution,
+      notifications: { record },
+    });
+    await service.updateItem(
+      'project-1',
+      options.actorOverride ?? actor,
+      'run-1',
+      'item-1',
+      { expectedRowVersion: 1, status: 'returned_to_dev' },
+    );
+    const recipients = record.mock.calls
+      .map(([input]) => input as { userId: string; eventCode: string })
+      .filter((input) => input.eventCode === 'qa.item.returned_to_dev')
+      .map((input) => input.userId);
+    return { recipients, commitResolution };
+  };
+
+  it('returned_to_dev reaches owner, leads and developers, deduplicated, minus the actor', async () => {
+    const { recipients } = await returnToDev({
+      access: {
+        listWorkspaceLeadAndDeveloperIds: jest
+          .fn()
+          .mockResolvedValue(['lead-1', 'dev-1', 'owner-1', actor.userId]),
+      },
+    });
+
+    expect([...recipients].sort()).toEqual(['dev-1', 'lead-1', 'owner-1']);
+  });
+
+  it('returned_to_dev adds the commit author when they can see the project', async () => {
+    const { recipients, commitResolution } = await returnToDev({
+      commitResolution: {
+        resolveCommitAuthorUserId: jest.fn().mockResolvedValue('author-1'),
+      },
+    });
+
+    expect(recipients).toContain('author-1');
+    expect(commitResolution.resolveCommitAuthorUserId).toHaveBeenCalledWith(
+      'org/repo',
+      actor.userId,
+      'a'.repeat(40),
+      null,
+    );
+  });
+
+  it('returned_to_dev skips a commit author who cannot see the project', async () => {
+    const findVisibleProject = jest
+      .fn()
+      .mockImplementation((_projectId: string, userId: string) =>
+        Promise.resolve(userId === 'author-1' ? null : projectRow()),
+      );
+    const { recipients } = await returnToDev({
+      access: { findVisibleProject },
+      commitResolution: {
+        resolveCommitAuthorUserId: jest.fn().mockResolvedValue('author-1'),
+      },
+    });
+
+    expect(recipients).not.toContain('author-1');
+  });
+
+  it('returned_to_dev does not duplicate an author who is already a developer', async () => {
+    const { recipients } = await returnToDev({
+      access: {
+        listWorkspaceLeadAndDeveloperIds: jest
+          .fn()
+          .mockResolvedValue(['dev-1']),
+      },
+      commitResolution: {
+        resolveCommitAuthorUserId: jest.fn().mockResolvedValue('dev-1'),
+      },
+    });
+
+    expect(recipients.filter((id) => id === 'dev-1')).toHaveLength(1);
+  });
+
+  it('returned_to_dev excludes the actor even when they authored the commit', async () => {
+    const { recipients } = await returnToDev({
+      commitResolution: {
+        resolveCommitAuthorUserId: jest.fn().mockResolvedValue(actor.userId),
+      },
+    });
+
+    expect(recipients).not.toContain(actor.userId);
+  });
+
+  it('retest_requested reaches the previous verifier and the QA team, deduplicated, minus the actor', async () => {
+    const item = itemRow({ status: 'returned_to_dev', verified_by: 'qa-1' });
+    const updated = itemRow({ ...item, status: 'pending', verified_by: null });
+    const record = jest.fn().mockResolvedValue(undefined);
+    const { service } = makeService({
+      repository: makeRepository({
+        findItemForRun: jest.fn().mockResolvedValue(item),
+        requestRetest: jest.fn().mockResolvedValue(updated),
+        listItemsByRunId: jest.fn().mockResolvedValue([updated]),
+      }),
+      access: makeAccess({
+        findAppRole: jest.fn().mockResolvedValue('member'),
+        listWorkspaceQaIds: jest
+          .fn()
+          .mockResolvedValue(['qa-1', 'qa-2', actor.userId]),
+      }),
+      notifications: { record },
+    });
+
+    await service.requestRetest('project-1', actor, 'run-1', 'item-1', {});
+
+    const ids = record.mock.calls.map(
+      ([input]) => (input as { userId: string }).userId,
+    );
+    expect([...ids].sort()).toEqual(['qa-1', 'qa-2']);
+  });
+
+  it('retest_requested still reaches the QA team when there is no previous verifier', async () => {
+    const item = itemRow({ status: 'returned_to_dev', verified_by: null });
+    const updated = itemRow({ ...item, status: 'pending' });
+    const record = jest.fn().mockResolvedValue(undefined);
+    const { service } = makeService({
+      repository: makeRepository({
+        findItemForRun: jest.fn().mockResolvedValue(item),
+        requestRetest: jest.fn().mockResolvedValue(updated),
+        listItemsByRunId: jest.fn().mockResolvedValue([updated]),
+      }),
+      access: makeAccess({
+        findAppRole: jest.fn().mockResolvedValue('member'),
+        listWorkspaceQaIds: jest.fn().mockResolvedValue(['qa-2']),
+      }),
+      notifications: { record },
+    });
+
+    await service.requestRetest('project-1', actor, 'run-1', 'item-1', {});
+
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'qa-2' }),
+    );
   });
 });

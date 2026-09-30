@@ -115,3 +115,142 @@ describe('ProjectProvisioningSupport, deploy jobs with no target', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe('ProjectProvisioningSupport.notifyProjectCreated', () => {
+  const build = (
+    overrides: {
+      teamIds?: string[] | Error;
+      record?: jest.Mock;
+      audit?: { recordProjectEvent: jest.Mock };
+      withNotifications?: boolean;
+    } = {},
+  ) => {
+    const record = overrides.record ?? jest.fn().mockResolvedValue(undefined);
+    const teamIds = overrides.teamIds ?? [];
+    const listWorkspaceLeadAndDeveloperIds =
+      teamIds instanceof Error
+        ? jest.fn().mockRejectedValue(teamIds)
+        : jest.fn().mockResolvedValue(teamIds);
+    const support = new ProjectProvisioningSupport({
+      catalogService: {} as never,
+      githubService: {} as never,
+      projectsRepository: { listWorkspaceLeadAndDeveloperIds } as never,
+      ciService: {} as never,
+      projectDeploymentProvisioningService: {} as never,
+      deploymentProvisioningDefaults: undefined,
+      configService: undefined,
+      usageQuotaService: undefined,
+      auditEventsService: undefined,
+      workspacesService: undefined,
+      notificationEventPublisher:
+        overrides.withNotifications === false
+          ? undefined
+          : ({ record } as never),
+      auditEventPublisher: (overrides.audit ?? {
+        recordProjectEvent: jest.fn(),
+      }) as never,
+      hierarchyProjectLinkService: undefined,
+      workflowFilePusher: undefined,
+      workflowFragmentRegistry: undefined,
+    });
+    return { support, record, listWorkspaceLeadAndDeveloperIds };
+  };
+
+  const input = {
+    workspaceId: 'ws-1',
+    creatorUserId: 'creator',
+    creatorLogin: 'tone',
+    projectId: 'project-1',
+    repoFullName: 'org/orders',
+  };
+
+  const recipients = (record: jest.Mock) =>
+    record.mock.calls.map(([call]) => (call as { userId: string }).userId);
+
+  it('notifies leads, developers and the creator once each with the specified copy', async () => {
+    const { support, record } = build({ teamIds: ['lead-1', 'dev-1'] });
+
+    await support.notifyProjectCreated(input);
+
+    expect([...recipients(record)].sort()).toEqual([
+      'creator',
+      'dev-1',
+      'lead-1',
+    ]);
+    expect(record).toHaveBeenCalledWith({
+      userId: 'lead-1',
+      projectId: 'project-1',
+      eventCode: 'project_created',
+      title: 'New project created: org/orders',
+      body: '@tone created project org/orders. It is now tracked and ready for development.',
+    });
+  });
+
+  it('never notifies a creator who is also a lead twice', async () => {
+    const { support, record } = build({ teamIds: ['creator', 'dev-1'] });
+
+    await support.notifyProjectCreated(input);
+
+    expect(recipients(record).filter((id) => id === 'creator')).toHaveLength(1);
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  it('still notifies the creator when there is no workspace to fan out to', async () => {
+    const { support, record, listWorkspaceLeadAndDeveloperIds } = build();
+
+    await support.notifyProjectCreated({ ...input, workspaceId: null });
+
+    expect(listWorkspaceLeadAndDeveloperIds).not.toHaveBeenCalled();
+    expect(recipients(record)).toEqual(['creator']);
+  });
+
+  it('records the audit row exactly once', async () => {
+    const audit = { recordProjectEvent: jest.fn() };
+    const { support } = build({ audit, teamIds: ['lead-1'] });
+
+    await support.notifyProjectCreated(input);
+
+    expect(audit.recordProjectEvent).toHaveBeenCalledTimes(1);
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'creator',
+        projectId: 'project-1',
+        eventCode: 'project_created',
+      }),
+    );
+  });
+
+  it('does not throw into provisioning when the recipient lookup fails', async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => {});
+    const { support, record } = build({ teamIds: new Error('db down') });
+
+    await expect(support.notifyProjectCreated(input)).resolves.toBeUndefined();
+
+    expect(record).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('does not throw when a notification sink rejects', async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => {});
+    const { support } = build({
+      record: jest.fn().mockRejectedValue(new Error('boom')),
+    });
+
+    await expect(support.notifyProjectCreated(input)).resolves.toBeUndefined();
+    warn.mockRestore();
+  });
+
+  it('is a no-op for notifications when no sink is wired', async () => {
+    const { support, listWorkspaceLeadAndDeveloperIds } = build({
+      withNotifications: false,
+    });
+
+    await expect(support.notifyProjectCreated(input)).resolves.toBeUndefined();
+    expect(listWorkspaceLeadAndDeveloperIds).not.toHaveBeenCalled();
+  });
+});

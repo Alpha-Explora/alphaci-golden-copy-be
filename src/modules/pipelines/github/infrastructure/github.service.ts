@@ -18,6 +18,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import {
   GithubRepoDeleteError,
   type GitHubBranchComparison,
+  type GitHubCommitAuthor,
   type GitHubDispatchWorkflowResult,
   type GitHubOpenPullRequestInput,
   type GitHubOpenPullRequestResult,
@@ -1958,6 +1959,42 @@ export class GithubService
     );
 
     return payload ? toBranchComparison(payload) : null;
+  }
+
+  /**
+   * Who GitHub attributes a single commit to, for best-effort notification
+   * attribution (never a full commit view — see GitHubCommitAuthor).
+   *
+   * `author.login` is only present when the commit is linked to a GitHub
+   * account; an unlinked email (a bot, a squash-merge service account)
+   * comes back as `author: null` from GitHub itself, which this passes
+   * through as `login: null` rather than falling back to the free-text git
+   * author name the way toComparisonCommit does for the branch-comparison
+   * UI — attribution needs a real account to map to an ALPHACI user, and a
+   * display name that cannot be mapped is not a fallback worth guessing at.
+   */
+  async getCommitAuthor(
+    accessToken: string,
+    repoFullName: string,
+    sha: string,
+  ): Promise<GitHubCommitAuthor | null> {
+    const payload = await this.http.workspaceGet<{
+      author?: { login?: string } | null;
+      parents?: unknown[];
+    }>(
+      `https://api.github.com/repos/${repoFullName}/commits/${encodeURIComponent(sha)}`,
+      accessToken,
+      'commit detail',
+    );
+
+    if (!payload) {
+      return null;
+    }
+
+    return {
+      login: payload.author?.login ?? null,
+      isMergeCommit: (payload.parents?.length ?? 0) > 1,
+    };
   }
 
   async findOpenPullRequest(

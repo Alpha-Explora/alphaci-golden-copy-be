@@ -4,6 +4,7 @@ import type {
   DeploymentProjectReference,
 } from '#kernel/ports/deployment-runtime.port';
 import type { GithubProjectPort } from '#kernel/ports/github.port';
+import type { PlatformAdminPort } from '#kernel/ports/platform-admin.port';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
 
 const project: DeploymentProjectReference = {
@@ -39,6 +40,11 @@ const makeGithub = (overrides: Partial<jest.Mocked<GithubProjectPort>> = {}) =>
     listBranches: jest.fn().mockResolvedValue([]),
     ...overrides,
   }) as unknown as jest.Mocked<GithubProjectPort>;
+
+const makeAdmin = (login: string | null = null) =>
+  ({
+    findUserIdByGithubLogin: jest.fn().mockResolvedValue(login),
+  }) as unknown as jest.Mocked<PlatformAdminPort>;
 
 describe('QaCommitResolutionService — resolution order', () => {
   it('prefers the newest READY deployment of the branch that has a commitSha', async () => {
@@ -91,7 +97,11 @@ describe('QaCommitResolutionService — resolution order', () => {
       ),
     });
     const github = makeGithub();
-    const service = new QaCommitResolutionService(deploymentHistory, github);
+    const service = new QaCommitResolutionService(
+      deploymentHistory,
+      github,
+      makeAdmin(),
+    );
 
     const result = await service.resolve(project, 'main', null);
 
@@ -141,7 +151,11 @@ describe('QaCommitResolutionService — resolution order', () => {
         .fn()
         .mockResolvedValue('installation-token'),
     });
-    const service = new QaCommitResolutionService(deploymentHistory, github);
+    const service = new QaCommitResolutionService(
+      deploymentHistory,
+      github,
+      makeAdmin(),
+    );
 
     const result = await service.resolve(project, 'main', null);
 
@@ -162,7 +176,11 @@ describe('QaCommitResolutionService — resolution order', () => {
         { name: 'main', protected: true, commitSha: 'e'.repeat(40) },
       ]),
     });
-    const service = new QaCommitResolutionService(deploymentHistory, github);
+    const service = new QaCommitResolutionService(
+      deploymentHistory,
+      github,
+      makeAdmin(),
+    );
 
     const result = await service.resolve(project, 'main', null);
 
@@ -185,7 +203,11 @@ describe('QaCommitResolutionService — resolution order', () => {
           { name: 'main', protected: true, commitSha: 'f'.repeat(40) },
         ]),
     });
-    const service = new QaCommitResolutionService(deploymentHistory, github);
+    const service = new QaCommitResolutionService(
+      deploymentHistory,
+      github,
+      makeAdmin(),
+    );
 
     const result = await service.resolve(project, 'main', 'oauth-token');
 
@@ -210,7 +232,11 @@ describe('QaCommitResolutionService — resolution order', () => {
           { name: 'main', protected: true, commitSha: 'g'.repeat(40) },
         ]),
     });
-    const service = new QaCommitResolutionService(deploymentHistory, github);
+    const service = new QaCommitResolutionService(
+      deploymentHistory,
+      github,
+      makeAdmin(),
+    );
 
     await service.resolve(project, 'main', 'oauth-token');
 
@@ -226,7 +252,11 @@ describe('QaCommitResolutionService — resolution order', () => {
     const github = makeGithub({
       listBranches: jest.fn().mockResolvedValue([]),
     });
-    const service = new QaCommitResolutionService(deploymentHistory, github);
+    const service = new QaCommitResolutionService(
+      deploymentHistory,
+      github,
+      makeAdmin(),
+    );
 
     const result = await service.resolve(project, 'main', 'oauth-token');
 
@@ -236,11 +266,86 @@ describe('QaCommitResolutionService — resolution order', () => {
   it('returns null when no token is resolvable at all (never calls listBranches)', async () => {
     const deploymentHistory = makeDeploymentHistory();
     const github = makeGithub();
-    const service = new QaCommitResolutionService(deploymentHistory, github);
+    const service = new QaCommitResolutionService(
+      deploymentHistory,
+      github,
+      makeAdmin(),
+    );
 
     const result = await service.resolve(project, 'main', null);
 
     expect(result).toBeNull();
     expect(github.listBranches).not.toHaveBeenCalled();
+  });
+});
+
+describe('QaCommitResolutionService.resolveCommitAuthorUserId', () => {
+  const build = (
+    getCommitAuthor: jest.Mock,
+    mappedUserId: string | null = 'dev-1',
+  ) => {
+    const github = makeGithub({
+      getCommitAuthor,
+    } as never);
+    const admin = makeAdmin(mappedUserId);
+    const service = new QaCommitResolutionService(
+      makeDeploymentHistory(),
+      github,
+      admin,
+    );
+    return { service, github, admin };
+  };
+
+  it('maps the GitHub author login to an ALPHACI user', async () => {
+    const { service, admin } = build(
+      jest.fn().mockResolvedValue({ login: 'tone', isMergeCommit: false }),
+    );
+
+    await expect(
+      service.resolveCommitAuthorUserId('org/repo', 'qa-1', 'sha', 'oauth'),
+    ).resolves.toBe('dev-1');
+    expect(admin.findUserIdByGithubLogin).toHaveBeenCalledWith('tone');
+  });
+
+  it('returns null for an unmapped login', async () => {
+    const { service } = build(
+      jest.fn().mockResolvedValue({ login: 'ghost', isMergeCommit: false }),
+      null,
+    );
+
+    await expect(
+      service.resolveCommitAuthorUserId('org/repo', 'qa-1', 'sha', 'oauth'),
+    ).resolves.toBeNull();
+  });
+
+  it('skips merge commits and unlinked authors without mapping', async () => {
+    for (const commit of [
+      { login: 'tone', isMergeCommit: true },
+      { login: null, isMergeCommit: false },
+    ]) {
+      const { service, admin } = build(jest.fn().mockResolvedValue(commit));
+      await expect(
+        service.resolveCommitAuthorUserId('org/repo', 'qa-1', 'sha', 'oauth'),
+      ).resolves.toBeNull();
+      expect(admin.findUserIdByGithubLogin).not.toHaveBeenCalled();
+    }
+  });
+
+  it('returns null (never throws) when the GitHub lookup fails', async () => {
+    const { service } = build(jest.fn().mockRejectedValue(new Error('502')));
+
+    await expect(
+      service.resolveCommitAuthorUserId('org/repo', 'qa-1', 'sha', 'oauth'),
+    ).resolves.toBeNull();
+  });
+
+  it('returns null when no read token is resolvable', async () => {
+    const getCommitAuthor = jest.fn();
+    const { service } = build(getCommitAuthor);
+
+    await expect(
+      service.resolveCommitAuthorUserId('org/repo', 'qa-1', 'sha', null),
+    ).resolves.toBeNull();
+    expect(getCommitAuthor).not.toHaveBeenCalled();
   });
 });

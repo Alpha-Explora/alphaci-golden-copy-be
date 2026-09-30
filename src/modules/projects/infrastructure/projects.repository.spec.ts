@@ -430,4 +430,52 @@ describe('ProjectsRepository', () => {
       );
     });
   });
+
+  describe('listWorkspaceLeadAndDeveloperIds', () => {
+    it('allow-lists lead and member personas of ACTIVE members only', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [{ id: 'lead-1' }, { id: 'dev-1' }],
+      });
+
+      await expect(
+        repo.listWorkspaceLeadAndDeveloperIds('workspace-1'),
+      ).resolves.toEqual(['lead-1', 'dev-1']);
+      const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+        string,
+        unknown[],
+      ];
+      expect(query).toContain("m.member_status = 'active'");
+      expect(query).toContain("u.app_role IN ('lead', 'member')");
+      expect(query).not.toContain("'qa'");
+      expect(values).toEqual(['workspace-1']);
+    });
+  });
+
+  describe('listWorkspaceQaIds', () => {
+    it('allow-lists the qa persona of ACTIVE members only', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [{ id: 'qa-1' }] });
+
+      await expect(repo.listWorkspaceQaIds('workspace-1')).resolves.toEqual([
+        'qa-1',
+      ]);
+      const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+        string,
+        unknown[],
+      ];
+      expect(query).toContain("m.member_status = 'active'");
+      expect(query).toContain("u.app_role = 'qa'");
+      expect(values).toEqual(['workspace-1']);
+    });
+  });
+
+  describe('findUserLogin', () => {
+    it('returns the login, or null for an unknown user', async () => {
+      (db.query as jest.Mock)
+        .mockResolvedValueOnce({ rows: [{ login: 'tone' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await expect(repo.findUserLogin('user-1')).resolves.toBe('tone');
+      await expect(repo.findUserLogin('nobody')).resolves.toBeNull();
+    });
+  });
 });

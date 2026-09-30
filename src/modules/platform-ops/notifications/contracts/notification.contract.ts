@@ -11,4 +11,8 @@ export interface NotificationContract {
   body: string;
   severity: NotificationSeverityContract;
   readAt: string | null;
+  /** Deep-link ids (spec 8.6); mirrors NotificationItem on the wire. */
+  projectId: string | null;
+  groupId: string | null;
+  deliveryProjectId: string | null;
 }

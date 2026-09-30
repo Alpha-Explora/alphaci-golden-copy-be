@@ -366,7 +366,13 @@ export class QaRunsService {
         run,
         { itemId, fromStatus: item.status, toStatus: updated.status },
       );
-      await this.notifyOnStatusChange(project, run, updated, runActor);
+      await this.notifyOnStatusChange(
+        project,
+        run,
+        updated,
+        runActor,
+        actor.oauthToken,
+      );
     }
 
     const [items, signoff] = await Promise.all([
@@ -412,17 +418,20 @@ export class QaRunsService {
       );
     }
 
-    if (previousVerifierId && previousVerifierId !== actor.userId) {
-      await this.notifyMany(
-        [previousVerifierId],
-        project.id,
-        'qa.item.retest_requested',
-        `A retest was requested for "${updated.title}" on ${run.branch}`,
-        note
-          ? this.truncate(note, RETEST_NOTIFICATION_TRUNCATE_LENGTH)
-          : 'No additional notes.',
-      );
-    }
+    // Re-test reaches the previous verifier plus the workspace's QA team
+    // (spec §3), never the developer who asked for it.
+    const qaIds = project.workspace_id
+      ? await this.access.listWorkspaceQaIds(project.workspace_id)
+      : [];
+    await this.notifyMany(
+      this.dedupeExcludingActor([previousVerifierId, ...qaIds], actor.userId),
+      project.id,
+      'qa.item.retest_requested',
+      `A retest was requested for "${updated.title}" on ${run.branch}`,
+      note
+        ? this.truncate(note, RETEST_NOTIFICATION_TRUNCATE_LENGTH)
+        : 'No additional notes.',
+    );
 
     const [items, signoff] = await Promise.all([
       this.repository.listItemsByRunId(run.id),
@@ -1020,9 +1029,15 @@ export class QaRunsService {
     run: QaVerificationRunRow,
     updated: QaRunItemRow,
     actor: { id: string; login: string },
+    oauthToken: string | null,
   ): Promise<void> {
     if (updated.status === 'returned_to_dev') {
-      const recipients = await this.ownerAndLeadRecipients(project, actor.id);
+      const recipients = await this.returnedToDevRecipients(
+        project,
+        run,
+        actor.id,
+        oauthToken,
+      );
       const parts = [
         updated.defect_severity
           ? `Severity: ${updated.defect_severity}.`
@@ -1081,17 +1096,53 @@ export class QaRunsService {
     );
   }
 
-  private async ownerAndLeadRecipients(
+  /**
+   * Owner + workspace leads + workspace developers, plus (best effort) the
+   * author of the commit under test when they map to an ALPHACI user who can
+   * see the project. Minus the actor, deduplicated.
+   */
+  private async returnedToDevRecipients(
     project: ProvisionedProjectRow,
-    excludeUserId: string,
+    run: QaVerificationRunRow,
+    actorId: string,
+    oauthToken: string | null,
   ): Promise<string[]> {
-    const leadIds = project.workspace_id
-      ? await this.access.listWorkspaceLeadIds(project.workspace_id)
-      : [];
+    const [teamIds, authorId] = await Promise.all([
+      project.workspace_id
+        ? this.access.listWorkspaceLeadAndDeveloperIds(project.workspace_id)
+        : Promise.resolve([] as string[]),
+      this.visibleCommitAuthor(project, run, actorId, oauthToken),
+    ]);
     return this.dedupeExcludingActor(
-      [project.user_id, ...leadIds],
-      excludeUserId,
+      [project.user_id, ...teamIds, authorId],
+      actorId,
     );
+  }
+
+  private async visibleCommitAuthor(
+    project: ProvisionedProjectRow,
+    run: QaVerificationRunRow,
+    actorId: string,
+    oauthToken: string | null,
+  ): Promise<string | null> {
+    const authorId = await this.commitResolution.resolveCommitAuthorUserId(
+      project.repo_full_name,
+      actorId,
+      run.commit_sha,
+      oauthToken,
+    );
+    if (!authorId) {
+      return null;
+    }
+    try {
+      const visible = await this.access.findVisibleProject(
+        project.id,
+        authorId,
+      );
+      return visible ? authorId : null;
+    } catch {
+      return null;
+    }
   }
 
   private dedupeExcludingActor(

@@ -31,7 +31,7 @@ export class SingleRepositoryProjectProvisioner {
 
   async createStandaloneProject(
     userId: string,
-    _userLogin: string,
+    userLogin: string,
     repositoryCreationToken: string,
     provisioningToken: string,
     provisioningOwnerLogin: string | undefined,
@@ -234,17 +234,13 @@ export class SingleRepositoryProjectProvisioner {
           ),
         });
 
-      await this.support.recordProductEvent({
-        userId,
+      await this.support.notifyProjectCreated({
+        workspaceId: row.workspace_id ?? null,
+        creatorUserId: userId,
+        creatorLogin: userLogin,
         projectId: row.id,
-        eventCode: 'project_created',
-        title: 'Project created',
-        body: `${repoFullName} is now tracked by ALPHACI.`,
-        metadata: {
-          repoFullName,
-          repoShape,
-          projectTypeId: dto.projectTypeId,
-        },
+        repoFullName,
+        metadata: { repoShape, projectTypeId: dto.projectTypeId },
       });
 
       return {
@@ -466,17 +462,16 @@ export class SingleRepositoryProjectProvisioner {
         slots: resolveSingleRepoDeploymentSlots(dto.deploymentProvisioning),
       });
 
-    await this.support.recordProductEvent({
-      userId,
+    // setupProject is not handed the session login, so read it back from the
+    // user record rather than threading a new argument through five layers.
+    const creatorLogin = await this.resolveCreatorLogin(userId);
+    await this.support.notifyProjectCreated({
+      workspaceId: row.workspace_id ?? null,
+      creatorUserId: userId,
+      creatorLogin,
       projectId: row.id,
-      eventCode: 'project_created',
-      title: 'Project created',
-      body: `${dto.repoFullName} is now tracked by ALPHACI.`,
-      metadata: {
-        repoFullName: dto.repoFullName,
-        repoShape: 'existing',
-        templateId: dto.templateId,
-      },
+      repoFullName: dto.repoFullName,
+      metadata: { repoShape: 'existing', templateId: dto.templateId },
     });
 
     return {
@@ -489,5 +484,19 @@ export class SingleRepositoryProjectProvisioner {
       githubCommitUrl: commitUrl,
       deploymentProvisioning,
     };
+  }
+
+  private async resolveCreatorLogin(userId: string): Promise<string> {
+    try {
+      return (
+        (await this.support.projectsRepository.findUserLogin(userId)) ??
+        'a teammate'
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not read the creator login for ${userId}: ${String(error)}`,
+      );
+      return 'a teammate';
+    }
   }
 }
