@@ -2,6 +2,7 @@ import {
   PIPELINE_BRANCHES,
   QA_BRANCH,
   QA_PROMOTION_TARGET_BRANCH,
+  WORKING_BRANCH,
 } from '#kernel/config/pipeline-branches';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 
@@ -108,8 +109,35 @@ export function canManageProjectLifecycle(role: PlatformAppRole): boolean {
   return PROJECT_MANAGEMENT_ROLES.includes(role);
 }
 
-/** The working tier developers push to; first rung of the promotion flow. */
-const WORKING_BRANCH = PIPELINE_BRANCHES[0];
+const REPOSITORY_ASSIGNEE_ROLES: readonly PlatformAppRole[] = ['member'];
+
+/**
+ * Whether a user whose global app_role is `role` may be given a repository
+ * ASSIGNMENT (which drives the GitHub team sync). Allow-list, Developers
+ * ('member') only: QA and leads already see every repository in the team
+ * through workspace membership, so an assignment would only grant GitHub push
+ * access nobody in those personas is meant to have. Evaluated on the TARGET's
+ * app_role, never on the derived group role (where qa also maps to 'member').
+ */
+export function canBeAssignedRepository(role: PlatformAppRole): boolean {
+  return REPOSITORY_ASSIGNEE_ROLES.includes(role);
+}
+
+/**
+ * The branch a self-service ALPHACI pull request (workflow settings, drift
+ * repair, existing-repo setup) should target: the working tier `dev`, else
+ * `uat`, never the production branch. Null when the repository has neither, in
+ * which case the caller refuses (409) instead of falling back to main.
+ */
+export function selfServicePullRequestBase(
+  existingBranches: Iterable<string>,
+): string | null {
+  const existing = new Set(existingBranches);
+  for (const candidate of [WORKING_BRANCH, QA_BRANCH]) {
+    if (existing.has(candidate)) return candidate;
+  }
+  return null;
+}
 
 /**
  * Whether the branch is named `feature/<login>-*`, the convention that marks a

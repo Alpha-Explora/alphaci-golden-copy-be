@@ -27,6 +27,9 @@ export const PIPELINE_BRANCHES = [
 
 export type PipelineBranch = (typeof PIPELINE_BRANCHES)[number];
 
+/** The working tier developers push to; first rung of the promotion flow. */
+export const WORKING_BRANCH = PIPELINE_BRANCHES[0];
+
 /** Production, and the branch every provisioned repository starts on. */
 export const DEFAULT_BRANCH = 'main' satisfies PipelineBranch;
 

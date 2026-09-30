@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -16,6 +18,11 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
+import { QA_BRANCH, WORKING_BRANCH } from '#kernel/config/pipeline-branches';
+import {
+  canCreatePullRequest,
+  selfServicePullRequestBase,
+} from '#kernel/rules/persona-access.rules';
 import { CatalogService } from '../catalog/catalog.service';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
@@ -224,9 +231,12 @@ export class ProjectWorkflowsService {
         'Workflow update pull requests are disabled',
       );
     }
-    await this.assertWithinQuota(userId);
-
+    // Visibility first (404), then the persona rule, then quota: a caller
+    // who may not open this PR must not spend quota or reach GitHub.
     const row = await this.loadOwnedProject(projectId, userId);
+    const role = await this.projectsRepository.findAppRole(userId);
+    this.assertMayOpenPullRequest(role, WORKING_BRANCH);
+    await this.assertWithinQuota(userId);
     const token = await this.resolveProvisioningToken(
       userId,
       oauthAccessToken,
@@ -245,8 +255,10 @@ export class ProjectWorkflowsService {
       );
     }
 
-    const repoInfo = await this.githubService.getRepo(token, owner, repo);
-    const baseBranch = repoInfo.defaultBranch || 'main';
+    // Never the repository default branch (main is production): dev, else
+    // uat, else refuse. The role rule is re-applied to the resolved base.
+    const baseBranch = await this.resolvePullRequestBase(token, owner, repo);
+    this.assertMayOpenPullRequest(role, baseBranch);
     const branchName = `alphaci/workflow-update-${this.timestampForBranch()}`;
     await this.githubService.createBranch(
       token,
@@ -342,6 +354,47 @@ export class ProjectWorkflowsService {
   }
 
   // --- Private helpers moved verbatim from ProjectsService ------------------
+
+  private assertMayOpenPullRequest(
+    role: Parameters<typeof canCreatePullRequest>[0],
+    base: string,
+  ): void {
+    // An unresolved role is not in any allow-list, so it is refused.
+    if (!canCreatePullRequest(role, base)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Your role cannot open workflow pull requests.',
+      });
+    }
+  }
+
+  private async resolvePullRequestBase(
+    token: string,
+    owner: string,
+    repo: string,
+  ): Promise<string> {
+    const existing: string[] = [];
+    for (const candidate of [WORKING_BRANCH, QA_BRANCH]) {
+      if (
+        await this.githubService.branchExists(token, owner, repo, candidate)
+      ) {
+        existing.push(candidate);
+      }
+    }
+    const base = selfServicePullRequestBase(existing);
+    if (!base) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'PR_BASE_BRANCH_MISSING',
+        message:
+          "This repository has no 'dev' or 'uat' branch to open the workflow pull request against. Create one first.",
+      });
+    }
+    return base;
+  }
 
   private async loadOwnedProject(
     projectId: string,

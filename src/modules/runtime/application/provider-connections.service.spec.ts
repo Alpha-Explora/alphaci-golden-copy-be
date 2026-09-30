@@ -1,3 +1,5 @@
+import { ForbiddenException } from '@nestjs/common';
+
 import { ProviderConnectionsService } from './provider-connections.service';
 
 describe('ProviderConnectionsService', () => {
@@ -19,8 +21,8 @@ describe('ProviderConnectionsService', () => {
   const providerRegistry = {
     get: jest.fn(),
   };
-  const workspacesService = {
-    getMyWorkspaces: jest.fn(),
+  const appRoleLookup = {
+    findAppRole: jest.fn(),
   };
 
   let service: ProviderConnectionsService;
@@ -76,17 +78,7 @@ describe('ProviderConnectionsService', () => {
         },
       ),
     });
-    workspacesService.getMyWorkspaces.mockResolvedValue({
-      enabled: true,
-      items: [
-        {
-          id: 'workspace-1',
-          name: 'Team workspace',
-          kind: 'team',
-          role: 'admin',
-        },
-      ],
-    });
+    appRoleLookup.findAppRole.mockResolvedValue('lead');
     repository.createProviderConnection.mockResolvedValue({
       id: 'connection-1',
       provider: 'vercel',
@@ -108,7 +100,7 @@ describe('ProviderConnectionsService', () => {
       repository as never,
       encryptionService as never,
       clientRegistry,
-      workspacesService,
+      appRoleLookup as never,
       providerRegistry as never,
     );
   });
@@ -154,40 +146,44 @@ describe('ProviderConnectionsService', () => {
     expect(repository.createProviderConnection).not.toHaveBeenCalled();
   });
 
-  it('rejects provider mutations for users without admin or delegated_lead workspace access', async () => {
-    workspacesService.getMyWorkspaces.mockResolvedValueOnce({
-      enabled: true,
-      items: [
-        {
-          id: 'workspace-1',
-          name: 'Team workspace',
-          kind: 'team',
-          role: 'viewer',
-        },
-      ],
-    });
+  it.each(['member', 'qa'])(
+    'rejects provider mutations for a %s with PROJECT_ROLE_FORBIDDEN',
+    async (role) => {
+      appRoleLookup.findAppRole.mockResolvedValueOnce(role);
 
+      const error = await service
+        .createProviderConnection('user-1', {
+          provider: 'vercel',
+          label: 'Team Vercel',
+          token: 'vercel-token-cdef',
+        })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'PROJECT_ROLE_FORBIDDEN',
+      });
+      expect(repository.createProviderConnection).not.toHaveBeenCalled();
+    },
+  );
+
+  it('fails closed when the role lookup yields nothing', async () => {
+    appRoleLookup.findAppRole.mockResolvedValueOnce(undefined);
     await expect(
-      service.createProviderConnection('user-1', {
-        provider: 'vercel',
-        label: 'Team Vercel',
-        token: 'vercel-token-cdef',
-      }),
-    ).rejects.toThrow(
-      'Provider connection management requires admin or delegated_lead workspace access',
-    );
-
-    expect(repository.createProviderConnection).not.toHaveBeenCalled();
+      service.revokeProviderConnection('connection-1', 'user-1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.revokeProviderConnection).not.toHaveBeenCalled();
   });
 
-  it('checks workspace role before revoking provider connections', async () => {
+  it.each(['admin', 'lead'])('allows %s to revoke', async (role) => {
+    appRoleLookup.findAppRole.mockResolvedValueOnce(role);
     repository.revokeProviderConnection.mockResolvedValueOnce(true);
 
     await expect(
       service.revokeProviderConnection('connection-1', 'user-1'),
     ).resolves.toEqual({ revoked: true });
 
-    expect(workspacesService.getMyWorkspaces).toHaveBeenCalledWith('user-1');
+    expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
     expect(repository.revokeProviderConnection).toHaveBeenCalledWith(
       'connection-1',
       'user-1',

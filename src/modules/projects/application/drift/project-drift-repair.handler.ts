@@ -30,7 +30,14 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
-import { PROTECTED_BRANCHES } from '#kernel/config/pipeline-branches';
+import {
+  PROTECTED_BRANCHES,
+  WORKING_BRANCH,
+} from '#kernel/config/pipeline-branches';
+import {
+  canCreatePullRequest,
+  canManageProjectLifecycle,
+} from '#kernel/rules/persona-access.rules';
 import { canRepairBranchProtection } from '../../domain/drift-repair-access.rules';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { ProjectWorkflowsService } from '../workflows/project-workflows.service';
@@ -116,21 +123,60 @@ export class ProjectDriftRepairService {
       finding,
     };
 
+    // Visibility (404) came first above; the persona gate runs before any
+    // action-specific work. Every action is allow-listed on the global
+    // app_role: an unlisted or unresolved role is refused (fail closed).
     switch (action) {
       case 'mark_ignored':
+        await this.assertLifecycleRole(ctx);
         return this.markIgnored(ctx);
       case 'rotate_ci_token':
+        await this.assertLifecycleRole(ctx);
         return this.rotateCiToken(ctx);
       case 'detach_target':
+        await this.assertLifecycleRole(ctx);
         return this.detachTarget(ctx);
       case 'repair_branch_protection':
         return this.repairBranchProtection(ctx, project.repo_full_name);
       case 'regenerate_workflow_preview':
+        await this.assertPullRequestRole(ctx);
         return this.regenerateWorkflowPreview(ctx);
       case 'create_workflow_update_pr':
+        await this.assertPullRequestRole(ctx);
         return this.createWorkflowUpdatePr(ctx);
       default:
         throw new BadRequestException('Unsupported repair action');
+    }
+  }
+
+  /** admin | lead only (canManageProjectLifecycle); 403 PROJECT_ROLE_FORBIDDEN. */
+  private async assertLifecycleRole(ctx: DriftRepairContext): Promise<void> {
+    const role = await this.projectsRepository.findAppRole(ctx.userId);
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Only a lead or admin may apply this drift repair.',
+      });
+    }
+  }
+
+  /**
+   * Workflow preview / update PR: the PR base is the working tier (dev), never
+   * main, so the rule is canCreatePullRequest(role, dev) -- qa is refused. The
+   * workflows service re-applies the same rule to the base it actually
+   * resolves (dev, else uat).
+   */
+  private async assertPullRequestRole(ctx: DriftRepairContext): Promise<void> {
+    const role = await this.projectsRepository.findAppRole(ctx.userId);
+    if (!canCreatePullRequest(role, WORKING_BRANCH)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Your role cannot open workflow pull requests.',
+      });
     }
   }
 

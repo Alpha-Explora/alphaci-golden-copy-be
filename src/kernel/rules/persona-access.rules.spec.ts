@@ -1,9 +1,11 @@
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import {
+  canBeAssignedRepository,
   canCreatePullRequest,
   canManageEnvVars,
   canManageProjectLifecycle,
   canMergeViaWorkspace,
+  selfServicePullRequestBase,
   visibleBranchesFor,
 } from './persona-access.rules';
 
@@ -73,6 +75,23 @@ describe('canManageProjectLifecycle', () => {
   it('refuses qa and member', () => {
     expect(canManageProjectLifecycle('qa')).toBe(false);
     expect(canManageProjectLifecycle('member')).toBe(false);
+  });
+});
+
+describe('canBeAssignedRepository', () => {
+  it('allows the Developer persona only', () => {
+    expect(ALL_ROLES.filter((r) => canBeAssignedRepository(r))).toEqual([
+      'member',
+    ]);
+  });
+});
+
+describe('selfServicePullRequestBase', () => {
+  it('prefers dev, then uat, and never main', () => {
+    expect(selfServicePullRequestBase(['main', 'uat', 'dev'])).toBe('dev');
+    expect(selfServicePullRequestBase(['main', 'uat'])).toBe('uat');
+    expect(selfServicePullRequestBase(['main'])).toBeNull();
+    expect(selfServicePullRequestBase([])).toBeNull();
   });
 });
 

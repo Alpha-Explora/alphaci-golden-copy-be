@@ -6,6 +6,11 @@ import {
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import { canManageEnvVars } from '#kernel/rules/persona-access.rules';
 import { HierarchyAccessService } from './hierarchy-access.service';
 import {
   HIERARCHY_EVENT_CODES,
@@ -32,6 +37,9 @@ export class RepoConfigBrokerService {
     @Inject(GITHUB_SECRETS_BROKER)
     private readonly secretsProvider: GithubSecretsBroker,
     private readonly auditEventsService: AuditEventPublisher,
+    // Required (not @Optional): the write gate must never silently vanish.
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup: AppRoleLookup,
   ) {}
 
   async listConfiguration(
@@ -105,8 +113,8 @@ export class RepoConfigBrokerService {
       // Delete has no request-body environmentScope; production repository
       // config is hard-blocked at write-time already, so a delete here only
       // ever targets a previously-written non_production entry. Passing
-      // 'non_production' keeps the same access rule (manager, or an active
-      // assignment holder) without re-deriving scope from history.
+      // 'non_production' keeps the same access rule (lead/admin app_role, no
+      // assignment shortcut) without re-deriving scope from history.
       'non_production',
     );
 
@@ -239,16 +247,27 @@ export class RepoConfigBrokerService {
     const { repository, viaManager } =
       await this.accessService.assertRepositoryVisible(repositoryId, userId);
 
+    // Repository-level GitHub Actions secrets/variables are written with an
+    // installation token, so the authority is the global app_role allow-list
+    // (admin | lead), not manager/assignee derivation. Visibility (404)
+    // came first above; an unresolved role falls back to 'member' (refused).
+    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'member';
+    if (!canManageEnvVars(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'ENV_VARS_LEAD_ONLY',
+        message:
+          'Only a lead or admin may change repository secrets and variables.',
+      });
+    }
+
     if (environmentScope === 'production') {
       throw new ForbiddenException(
         'Production environment configuration requires the protected approval workflow, which is not yet available',
       );
     }
 
-    // Not a manager — must hold this exact repository's active assignment.
-    // assertRepositoryVisible already guarantees this (it 404s otherwise),
-    // so reaching here means the caller is either a manager or an active
-    // assignment holder — both permitted for non_production writes.
     return { groupId: repository.groupId, viaManager, repository };
   }
 

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -36,6 +37,8 @@ function build(
   overrides: {
     client?: Record<string, unknown>;
     domain?: unknown;
+    role?: string;
+    visible?: boolean;
   } = {},
 ) {
   const client = {
@@ -81,14 +84,24 @@ function build(
     ),
   };
   const clientRegistry = { getClient: jest.fn(() => client) };
-  const workspaceAccessService = { assertProjectRole: jest.fn() };
+  const projectReferenceLookup = {
+    findProjectReference: jest.fn(() =>
+      Promise.resolve(
+        overrides.visible === false ? null : { projectId: 'project-1' },
+      ),
+    ),
+  };
+  const appRoleLookup = {
+    findAppRole: jest.fn(() => Promise.resolve(overrides.role ?? 'lead')),
+  };
   const auditEventsService = { recordProjectEvent: jest.fn() };
 
   const service = new CustomDomainsService(
     repository as never,
     deploymentTargetsService as never,
     clientRegistry as never,
-    workspaceAccessService as never,
+    projectReferenceLookup as never,
+    appRoleLookup as never,
     auditEventsService as never,
   );
 
@@ -97,7 +110,8 @@ function build(
     client,
     repository,
     deploymentTargetsService,
-    workspaceAccessService,
+    projectReferenceLookup,
+    appRoleLookup,
     auditEventsService,
   };
 }
@@ -209,19 +223,63 @@ describe('CustomDomainsService', () => {
       ).rejects.toThrow(ServiceUnavailableException);
     });
 
-    it('checks mutation access before touching the provider', async () => {
-      const { service, workspaceAccessService } = build();
+    it('refuses member and qa with HOSTING_LEAD_ONLY before touching the provider', async () => {
+      for (const role of ['member', 'qa']) {
+        const { service, deploymentTargetsService, repository } = build({
+          role,
+        });
+        const err = await service
+          .addDomain('project-1', 'user-1', {
+            deploymentTargetId: 'target-1',
+            hostname: 'app.example.com',
+          })
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({
+          code: 'HOSTING_LEAD_ONLY',
+        });
+        expect(
+          deploymentTargetsService.providerContextForTarget,
+        ).not.toHaveBeenCalled();
+        expect(repository.insert).not.toHaveBeenCalled();
+      }
+    });
 
-      await service.addDomain('project-1', 'user-1', {
-        deploymentTargetId: 'target-1',
-        hostname: 'app.example.com',
+    it('allows admin and lead', async () => {
+      for (const role of ['admin', 'lead']) {
+        const { service } = build({ role });
+        await expect(
+          service.addDomain('project-1', 'user-1', {
+            deploymentTargetId: 'target-1',
+            hostname: 'app.example.com',
+          }),
+        ).resolves.toBeDefined();
+      }
+    });
+
+    it('answers 404 for an invisible project, before the role check', async () => {
+      const { service, appRoleLookup } = build({
+        visible: false,
+        role: 'member',
       });
+      await expect(
+        service.addDomain('project-1', 'user-1', {
+          deploymentTargetId: 'target-1',
+          hostname: 'app.example.com',
+        }),
+      ).rejects.toThrow(NotFoundException);
+      expect(appRoleLookup.findAppRole).not.toHaveBeenCalled();
+    });
 
-      expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-        'project-1',
-        'user-1',
-        ['admin', 'delegated_lead', 'member'],
-      );
+    it('fails closed when the role cannot be resolved', async () => {
+      const { service, appRoleLookup } = build();
+      (appRoleLookup.findAppRole as jest.Mock).mockResolvedValueOnce(undefined);
+      await expect(
+        service.addDomain('project-1', 'user-1', {
+          deploymentTargetId: 'target-1',
+          hostname: 'app.example.com',
+        }),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -329,17 +387,63 @@ describe('CustomDomainsService', () => {
     });
   });
 
+  describe('access control on verify/remove', () => {
+    it('verify: member is refused, invisible project is 404', async () => {
+      await expect(
+        build({ role: 'member' }).service.verifyDomain(
+          'project-1',
+          'domain-1',
+          'user-1',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        build({ visible: false }).service.verifyDomain(
+          'project-1',
+          'domain-1',
+          'user-1',
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('remove: a stranger (invisible project) gets 404 and nothing is deleted', async () => {
+      const { service, repository, deploymentTargetsService } = build({
+        visible: false,
+        role: 'admin',
+      });
+      await expect(
+        service.removeDomain('project-1', 'domain-1', 'user-1'),
+      ).rejects.toThrow(NotFoundException);
+      expect(repository.deleteById).not.toHaveBeenCalled();
+      expect(
+        deploymentTargetsService.providerContextForTarget,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('remove: member and qa are refused and nothing is deleted', async () => {
+      for (const role of ['member', 'qa']) {
+        const { service, repository } = build({ role });
+        await expect(
+          service.removeDomain('project-1', 'domain-1', 'user-1'),
+        ).rejects.toThrow(ForbiddenException);
+        expect(repository.deleteById).not.toHaveBeenCalled();
+      }
+    });
+  });
+
   describe('listDomains', () => {
-    it('allows a viewer to read', async () => {
-      const { service, workspaceAccessService } = build();
+    it('allows any user who can see the project, whatever their role', async () => {
+      const { service } = build({ role: 'qa' });
+      await expect(
+        service.listDomains('project-1', 'user-1'),
+      ).resolves.toHaveLength(1);
+    });
 
-      await service.listDomains('project-1', 'user-1');
-
-      expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-        'project-1',
-        'user-1',
-        ['admin', 'delegated_lead', 'member', 'viewer'],
+    it('answers 404 for an invisible project', async () => {
+      const { service, repository } = build({ visible: false });
+      await expect(service.listDomains('project-1', 'user-1')).rejects.toThrow(
+        NotFoundException,
       );
+      expect(repository.listForProject).not.toHaveBeenCalled();
     });
   });
 });

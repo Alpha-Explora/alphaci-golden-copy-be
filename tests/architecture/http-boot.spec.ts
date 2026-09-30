@@ -74,6 +74,34 @@ const { ProjectWorkflowsService } =
 const { QaPromotionService } =
   require('../../src/modules/projects/application/qa-runs/qa-promotion.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-promotion.service.js');
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { APP_ROLE_LOOKUP } =
+  require('../../src/kernel/ports/app-role.port.js') as typeof import('../../src/kernel/ports/app-role.port.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { CustomDomainsService } =
+  require('../../src/modules/runtime/application/custom-domains.service.js') as typeof import('../../src/modules/runtime/application/custom-domains.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DeploymentTargetsService } =
+  require('../../src/modules/runtime/application/deployment-targets.service.js') as typeof import('../../src/modules/runtime/application/deployment-targets.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProviderConnectionsService } =
+  require('../../src/modules/runtime/application/provider-connections.service.js') as typeof import('../../src/modules/runtime/application/provider-connections.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { RepoConfigBrokerService } =
+  require('../../src/modules/identity-access/hierarchy/application/repo-config-broker.service.js') as typeof import('../../src/modules/identity-access/hierarchy/application/repo-config-broker.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { AssignmentsService } =
+  require('../../src/modules/identity-access/hierarchy/application/assignments.service.js') as typeof import('../../src/modules/identity-access/hierarchy/application/assignments.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ExistingReposService } =
+  require('../../src/modules/projects/application/existing-repos/existing-repos.service.js') as typeof import('../../src/modules/projects/application/existing-repos/existing-repos.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { GithubController } =
+  require('../../src/modules/pipelines/github/api/github.controller.js') as typeof import('../../src/modules/pipelines/github/api/github.controller.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DEPLOYMENT_PROJECT_REFERENCE_LOOKUP } =
+  require('../../src/kernel/ports/deployment-runtime.port.js') as typeof import('../../src/kernel/ports/deployment-runtime.port.js');
+
 describe('HTTP application boot', () => {
   it('initializes the real Express middleware and serves health without a DB', async () => {
     const app = await createHttpApplication();
@@ -343,4 +371,60 @@ describe('HTTP application boot', () => {
     },
     60_000,
   );
+
+  /*
+   * Phase 5 role gates. Each of these reads the caller's global app_role
+   * through APP_ROLE_LOOKUP (and custom domains also checks project
+   * visibility through DEPLOYMENT_PROJECT_REFERENCE_LOOKUP). A gate whose
+   * lookup silently arrived as undefined would be a no-op or a permanent
+   * refusal that unit tests, which hand-build the service, cannot see.
+   */
+  it.each([
+    ['CustomDomainsService', () => CustomDomainsService],
+    ['DeploymentTargetsService', () => DeploymentTargetsService],
+    ['ProviderConnectionsService', () => ProviderConnectionsService],
+    ['RepoConfigBrokerService', () => RepoConfigBrokerService],
+    ['AssignmentsService', () => AssignmentsService],
+    ['ExistingReposService', () => ExistingReposService],
+    ['GithubController', () => GithubController],
+  ] as const)(
+    'gives %s the real APP_ROLE_LOOKUP, not a silently-undefined optional',
+    async (_name, target) => {
+      const app = await createHttpApplication();
+      await app.init();
+
+      try {
+        const lookup = app.get(APP_ROLE_LOOKUP, { strict: false });
+        expect(lookup).toBeInstanceOf(ProjectsRepository);
+        const resolved: unknown = app.get(target(), { strict: false });
+        const instance = resolved as { appRoleLookup?: unknown };
+        expect(instance.appRoleLookup).toBe(lookup);
+      } finally {
+        await app.close();
+      }
+    },
+    60_000,
+  );
+
+  it('gives CustomDomainsService the real project-visibility reference lookup', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const lookup = app.get(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP, {
+        strict: false,
+      });
+      const resolved: unknown = app.get(CustomDomainsService, {
+        strict: false,
+      });
+      const instance = resolved as { projectReferenceLookup?: unknown };
+      expect(
+        typeof (lookup as { findProjectReference?: unknown })
+          .findProjectReference,
+      ).toBe('function');
+      expect(instance.projectReferenceLookup).toBe(lookup);
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
 });
