@@ -21,6 +21,18 @@ import {
   type ValidateEnvTextInput,
 } from '../application/env-vars.service';
 
+/**
+ * Every route here is gated by EnvVarsService.assertHttpAccess (app_role
+ * admin/lead, or platform admin, and project visibility — see
+ * persona-access.rules.ts's canManageEnvVars) before the underlying method
+ * runs. That gate lives here, at the HTTP boundary, rather than inside
+ * provisionEnvVars/listEnvMetadata/validateEnvText/deleteEnvMetadata
+ * themselves: provisionEnvVars in particular is also called directly by
+ * provisioning's own env injection (ProjectDeploymentProvisioningService),
+ * which must keep writing env vars unattended during project setup and
+ * cross-linking, for whichever user triggered it — baking the lead/admin
+ * check into the shared method would break that internal caller.
+ */
 @Controller('projects/:projectId/env-vars')
 @RequiresCapability('runtime.env-provisioning')
 @UseGuards(SessionAuthGuard, CapabilityGuard, SubscriptionGuard)
@@ -28,42 +40,50 @@ export class EnvVarsController {
   constructor(private readonly service: EnvVarsService) {}
 
   @Get()
-  list(@Req() req: Request, @Param('projectId') projectId: string) {
-    const userId = req.session.user?.id ?? req.session.userId;
-    if (!userId) {
-      throw new UnauthorizedException('Authentication required');
-    }
+  async list(@Req() req: Request, @Param('projectId') projectId: string) {
+    const userId = this.requireUserId(req);
+    await this.service.assertHttpAccess(projectId, userId);
     return this.service.listEnvMetadata(projectId, userId);
   }
 
   @Post('provision')
-  provision(
+  async provision(
     @Req() req: Request,
     @Param('projectId') projectId: string,
     @Body() body: ProvisionEnvVarsDto,
   ) {
-    return this.service.provisionEnvVars(projectId, req.session.user!.id, body);
+    const userId = this.requireUserId(req);
+    await this.service.assertHttpAccess(projectId, userId);
+    return this.service.provisionEnvVars(projectId, userId, body);
   }
 
   @Post('validate')
-  validate(
+  async validate(
     @Req() req: Request,
     @Param('projectId') projectId: string,
     @Body() body: ValidateEnvTextInput,
   ) {
-    return this.service.validateEnvText(projectId, req.session.user!.id, body);
+    const userId = this.requireUserId(req);
+    await this.service.assertHttpAccess(projectId, userId);
+    return this.service.validateEnvText(projectId, userId, body);
   }
 
   @Delete(':metadataId')
-  remove(
+  async remove(
     @Req() req: Request,
     @Param('projectId') projectId: string,
     @Param('metadataId') metadataId: string,
   ) {
-    return this.service.deleteEnvMetadata(
-      projectId,
-      metadataId,
-      req.session.user!.id,
-    );
+    const userId = this.requireUserId(req);
+    await this.service.assertHttpAccess(projectId, userId);
+    return this.service.deleteEnvMetadata(projectId, metadataId, userId);
+  }
+
+  private requireUserId(req: Request): string {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    return userId;
   }
 }

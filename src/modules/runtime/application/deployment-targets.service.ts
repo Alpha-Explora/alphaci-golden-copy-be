@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -11,6 +12,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import {
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import {
   DEPLOYMENT_CAPABILITY_RESOLVER,
   type CapabilityResolverPort,
 } from '#kernel/composition/capability-resolver.port.js';
@@ -21,6 +26,7 @@ import {
   USAGE_QUOTA,
   type UsageQuotaPort,
 } from '#kernel/ports/usage-quota.port';
+import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import {
@@ -120,6 +126,9 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     @Optional()
     @Inject(PROVIDER_CI_SECRETS_INSTALLER_REGISTRY)
     private readonly ciSecretsInstallers?: ProviderCiSecretsInstallerRegistryPort,
+    @Optional()
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup?: AppRoleLookup,
   ) {}
 
   async listDeploymentTargets(projectId: string, userId: string) {
@@ -705,18 +714,27 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       throw new BadRequestException('Project target management is disabled');
     }
 
-    // Leads only: this rewrites the repository's deployment credentials, and
-    // for an ALPHACI-managed target that means writing the platform's own
-    // provider token — the same bar Detach sets for touching a provider.
-    await this.assertProjectMutationAccess(projectId, userId, [
-      'admin',
-      'delegated_lead',
-    ]);
+    // Visibility first (getOwnedTargetOrThrow's own getProjectOrThrow — 404
+    // for a project/target this user cannot see), then the persona check:
+    // app_role admin/lead only (see persona-access.rules.ts's
+    // canManageProjectLifecycle), the sole authority now — this rewrites
+    // the repository's deployment credentials, and for an ALPHACI-managed
+    // target that means writing the platform's own provider token, the
+    // same bar Detach sets for touching a provider.
     const target = await this.getOwnedTargetOrThrow(
       projectId,
       targetId,
       userId,
     );
+    const role = (await this.appRoleLookup?.findAppRole(userId)) ?? 'member';
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Only a lead or admin may reinstall deployment secrets.',
+      });
+    }
 
     const installer = this.ciSecretsInstallers?.get(target.provider);
     if (!installer?.supports(target)) {

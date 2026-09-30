@@ -12,6 +12,7 @@ never import from `src/modules/`.**
 | `events/` | outbox persistence, topic registration, and event dispatching |
 | `http/` | exception filters and HTTP middleware shared by the application |
 | `ports/` | small dependency-inversion ports used to break genuine context cycles |
+| `rules/` | pure authorization policy shared by two or more bounded contexts, agreed on by neither owner alone |
 
 ## Admission rule
 

@@ -13,7 +13,6 @@ import type { CiService } from '#modules/pipelines/ci/application/ci.service.js'
 import { GithubRepoDeleteError } from '#modules/pipelines/github/infrastructure/github.service.js';
 import type { GithubService } from '#modules/pipelines/github/infrastructure/github.service.js';
 import type { WorkspacesService } from '#modules/identity-access/workspaces/application/workspaces.service.js';
-import type { WorkspaceAccessService } from '#modules/identity-access/workspaces/application/workspace-access.service.js';
 import type { ProjectsRepository } from '../../infrastructure/projects.repository.js';
 import { ProjectsService } from './projects.service.js';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
@@ -106,17 +105,13 @@ const makeProjectsRepository = () =>
       id: 'project-1',
       repo_full_name: 'tone/orders-api',
     }),
+    // app_role is the disconnect/lifecycle authority (see
+    // persona-access.rules.ts); default to a persona allowed to disconnect
+    // so tests unrelated to the role gate do not each need to set it.
+    findAppRole: jest.fn().mockResolvedValue('lead'),
     listByUser: jest.fn().mockResolvedValue([]),
     isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
   }) as unknown as ProjectsRepository;
-
-const makeWorkspaceAccessService = (
-  overrides: Partial<{ assertProjectRole: jest.Mock }> = {},
-) =>
-  ({
-    assertProjectRole: jest.fn().mockResolvedValue(null),
-    ...overrides,
-  }) as unknown as WorkspaceAccessService;
 
 const makeCiService = () =>
   ({
@@ -2604,7 +2599,11 @@ jobs:
   it('disconnects an owned project through the repository (default, no GitHub call)', async () => {
     const projectsRepository = {
       deleteByIdAndUser: jest.fn().mockResolvedValue(true),
-      findByIdAndUser: jest.fn(),
+      findByIdAndUser: jest.fn().mockResolvedValue({
+        id: 'project-1',
+        repo_full_name: 'tone/orders-api',
+      }),
+      findAppRole: jest.fn().mockResolvedValue('lead'),
     };
     const githubServiceSpy = makeGithubService();
     const disconnectService = makeProjectsService(
@@ -2618,16 +2617,20 @@ jobs:
     await expect(
       disconnectService.disconnectProject('project-1', 'user-1'),
     ).resolves.toEqual({ ok: true, githubRepoDeleted: false });
-    // Default path passes allowedRoles: undefined through, which falls back
-    // to deleteByIdAndUser's own default (admin/delegated_lead/member) — the
-    // plain-disconnect permissive role set stays unchanged.
+    // app_role is the sole authority now (persona-access.rules.ts):
+    // visibility is checked with the default, role-aware predicate (no
+    // allowedRoles), the caller's persona is read separately, and neither
+    // deleteByIdAndUser nor the visibility lookup carries a stored-role
+    // restriction any more.
+    expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+    );
+    expect(projectsRepository.findAppRole).toHaveBeenCalledWith('user-1');
     expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      undefined,
     );
-    // Default path must never touch GitHub or require a repo lookup.
-    expect(projectsRepository.findByIdAndUser).not.toHaveBeenCalled();
     expect(githubServiceSpy.deleteRepoForUser).not.toHaveBeenCalled();
   });
 
@@ -2635,7 +2638,10 @@ jobs:
     const disconnectService = makeProjectsService(
       makeCatalogService(),
       githubService,
-      { deleteByIdAndUser: jest.fn().mockResolvedValue(false) },
+      {
+        findByIdAndUser: jest.fn().mockResolvedValue(null),
+        deleteByIdAndUser: jest.fn().mockResolvedValue(false),
+      },
       makeCiService(),
       projectDeploymentProvisioningService,
     );
@@ -2645,14 +2651,43 @@ jobs:
     ).rejects.toThrow(NotFoundException);
   });
 
+  it.each(['qa', 'member'] as const)(
+    'is a 403 for a visible project when the caller persona is %s, even for a plain disconnect',
+    async (appRole) => {
+      const disconnectService = makeProjectsService(
+        makeCatalogService(),
+        githubService,
+        {
+          findByIdAndUser: jest.fn().mockResolvedValue({
+            id: 'project-1',
+            repo_full_name: 'tone/orders-api',
+          }),
+          findAppRole: jest.fn().mockResolvedValue(appRole),
+          deleteByIdAndUser: jest.fn().mockResolvedValue(true),
+        },
+        makeCiService(),
+        projectDeploymentProvisioningService,
+      );
+
+      const error = await disconnectService
+        .disconnectProject('project-1', 'user-1')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'PROJECT_ROLE_FORBIDDEN',
+      });
+    },
+  );
+
   describe('disconnectProject with deleteGithubRepo opt-in', () => {
     const buildService = (options: {
       githubServiceOverride?: Partial<{
         deleteRepoForUser: jest.Mock;
       }>;
-      workspaceAccessService?: WorkspaceAccessService;
       projectsRepositoryOverride?: Partial<{
         findByIdAndUser: jest.Mock;
+        findAppRole: jest.Mock;
         deleteByIdAndUser: jest.Mock;
       }>;
       auditEventsService?: { recordProjectEvent: jest.Mock };
@@ -2685,7 +2720,7 @@ jobs:
         options.auditEventsService ?? undefined, // auditEventsService
         undefined, // workspacesService
         options.notificationEventsService ?? undefined, // notificationEventsService
-        options.workspaceAccessService, // workspaceAccessService
+        undefined, // workspaceAccessService — no longer consulted by disconnectProject
       );
 
       return { service, githubServiceMock, projectsRepository };
@@ -2695,7 +2730,6 @@ jobs:
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const notificationEventsService = { record: jest.fn() };
       const { service, githubServiceMock, projectsRepository } = buildService({
-        workspaceAccessService: makeWorkspaceAccessService(),
         auditEventsService,
         notificationEventsService,
       });
@@ -2713,18 +2747,16 @@ jobs:
         'tone',
         'orders-api',
       );
-      // Both the role-scoped lookup and the final delete must carry the
-      // tightened role list — this is the SQL-level (fail-closed)
-      // enforcement, independent of workspaceAccessService.
+      // app_role is the authority (persona-access.rules.ts); visibility and
+      // delete are no longer restricted by a stored workspace role.
       expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['admin', 'delegated_lead'],
       );
+      expect(projectsRepository.findAppRole).toHaveBeenCalledWith('user-1');
       expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['admin', 'delegated_lead'],
       );
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({ eventCode: 'project_github_repo_deleted' }),
@@ -2734,7 +2766,6 @@ jobs:
     it('rejects a mismatched confirmRepoName without ever calling GitHub, and audits the rejection', async () => {
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, githubServiceMock, projectsRepository } = buildService({
-        workspaceAccessService: makeWorkspaceAccessService(),
         auditEventsService,
       });
 
@@ -2759,36 +2790,35 @@ jobs:
       );
     });
 
-    it('rejects deleteGithubRepo=true for a developer-role user via the app-layer pre-check (owner/admin only), and audits it', async () => {
-      const workspaceAccessService = makeWorkspaceAccessService({
-        assertProjectRole: jest
-          .fn()
-          .mockRejectedValue(
-            new ForbiddenException('Insufficient workspace role'),
-          ),
-      });
+    it('rejects deleteGithubRepo=true for a member-persona user via the app-layer pre-check (admin/lead only), and audits it', async () => {
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, githubServiceMock, projectsRepository } = buildService({
-        workspaceAccessService,
+        projectsRepositoryOverride: {
+          findAppRole: jest.fn().mockResolvedValue('member'),
+        },
         auditEventsService,
       });
 
-      await expect(
-        service.disconnectProject(
+      const error = await service
+        .disconnectProject(
           'project-1',
           'user-1',
           { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
           'gh-token',
-        ),
-      ).rejects.toThrow(ForbiddenException);
+        )
+        .catch((e: unknown) => e);
 
-      expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'PROJECT_ROLE_FORBIDDEN',
+      });
+      // Visibility was still resolved (this is a 403, not a 404) before the
+      // persona check failed; nothing downstream ran.
+      expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['admin', 'delegated_lead'],
       );
       expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
-      expect(projectsRepository.findByIdAndUser).not.toHaveBeenCalled();
       expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2798,11 +2828,10 @@ jobs:
       );
     });
 
-    it('fails closed at the SQL layer even when workspaceAccessService is entirely absent (H1 defense-in-depth)', async () => {
-      // No workspaceAccessService passed at all — the app-layer pre-check
-      // no-ops via `?.`. The role-scoped findByIdAndUser must still deny
-      // access on its own: simulate the DB returning no row, as it would for
-      // a caller whose workspace role isn't in the allowedRoles list.
+    it('is a 404, fail closed, when the project is not visible to this user at all', async () => {
+      // Simulates a caller with no visibility into the project — global
+      // admin / owner / active workspace member / assigned repository all
+      // false. Fails closed to 404, never silently proceeding.
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, githubServiceMock, projectsRepository } = buildService({
         projectsRepositoryOverride: {
@@ -2823,16 +2852,14 @@ jobs:
       expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['admin', 'delegated_lead'],
       );
+      expect(projectsRepository.findAppRole).not.toHaveBeenCalled();
       expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
       expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           eventCode: 'project_github_repo_delete_rejected',
-          metadata: expect.objectContaining({
-            reason: 'not_found_or_insufficient_role',
-          }),
+          metadata: expect.objectContaining({ reason: 'insufficient_role' }),
         }),
       );
     });
@@ -2848,7 +2875,6 @@ jobs:
     it('keeps the project and fails with 409 when GitHub refuses the delete', async () => {
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, projectsRepository } = buildService({
-        workspaceAccessService: makeWorkspaceAccessService(),
         githubServiceOverride: {
           deleteRepoForUser: jest
             .fn()
@@ -2892,7 +2918,6 @@ jobs:
     it('records a verified missing scope under its own event', async () => {
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, projectsRepository } = buildService({
-        workspaceAccessService: makeWorkspaceAccessService(),
         githubServiceOverride: {
           deleteRepoForUser: jest
             .fn()
@@ -2920,9 +2945,9 @@ jobs:
     });
 
     it('still disconnects when the user did not ask to delete on GitHub', async () => {
-      const { service, githubServiceMock, projectsRepository } = buildService({
-        workspaceAccessService: makeWorkspaceAccessService(),
-      });
+      const { service, githubServiceMock, projectsRepository } = buildService(
+        {},
+      );
 
       await expect(
         service.disconnectProject('project-1', 'user-1', undefined, 'gh-token'),
@@ -2932,9 +2957,9 @@ jobs:
     });
 
     it('keeps the project without calling GitHub when the session has no access token', async () => {
-      const { service, githubServiceMock, projectsRepository } = buildService({
-        workspaceAccessService: makeWorkspaceAccessService(),
-      });
+      const { service, githubServiceMock, projectsRepository } = buildService(
+        {},
+      );
 
       const error = await service
         .disconnectProject(
@@ -2956,7 +2981,6 @@ jobs:
     it('keeps the project and audits an "other" error when repo_full_name has no owner/repo split', async () => {
       const auditEventsService = { recordProjectEvent: jest.fn() };
       const { service, githubServiceMock, projectsRepository } = buildService({
-        workspaceAccessService: makeWorkspaceAccessService(),
         projectsRepositoryOverride: {
           findByIdAndUser: jest
             .fn()

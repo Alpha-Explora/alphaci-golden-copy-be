@@ -1,11 +1,18 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { ProjectLifecycleService } from './project-lifecycle.service';
+import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 
 describe('ProjectLifecycleService.disconnectProject external teardown', () => {
   const build = (
     overrides: {
       findByIdAndUser?: jest.Mock;
+      findAppRole?: jest.Mock;
+      appRole?: PlatformAppRole;
       deleteRepoForUser?: jest.Mock;
       teardownResult?: unknown;
       teardown?: null;
@@ -20,6 +27,9 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
           id: 'project-1',
           repo_full_name: 'tone/orders-api',
         }),
+      findAppRole:
+        overrides.findAppRole ??
+        jest.fn().mockResolvedValue(overrides.appRole ?? 'lead'),
       deleteByIdAndUser: jest.fn().mockImplementation(() => {
         calls.push('db-delete');
         return Promise.resolve(true);
@@ -71,16 +81,12 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
         );
       }),
     };
-    const workspaceAccessService = {
-      assertProjectRole: jest.fn().mockResolvedValue(undefined),
-    };
     const auditEventsService = { recordProjectEvent: jest.fn() };
 
     const service = new ProjectLifecycleService(
       {} as never,
       projectsRepository as never,
       githubService as never,
-      workspaceAccessService as never,
       auditEventsService as never,
       undefined,
       undefined,
@@ -93,7 +99,6 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
       projectsRepository,
       teardown,
       sonar,
-      workspaceAccessService,
       auditEventsService,
     };
   };
@@ -106,7 +111,7 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
   };
 
   it('leaves external resources alone by default', async () => {
-    const { service, teardown, sonar, workspaceAccessService } = build();
+    const { service, teardown, sonar, projectsRepository } = build();
 
     await expect(
       service.disconnectProject('project-1', 'user-1'),
@@ -114,16 +119,15 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
 
     expect(teardown?.deleteProviderResourcesForProject).not.toHaveBeenCalled();
     expect(sonar.deleteProject).not.toHaveBeenCalled();
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+    expect(projectsRepository.findAppRole).toHaveBeenCalledWith('user-1');
+    expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['admin', 'delegated_lead', 'member'],
     );
   });
 
   it('deletes GitHub, then deployments, then SonarCloud, then the project row', async () => {
-    const { service, calls, projectsRepository, workspaceAccessService } =
-      build();
+    const { service, calls, projectsRepository } = build();
 
     await expect(
       service.disconnectProject('project-1', 'user-1', everything, 'gh-token'),
@@ -140,15 +144,9 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
       'sonar-delete',
       'db-delete',
     ]);
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['admin', 'delegated_lead'],
-    );
     expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['admin', 'delegated_lead'],
     );
   });
 
@@ -267,7 +265,7 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
     expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
   });
 
-  it('refuses before any external call when the role-scoped lookup finds nothing', async () => {
+  it('is a 404, fail closed, when the project is not visible to this user at all', async () => {
     const { service, calls } = build({
       findByIdAndUser: jest.fn().mockResolvedValue(null),
     });
@@ -281,4 +279,33 @@ describe('ProjectLifecycleService.disconnectProject external teardown', () => {
 
     expect(calls).toEqual([]);
   });
+
+  it.each(['qa', 'member'] as const)(
+    'is a 403 for a visible project when the caller persona is %s, even for a plain (non-destructive) disconnect',
+    async (appRole) => {
+      const { service, calls, projectsRepository } = build({ appRole });
+
+      const error = await service
+        .disconnectProject('project-1', 'user-1')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'PROJECT_ROLE_FORBIDDEN',
+      });
+      expect(calls).toEqual([]);
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['admin', 'lead'] as const)(
+    'allows a plain disconnect for an %s persona',
+    async (appRole) => {
+      const { service } = build({ appRole });
+
+      await expect(
+        service.disconnectProject('project-1', 'user-1'),
+      ).resolves.toEqual({ ok: true, githubRepoDeleted: false });
+    },
+  );
 });

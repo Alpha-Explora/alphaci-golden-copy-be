@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import type { AppRoleLookup } from '#kernel/ports/app-role.port';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import type { ProjectVisibilityLookup } from '#kernel/ports/project-visibility.port';
 
@@ -115,7 +116,9 @@ export interface CreateProvisionedProjectInput {
 }
 
 @Injectable()
-export class ProjectsRepository implements ProjectVisibilityLookup {
+export class ProjectsRepository
+  implements ProjectVisibilityLookup, AppRoleLookup
+{
   private readonly logger = new Logger(ProjectsRepository.name);
 
   constructor(private readonly databaseService: DatabaseService) {}

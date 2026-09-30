@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   InternalServerErrorException,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 
@@ -48,6 +49,9 @@ describe('DeploymentTargetsService', () => {
   };
   const workspaceAccessService = {
     assertProjectRole: jest.fn(),
+  };
+  const appRoleLookup = {
+    findAppRole: jest.fn(),
   };
   const auditEventsService = {
     recordProjectEvent: jest.fn(),
@@ -165,6 +169,11 @@ describe('DeploymentTargetsService', () => {
       userId: 'user-1',
       role: 'member',
     });
+    // app_role is the authority for reinstallDeploymentSecrets (see
+    // persona-access.rules.ts's canManageProjectLifecycle); default to a
+    // persona allowed to reinstall so tests unrelated to the role gate do
+    // not each need to set it.
+    appRoleLookup.findAppRole.mockResolvedValue('lead');
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
         ownershipMode: 'byo',
@@ -203,6 +212,7 @@ describe('DeploymentTargetsService', () => {
       providerRegistry as never,
       capabilityResolver as never,
       ciSecretsInstallers as never,
+      appRoleLookup as never,
     );
   });
 
@@ -996,30 +1006,51 @@ describe('DeploymentTargetsService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('is limited to leads and stops a member before any secret is written', async () => {
-      const installer = {
-        supports: jest.fn().mockReturnValue(true),
-        installForTarget: jest.fn(),
-      };
-      ciSecretsInstallers.get.mockReturnValue(installer);
-      workspaceAccessService.assertProjectRole.mockRejectedValueOnce(
-        new ForbiddenException('Insufficient project role'),
-      );
+    it.each(['qa', 'member'] as const)(
+      'is limited to lead/admin and stops a %s persona before any secret is written',
+      async (appRole) => {
+        const installer = {
+          supports: jest.fn().mockReturnValue(true),
+          installForTarget: jest.fn(),
+        };
+        ciSecretsInstallers.get.mockReturnValue(installer);
+        deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+          target,
+        );
+        appRoleLookup.findAppRole.mockResolvedValueOnce(appRole);
 
-      await expect(
-        service.reinstallDeploymentSecrets(
+        const error = await service
+          .reinstallDeploymentSecrets(
+            'project-1',
+            'target-1',
+            'user-1',
+            'github-token',
+          )
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getResponse()).toMatchObject({
+          code: 'PROJECT_ROLE_FORBIDDEN',
+        });
+        expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
+        expect(installer.installForTarget).not.toHaveBeenCalled();
+      },
+    );
+
+    it('is a 404, fail closed, before the role is even checked, when the project is not visible', async () => {
+      projectReferenceLookup.findProjectReference.mockResolvedValueOnce(null);
+
+      const error = await service
+        .reinstallDeploymentSecrets(
           'project-1',
           'target-1',
-          'member-1',
+          'user-1',
           'github-token',
-        ),
-      ).rejects.toThrow(ForbiddenException);
-      expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-        'project-1',
-        'member-1',
-        ['admin', 'delegated_lead'],
-      );
-      expect(installer.installForTarget).not.toHaveBeenCalled();
+        )
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect(appRoleLookup.findAppRole).not.toHaveBeenCalled();
     });
 
     it('refuses when no installer supports this target', async () => {

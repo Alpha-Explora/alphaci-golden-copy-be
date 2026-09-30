@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -11,9 +12,18 @@ import type { AppConfig } from '#kernel/config/app.config';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { NotificationEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import {
+  DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
+  type DeploymentProjectReferenceLookup,
+} from '#kernel/ports/deployment-runtime.port';
+import {
   USAGE_QUOTA,
   type UsageQuotaPort,
 } from '#kernel/ports/usage-quota.port';
+import { canManageEnvVars } from '#kernel/rules/persona-access.rules';
 import {
   DeploymentPolicyViolation,
   validateEnvironmentScope,
@@ -34,10 +44,6 @@ import type {
   EnvVarScope,
 } from '../core/deployments.types';
 import { ProviderConnectionsRepository } from '../infrastructure/repositories/provider-connections.repository';
-import {
-  WORKSPACE_ACCESS_PORT,
-  type WorkspaceAccessPort,
-} from '#kernel/ports/workspaces.port';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 
@@ -88,15 +94,51 @@ export class EnvVarsService {
     @Inject(USAGE_QUOTA)
     private readonly usageQuotaService?: UsageQuotaPort,
     @Optional()
-    @Inject(WORKSPACE_ACCESS_PORT)
-    private readonly workspaceAccessService?: WorkspaceAccessPort,
-    @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
     private readonly notificationEventsService?: NotificationEventPublisher,
     @Optional()
     private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
+    @Optional()
+    @Inject(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP)
+    private readonly projectReferenceLookup?: DeploymentProjectReferenceLookup,
+    @Optional()
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup?: AppRoleLookup,
   ) {}
+
+  /**
+   * The gate for every HTTP-facing env-var route (list/provision/validate/
+   * delete) — called once by EnvVarsController before delegating to the
+   * method below, never by internal, non-HTTP callers (provisioning's own
+   * env injection calls provisionEnvVars directly and must keep working
+   * unattended; see persona-access.rules.ts's canManageEnvVars doc comment).
+   *
+   * Visibility first, so a project this user cannot see answers 404 without
+   * confirming it exists; a visible project the caller's persona may not
+   * manage answers 403. Both fail closed: an unresolvable project or role
+   * (the lookup ports absent, which does not happen in the wired app) is
+   * treated as "not allowed", never as "allowed by default".
+   */
+  async assertHttpAccess(projectId: string, userId: string): Promise<void> {
+    const project = await this.projectReferenceLookup?.findProjectReference(
+      projectId,
+      userId,
+    );
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
+    const role = (await this.appRoleLookup?.findAppRole(userId)) ?? 'member';
+    if (!canManageEnvVars(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'ENV_VARS_LEAD_ONLY',
+        message: 'Only a lead or admin may manage environment variables.',
+      });
+    }
+  }
 
   async listEnvMetadata(projectId: string, userId: string) {
     return this.envVarsRepository.listEnvMetadataForUser(projectId, userId);
@@ -152,7 +194,6 @@ export class EnvVarsService {
     }
     const scope = this.resolveScope(dto);
     this.validateVars(dto.vars);
-    await this.assertProjectMutationAccess(projectId, userId);
 
     const target = await this.getOwnedTargetOrThrow(
       projectId,
@@ -247,7 +288,6 @@ export class EnvVarsService {
     metadataId: string,
     userId: string,
   ): Promise<{ removed: true; key: string }> {
-    await this.assertProjectMutationAccess(projectId, userId);
     const metadata = await this.envVarsRepository.findEnvMetadataForUser(
       metadataId,
       userId,
@@ -299,17 +339,6 @@ export class EnvVarsService {
       },
     });
     return { removed: true, key: metadata.key };
-  }
-
-  private async assertProjectMutationAccess(
-    projectId: string,
-    userId: string,
-  ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
-      'admin',
-      'delegated_lead',
-      'member',
-    ]);
   }
 
   private async assertWithinQuota(
