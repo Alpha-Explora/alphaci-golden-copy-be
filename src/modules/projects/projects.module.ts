@@ -18,7 +18,9 @@ import { ExistingReposModule } from './application/existing-repos/existing-repos
 import { CatalogModule } from './application/catalog/catalog.module';
 import { QaChecklistsModule } from './application/qa-checklists/qa-checklists.module';
 import { QaRunsModule } from './application/qa-runs/qa-runs.module';
+import { ProjectFolderController } from './api/project-folder.controller';
 import { ProjectsController } from './api/projects.controller';
+import { ProjectFolderService } from './application/folder/project-folder.service';
 import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './infrastructure/project-dashboard-snapshots.repository';
 import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service';
@@ -68,7 +70,11 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     QaChecklistsModule,
     QaRunsModule,
   ],
-  controllers: [ProjectsController, ProjectWorkspaceController],
+  controllers: [
+    ProjectsController,
+    ProjectWorkspaceController,
+    ProjectFolderController,
+  ],
   providers: [
     ProjectsService,
     {
@@ -86,6 +92,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectReconciliationService,
     ProjectProvisioningApplicationService,
     ProjectWorkspaceService,
+    ProjectFolderService,
     ProjectCiRunsService,
     ProjectPreviewsService,
     UrlEmbeddabilityProbe,
