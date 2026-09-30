@@ -2274,6 +2274,7 @@ jobs:
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
       create: jest.fn(),
+      findAppRole: jest.fn().mockResolvedValue('lead'),
       findByIdAndUser: jest.fn().mockResolvedValue({
         id: 'project-1',
         user_id: 'user-1',
@@ -2308,7 +2309,12 @@ jobs:
       createBranch: jest.Mock;
       putFileContent: jest.Mock;
       createPullRequest: jest.Mock;
+      branchExists: jest.Mock;
     };
+    githubWrites.branchExists.mockImplementation(
+      (_t: string, _o: string, _r: string, b: string) =>
+        Promise.resolve(b === 'dev' || b === 'uat'),
+    );
     const auditEventsService = {
       recordProjectEvent: jest.fn().mockResolvedValue(undefined),
     };
@@ -2362,7 +2368,7 @@ jobs:
       'tone',
       'orders-api',
       expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
-      'main',
+      'dev',
     );
     expect(githubWrites.putFileContent).toHaveBeenCalledTimes(4);
     const putFileContentCalls = githubWrites.putFileContent.mock.calls as Array<
@@ -2381,7 +2387,7 @@ jobs:
       expect.objectContaining({
         title: 'Update ALPHACI workflow configuration',
         head: expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
-        base: 'main',
+        base: 'dev',
         body: expect.stringContaining(
           'Runtime environment values are not included.',
         ),
@@ -2407,7 +2413,7 @@ jobs:
         pullRequestNumber: 42,
         pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
         branchName: result.branchName,
-        baseBranch: 'main',
+        baseBranch: 'dev',
       }),
     });
     expect(notificationEventsService.record).toHaveBeenCalledWith({
@@ -2424,10 +2430,11 @@ jobs:
     });
   });
 
-  it('creates workflow update PRs against the repository default branch', async () => {
+  it('never targets the repository default branch: dev, else uat, else 409', async () => {
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
       create: jest.fn(),
+      findAppRole: jest.fn().mockResolvedValue('lead'),
       findByIdAndUser: jest.fn().mockResolvedValue({
         id: 'project-1',
         user_id: 'user-1',
@@ -2452,17 +2459,76 @@ jobs:
     const githubWrites = makeGithubService() as unknown as GithubService & {
       createBranch: jest.Mock;
       createPullRequest: jest.Mock;
-      getRepo: jest.Mock;
+      branchExists: jest.Mock;
     };
-    githubWrites.getRepo.mockResolvedValueOnce({
-      fullName: 'tone/orders-api',
-      htmlUrl: 'https://github.com/tone/orders-api',
-      defaultBranch: 'master',
-      private: false,
-    });
-    const prService = makeProjectsService(
+    const build = () =>
+      makeProjectsService(
+        makeCatalogService(),
+        githubWrites,
+        projectsRepository,
+        makeCiService(),
+        projectDeploymentProvisioningService,
+        overviewRepos.ciTokensRepository,
+        overviewRepos.deploymentTargetsRepository,
+        overviewRepos.envVarsRepository,
+        overviewRepos.workflowHistoryRepository,
+        overviewRepos.dashboardSnapshotsRepository,
+        makeProjectFeatureConfig({
+          workflowSettingsPreview: true,
+          workflowUpdatePr: true,
+        }),
+        overviewRepos.workflowSettingsRepository,
+        overviewRepos.workflowUpdateRequestsRepository,
+      );
+
+    // uat only -> uat (the repository default branch, master, is never used)
+    githubWrites.branchExists.mockImplementation(
+      (_t: string, _o: string, _r: string, b: string) =>
+        Promise.resolve(b === 'uat'),
+    );
+    const result = await build().createWorkflowUpdatePullRequest(
+      'project-1',
+      'user-1',
+      null,
+      {},
+    );
+    expect(githubWrites.createBranch).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'orders-api',
+      result.branchName,
+      'uat',
+    );
+    expect(githubWrites.createPullRequest).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'orders-api',
+      expect.objectContaining({ base: 'uat' }),
+    );
+
+    // neither -> 409, and nothing is written
+    githubWrites.createBranch.mockClear();
+    githubWrites.branchExists.mockResolvedValue(false);
+    await expect(
+      build().createWorkflowUpdatePullRequest('project-1', 'user-1', null, {}),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(githubWrites.createBranch).not.toHaveBeenCalled();
+  });
+
+  const roleGateService = (
+    role: string | undefined,
+    project: unknown,
+    github: GithubService,
+  ) => {
+    const overviewRepos = makeOverviewReadRepositories();
+    const projectsRepository = {
+      create: jest.fn(),
+      findAppRole: jest.fn().mockResolvedValue(role),
+      findByIdAndUser: jest.fn().mockResolvedValue(project),
+    };
+    const service = makeProjectsService(
       makeCatalogService(),
-      githubWrites,
+      github,
       projectsRepository,
       makeCiService(),
       projectDeploymentProvisioningService,
@@ -2478,33 +2544,96 @@ jobs:
       overviewRepos.workflowSettingsRepository,
       overviewRepos.workflowUpdateRequestsRepository,
     );
+    return { service, projectsRepository };
+  };
+  const provisionedProject = {
+    id: 'project-1',
+    user_id: 'user-1',
+    repo_full_name: 'tone/orders-api',
+    template_id: 'be-nestjs',
+    service_name: 'orders-api',
+    workflow_path: '.github/workflows/00-alphaci-access.yml',
+    status: 'provisioned',
+    github_commit_sha: 'abc123456789',
+    github_commit_url: null,
+    failure_reason: null,
+    repo_url: 'https://github.com/tone/orders-api',
+    visibility: 'private',
+    repo_shape: 'mono',
+    project_type_id: 'nestjs-api',
+    workflow_recipe_id: 'backend-api-ci',
+    project_options: {},
+    created_at: '2026-06-12T00:00:00.000Z',
+    updated_at: '2026-06-12T00:00:00.000Z',
+  };
 
-    const result = await prService.createWorkflowUpdatePullRequest(
-      'project-1',
-      'user-1',
+  it.each(['member', 'lead', 'admin'])(
+    'lets %s open the workflow PR, against dev and never main',
+    async (role) => {
+      const githubWrites = makeGithubService() as unknown as GithubService & {
+        createPullRequest: jest.Mock;
+        branchExists: jest.Mock;
+      };
+      githubWrites.branchExists.mockResolvedValue(true);
+      const { service } = roleGateService(
+        role,
+        provisionedProject,
+        githubWrites,
+      );
+      await service.createWorkflowUpdatePullRequest(
+        'project-1',
+        'user-1',
+        null,
+        {},
+      );
+      expect(githubWrites.createPullRequest).toHaveBeenCalledWith(
+        'app-token',
+        'tone',
+        'orders-api',
+        expect.objectContaining({ base: 'dev' }),
+      );
+    },
+  );
+
+  it.each(['qa', undefined])(
+    'refuses the workflow PR for role %s with PROJECT_ROLE_FORBIDDEN before GitHub',
+    async (role) => {
+      const githubWrites = makeGithubService() as unknown as GithubService & {
+        createBranch: jest.Mock;
+      };
+      const { service } = roleGateService(
+        role,
+        provisionedProject,
+        githubWrites,
+      );
+      const error = await service
+        .createWorkflowUpdatePullRequest('project-1', 'user-1', null, {})
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject({
+        code: 'PROJECT_ROLE_FORBIDDEN',
+      });
+      expect(githubWrites.createBranch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('answers 404 for an invisible project before the role is read', async () => {
+    const { service, projectsRepository } = roleGateService(
+      'lead',
       null,
-      {},
+      makeGithubService(),
     );
-
-    expect(githubWrites.createBranch).toHaveBeenCalledWith(
-      'app-token',
-      'tone',
-      'orders-api',
-      result.branchName,
-      'master',
-    );
-    expect(githubWrites.createPullRequest).toHaveBeenCalledWith(
-      'app-token',
-      'tone',
-      'orders-api',
-      expect.objectContaining({ base: 'master' }),
-    );
+    await expect(
+      service.createWorkflowUpdatePullRequest('project-1', 'user-2', null, {}),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(projectsRepository.findAppRole).not.toHaveBeenCalled();
   });
 
   it('returns a clean error when GitHub rejects workflow update PR creation', async () => {
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
       create: jest.fn(),
+      findAppRole: jest.fn().mockResolvedValue('lead'),
       findByIdAndUser: jest.fn().mockResolvedValue({
         id: 'project-1',
         user_id: 'user-1',
@@ -2528,7 +2657,9 @@ jobs:
     };
     const githubWrites = makeGithubService() as unknown as GithubService & {
       createPullRequest: jest.Mock;
+      branchExists: jest.Mock;
     };
+    githubWrites.branchExists.mockResolvedValue(true);
     githubWrites.createPullRequest.mockRejectedValueOnce(
       new Error('GitHub pull request creation failed (422): Validation Failed'),
     );
@@ -3075,10 +3206,23 @@ jobs:
     } as unknown as GithubService;
     const projectsRepository = {
       listByUser: jest.fn().mockResolvedValue([
-        { id: 'project-1', repo_full_name: 'tone/orders-api' },
-        { id: 'project-2', repo_full_name: 'tone/deleted-api' },
-        { id: 'project-3', repo_full_name: 'tone/flaky-api' },
+        {
+          id: 'project-1',
+          user_id: 'user-1',
+          repo_full_name: 'tone/orders-api',
+        },
+        {
+          id: 'project-2',
+          user_id: 'user-1',
+          repo_full_name: 'tone/deleted-api',
+        },
+        {
+          id: 'project-3',
+          user_id: 'user-1',
+          repo_full_name: 'tone/flaky-api',
+        },
       ]),
+      findAppRole: jest.fn().mockResolvedValue('member'),
       markOrphaned: jest.fn().mockResolvedValue(1),
       markReachable: jest.fn().mockResolvedValue(1),
     };
@@ -3137,6 +3281,62 @@ jobs:
         projectId: null,
         eventCode: 'project_sync_completed',
       }),
+    );
+  });
+
+  describe('syncProjects: projects owned by other people', () => {
+    const buildSync = (role: string | undefined) => {
+      const githubSvc = {
+        ...makeGithubService(),
+        // The caller's token cannot see anyone else's private repository.
+        repoExists: jest.fn().mockResolvedValue(false),
+      } as unknown as GithubService & { repoExists: jest.Mock };
+      const projectsRepository = {
+        listByUser: jest.fn().mockResolvedValue([
+          { id: 'mine', user_id: 'user-1', repo_full_name: 'tone/mine' },
+          { id: 'theirs', user_id: 'user-2', repo_full_name: 'tone/theirs' },
+        ]),
+        findAppRole: jest.fn().mockResolvedValue(role),
+        markOrphaned: jest.fn().mockResolvedValue(1),
+        markReachable: jest.fn().mockResolvedValue(0),
+      };
+      const service = makeProjectsService(
+        makeCatalogService(),
+        githubSvc,
+        projectsRepository,
+        makeCiService(),
+        projectDeploymentProvisioningService,
+      );
+      return { service, githubSvc, projectsRepository };
+    };
+
+    it.each(['member', 'qa', undefined])(
+      'a %s only ever checks and marks the rows they own',
+      async (role) => {
+        const { service, githubSvc, projectsRepository } = buildSync(role);
+        await service.syncProjects('user-1', 'gh-token');
+        expect(githubSvc.repoExists).toHaveBeenCalledTimes(1);
+        expect(githubSvc.repoExists).toHaveBeenCalledWith(
+          'gh-token',
+          'tone/mine',
+        );
+        expect(projectsRepository.markOrphaned).toHaveBeenCalledWith(
+          ['mine'],
+          'user-1',
+        );
+      },
+    );
+
+    it.each(['lead', 'admin'])(
+      'a %s may also mark rows they do not own',
+      async (role) => {
+        const { service, projectsRepository } = buildSync(role);
+        await service.syncProjects('user-1', 'gh-token');
+        expect(projectsRepository.markOrphaned).toHaveBeenCalledWith(
+          expect.arrayContaining(['mine', 'theirs']),
+          'user-1',
+        );
+      },
     );
   });
 

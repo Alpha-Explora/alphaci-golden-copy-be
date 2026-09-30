@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -11,9 +12,14 @@ import {
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
-  WORKSPACE_ACCESS_PORT,
-  type WorkspaceAccessPort,
-} from '#kernel/ports/workspaces.port';
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import {
+  DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
+  type DeploymentProjectReferenceLookup,
+} from '#kernel/ports/deployment-runtime.port';
+import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
 import { CustomDomainsRepository } from '../infrastructure/repositories/custom-domains.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import {
@@ -49,9 +55,12 @@ export class CustomDomainsService {
     private readonly deploymentTargetsService: DeploymentTargetsService,
     @Inject(PROVIDER_CLIENT_REGISTRY)
     private readonly clientRegistry: ProviderClientRegistryPort,
-    @Optional()
-    @Inject(WORKSPACE_ACCESS_PORT)
-    private readonly workspaceAccessService?: WorkspaceAccessPort,
+    // Required (not @Optional): an absent lookup must fail the boot, never
+    // silently turn the access checks below into no-ops.
+    @Inject(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP)
+    private readonly projectReferenceLookup: DeploymentProjectReferenceLookup,
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup: AppRoleLookup,
     @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
   ) {}
@@ -288,27 +297,51 @@ export class CustomDomainsService {
     return raw.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0, 400);
   }
 
+  /**
+   * Visibility first: a project this user cannot see answers 404 without
+   * confirming it exists. Deliberately outside every try/catch in this file --
+   * a swallowed visibility failure is what let a stranger delete a domain.
+   * Membership rows are NOT consulted: no row is not "allowed".
+   */
+  private async assertProjectVisible(
+    projectId: string,
+    userId: string,
+  ): Promise<void> {
+    const project = await this.projectReferenceLookup.findProjectReference(
+      projectId,
+      userId,
+    );
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+  }
+
   private async assertReadAccess(
     projectId: string,
     userId: string,
   ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
-      'admin',
-      'delegated_lead',
-      'member',
-      'viewer',
-    ]);
+    await this.assertProjectVisible(projectId, userId);
   }
 
+  /**
+   * Add/verify/remove touch the project's hosting: visibility (404), then the
+   * global app_role allow-list (403 HOSTING_LEAD_ONLY). An unresolved role
+   * falls back to 'member', which the allow-list refuses -- fail closed.
+   */
   private async assertMutationAccess(
     projectId: string,
     userId: string,
   ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
-      'admin',
-      'delegated_lead',
-      'member',
-    ]);
+    await this.assertProjectVisible(projectId, userId);
+    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'member';
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'HOSTING_LEAD_ONLY',
+        message: 'Only a lead or admin may manage custom domains.',
+      });
+    }
   }
 
   private async recordEvent(

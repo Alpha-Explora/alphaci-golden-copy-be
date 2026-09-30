@@ -357,12 +357,24 @@ export class ProjectLifecycleService {
       return { orphaned: 0, reachable: 0, total: 0 };
     }
 
+    // The caller's OAuth token says nothing about what OTHER people's
+    // projects look like: it may simply not see a private repository. So a
+    // row is only ever checked, and marked, when the caller owns it or holds
+    // a lead/admin app_role (allow-list). Never inferred from workspace
+    // membership. An unresolved role falls back to 'member' (owned only).
+    const role =
+      (await this.projectsRepository.findAppRole(userId)) ?? 'member';
+    const mayManageOthers = canManageProjectLifecycle(role);
+    const eligible = rows.filter(
+      (row) => row.user_id === userId || mayManageOthers,
+    );
+
     const orphanedIds: string[] = [];
     const reachableIds: string[] = [];
     const CONCURRENCY = 10;
 
-    for (let i = 0; i < rows.length; i += CONCURRENCY) {
-      const batch = rows.slice(i, i + CONCURRENCY);
+    for (let i = 0; i < eligible.length; i += CONCURRENCY) {
+      const batch = eligible.slice(i, i + CONCURRENCY);
       await Promise.all(
         batch.map(async (row) => {
           try {

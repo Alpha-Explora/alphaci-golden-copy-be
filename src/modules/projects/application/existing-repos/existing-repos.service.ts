@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 
 import {
+  ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -14,6 +16,16 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
+import { QA_BRANCH, WORKING_BRANCH } from '#kernel/config/pipeline-branches';
+import {
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import {
+  canCreatePullRequest,
+  canManageProjectLifecycle,
+  selfServicePullRequestBase,
+} from '#kernel/rules/persona-access.rules';
 import type { DiscoverExistingRepoDto } from './dto/discover-existing-repo.dto';
 import type { SetupExistingRepoPrDto } from './dto/setup-existing-repo-pr.dto';
 
@@ -60,6 +72,9 @@ export class ExistingReposService {
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService: GithubProjectPort,
     private readonly catalogService: CatalogService,
+    // Required (not @Optional): the creator gate must never silently vanish.
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup: AppRoleLookup,
   ) {}
 
   async discover(
@@ -67,7 +82,15 @@ export class ExistingReposService {
     oauthAccessToken: string | null | undefined,
     dto: DiscoverExistingRepoDto,
   ): Promise<ExistingRepoDiscoveryResponse> {
+    await this.assertCanOnboard(userId);
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+    // The installation token below can read every repository the App is
+    // installed on; it must only ever be used for one the CALLER can read.
+    const callerRepo = await this.assertCallerCanReadRepo(
+      oauthAccessToken,
+      owner,
+      repo,
+    );
     const token = await this.resolveProvisioningToken(
       userId,
       oauthAccessToken,
@@ -79,7 +102,7 @@ export class ExistingReposService {
      * fail on `master` repositories.
      */
     const baseBranch =
-      dto.baseBranch ?? (await this.defaultBranch(token, owner, repo));
+      dto.baseBranch ?? (callerRepo.defaultBranch?.trim() || 'main');
     const packageJson = await this.githubService.getFileContent(
       token,
       owner,
@@ -105,19 +128,6 @@ export class ExistingReposService {
       servicePath: '.',
       warnings,
     };
-  }
-
-  private async defaultBranch(
-    token: string,
-    owner: string,
-    repo: string,
-  ): Promise<string> {
-    try {
-      const repository = await this.githubService.getRepo(token, owner, repo);
-      return repository.defaultBranch?.trim() || 'main';
-    } catch {
-      return 'main';
-    }
   }
 
   /**
@@ -185,13 +195,20 @@ export class ExistingReposService {
     oauthAccessToken: string | null | undefined,
     dto: SetupExistingRepoPrDto,
   ): Promise<ExistingRepoSetupPullRequestResponse> {
+    const role = await this.assertCanOnboard(userId);
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+    // Refuse main before any GitHub call: main is reached only by promotion.
+    if (dto.baseBranch && !canCreatePullRequest(role, dto.baseBranch)) {
+      throw this.mainPrRestricted();
+    }
+    await this.assertCallerCanReadRepo(oauthAccessToken, owner, repo);
     const token = await this.resolveProvisioningToken(
       userId,
       oauthAccessToken,
       dto.repoFullName,
     );
-    const baseBranch = dto.baseBranch ?? 'main';
+    const baseBranch =
+      dto.baseBranch ?? (await this.defaultPullRequestBase(token, owner, repo));
     const workflowRecipeId = dto.workflowRecipeId ?? 'standard';
     const templateId = this.resolveTemplateId(
       dto.projectTypeId,
@@ -248,6 +265,108 @@ export class ExistingReposService {
       pullRequestNumber: pullRequest.number,
       pullRequestUrl: pullRequest.htmlUrl,
     };
+  }
+
+  /**
+   * Onboarding an existing repository installs CI on it with the App's
+   * installation token, so it is a Lead/Admin action: the same global
+   * app_role gate as project creation (WorkspaceGateService.
+   * assertCanCreateProjects / isGlobalProjectCreator). Returns the role so
+   * callers can apply the pull-request rule; an unresolved role falls back to
+   * 'member' and is refused (fail closed).
+   */
+  private async assertCanOnboard(userId: string) {
+    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'member';
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message:
+          'Only a Lead or Admin can onboard an existing repository. Ask a team lead to do it for you.',
+      });
+    }
+    return role;
+  }
+
+  private mainPrRestricted(): ForbiddenException {
+    return new ForbiddenException({
+      statusCode: 403,
+      error: 'Forbidden',
+      code: 'MAIN_PR_RESTRICTED',
+      message:
+        'Pull requests into main are opened only by the promotion flow. Target dev instead.',
+    });
+  }
+
+  /**
+   * Proves the SIGNED-IN USER can read the repository with their own OAuth
+   * token before the (broader) installation token is used on it. Fail closed:
+   * no OAuth token is 401; a repository GitHub will not show that token is 403
+   * REPO_NOT_ACCESSIBLE (404 and 403 from GitHub look the same to the caller,
+   * so the answer does not confirm the repository exists).
+   */
+  private async assertCallerCanReadRepo(
+    oauthAccessToken: string | null | undefined,
+    owner: string,
+    repo: string,
+  ) {
+    if (!oauthAccessToken) {
+      throw new UnauthorizedException(
+        'GitHub access token not found. Re-authenticate via GitHub OAuth.',
+      );
+    }
+    try {
+      return await this.githubService.getRepo(oauthAccessToken, owner, repo);
+    } catch (error) {
+      const status = /\((\d{3})\)/.exec(
+        error instanceof Error ? error.message : '',
+      )?.[1];
+      if (status === '401') {
+        throw new UnauthorizedException(
+          'GitHub rejected your sign-in. Re-authenticate via GitHub OAuth.',
+        );
+      }
+      if (status === '403' || status === '404') {
+        throw new ForbiddenException({
+          statusCode: 403,
+          error: 'Forbidden',
+          code: 'REPO_NOT_ACCESSIBLE',
+          message: 'That repository is not accessible to your GitHub account.',
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * dev, else uat; never main. Neither present is a 409 rather than a silent
+   * fall back to the production branch.
+   */
+  private async defaultPullRequestBase(
+    token: string,
+    owner: string,
+    repo: string,
+  ): Promise<string> {
+    const existing: string[] = [];
+    for (const candidate of [WORKING_BRANCH, QA_BRANCH]) {
+      if (
+        await this.githubService.branchExists(token, owner, repo, candidate)
+      ) {
+        existing.push(candidate);
+      }
+    }
+    const base = selfServicePullRequestBase(existing);
+    if (!base) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'PR_BASE_BRANCH_MISSING',
+        message:
+          "This repository has no 'dev' or 'uat' branch to open the setup pull request against. Create one first.",
+      });
+    }
+    return base;
   }
 
   private async resolveProvisioningToken(

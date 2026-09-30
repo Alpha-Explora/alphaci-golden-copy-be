@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -8,6 +9,12 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import { canBeAssignedRepository } from '#kernel/rules/persona-access.rules';
 import { GroupsRepository } from '../infrastructure/groups.repository';
 import { GithubAccessSyncRepository } from '../infrastructure/github-access-sync.repository';
 import { GithubSyncService } from './github-sync.service';
@@ -29,6 +36,9 @@ export class AssignmentsService {
     private readonly accessService: HierarchyAccessService,
     private readonly auditEventsService: AuditEventPublisher,
     private readonly configService: ConfigService,
+    // Required (not @Optional): the persona allow-list must never vanish.
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup: AppRoleLookup,
   ) {}
 
   /** Transition #1 (hierarchy state-machine contract): verifies group membership, creates the pending row, enqueues the grant job. */
@@ -60,10 +70,19 @@ export class AssignmentsService {
         "The target user must be an active member of the repository's owning Group",
       );
     }
-    if (targetMembership.role !== 'member') {
-      throw new BadRequestException(
-        'Only users with the Member role can be assigned to a repository',
-      );
+    // Allow-list on the target's GLOBAL app_role. targetMembership.role is a
+    // derived group role in which qa also maps to 'member', so it cannot tell
+    // a Developer from QA. Unresolved role -> refused (fail closed).
+    const targetRole: PlatformAppRole | undefined =
+      await this.appRoleLookup.findAppRole(dto.userId);
+    if (!targetRole || !canBeAssignedRepository(targetRole)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        code: 'ASSIGNMENT_ROLE_NOT_ALLOWED',
+        message:
+          'Only Developers are assigned repositories; QA and leads already see every repository in the team.',
+      });
     }
 
     const assignment =

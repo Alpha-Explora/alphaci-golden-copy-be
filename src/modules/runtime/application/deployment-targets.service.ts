@@ -57,7 +57,6 @@ import { ProviderConnectionsRepository } from '../infrastructure/repositories/pr
 import {
   WORKSPACE_ACCESS_PORT,
   type WorkspaceAccessPort,
-  type WorkspaceRole,
 } from '#kernel/ports/workspaces.port';
 import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
@@ -111,9 +110,14 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     @Optional()
     @Inject(USAGE_QUOTA)
     private readonly usageQuotaService?: UsageQuotaPort,
+    /**
+     * No longer an authority: mutations are gated by visibility + app_role
+     * (assertProjectLifecycleAccess). Kept in the constructor order for
+     * positional callers; workspace membership rows must not decide access.
+     */
     @Optional()
     @Inject(WORKSPACE_ACCESS_PORT)
-    private readonly workspaceAccessService?: WorkspaceAccessPort,
+    _workspaceAccessService?: WorkspaceAccessPort,
     @Optional()
     private readonly auditEventsService?: AuditEventPublisher,
     @Optional()
@@ -150,8 +154,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     userId: string,
     dto: CreateDeploymentTargetDto,
   ) {
-    await this.assertProjectMutationAccess(projectId, userId);
-    const project = await this.getProjectOrThrow(projectId, userId);
+    const project = await this.assertProjectLifecycleAccess(projectId, userId);
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     this.assertOwnershipModeAllowed(dto);
     try {
@@ -301,7 +304,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       throw new BadRequestException('Project target management is disabled');
     }
 
-    await this.assertProjectMutationAccess(projectId, userId);
+    await this.assertProjectLifecycleAccess(projectId, userId);
     const existingTarget = await this.getOwnedTargetOrThrow(
       projectId,
       targetId,
@@ -365,7 +368,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       throw new BadRequestException('Project target management is disabled');
     }
 
-    await this.assertProjectMutationAccess(projectId, userId);
+    await this.assertProjectLifecycleAccess(projectId, userId);
     let target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
     const findings: Array<{
       code: string;
@@ -474,13 +477,9 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     }
 
     const requiresProviderDelete = options?.deleteProviderResource === true;
-    await this.assertProjectMutationAccess(
-      projectId,
-      userId,
-      requiresProviderDelete
-        ? ['admin', 'delegated_lead']
-        : ['admin', 'delegated_lead', 'member'],
-    );
+    // Same bar with or without deleteProviderResource: the app_role
+    // allow-list (admin | lead) now gates both, visibility first.
+    await this.assertProjectLifecycleAccess(projectId, userId);
     // Load the target row before deleting anything locally — we need
     // providerProjectId/provider/ownershipMode/providerConnectionId to
     // attempt the live provider delete below, and the row disappears once
@@ -812,16 +811,28 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     return project;
   }
 
-  private async assertProjectMutationAccess(
+  /**
+   * Visibility first (404 for a project this user cannot see), then the
+   * global app_role allow-list (403 HOSTING_LEAD_ONLY). The stored workspace
+   * role is not consulted: no membership row must never mean "allowed". A role
+   * that cannot be resolved falls back to 'member', which the allow-list
+   * refuses (fail closed). Same bar as reinstallDeploymentSecrets.
+   */
+  private async assertProjectLifecycleAccess(
     projectId: string,
     userId: string,
-    roles: WorkspaceRole[] = ['admin', 'delegated_lead', 'member'],
-  ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(
-      projectId,
-      userId,
-      roles,
-    );
+  ): Promise<DeploymentProjectReference> {
+    const project = await this.getProjectOrThrow(projectId, userId);
+    const role = (await this.appRoleLookup?.findAppRole(userId)) ?? 'member';
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'HOSTING_LEAD_ONLY',
+        message: 'Only a lead or admin may manage deployment targets.',
+      });
+    }
+    return project;
   }
 
   private truncateErrorMessage(error: unknown, maxLength = 300): string {

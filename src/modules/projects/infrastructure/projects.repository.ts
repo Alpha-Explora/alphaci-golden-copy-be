@@ -672,6 +672,7 @@ export class ProjectsRepository
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
                 AND member.role IN ('admin', 'delegated_lead', 'member')
+                AND member.member_status = 'active'
             )
           )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
@@ -703,6 +704,7 @@ export class ProjectsRepository
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
                 AND member.role IN ('admin', 'delegated_lead', 'member')
+                AND member.member_status = 'active'
             )
           )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])

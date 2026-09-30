@@ -1,7 +1,21 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Inject,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import {
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
 import { CreateRepoDto } from './dto/create-repo.dto.js';
 import { LinkInstallationDto } from './dto/link-installation.dto';
 import { GithubService } from '../infrastructure/github.service';
@@ -14,7 +28,12 @@ import {
 @Controller('github')
 @UseGuards(SessionAuthGuard)
 export class GithubController {
-  constructor(private readonly githubService: GithubService) {}
+  constructor(
+    private readonly githubService: GithubService,
+    // Required (not @Optional): the creator gate must never silently vanish.
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup: AppRoleLookup,
+  ) {}
 
   // ─── GitHub App endpoints ───────────────────────────────────────────────
 
@@ -35,7 +54,13 @@ export class GithubController {
   ) {
     // SessionAuthGuard guarantees req.session.user is populated before this runs.
     const userId = req.session.user!.id;
-    return this.githubService.linkInstallation(userId, body.installationId);
+    // The caller's own OAuth token must be able to see the installation;
+    // the App's credentials alone would accept any installation id.
+    return this.githubService.linkInstallationForUser(
+      userId,
+      body.installationId,
+      req.session.githubAccessToken,
+    );
   }
 
   /** GET /github/installations/repos — list repos linked via GitHub App */
@@ -113,6 +138,20 @@ export class GithubController {
   /** POST /github/repos — create a new GitHub repository with branch structure */
   @Post('repos')
   async createRepo(@Req() req: Request, @Body() body: CreateRepoDto) {
+    // Creating a repository is a Lead/Admin action, the same global app_role
+    // gate as project creation (WorkspaceGateService.assertCanCreateProjects).
+    // Unresolved role -> 'member' -> refused (fail closed).
+    const role =
+      (await this.appRoleLookup.findAppRole(req.session.user!.id)) ?? 'member';
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Only a Lead or Admin can create repositories.',
+      });
+    }
+
     const accessToken = req.session.githubAccessToken;
     if (!accessToken) {
       return {

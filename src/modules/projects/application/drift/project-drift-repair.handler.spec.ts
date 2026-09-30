@@ -9,6 +9,7 @@ import { ProjectDriftRepairService } from './project-drift-repair.handler';
 describe('ProjectDriftRepairService', () => {
   const projectsRepository = {
     findByIdAndUser: jest.fn(),
+    findAppRole: jest.fn(),
   };
   const findingsRepository = {
     findByIdForProject: jest.fn(),
@@ -36,6 +37,7 @@ describe('ProjectDriftRepairService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    projectsRepository.findAppRole.mockResolvedValue('lead');
     projectsRepository.findByIdAndUser.mockResolvedValue({
       id: 'project-1',
       repo_full_name: 'tone/orders-api',
@@ -180,6 +182,90 @@ describe('ProjectDriftRepairService', () => {
     it('needs a GitHub session', async () => {
       await expect(repairAs('lead', null)).rejects.toThrow(BadRequestException);
       expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('persona gate on non-protection repairs', () => {
+    const lifecycleActions = [
+      'mark_ignored',
+      'rotate_ci_token',
+      'detach_target',
+    ] as const;
+    const prActions = [
+      'regenerate_workflow_preview',
+      'create_workflow_update_pr',
+    ] as const;
+
+    it.each(
+      ['member', 'qa'].flatMap((role) =>
+        lifecycleActions.map((action) => [role, action] as const),
+      ),
+    )(
+      '%s is refused %s with PROJECT_ROLE_FORBIDDEN and nothing is changed',
+      async (role, action) => {
+        projectsRepository.findAppRole.mockResolvedValue(role);
+        const error = await createService()
+          .repair('project-1', 'finding-1', 'user-1', action, null)
+          .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getResponse()).toMatchObject({
+          code: 'PROJECT_ROLE_FORBIDDEN',
+        });
+        expect(findingsRepository.markStatus).not.toHaveBeenCalled();
+        expect(ciService.issueProjectToken).not.toHaveBeenCalled();
+        expect(
+          deploymentTargetsRepository.deleteDeploymentTargetForUser,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(prActions)('qa is refused %s', async (action) => {
+      projectsRepository.findAppRole.mockResolvedValue('qa');
+      findingsRepository.findByIdForProject.mockResolvedValueOnce({
+        id: 'finding-1',
+        projectId: 'project-1',
+        targetId: null,
+        code: 'workflow_files_missing',
+        details: {},
+        status: 'active',
+        message: 'x',
+      });
+      await expect(
+        createService().repair('project-1', 'finding-1', 'user-1', action, 't'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(
+        projectWorkflowsService.createWorkflowUpdatePullRequest,
+      ).not.toHaveBeenCalled();
+      expect(
+        projectWorkflowsService.previewWorkflowSettings,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the role is unresolvable', async () => {
+      projectsRepository.findAppRole.mockResolvedValue(undefined);
+      await expect(
+        createService().repair(
+          'project-1',
+          'finding-1',
+          'user-1',
+          'rotate_ci_token',
+          null,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('a project the caller cannot see is a 404 before the role is read', async () => {
+      projectsRepository.findByIdAndUser.mockResolvedValueOnce(null);
+      await expect(
+        createService().repair(
+          'project-1',
+          'finding-1',
+          'user-1',
+          'rotate_ci_token',
+          null,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(projectsRepository.findAppRole).not.toHaveBeenCalled();
     });
   });
 

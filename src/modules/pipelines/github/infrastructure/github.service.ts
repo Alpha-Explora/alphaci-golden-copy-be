@@ -623,6 +623,24 @@ export class GithubService
     return this.installationLinker.linkInstallation(userId, installationId);
   }
 
+  /**
+   * The HTTP entry point (POST /github/installations). Verifies the user's own
+   * OAuth token can access the installation before linking anything; internal
+   * re-links of installations this user already owns keep calling
+   * linkInstallation directly.
+   */
+  async linkInstallationForUser(
+    userId: string,
+    installationId: number,
+    githubAccessToken: string | null | undefined,
+  ): Promise<{ reposLinked: number; repositorySelection: 'all' | 'selected' }> {
+    await this.installationLinker.assertInstallationAccessibleToUser(
+      installationId,
+      githubAccessToken,
+    );
+    return this.installationLinker.linkInstallation(userId, installationId);
+  }
+
   async listLinkedRepos(userId: string): Promise<GithubInstallationRepo[]> {
     if (!this.githubInstallationsRepository) return [];
     try {

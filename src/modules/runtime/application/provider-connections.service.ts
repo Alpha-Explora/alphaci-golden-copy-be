@@ -9,9 +9,10 @@ import {
 
 import { EnvTokenEncryptionService } from './encryption.service';
 import {
-  WORKSPACES_PORT,
-  type WorkspacesPort,
-} from '#kernel/ports/workspaces.port';
+  APP_ROLE_LOOKUP,
+  type AppRoleLookup,
+} from '#kernel/ports/app-role.port';
+import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
 import {
   PROVIDER_CLIENT_REGISTRY,
   type ProviderClientRegistryPort,
@@ -28,9 +29,9 @@ export class ProviderConnectionsService {
     private readonly encryptionService: EnvTokenEncryptionService,
     @Inject(PROVIDER_CLIENT_REGISTRY)
     private readonly clientRegistry: ProviderClientRegistryPort,
-    @Optional()
-    @Inject(WORKSPACES_PORT)
-    private readonly workspacesService?: WorkspacesPort,
+    // Required (not @Optional): the role check must never silently vanish.
+    @Inject(APP_ROLE_LOOKUP)
+    private readonly appRoleLookup: AppRoleLookup,
     @Optional()
     private readonly providerRegistry?: DeploymentProviderRegistry<DeploymentProvider>,
   ) {}
@@ -84,22 +85,22 @@ export class ProviderConnectionsService {
     return { revoked: true };
   }
 
+  /**
+   * Provider credentials are account-level, so the authority is the global
+   * app_role allow-list (admin | lead), not a workspace membership row. An
+   * unresolvable role falls back to 'member', which is refused (fail closed).
+   */
   private async assertCanManageProviderConnections(
     userId: string,
   ): Promise<void> {
-    if (!this.workspacesService) {
-      return;
-    }
-
-    const workspaces = await this.workspacesService.getMyWorkspaces(userId);
-    const canManage = workspaces.items.some(
-      (workspace) =>
-        workspace.role === 'admin' || workspace.role === 'delegated_lead',
-    );
-    if (!canManage) {
-      throw new ForbiddenException(
-        'Provider connection management requires admin or delegated_lead workspace access',
-      );
+    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'member';
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Only a lead or admin may manage provider connections.',
+      });
     }
   }
 

@@ -162,6 +162,7 @@ describe('DeploymentTargetsRepository', () => {
     expect(queryText).toContain(
       "member.role IN ('admin', 'delegated_lead', 'member')",
     );
+    expect(queryText).toContain("member.member_status = 'active'");
   });
 
   it('returns null when metadata update does not match a user target', async () => {
@@ -192,6 +193,7 @@ describe('DeploymentTargetsRepository', () => {
     expect(queryText).toContain(
       "member.role IN ('admin', 'delegated_lead', 'member')",
     );
+    expect(queryText).toContain("member.member_status = 'active'");
   });
 
   it('finds a deployment target for the owning user', async () => {
@@ -208,6 +210,7 @@ describe('DeploymentTargetsRepository', () => {
     expect(queryText).toContain(
       "member.role IN ('admin', 'delegated_lead', 'member')",
     );
+    expect(queryText).toContain("member.member_status = 'active'");
   });
 
   it('returns null when a target is not visible to the user', async () => {

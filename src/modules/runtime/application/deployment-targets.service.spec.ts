@@ -239,6 +239,9 @@ describe('DeploymentTargetsService', () => {
       auditEventsService as never,
       notificationEventsService as never,
       providerRegistry as never,
+      undefined,
+      undefined,
+      appRoleLookup as never,
     );
 
     const attempt = unwired.createDeploymentTarget('project-1', 'user-1', {
@@ -303,11 +306,7 @@ describe('DeploymentTargetsService', () => {
     expect(
       deploymentTargetsRepository.createDeploymentTarget,
     ).not.toHaveBeenCalled();
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['admin', 'delegated_lead', 'member'],
-    );
+    expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
   });
 
   it('rejects archived ALPHACI-managed Render targets before provider calls', async () => {
@@ -511,11 +510,7 @@ describe('DeploymentTargetsService', () => {
         renderEnvironmentName: 'uat',
       }),
     );
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['admin', 'delegated_lead', 'member'],
-    );
+    expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         actorUserId: 'user-1',
@@ -599,11 +594,7 @@ describe('DeploymentTargetsService', () => {
     expect(
       deploymentTargetsRepository.deleteDeploymentTargetForUser,
     ).toHaveBeenCalledWith('project-1', 'target-1', 'user-1');
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['admin', 'delegated_lead', 'member'],
-    );
+    expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         actorUserId: 'user-1',
@@ -617,40 +608,101 @@ describe('DeploymentTargetsService', () => {
     );
   });
 
-  it('requires admin/delegated_lead (not member) role when requesting the live provider resource be deleted', async () => {
-    workspaceAccessService.assertProjectRole.mockImplementation(
-      (_projectId: string, _userId: string, roles: string[]) => {
-        if (!roles.includes('member')) {
-          return Promise.reject(
-            new Error('Forbidden: requires admin or delegated_lead role'),
-          );
-        }
-        return Promise.resolve({
-          workspaceId: 'workspace-1',
-          userId: 'user-1',
-          role: 'member',
+  describe('lifecycle role gate (create / patch / sync / detach)', () => {
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      [
+        'create',
+        () =>
+          service.createDeploymentTarget('project-1', 'user-1', {
+            provider: 'vercel',
+            projectName: 'demo-frontend',
+          } as never),
+      ],
+      [
+        'patch',
+        () =>
+          service.updateDeploymentTargetMetadata(
+            'project-1',
+            'target-1',
+            'user-1',
+            { branchName: 'uat' },
+          ),
+      ],
+      [
+        'sync',
+        () => service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),
+      ],
+      [
+        'detach',
+        () => service.detachDeploymentTarget('project-1', 'target-1', 'user-1'),
+      ],
+      [
+        'detach+deleteProviderResource',
+        () =>
+          service.detachDeploymentTarget('project-1', 'target-1', 'user-1', {
+            deleteProviderResource: true,
+          }),
+      ],
+    ];
+
+    it.each(
+      calls.flatMap(
+        (c) =>
+          [
+            ['member', ...c],
+            ['qa', ...c],
+          ] as const,
+      ),
+    )(
+      '%s is refused with HOSTING_LEAD_ONLY on %s and nothing is touched',
+      async (role, _name, call) => {
+        appRoleLookup.findAppRole.mockResolvedValueOnce(role);
+        const error = await call().catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getResponse()).toMatchObject({
+          code: 'HOSTING_LEAD_ONLY',
         });
+        expect(
+          deploymentTargetsRepository.deleteDeploymentTargetForUser,
+        ).not.toHaveBeenCalled();
+        expect(
+          deploymentTargetsRepository.createDeploymentTarget,
+        ).not.toHaveBeenCalled();
+        expect(vercelClient.createTarget).not.toHaveBeenCalled();
       },
     );
-    // No findDeploymentTargetForUser mock is queued here: access is denied
-    // in assertProjectMutationAccess before the target row is ever loaded,
-    // so queuing an unused mockResolvedValueOnce would leak into (and
-    // desync) the next test's queue.
 
-    await expect(
-      service.detachDeploymentTarget('project-1', 'target-1', 'user-1', {
-        deleteProviderResource: true,
-      }),
-    ).rejects.toThrow('Forbidden: requires admin or delegated_lead role');
-
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['admin', 'delegated_lead'],
+    it.each(calls)(
+      'answers 404, before the role, for an invisible project on %s',
+      async (_name, call) => {
+        projectReferenceLookup.findProjectReference.mockResolvedValueOnce(null);
+        appRoleLookup.findAppRole.mockClear();
+        await expect(call()).rejects.toBeInstanceOf(NotFoundException);
+        expect(appRoleLookup.findAppRole).not.toHaveBeenCalled();
+      },
     );
-    expect(
-      deploymentTargetsRepository.deleteDeploymentTargetForUser,
-    ).not.toHaveBeenCalled();
+
+    it('fails closed when the app-role port is absent (no membership row is not allowed)', async () => {
+      const unwired = new DeploymentTargetsService(
+        projectReferenceLookup as never,
+        deploymentTargetsRepository as never,
+        providerConnectionsRepository as never,
+        encryptionService as never,
+        clientRegistry as never,
+        configService as never,
+        new DeploymentStrategyResolver(providerRegistry as never),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        capabilityResolver as never,
+      );
+      await expect(
+        unwired.detachDeploymentTarget('project-1', 'target-1', 'user-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 
   it('allows deleteProviderResource for admin/delegated_lead roles and deletes the live resource', async () => {
@@ -679,11 +731,7 @@ describe('DeploymentTargetsService', () => {
       }),
     ).resolves.toEqual({ detached: true, providerResourceDeleted: true });
 
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['admin', 'delegated_lead'],
-    );
+    expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
     expect(renderClient.deleteTarget).toHaveBeenCalledWith({
       token: 'render-token',
       targetId: 'srv-1',

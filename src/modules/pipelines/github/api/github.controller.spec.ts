@@ -3,6 +3,8 @@ import type { TestingModule } from '@nestjs/testing';
 import { GithubController } from './github.controller.js';
 import { GithubService } from '../infrastructure/github.service.js';
 import type { Request } from 'express';
+import { ForbiddenException } from '@nestjs/common';
+import { APP_ROLE_LOOKUP } from '#kernel/ports/app-role.port';
 
 const fakeRepos = [
   {
@@ -32,7 +34,7 @@ const makeGithubService = () =>
       .fn()
       .mockReturnValue('https://github.com/apps/flowci/installations/new'),
     getAppSlug: jest.fn().mockReturnValue('flowci'),
-    linkInstallation: jest.fn().mockResolvedValue({
+    linkInstallationForUser: jest.fn().mockResolvedValue({
       reposLinked: 3,
       repositorySelection: 'selected',
     }),
@@ -59,13 +61,18 @@ const makeGithubService = () =>
 describe('GithubController', () => {
   let controller: GithubController;
   let service: GithubService;
+  const appRoleLookup = { findAppRole: jest.fn() };
 
   beforeEach(async () => {
     service = makeGithubService();
+    appRoleLookup.findAppRole.mockReset().mockResolvedValue('lead');
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [GithubController],
-      providers: [{ provide: GithubService, useValue: service }],
+      providers: [
+        { provide: GithubService, useValue: service },
+        { provide: APP_ROLE_LOOKUP, useValue: appRoleLookup },
+      ],
     })
       .overrideGuard(
         require('#kernel/auth/session-auth.guard.js').SessionAuthGuard,
@@ -89,12 +96,20 @@ describe('GithubController', () => {
 
   it('links a GitHub App installation to the current user', async () => {
     await expect(
-      controller.linkInstallation(makeRequest(), { installationId: 123 }),
+      controller.linkInstallation(makeRequest('gho_token'), {
+        installationId: 123,
+      }),
     ).resolves.toEqual({
       reposLinked: 3,
       repositorySelection: 'selected',
     });
-    expect(service.linkInstallation).toHaveBeenCalledWith('user-1', 123);
+    // The caller's own OAuth token travels with the request so the service can
+    // prove the installation is theirs.
+    expect(service.linkInstallationForUser).toHaveBeenCalledWith(
+      'user-1',
+      123,
+      'gho_token',
+    );
   });
 
   it('lists linked repos for the current GitHub App installation', async () => {
@@ -243,6 +258,49 @@ describe('GithubController', () => {
         'tone',
         'orders-api',
         'main',
+      );
+    });
+  });
+
+  describe('POST /github/repos role gate', () => {
+    it.each(['member', 'qa'])(
+      'refuses %s with PROJECT_ROLE_FORBIDDEN before touching GitHub',
+      async (role) => {
+        appRoleLookup.findAppRole.mockResolvedValueOnce(role);
+        const error = await controller
+          .createRepo(makeRequest('gho'), { name: 'x' } as never)
+          .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getResponse()).toMatchObject({
+          code: 'PROJECT_ROLE_FORBIDDEN',
+        });
+        expect(service.createRepo).not.toHaveBeenCalled();
+      },
+    );
+
+    it('fails closed when the role cannot be resolved', async () => {
+      appRoleLookup.findAppRole.mockResolvedValueOnce(undefined);
+      await expect(
+        controller.createRepo(makeRequest('gho'), { name: 'x' } as never),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it.each(['admin', 'lead'])('lets %s create a repository', async (role) => {
+      appRoleLookup.findAppRole.mockResolvedValueOnce(role);
+      await expect(
+        controller.createRepo(makeRequest('gho'), { name: 'x' } as never),
+      ).resolves.toMatchObject({ defaultBranch: 'main' });
+      expect(service.createRepo).toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /github/installations', () => {
+    it('passes an absent OAuth token through so the service answers 401', async () => {
+      await controller.linkInstallation(makeRequest(), { installationId: 1 });
+      expect(service.linkInstallationForUser).toHaveBeenCalledWith(
+        'user-1',
+        1,
+        undefined,
       );
     });
   });

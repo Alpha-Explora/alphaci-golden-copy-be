@@ -1,5 +1,10 @@
 import { createHmac, generateKeyPairSync } from 'node:crypto';
 
+import {
+  BadGatewayException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config.js';
@@ -546,6 +551,128 @@ describe('GithubService', () => {
         'tone/web',
       ]);
       expect(result).toEqual({ reposLinked: 2, repositorySelection: 'all' });
+    });
+  });
+
+  describe('linkInstallationForUser', () => {
+    const res = (status: number, body: unknown = {}) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+      text: async () => '',
+    });
+    const meta = (type: string | null, login: string | null = 'tone') =>
+      res(200, {
+        account: { login, id: 99, type },
+        repository_selection: 'all',
+      });
+    // The successful path continues into linkInstallation's own three calls.
+    const queueLink = () =>
+      fetchMock
+        .mockResolvedValueOnce(meta('Organization'))
+        .mockResolvedValueOnce(res(200, { token: 'installation-token' }))
+        .mockResolvedValueOnce(
+          res(200, { repositories: [{ full_name: 'tone/api' }] }),
+        );
+    const expectNothingLinked = () => {
+      expect(installationsRepository.upsert).not.toHaveBeenCalled();
+    };
+    const code = async (p: Promise<unknown>) => {
+      const e = await p.catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as ForbiddenException).getResponse()).toMatchObject({
+        code: 'INSTALLATION_NOT_ACCESSIBLE',
+      });
+    };
+
+    it('401 with no OAuth token, no GitHub call, nothing linked', async () => {
+      await expect(
+        service.linkInstallationForUser('user-1', 1, undefined),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expectNothingLinked();
+    });
+
+    it('User account: links when the caller login matches (case-insensitive)', async () => {
+      fetchMock
+        .mockResolvedValueOnce(meta('User', 'Tone'))
+        .mockResolvedValueOnce(res(200, { login: 'tone' }));
+      queueLink();
+      await expect(
+        service.linkInstallationForUser('user-1', 1, 'gho'),
+      ).resolves.toMatchObject({ repositorySelection: 'all' });
+      expect(installationsRepository.upsert).toHaveBeenCalled();
+    });
+
+    it('User account: mismatched login is refused', async () => {
+      fetchMock
+        .mockResolvedValueOnce(meta('User', 'victim'))
+        .mockResolvedValueOnce(res(200, { login: 'attacker' }));
+      await code(service.linkInstallationForUser('user-1', 1, 'gho'));
+      expectNothingLinked();
+    });
+
+    it('Organization: active membership links', async () => {
+      fetchMock
+        .mockResolvedValueOnce(meta('Organization'))
+        .mockResolvedValueOnce(res(200, { state: 'active' }));
+      queueLink();
+      await service.linkInstallationForUser('user-1', 1, 'gho');
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+        '/user/memberships/orgs/tone',
+      );
+      expect(installationsRepository.upsert).toHaveBeenCalled();
+    });
+
+    it('Organization: pending membership is refused', async () => {
+      fetchMock
+        .mockResolvedValueOnce(meta('Organization'))
+        .mockResolvedValueOnce(res(200, { state: 'pending' }));
+      await code(service.linkInstallationForUser('user-1', 1, 'gho'));
+      expectNothingLinked();
+    });
+
+    it.each([404, 403])(
+      'Organization: membership %s is refused',
+      async (st) => {
+        fetchMock
+          .mockResolvedValueOnce(meta('Organization'))
+          .mockResolvedValueOnce(res(st));
+        await code(service.linkInstallationForUser('user-1', 1, 'gho'));
+        expectNothingLinked();
+      },
+    );
+
+    it.each([
+      ['metadata 404', () => res(404)],
+      ['unknown type', () => meta('Bot')],
+      ['missing account', () => res(200, {})],
+    ])('fails closed when %s', async (_n, first) => {
+      fetchMock.mockResolvedValueOnce(first());
+      await code(service.linkInstallationForUser('user-1', 1, 'gho'));
+      expectNothingLinked();
+    });
+
+    it('401 when GitHub rejects the user token', async () => {
+      fetchMock
+        .mockResolvedValueOnce(meta('User'))
+        .mockResolvedValueOnce(res(401));
+      await expect(
+        service.linkInstallationForUser('user-1', 1, 'gho'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expectNothingLinked();
+    });
+
+    it.each([
+      ['metadata', [res(502)]],
+      ['membership', [meta('Organization'), res(503)]],
+      ['user', [meta('User'), res(500)]],
+    ])('502 on GitHub 5xx (%s)', async (_n, responses) => {
+      for (const r of responses) fetchMock.mockResolvedValueOnce(r);
+      await expect(
+        service.linkInstallationForUser('user-1', 1, 'gho'),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+      expectNothingLinked();
     });
   });
 
