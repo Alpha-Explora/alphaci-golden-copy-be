@@ -16,7 +16,6 @@ This bundle describes the current AlphaCI backend as one NestJS deployable. It i
 
 ## Maintenance
 
-* [Bundle update log](log.md) - OKF documentation-bundle history.
-* Repository change history is recorded in the root `CHANGELOG.md`.
+* Contract and user-visible changes are recorded in the root `CHANGELOG.md`; git history covers the rest.
 
-The bundle uses OKF v0.2 Markdown and YAML frontmatter. `index.md` files are directory listings and `log.md` is update history; all other Markdown files are typed concepts.
+The bundle uses OKF v0.2 Markdown and YAML frontmatter. `index.md` files are directory listings; all other Markdown files are typed concepts.

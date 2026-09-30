@@ -58,4 +58,4 @@ The profile is the artifact ceiling. The backend validates `ALPHACI_BUILD_PROFIL
 
 ## Update rule
 
-Update every affected pack profile and the generated capability matrix when a shared capability contract changes. Record the change in `docs/log.md` and `CHANGELOG.md`. Use the [pack template](pack-template.md) to keep the three profiles structurally comparable.
+Update every affected pack profile and the generated capability matrix when a shared capability contract changes, and record the change in `CHANGELOG.md`. Use the [pack template](pack-template.md) to keep the three profiles structurally comparable.
