@@ -596,6 +596,10 @@ function dockerfile(projectName: string, runtimeVersion: string): string {
     'WORKDIR /app',
     'ENV ASPNETCORE_URLS=http://+:8080',
     'EXPOSE 8080',
+    // Base image tags lag distribution security fixes; the release scan
+    // blocks fixable HIGH and CRITICAL findings, so take them at build time.
+    'USER root',
+    'RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*',
     '# Runs unprivileged; the base image ships this user for exactly this.',
     'USER $APP_UID',
     'COPY --from=build /app/publish .',
