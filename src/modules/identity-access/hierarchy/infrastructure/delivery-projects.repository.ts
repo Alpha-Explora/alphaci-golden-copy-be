@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type { LifecycleStatus } from '../domain/hierarchy.types';
+import {
+  ACTIVE_PROJECT_NAME_EXISTS_SQL,
+  projectNameLockKey,
+} from '../domain/project-name';
 
 export interface DeliveryProjectRecord {
   id: string;
@@ -34,6 +38,40 @@ interface DeliveryProjectRow {
 @Injectable()
 export class DeliveryProjectsRepository {
   constructor(private readonly databaseService: DatabaseService) {}
+
+  /** True when the team already has a non-archived Project with this name. */
+  async isNameTaken(groupId: string, name: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      ACTIVE_PROJECT_NAME_EXISTS_SQL,
+      [groupId, name],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Runs `fn` while holding a session advisory lock on (team, name), so
+   * concurrent creators of the same Project name serialize and each re-checks
+   * inside the lock. Same lock key as the repo-linking chain transaction.
+   */
+  async withNameLock<T>(
+    groupId: string,
+    name: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    return this.databaseService.withClient(async (client) => {
+      const key = projectNameLockKey(groupId, name);
+      await client.query(`SELECT pg_advisory_lock(hashtextextended($1, 0));`, [
+        key,
+      ]);
+      try {
+        return await fn();
+      } finally {
+        await client
+          .query(`SELECT pg_advisory_unlock(hashtextextended($1, 0));`, [key])
+          .catch(() => undefined);
+      }
+    });
+  }
 
   async create(input: {
     systemId: string;

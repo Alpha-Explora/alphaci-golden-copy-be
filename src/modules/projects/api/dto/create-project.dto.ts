@@ -15,8 +15,11 @@ import {
   IsUUID,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import type { DeploymentProviderId } from '#kernel/ports/deployment-runtime.port';
+
+/** Rejects C0/C1 control characters (incl. newlines and tabs). */
+export const PROJECT_NAME_PATTERN = /^[^\p{Cc}]*$/u;
 
 export class DeploymentProvisioningEnvVarDto {
   @IsString()
@@ -351,4 +354,24 @@ export class CreateProjectDto {
   @IsOptional()
   @IsUUID()
   deliveryProjectId?: string;
+
+  /**
+   * Name of the Project (hierarchy delivery project) a NEW repository is filed
+   * under, independent of the repository name. Trimmed; 1-80 chars; no control
+   * characters. Optional: omitted keeps the legacy naming. Ignored when
+   * `deliveryProjectId` is given (the repository joins that Project). Must be
+   * unique among the team's non-archived Projects (case-insensitive) or the
+   * request fails 409 PROJECT_NAME_TAKEN before any GitHub repository exists.
+   */
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  @Matches(PROJECT_NAME_PATTERN, {
+    message: 'projectName must not contain control characters',
+  })
+  projectName?: string;
 }

@@ -155,6 +155,54 @@ describe('MicroservicesProjectProvisioner', () => {
     });
   });
 
+  it('names the shared chain after projectName (enforced unique)', async () => {
+    const support = fakeSupport();
+    support.createProjectRow.mockResolvedValueOnce({
+      row: { id: 'proj-be', workspace_id: 'ws-1' },
+      deliveryProjectId: 'dp-shared',
+    });
+    const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+    await provisioner.createMicroservicesProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      { ...packedShapeDto, projectName: 'Order Platform' } as never,
+    );
+
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      chainName: 'Order Platform',
+      enforceUniqueChainName: true,
+    });
+    expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      deliveryProjectId: 'dp-shared',
+    });
+  });
+
+  it('ignores projectName when an explicit deliveryProjectId is given', async () => {
+    const support = fakeSupport();
+    const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+    await provisioner.createMicroservicesProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      {
+        ...packedShapeDto,
+        projectName: 'Ignored',
+        deliveryProjectId: 'dp-given',
+      } as never,
+    );
+
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      deliveryProjectId: 'dp-given',
+    });
+  });
+
   it('links both slots to an explicit deliveryProjectId instead of auto-creating a chain', async () => {
     const support = fakeSupport();
     support.createProjectRow.mockResolvedValueOnce({

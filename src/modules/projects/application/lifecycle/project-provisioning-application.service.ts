@@ -138,6 +138,13 @@ export class ProjectProvisioningApplicationService {
         dto.workspaceId,
       );
 
+    // Same ordering rule for a caller-chosen Project name: 409 before GitHub.
+    await this.support.assertProjectNameAvailableForCreate({
+      projectName: dto.projectName,
+      deliveryProjectId: dto.deliveryProjectId,
+      workspaceId,
+    });
+
     // Validated before resolveRepositoryProvisioning below (the first call
     // that can reach GitHub) — a deliveryProjectId rejected after the repo
     // already exists would strand it.
@@ -199,17 +206,24 @@ export class ProjectProvisioningApplicationService {
   ): Promise<SetupProjectResponse> {
     // Same ordering as createProject: validated before the setup flow's first
     // GitHub call (resolveSetupProvisioningToken).
-    if (dto.deliveryProjectId) {
+    if (dto.deliveryProjectId || dto.projectName) {
       const workspaceId =
         await this.support.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
         );
-      await this.support.assertDeliveryProjectAvailableForCreate({
+      await this.support.assertProjectNameAvailableForCreate({
+        projectName: dto.projectName,
         deliveryProjectId: dto.deliveryProjectId,
         workspaceId,
-        userId,
       });
+      if (dto.deliveryProjectId) {
+        await this.support.assertDeliveryProjectAvailableForCreate({
+          deliveryProjectId: dto.deliveryProjectId,
+          workspaceId,
+          userId,
+        });
+      }
     }
 
     return this.singleRepository.setupProject(userId, oauthAccessToken, dto);

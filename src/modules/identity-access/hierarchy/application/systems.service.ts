@@ -127,6 +127,27 @@ export class SystemsService {
   ): Promise<DeliveryProjectRecord> {
     await this.accessService.assertCanCreateInGroup(groupId, userId);
 
+    // Same uniqueness rule as project creation (409 PROJECT_NAME_TAKEN),
+    // re-checked under a per-(team, name) lock so two concurrent creates of
+    // one name cannot both pass.
+    return this.deliveryProjectsService.withProjectNameLock(
+      groupId,
+      dto.name,
+      async () => {
+        await this.deliveryProjectsService.assertProjectNameAvailable(
+          groupId,
+          dto.name,
+        );
+        return this.createEmptyProjectUnlocked(groupId, userId, dto);
+      },
+    );
+  }
+
+  private async createEmptyProjectUnlocked(
+    groupId: string,
+    userId: string,
+    dto: CreateEmptyProjectDto,
+  ): Promise<DeliveryProjectRecord> {
     const system = await this.systemsRepository.create({
       groupId,
       name: dto.name,

@@ -10,6 +10,13 @@ export interface EnsureProjectLinkInput {
    * hierarchy.repositories entry.
    */
   chainName?: string;
+  /**
+   * `chainName` is a caller-chosen Project name that must be unique among the
+   * team's non-archived Projects. ensureLink then throws a 409
+   * PROJECT_NAME_TAKEN ConflictException if it lost a race (the only case in
+   * which it throws).
+   */
+  enforceUniqueChainName?: boolean;
   repoFullName: string;
   visibility?: string | null;
   createdBy: string;
@@ -53,6 +60,16 @@ export interface ProjectLinkPort {
    */
   getProjectFolder(projectId: string): Promise<ProjectFolderLink | null>;
   ensureLink(input: EnsureProjectLinkInput): Promise<EnsureLinkResult | null>;
+  /**
+   * User-facing gate for a caller-chosen Project name on project creation.
+   * Must run BEFORE any GitHub call. Throws 409 PROJECT_NAME_TAKEN when the
+   * team already has a non-archived Project with this name (case-insensitive,
+   * trimmed); a no-op for personal workspaces, which have no Projects.
+   */
+  assertProjectNameAvailableForCreate(input: {
+    workspaceId: string;
+    name: string;
+  }): Promise<void>;
   /**
    * User-facing gate for a caller-supplied `deliveryProjectId` on project
    * creation. Must run BEFORE any GitHub call — a late rejection would strand

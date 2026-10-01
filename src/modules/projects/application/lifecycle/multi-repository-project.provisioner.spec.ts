@@ -263,6 +263,85 @@ describe('MultiRepositoryProjectProvisioner', () => {
     });
   });
 
+  it('names the shared chain after projectName (enforced unique) and keeps the frontend row on that chain', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-fe',
+        ownerLogin: 'org',
+        repoName: 'orders-fe',
+      });
+    support.createProjectRow
+      .mockResolvedValueOnce({
+        row: { id: 'proj-be' },
+        deliveryProjectId: 'dp-shared',
+      })
+      .mockResolvedValueOnce({
+        row: { id: 'proj-fe' },
+        deliveryProjectId: 'dp-shared',
+      });
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      { ...multiRepoDto, projectName: '  Order Platform ' } as never,
+    );
+
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      chainName: 'Order Platform',
+      enforceUniqueChainName: true,
+    });
+    expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      deliveryProjectId: 'dp-shared',
+    });
+  });
+
+  it('ignores projectName when an explicit deliveryProjectId is given', async () => {
+    const support = fakeSupport();
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-fe',
+        ownerLogin: 'org',
+        repoName: 'orders-fe',
+      });
+    support.createProjectRow.mockResolvedValue({
+      row: { id: 'proj' },
+      deliveryProjectId: 'dp-given',
+    });
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      {
+        ...multiRepoDto,
+        projectName: 'Ignored',
+        deliveryProjectId: 'dp-given',
+      } as never,
+    );
+
+    expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      deliveryProjectId: 'dp-given',
+    });
+  });
+
   it('links both pair rows to an explicit deliveryProjectId instead of auto-creating a chain', async () => {
     const support = fakeSupport();
     support.githubService.createRepo

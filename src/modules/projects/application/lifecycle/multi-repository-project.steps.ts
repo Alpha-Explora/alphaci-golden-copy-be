@@ -17,7 +17,10 @@ import type {
 import type { CreateProjectResponse } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import type { StagedWorkflowFile } from '../workflows/index';
-import type { ProjectProvisioningSupport } from './project-provisioning.support';
+import {
+  newChainLinkOptions,
+  type ProjectProvisioningSupport,
+} from './project-provisioning.support';
 import {
   BRANCHES_CREATED_ON_PROVISION,
   PROTECTED_BRANCHES,
@@ -221,6 +224,8 @@ export async function persistMultiRepoStandaloneRow(input: {
   deliveryProjectId?: string;
   /** Name for a newly auto-created system/delivery-project chain. */
   chainName?: string;
+  /** `chainName` is a caller-chosen Project name that must be unique in the team. */
+  enforceUniqueChainName?: boolean;
 }): Promise<{ row: ProvisionedProjectRow; deliveryProjectId: string | null }> {
   const {
     support,
@@ -236,6 +241,7 @@ export async function persistMultiRepoStandaloneRow(input: {
     includeTests,
     deliveryProjectId,
     chainName,
+    enforceUniqueChainName,
   } = input;
 
   return support.createProjectRow(
@@ -264,6 +270,7 @@ export async function persistMultiRepoStandaloneRow(input: {
     {
       ...(deliveryProjectId !== undefined && { deliveryProjectId }),
       ...(chainName !== undefined && { chainName }),
+      ...(enforceUniqueChainName && { enforceUniqueChainName }),
     },
   );
 }
@@ -399,9 +406,7 @@ export async function provisionMultiRepoBackend(input: {
         workflowPath: bundle.workflowPath,
         workflowFiles: bundle.workflowFiles,
         includeTests: true,
-        ...(dto.deliveryProjectId
-          ? { deliveryProjectId: dto.deliveryProjectId }
-          : { chainName: dto.repoName }),
+        ...newChainLinkOptions(dto, dto.repoName),
       }));
 
     await installMultiRepoCiSecrets({
@@ -556,7 +561,7 @@ export async function provisionMultiRepoFrontend(input: {
       // no-op through ensureLink's own workspace check.
       ...(pairDeliveryProjectId
         ? { deliveryProjectId: pairDeliveryProjectId }
-        : { chainName: dto.repoName }),
+        : { chainName: dto.projectName?.trim() || dto.repoName }),
     }));
 
     await installMultiRepoCiSecrets({

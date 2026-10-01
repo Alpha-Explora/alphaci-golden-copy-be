@@ -17,7 +17,10 @@ import type {
   SetupProjectResponse,
 } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
-import type { ProjectProvisioningSupport } from './project-provisioning.support';
+import {
+  newChainLinkOptions,
+  type ProjectProvisioningSupport,
+} from './project-provisioning.support';
 import {
   BRANCHES_CREATED_ON_PROVISION,
   PROTECTED_BRANCHES,
@@ -147,9 +150,7 @@ export class SingleRepositoryProjectProvisioner {
             workflowFiles: workflowFileMetadata(workflowFiles),
           },
         },
-        dto.deliveryProjectId
-          ? { deliveryProjectId: dto.deliveryProjectId }
-          : undefined,
+        newChainLinkOptions(dto),
       ));
 
       const ciToken = await this.support.ciService.issueProjectToken(row.id);
@@ -366,9 +367,7 @@ export class SingleRepositoryProjectProvisioner {
           workflowFiles: workflowFileMetadata(workflowFiles),
         },
       },
-      dto.deliveryProjectId
-        ? { deliveryProjectId: dto.deliveryProjectId }
-        : undefined,
+      newChainLinkOptions(dto),
     );
 
     let commitSha = '';

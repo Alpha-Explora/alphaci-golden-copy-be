@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 
 import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import type {
@@ -107,6 +107,10 @@ function buildSystemsService(accessService: HierarchyAccessService) {
   };
   const deliveryProjectsService = {
     createDeliveryProject: jest.fn(() => Promise.resolve(deliveryProject)),
+    assertProjectNameAvailable: jest.fn(() => Promise.resolve()),
+    withProjectNameLock: jest.fn(
+      (_groupId: string, _name: string, fn: () => Promise<unknown>) => fn(),
+    ),
   } as unknown as jest.Mocked<DeliveryProjectsService>;
   const repositoriesService = {} as unknown as RepositoriesService;
 
@@ -190,5 +194,44 @@ describe('SystemsService.createEmptyProject', () => {
         name: 'Payments',
       }),
     ).resolves.toMatchObject({ id: 'dp-1' });
+  });
+
+  it('rejects a duplicate Project name with 409 PROJECT_NAME_TAKEN and creates nothing', async () => {
+    const accessService = buildAccessService({ appRole: 'lead' });
+    const { service, systemsRepository, deliveryProjectsService } =
+      buildSystemsService(accessService);
+    deliveryProjectsService.assertProjectNameAvailable.mockRejectedValue(
+      new ConflictException({
+        code: 'PROJECT_NAME_TAKEN',
+        message: 'A Project named "Payments" already exists in this team.',
+      }),
+    );
+
+    await expect(
+      service.createEmptyProject('group-1', 'user-1', { name: 'Payments' }),
+    ).rejects.toMatchObject({
+      response: { code: 'PROJECT_NAME_TAKEN' },
+    });
+    expect(systemsRepository.create).not.toHaveBeenCalled();
+    expect(
+      deliveryProjectsService.createDeliveryProject,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('checks the name inside the per-(team, name) lock', async () => {
+    const accessService = buildAccessService({ appRole: 'lead' });
+    const { service, deliveryProjectsService } =
+      buildSystemsService(accessService);
+
+    await service.createEmptyProject('group-1', 'user-1', { name: 'Payments' });
+
+    expect(deliveryProjectsService.withProjectNameLock).toHaveBeenCalledWith(
+      'group-1',
+      'Payments',
+      expect.any(Function),
+    );
+    expect(
+      deliveryProjectsService.assertProjectNameAvailable,
+    ).toHaveBeenCalledWith('group-1', 'Payments');
   });
 });
