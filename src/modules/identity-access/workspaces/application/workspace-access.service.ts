@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -55,33 +54,6 @@ export class WorkspaceAccessService implements WorkspaceAccessPort {
     }
     this.assertRole(membership.role, allowedRoles);
     return membership;
-  }
-
-  async assertCanChangeOwnerRole(
-    workspaceId: string,
-    targetMembership: WorkspaceMembership,
-    nextRole: WorkspaceRole,
-  ): Promise<void> {
-    if (targetMembership.role !== 'admin' || nextRole === 'admin') {
-      return;
-    }
-    const ownerCount = await this.repository.countOwners(workspaceId);
-    if (ownerCount <= 1) {
-      throw new BadRequestException('Workspace must keep at least one owner');
-    }
-  }
-
-  async assertCanRemoveMember(
-    workspaceId: string,
-    targetMembership: WorkspaceMembership,
-  ): Promise<void> {
-    if (targetMembership.role !== 'admin') {
-      return;
-    }
-    const ownerCount = await this.repository.countOwners(workspaceId);
-    if (ownerCount <= 1) {
-      throw new BadRequestException('Workspace must keep at least one owner');
-    }
   }
 
   private assertRole(role: WorkspaceRole, allowedRoles: WorkspaceRole[]): void {
