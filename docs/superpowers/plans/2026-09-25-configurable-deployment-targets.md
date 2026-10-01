@@ -396,14 +396,21 @@ as runtime acceptance evidence.
   push, explicit promotion, pinned source identity, provider isolation,
   install, upgrade, rejected signature, failed-health rollback, and restart
   recovery of the WSL host. Record a repeatable report tied to the commit.
-  **Lab progress (2026-09-29, laptop, React only, dev and main both on the WSL
-  host):** a push to `dev` runs quality, builds and scans the image,
-  registers the release, and signs it (run 36564833472 in
-  Alphaexplora-Sandbox/alphaci-lab-react); the agent verified the signature and
-  reached the image pull, which needs a GHCR credential on the host. Found and
-  fixed on the way: backend #124 and #125, workflow #34 and #35. Remaining: the
-  pull, promotion to main, tamper, rollback, reboot, mixed Vercel/Render
-  test/UAT, and .NET.
+  **Lab results (2026-10-01, laptop, .NET project
+  Alphaexplora-Sandbox/alphaci-lab-dotnet, `dev` and `main` both delivered to
+  the Ubuntu host):** passed: a push to `dev` runs quality, builds and scans
+  the image, registers and signs the release, and the agent verifies the
+  signature, pulls by digest, starts it, and reports healthy; promotion puts
+  the same image on `main` behind Caddy (HTTPS answers); a second release
+  upgrades `dev` and leaves `main` alone; a manifest with a changed digest
+  is rejected with nothing pulled; a release failing its health check is
+  rolled back (deployment `rolled_back`). The React project passed up to
+  signing (run 36564833472). Found and fixed on the way: backend #124, #125,
+  #140 and workflow #34, #35. Remaining: an elevated
+  `Install-AlphaCIHost.ps1` run and a Windows restart with nobody signed in
+  (after a restart the distro idles out until a keepalive session exists, so
+  agents do not run), the mixed Vercel/Render test/UAT run (the lab has no
+  Vercel or Render tokens), a scripted repeatable report, and Server 2022.
 - [x] **F2**, frontend PR: show each environment in order with its targets per
   slot, current release (commit, image digests), deployment history, and an
   explicit Promote action with the backend's reason when it is refused and a
