@@ -7,10 +7,12 @@ import type { QaChecklistTargetPersona } from '../application/qa-checklists/qa-c
  * constructor args from Nest, and none of these rules has a dependency to
  * wire, so a function keeps them pure data in, data out.
  *
- * The permission matrix, verbatim from the task contract:
- *   PATCH by item.targetPersona: developer -> member|lead|admin;
+ * The permission matrix:
+ *   PATCH by item.targetPersona: developer -> member|qa|lead|admin;
  *                                 qa        -> qa|lead|admin;
  *                                 all       -> qa|member|lead|admin.
+ *   QA is the primary verifier and may mark every item; Developers mark their
+ *   own (developer) and shared (all) items but not QA-only checks.
  *   Setting status 'returned_to_dev': qa|lead|admin only, regardless of persona.
  *   Creating a run, and signing off: qa|lead|admin.
  *   request-retest: member|lead|admin (deliberately NOT qa — QA flags a
@@ -30,7 +32,7 @@ export function personaAllowsRole(
     return true;
   }
   if (persona === 'developer') {
-    return role === 'member';
+    return role === 'member' || role === 'qa';
   }
   // persona === 'qa'
   return role === 'qa';

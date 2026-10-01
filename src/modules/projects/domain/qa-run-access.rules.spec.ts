@@ -14,12 +14,15 @@ import {
 const ROLES: PlatformAppRole[] = ['admin', 'lead', 'qa', 'member'];
 const PERSONAS: QaChecklistTargetPersona[] = ['developer', 'qa', 'all'];
 
-/** The exact matrix from the task contract, verbatim. */
+/**
+ * QA is the primary verifier and marks every item, developer items included;
+ * Developers mark their own (developer) and shared (all) items, not QA-only.
+ */
 const EXPECTED_PERSONA_MATRIX: Record<
   QaChecklistTargetPersona,
   Record<PlatformAppRole, boolean>
 > = {
-  developer: { admin: true, lead: true, qa: false, member: true },
+  developer: { admin: true, lead: true, qa: true, member: true },
   qa: { admin: true, lead: true, qa: true, member: false },
   all: { admin: true, lead: true, qa: true, member: true },
 };
