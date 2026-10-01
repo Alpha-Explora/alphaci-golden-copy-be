@@ -11,12 +11,17 @@ import type { WorkspaceDataCleanupPort } from '#kernel/ports/workspace-data-clea
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
+  PROJECT_LINK_PORT,
+  type ProjectLinkPort,
+} from '#kernel/ports/project-link.port';
+import {
   QA_UNIQUE_VIOLATION,
   QaChecklistsRepository,
   type QaChecklistItemRow,
   type QaChecklistRow,
 } from '../../infrastructure/qa-checklists.repository';
 import { QaAccessService } from './qa-access.service';
+import { requirementMovedToProject } from './qa-errors';
 import {
   QA_CHECKLIST_MAX_ITEMS,
   type QaChecklist,
@@ -46,6 +51,8 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
   constructor(
     private readonly repository: QaChecklistsRepository,
     private readonly access: QaAccessService,
+    @Inject(PROJECT_LINK_PORT)
+    private readonly projectLink: ProjectLinkPort,
     // Explicit token: AuditEventSink is a type alias, which TypeScript emits
     // as `Object` in design:paramtypes, so without @Inject Nest finds no
     // provider and @Optional() silently injects undefined.
@@ -129,6 +136,7 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     const checklist = await this.requireChecklist(id);
     await this.assertWorkspaceAccess(userId, checklist.workspace_id);
     await this.assertManage(userId);
+    this.assertNotMovedToProject(checklist);
     this.assertNotArchived(checklist);
     this.assertVersion(checklist, dto.expectedVersion);
 
@@ -193,6 +201,7 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     const checklist = await this.requireChecklist(id);
     await this.assertWorkspaceAccess(userId, checklist.workspace_id);
     await this.assertManage(userId);
+    this.assertNotMovedToProject(checklist);
     this.assertNotArchived(checklist);
     this.assertVersion(checklist, dto.expectedVersion);
     this.assertItemCount(dto.items.length);
@@ -221,6 +230,7 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     const checklist = await this.requireChecklist(id);
     await this.assertWorkspaceAccess(userId, checklist.workspace_id);
     await this.assertManage(userId);
+    this.assertNotMovedToProject(checklist);
 
     const wasAlreadyArchived = checklist.archived_at !== null;
     const archived = await this.repository.archive(id, userId);
@@ -247,6 +257,7 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     const checklist = await this.requireChecklist(id);
     await this.assertWorkspaceAccess(userId, checklist.workspace_id);
     await this.assertManage(userId);
+    this.assertNotMovedToProject(checklist);
     this.assertNotArchived(checklist);
 
     const requestedIds = [...new Set(dto.projectIds)];
@@ -294,6 +305,7 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     const checklist = await this.requireChecklist(id);
     await this.assertWorkspaceAccess(userId, checklist.workspace_id);
     await this.assertManage(userId);
+    this.assertNotMovedToProject(checklist);
     this.assertNotArchived(checklist);
 
     const add = [...new Set(dto.add ?? [])];
@@ -364,7 +376,15 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
         (await this.access.canManage(userId))
       : false;
 
-    const rows = await this.repository.listByProject(projectId);
+    // A repository's requirements are its Project's. A repository filed under
+    // no Project falls back to what was shared to it before requirements
+    // belonged to Projects.
+    const folder = await this.projectLink.getProjectFolder(projectId);
+    const rows = folder
+      ? await this.repository.listByDeliveryProject(folder.deliveryProjectId, {
+          includeArchived: false,
+        })
+      : await this.repository.listByProject(projectId);
     return { items: await this.assembleMany(rows), canManage };
   }
 
@@ -395,6 +415,17 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
       throw new ForbiddenException(
         'Only a workspace lead or admin can manage QA checklists',
       );
+    }
+  }
+
+  /**
+   * A checklist that belongs to a Project is edited through the Project's
+   * requirements. The legacy item replace deletes and reinserts every item,
+   * which would destroy their Progress.
+   */
+  private assertNotMovedToProject(checklist: QaChecklistRow): void {
+    if (checklist.delivery_project_id) {
+      throw requirementMovedToProject(checklist.delivery_project_id);
     }
   }
 
@@ -515,8 +546,13 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
         targetPersona: item.target_persona,
         verificationType: item.verification_type,
         testIdentifier: item.test_identifier,
+        acceptanceCriteria: item.acceptance_criteria,
+        progress: item.progress,
       })),
       sharedProjectIds,
+      kind: row.kind,
+      deliveryProjectId: row.delivery_project_id,
+      legacyChecklistId: row.legacy_checklist_id,
     };
   }
 

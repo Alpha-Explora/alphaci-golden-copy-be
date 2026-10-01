@@ -101,6 +101,11 @@ export class QaAccessService {
     return this.projectsRepository.findAppRole(userId);
   }
 
+  /** The owning user of a provisioned project - a notification recipient. */
+  async findProjectOwnerId(projectId: string): Promise<string | null> {
+    return this.projectsRepository.findOwnerId(projectId);
+  }
+
   /** Active workspace members whose global persona is 'lead' — notification recipients. */
   async listWorkspaceLeadIds(workspaceId: string): Promise<string[]> {
     return this.projectsRepository.listWorkspaceLeadIds(workspaceId);

@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-01
+
+- **Creation**: Recorded Project requirements (ADR-0014). Requirements move from the workspace-and-repository checklist model to the Project: a Product owner defines Features with User stories and System requirements, developers report Progress, QA verifies once per Project against the `uat` head of every repository, and the merge-to-main gate is per Project with strict staleness. The migration is additive and idempotent and is applied before the backend deploys; `PROJECT_LINK_PORT` gained the reverse Project lookup and a `DELIVERY_PROJECT_DATA_CLEANUP` port removes a deleted Project's requirements, so the schema-ownership gate gains only the one-time backfill pairs.
+
 ## 2026-09-15
 
 - **Update**: Added deterministic provenance to the generated `@alphaci/capability-catalog` package. `provenance.json` binds the backend source digest and package identity to a canonical generated-file digest, and the package checker now rejects stale or tampered output.

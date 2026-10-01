@@ -81,7 +81,7 @@ describe('QaChecklistsRepository', () => {
     expect(query).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining('INSERT INTO projects.qa_checklists'),
-      ['workspace-1', 'Release checklist', null, 'user-1'],
+      ['workspace-1', 'Release checklist', null, 'user-1', 'system', null],
     );
     expect(query).toHaveBeenNthCalledWith(
       2,
@@ -93,6 +93,7 @@ describe('QaChecklistsRepository', () => {
         null,
         'qa',
         'manual',
+        null,
         null,
       ],
     );
@@ -113,6 +114,8 @@ describe('QaChecklistsRepository', () => {
       'workspace-1',
       'RELEASE CHECKLIST',
       'checklist-1',
+      null,
+      'system',
     ]);
     expect(result).toBe(true);
   });

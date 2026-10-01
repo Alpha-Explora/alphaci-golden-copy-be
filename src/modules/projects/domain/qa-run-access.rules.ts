@@ -1,52 +1,47 @@
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
-import type { QaChecklistTargetPersona } from '../application/qa-checklists/qa-checklists.contracts';
+
+export { canManageRequirements } from '#kernel/rules/persona-access.rules';
 
 /**
  * Plain functions, not an injectable class: same reasoning as
  * preview-surface.rule.ts — undecorated classes under domain/ get no
  * constructor args from Nest, and none of these rules has a dependency to
- * wire, so a function keeps them pure data in, data out.
+ * wire, so a function keeps them pure data in, data out. Every check is an
+ * allow-list: an unresolved or future role gets nothing.
  *
- * The permission matrix:
- *   PATCH by item.targetPersona: developer -> member|qa|lead|admin;
- *                                 qa        -> qa|lead|admin;
- *                                 all       -> qa|member|lead|admin.
- *   QA is the primary verifier and may mark every item; Developers mark their
- *   own (developer) and shared (all) items but not QA-only checks.
- *   Setting status 'returned_to_dev': qa|lead|admin only, regardless of persona.
- *   Creating a run, and signing off: qa|lead|admin.
- *   request-retest: member|lead|admin (deliberately NOT qa — QA flags a
- *     defect, member/lead/admin says it is fixed and ready to re-check).
- *   Reopening a signed-off run: lead|admin only.
+ * The permission matrix (docs/design/project-requirements.md, section 4.1):
+ *   Creating/editing requirements (canManageRequirements): lead|admin.
+ *   Setting an item's Progress (todo / in_progress / done): member|lead|admin.
+ *     QA does not write Progress; it verifies.
+ *   Setting an item's Verification (pending / passed / failed / blocked /
+ *     returned_to_dev): qa|lead|admin. Developers lose it - they report
+ *     Progress and QA decides.
+ *   Creating a run, signing off, dispatching automation: qa|lead|admin.
+ *   Reopening a signed-off run, merging to main: lead|admin only.
+ *   request-retest (compatibility alias that sets Progress to done):
+ *     member|lead|admin.
  */
 
-/** Whether `role` may PATCH an item whose checklist item persona is `persona`. */
-export function personaAllowsRole(
-  persona: QaChecklistTargetPersona,
-  role: PlatformAppRole,
-): boolean {
-  if (role === 'admin' || role === 'lead') {
-    return true;
-  }
-  if (persona === 'all') {
-    return true;
-  }
-  if (persona === 'developer') {
-    return role === 'member' || role === 'qa';
-  }
-  // persona === 'qa'
-  return role === 'qa';
+/** Setting an item's Progress: the developer track. */
+export function canSetProgress(role: PlatformAppRole): boolean {
+  return role === 'member' || role === 'lead' || role === 'admin';
+}
+
+/** Setting an item's Verification: the QA track. */
+export function canSetVerification(role: PlatformAppRole): boolean {
+  return role === 'qa' || role === 'lead' || role === 'admin';
 }
 
 export function canCreateRun(role: PlatformAppRole): boolean {
   return role === 'qa' || role === 'lead' || role === 'admin';
 }
 
-/** Setting an item's status TO 'returned_to_dev' — QA feedback, regardless of the item's persona. */
+/** Setting an item's status TO 'returned_to_dev' — QA feedback. */
 export function canSetReturnedToDev(role: PlatformAppRole): boolean {
   return role === 'qa' || role === 'lead' || role === 'admin';
 }
 
+/** The request-retest alias, kept for the frontend that predates Progress. */
 export function canRequestRetest(role: PlatformAppRole): boolean {
   return role === 'member' || role === 'lead' || role === 'admin';
 }

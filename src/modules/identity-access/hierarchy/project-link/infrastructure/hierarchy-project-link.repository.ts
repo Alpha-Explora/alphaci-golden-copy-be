@@ -88,6 +88,53 @@ export class HierarchyProjectLinkRepository {
   async findProjectFolder(
     projectId: string,
   ): Promise<ProjectFolderLink | null> {
+    return this.queryFolder(
+      `
+        SELECT dp.id AS delivery_project_id
+        FROM hierarchy.repositories self
+        JOIN hierarchy.delivery_projects dp ON dp.id = self.delivery_project_id
+        WHERE self.provisioned_project_id = $1
+      `,
+      projectId,
+    );
+  }
+
+  /** Active Projects of a group, oldest first. */
+  async listActiveDeliveryProjects(
+    groupId: string,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const result = await this.databaseService.query<{
+      id: string;
+      name: string;
+    }>(
+      `
+        SELECT id, name FROM hierarchy.delivery_projects
+        WHERE group_id = $1 AND status = 'active'
+        ORDER BY created_at, id;
+      `,
+      [groupId],
+    );
+    return result.rows;
+  }
+
+  /** The Project by its own id, with every non-archived repository row of it. */
+  async findDeliveryProject(
+    deliveryProjectId: string,
+  ): Promise<ProjectFolderLink | null> {
+    return this.queryFolder(
+      `
+        SELECT dp.id AS delivery_project_id
+        FROM hierarchy.delivery_projects dp
+        WHERE dp.id = $1
+      `,
+      deliveryProjectId,
+    );
+  }
+
+  private async queryFolder(
+    pickDeliveryProjectSql: string,
+    param: string,
+  ): Promise<ProjectFolderLink | null> {
     const result = await this.databaseService.query<{
       delivery_project_id: string;
       group_id: string;
@@ -104,15 +151,14 @@ export class HierarchyProjectLinkRepository {
           r.provisioned_project_id,
           r.name   AS repository_name,
           r.repo_full_name
-        FROM hierarchy.repositories self
-        JOIN hierarchy.delivery_projects dp ON dp.id = self.delivery_project_id
+        FROM (${pickDeliveryProjectSql}) picked
+        JOIN hierarchy.delivery_projects dp ON dp.id = picked.delivery_project_id
         LEFT JOIN hierarchy.repositories r
           ON r.delivery_project_id = dp.id
          AND r.status <> 'archived'
-        WHERE self.provisioned_project_id = $1
         ORDER BY r.created_at, r.id;
       `,
-      [projectId],
+      [param],
     );
     const first = result.rows[0];
     if (!first) return null;

@@ -15,7 +15,6 @@ import {
   ProjectQaRunsController,
 } from './qa-runs.controller';
 import { QaRunsService } from '../application/qa-runs/qa-runs.service';
-import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
 import { QaPromotionService } from '../application/qa-runs/qa-promotion.service';
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { QA_REPORT_SCHEMA_VERSION } from '../application/qa-runs/qa-report.contracts';
@@ -32,6 +31,8 @@ const makeRequest = (user: typeof fakeUser | undefined = fakeUser) =>
 
 const run = (overrides: Partial<QaRun> = {}): QaRun => ({
   id: 'run-1',
+  scope: 'repository' as const,
+  legacy: true as const,
   projectId: 'project-1',
   checklistId: 'checklist-1',
   checklistName: 'Release checklist',
@@ -118,7 +119,7 @@ const makeRunsService = () =>
     updateItem: jest.fn(),
     requestRetest: jest.fn(),
     signoff: jest.fn(),
-    reopen: jest.fn().mockResolvedValue(run()),
+    refuseWrite: jest.fn().mockRejectedValue(new ConflictException('refused')),
     listReturnedItems: jest.fn(),
     listMyItems: jest.fn(),
   }) as unknown as QaRunsService;
@@ -129,6 +130,11 @@ const promotionStatusFixture = (
   qaBranch: 'uat',
   targetBranch: 'main',
   headSha: 'a'.repeat(40),
+  scope: 'project',
+  deliveryProject: null,
+  run: null,
+  repositories: [],
+  requirementsChanged: false,
   checklists: [],
   eligible: false,
   reasons: ['No QA checklist is shared to this project'],
@@ -154,30 +160,15 @@ const makeReportService = (
     ...overrides,
   }) as unknown as jest.Mocked<QaReportService>;
 
-const makeDispatchService = (
-  overrides: Partial<jest.Mocked<QaAutomationDispatchService>> = {},
-) =>
-  ({
-    dispatch: jest.fn().mockResolvedValue({
-      workflowFile: '30-alphaci-verify.yml',
-      ref: 'main',
-      headSha: 'a'.repeat(40),
-      targetsRunCommit: true,
-    }),
-    ...overrides,
-  }) as unknown as jest.Mocked<QaAutomationDispatchService>;
-
 async function compileController(
   runsService: QaRunsService,
   reportService: QaReportService,
-  dispatchService: QaAutomationDispatchService = makeDispatchService(),
 ) {
   const module: TestingModule = await Test.createTestingModule({
     controllers: [ProjectQaRunsController],
     providers: [
       { provide: QaRunsService, useValue: runsService },
       { provide: QaReportService, useValue: reportService },
-      { provide: QaAutomationDispatchService, useValue: dispatchService },
     ],
   })
     .overrideGuard(
@@ -313,70 +304,53 @@ describe('ProjectQaRunsController.report', () => {
   });
 });
 
-describe('ProjectQaRunsController.reopen', () => {
-  it('passes the full actor context (id + login), not just the user id', async () => {
+describe('ProjectQaRunsController - repository-scope runs are read-only history', () => {
+  it('refuses reopen, sign-off, item writes and dispatch through refuseWrite with the full actor context', async () => {
     const runsService = makeRunsService();
     const controller = await compileController(
       runsService,
       makeReportService(),
     );
+    const actor = {
+      userId: 'user-1',
+      userLogin: 'tone',
+      oauthToken: 'token-1',
+    };
 
-    await controller.reopen(makeRequest(), 'project-1', 'run-1');
-
-    expect(runsService.reopen).toHaveBeenCalledWith(
-      'project-1',
-      { userId: 'user-1', userLogin: 'tone', oauthToken: 'token-1' },
-      'run-1',
-    );
-  });
-});
-
-describe('ProjectQaRunsController.dispatchAutomation', () => {
-  it('passes the full actor context and returns the dispatch service result verbatim', async () => {
-    const dispatchService = makeDispatchService();
-    const controller = await compileController(
-      makeRunsService(),
-      makeReportService(),
-      dispatchService,
-    );
-
-    const result = await controller.dispatchAutomation(
-      makeRequest(),
-      'project-1',
-      'run-1',
-    );
-
-    expect(dispatchService.dispatch).toHaveBeenCalledWith(
-      'project-1',
-      { userId: 'user-1', userLogin: 'tone', oauthToken: 'token-1' },
-      'run-1',
-    );
-    expect(result).toEqual({
-      workflowFile: '30-alphaci-verify.yml',
-      ref: 'main',
-      headSha: 'a'.repeat(40),
-      targetsRunCommit: true,
-    });
-  });
-
-  it('propagates the dispatch service rejection (e.g. a 409 GITHUB_REAUTH) unchanged', async () => {
-    const dispatchService = makeDispatchService({
-      dispatch: jest.fn().mockRejectedValue(
-        new ConflictException({
-          code: 'GITHUB_REAUTH',
-          message: 'Sign in to GitHub again, then retry.',
-        }),
-      ),
-    });
-    const controller = await compileController(
-      makeRunsService(),
-      makeReportService(),
-      dispatchService,
-    );
-
+    await expect(
+      controller.reopen(makeRequest(), 'project-1', 'run-1'),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      controller.signoff(makeRequest(), 'project-1', 'run-1'),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      controller.updateItem(makeRequest(), 'project-1', 'run-1'),
+    ).rejects.toThrow(ConflictException);
     await expect(
       controller.dispatchAutomation(makeRequest(), 'project-1', 'run-1'),
     ).rejects.toThrow(ConflictException);
+
+    expect(runsService.refuseWrite).toHaveBeenCalledTimes(4);
+    expect(runsService.refuseWrite).toHaveBeenCalledWith(
+      'project-1',
+      actor,
+      'run-1',
+    );
+  });
+
+  it('refuses creating a repository-scope run', async () => {
+    const runsService = makeRunsService();
+    (runsService.create as jest.Mock).mockRejectedValue(
+      new ConflictException('refused'),
+    );
+    const controller = await compileController(
+      runsService,
+      makeReportService(),
+    );
+
+    await expect(controller.create(makeRequest(), 'project-1')).rejects.toThrow(
+      ConflictException,
+    );
   });
 });
 
@@ -406,7 +380,11 @@ describe('ProjectQaMyItemsController.list', () => {
 
     const result = await controller.list(makeRequest(), 'project-1');
 
-    expect(runsService.listMyItems).toHaveBeenCalledWith('project-1', 'user-1');
+    expect(runsService.listMyItems).toHaveBeenCalledWith('project-1', {
+      userId: 'user-1',
+      userLogin: 'tone',
+      oauthToken: 'token-1',
+    });
     expect(result).toEqual({ returned: [], developerItems: [] });
   });
 });

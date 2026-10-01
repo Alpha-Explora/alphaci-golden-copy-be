@@ -59,6 +59,18 @@ export interface ProjectLinkPort {
    * getLinkedRepositoryId this lets a database failure propagate.
    */
   getProjectFolder(projectId: string): Promise<ProjectFolderLink | null>;
+  /**
+   * The reverse of getProjectFolder: a Project (delivery project) by its own
+   * id, with its group and non-archived repositories, or null when it does not
+   * exist. Errors propagate on purpose.
+   */
+  getDeliveryProject(
+    deliveryProjectId: string,
+  ): Promise<ProjectFolderLink | null>;
+  /** The active (non-archived) Projects of a group, oldest first. */
+  listDeliveryProjectsForGroup(
+    groupId: string,
+  ): Promise<Array<{ id: string; name: string }>>;
   ensureLink(input: EnsureProjectLinkInput): Promise<EnsureLinkResult | null>;
   /**
    * User-facing gate for a caller-chosen Project name on project creation.

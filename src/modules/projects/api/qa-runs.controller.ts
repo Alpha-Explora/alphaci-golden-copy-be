@@ -9,12 +9,11 @@ import {
   Post,
   Query,
   Req,
-  Res,
   StreamableFile,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
 
 import {
   CapabilityGuard,
@@ -25,11 +24,7 @@ import {
   QaRunsService,
   type QaRunActorContext,
 } from '../application/qa-runs/qa-runs.service';
-import { CreateQaRunDto } from '../application/qa-runs/dto/create-qa-run.dto';
-import { PatchQaRunItemDto } from '../application/qa-runs/dto/patch-qa-run-item.dto';
 import { RequestRetestDto } from '../application/qa-runs/dto/request-retest.dto';
-import { SignoffQaRunDto } from '../application/qa-runs/dto/signoff-qa-run.dto';
-import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
 import { QaPromotionService } from '../application/qa-runs/qa-promotion.service';
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { buildQaReportFilename } from '../application/qa-runs/qa-report.filename';
@@ -41,7 +36,7 @@ function parseReportFormat(raw: string | undefined): QaReportFormat {
   if (raw === undefined || raw === 'json') {
     return 'json';
   }
-  if (raw === 'md') {
+  if (raw === 'md' || raw === 'markdown') {
     return 'md';
   }
   throw new BadRequestException(
@@ -49,7 +44,7 @@ function parseReportFormat(raw: string | undefined): QaReportFormat {
   );
 }
 
-function requireUserId(req: Request): string {
+export function requireUserId(req: Request): string {
   const userId = req.session.user?.id ?? req.session.userId;
   if (!userId) {
     throw new UnauthorizedException('Authentication required');
@@ -71,7 +66,7 @@ function requireUserLogin(req: Request): string {
   return login;
 }
 
-function actorContext(req: Request): QaRunActorContext {
+export function actorContext(req: Request): QaRunActorContext {
   return {
     userId: requireUserId(req),
     userLogin: requireUserLogin(req),
@@ -79,7 +74,7 @@ function actorContext(req: Request): QaRunActorContext {
   };
 }
 
-function parseLimit(limit: string | undefined): number | undefined {
+export function parseLimit(limit: string | undefined): number | undefined {
   if (limit === undefined) {
     return undefined;
   }
@@ -88,9 +83,11 @@ function parseLimit(limit: string | undefined): number | undefined {
 }
 
 /**
- * QA verification runs (Slice 3): per-(checklist, branch, commit) runs, their
- * items, and the sign-off/reopen lifecycle. Entirely project-scoped — unlike
- * the checklist definitions in qa-checklists.controller.ts, there is no
+ * Repository-scope QA runs, DEPRECATED and read-only history: QA verifies once
+ * per Project now (see qa-project-runs.controller.ts). The reads stay so
+ * history remains visible; every write answers 409 QA_RUN_LEGACY_READONLY,
+ * except request-retest, which on a Project run is an alias that sets the
+ * item's Progress to done. Entirely project-scoped - there is no
  * workspace-scoped route here.
  */
 @Controller('projects/:projectId/qa-runs')
@@ -100,7 +97,6 @@ export class ProjectQaRunsController {
   constructor(
     private readonly qaRunsService: QaRunsService,
     private readonly qaReportService: QaReportService,
-    private readonly qaAutomationDispatchService: QaAutomationDispatchService,
   ) {}
 
   @Get()
@@ -136,20 +132,10 @@ export class ProjectQaRunsController {
     );
   }
 
+  /** Refused: start the Project's run instead. The legacy body is not read. */
   @Post()
-  async create(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-    @Param('projectId') projectId: string,
-    @Body() body: CreateQaRunDto,
-  ) {
-    const { created, run } = await this.qaRunsService.create(
-      projectId,
-      actorContext(req),
-      body,
-    );
-    res.status(created ? 201 : 200);
-    return run;
+  create(@Req() req: Request, @Param('projectId') projectId: string) {
+    return this.qaRunsService.create(projectId, actorContext(req));
   }
 
   @Get(':runId')
@@ -200,18 +186,11 @@ export class ProjectQaRunsController {
     @Req() req: Request,
     @Param('projectId') projectId: string,
     @Param('runId') runId: string,
-    @Param('itemId') itemId: string,
-    @Body() body: PatchQaRunItemDto,
   ) {
-    return this.qaRunsService.updateItem(
-      projectId,
-      actorContext(req),
-      runId,
-      itemId,
-      body,
-    );
+    return this.qaRunsService.refuseWrite(projectId, actorContext(req), runId);
   }
 
+  /** On a Project run: an alias that sets the item's Progress to done. */
   @Post(':runId/items/:itemId/request-retest')
   requestRetest(
     @Req() req: Request,
@@ -234,14 +213,8 @@ export class ProjectQaRunsController {
     @Req() req: Request,
     @Param('projectId') projectId: string,
     @Param('runId') runId: string,
-    @Body() body: SignoffQaRunDto,
   ) {
-    return this.qaRunsService.signoff(
-      projectId,
-      actorContext(req),
-      runId,
-      body,
-    );
+    return this.qaRunsService.refuseWrite(projectId, actorContext(req), runId);
   }
 
   @Post(':runId/reopen')
@@ -250,15 +223,9 @@ export class ProjectQaRunsController {
     @Param('projectId') projectId: string,
     @Param('runId') runId: string,
   ) {
-    return this.qaRunsService.reopen(projectId, actorContext(req), runId);
+    return this.qaRunsService.refuseWrite(projectId, actorContext(req), runId);
   }
 
-  /**
-   * "Run Playwright": re-dispatches the run's branch's generated verify
-   * workflow via GitHub's workflow_dispatch, using the signed-in user's own
-   * OAuth token so the run is attributed to them — see
-   * qa-automation-dispatch.service.ts.
-   */
   @Post(':runId/automation/dispatch')
   @HttpCode(202)
   dispatchAutomation(
@@ -266,15 +233,11 @@ export class ProjectQaRunsController {
     @Param('projectId') projectId: string,
     @Param('runId') runId: string,
   ) {
-    return this.qaAutomationDispatchService.dispatch(
-      projectId,
-      actorContext(req),
-      runId,
-    );
+    return this.qaRunsService.refuseWrite(projectId, actorContext(req), runId);
   }
 }
 
-/** Cross-run "needs your attention" feed: returned_to_dev items across the project's open runs. */
+/** DEPRECATED: returned items of the repository's Project; read the Project-wide feed instead. */
 @Controller('projects/:projectId/qa-returned-items')
 @UseGuards(SessionAuthGuard, CapabilityGuard)
 @RequiresCapability('projects.qa-checklists')
@@ -283,15 +246,14 @@ export class ProjectQaReturnedItemsController {
 
   @Get()
   list(@Req() req: Request, @Param('projectId') projectId: string) {
-    return this.qaRunsService.listReturnedItems(projectId, requireUserId(req));
+    return this.qaRunsService.listReturnedItems(projectId, actorContext(req));
   }
 }
 
 /**
- * Overview's "My QA items" card (Slice 6): everything listReturnedItems
- * already returns, plus open developer-targeted items on the current uat
- * run. That existing endpoint is untouched -- this is a separate route so
- * its response shape stays exactly what it always was.
+ * DEPRECATED Overview "My QA items" card (Slice 6), derived from the
+ * repository's Project. The Project-wide feed is
+ * GET /delivery-projects/:id/qa/my-items.
  */
 @Controller('projects/:projectId/qa-my-items')
 @UseGuards(SessionAuthGuard, CapabilityGuard)
@@ -301,16 +263,16 @@ export class ProjectQaMyItemsController {
 
   @Get()
   list(@Req() req: Request, @Param('projectId') projectId: string) {
-    return this.qaRunsService.listMyItems(projectId, requireUserId(req));
+    return this.qaRunsService.listMyItems(projectId, actorContext(req));
   }
 }
 
 /**
  * QA promotion (Slice 6, "Merge to main"): the gate that decides whether a
- * QA-approved uat commit may go to main, and the merge action itself.
- * GET is readable by anyone who can see the project; POST is lead|admin
- * only, enforced inside QaPromotionService (a 403 there, not a 404 --
- * unlike checklist workspace-scoping, project visibility was already
+ * QA-approved uat commit may go to main, and the merge action itself. The gate
+ * is per Project. GET is readable by anyone who can see the project; POST is
+ * lead|admin only, enforced inside QaPromotionService (a 403 there, not a 404
+ * -- unlike checklist workspace-scoping, project visibility was already
  * established by the same GET this pairs with).
  */
 @Controller('projects/:projectId/qa/promotion')

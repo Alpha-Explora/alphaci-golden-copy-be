@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import type { DeliveryProjectDataCleanupPort } from '#kernel/ports/delivery-project-data-cleanup.port';
 import type { ProjectLifecyclePort } from '#kernel/ports/project-lifecycle.port';
 import type { DeleteDeliveryProjectDto } from '../api/dto/delete-delivery-project.dto';
 import type {
@@ -106,6 +107,10 @@ function setup({
       .mockResolvedValue({ githubRepoDeleted: false }),
   };
 
+  const deliveryProjectDataCleanup = {
+    purgeDeliveryProject: jest.fn().mockResolvedValue({ removed: 0 }),
+  };
+
   const service = new DeliveryProjectsService(
     deliveryProjectsRepository as unknown as DeliveryProjectsRepository,
     repositoriesRepository as unknown as RepositoriesRepository,
@@ -113,6 +118,7 @@ function setup({
     accessService as unknown as HierarchyAccessService,
     auditEventsService as unknown as AuditEventPublisher,
     projectLifecyclePort as unknown as ProjectLifecyclePort,
+    deliveryProjectDataCleanup as unknown as DeliveryProjectDataCleanupPort,
   );
 
   return {
@@ -123,6 +129,7 @@ function setup({
     accessService,
     auditEventsService,
     projectLifecyclePort,
+    deliveryProjectDataCleanup,
   };
 }
 
@@ -401,6 +408,35 @@ describe('DeliveryProjectsService.deleteDeliveryProject', () => {
     );
 
     expect(systemsRepository.deleteById).not.toHaveBeenCalled();
+  });
+
+  it('removes the Project requirements once its repositories are gone, and keeps the Project when that fails', async () => {
+    const { service, deliveryProjectsRepository, deliveryProjectDataCleanup } =
+      setup({ repositories: [] });
+
+    await service.deleteDeliveryProject(
+      DELIVERY_PROJECT_ID,
+      USER_ID,
+      confirmedDto(),
+      TOKEN,
+    );
+    expect(
+      deliveryProjectDataCleanup.purgeDeliveryProject,
+    ).toHaveBeenCalledWith(DELIVERY_PROJECT_ID);
+
+    deliveryProjectsRepository.deleteById.mockClear();
+    deliveryProjectDataCleanup.purgeDeliveryProject.mockRejectedValueOnce(
+      new Error('db down'),
+    );
+    await expect(
+      service.deleteDeliveryProject(
+        DELIVERY_PROJECT_ID,
+        USER_ID,
+        confirmedDto(),
+        TOKEN,
+      ),
+    ).rejects.toThrow('db down');
+    expect(deliveryProjectsRepository.deleteById).not.toHaveBeenCalled();
   });
 
   it('records a deliveryProjectDeleted audit event with the deleted repository names and options', async () => {

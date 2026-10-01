@@ -10,6 +10,10 @@ import {
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
+  DELIVERY_PROJECT_DATA_CLEANUP,
+  type DeliveryProjectDataCleanupPort,
+} from '#kernel/ports/delivery-project-data-cleanup.port';
+import {
   PROJECT_LIFECYCLE_PORT,
   type ProjectLifecyclePort,
 } from '#kernel/ports/project-lifecycle.port';
@@ -90,6 +94,8 @@ export class DeliveryProjectsService {
     private readonly auditEventsService: AuditEventPublisher,
     @Inject(PROJECT_LIFECYCLE_PORT)
     private readonly projectLifecyclePort: ProjectLifecyclePort,
+    @Inject(DELIVERY_PROJECT_DATA_CLEANUP)
+    private readonly deliveryProjectDataCleanup: DeliveryProjectDataCleanupPort,
   ) {}
 
   /** Throws 409 PROJECT_NAME_TAKEN when the team already has this Project name. */
@@ -341,6 +347,13 @@ export class DeliveryProjectsService {
         });
       }
     }
+
+    // The Project's QA requirements go with it. Before the row is deleted, so a
+    // failure here keeps the Project and the delete can be retried; QA runs
+    // stay as history because each carries its own snapshot.
+    await this.deliveryProjectDataCleanup.purgeDeliveryProject(
+      deliveryProjectId,
+    );
 
     const deliveryProjectDeleted =
       await this.deliveryProjectsRepository.deleteById(deliveryProjectId);

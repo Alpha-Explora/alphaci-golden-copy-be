@@ -42,4 +42,18 @@ describe('buildQaPromotionPullRequestBody', () => {
 
     expect(body).toContain('run unknown, unknown (a1b2c3d)');
   });
+
+  it('lists the Project run and every repository it captured', () => {
+    const body = buildQaPromotionPullRequestBody([checklist()], SHA, {
+      runId: 'run-9',
+      repositories: [
+        { repoFullName: 'acme/api', runSha: SHA },
+        { repoFullName: 'acme/web', runSha: null },
+      ],
+    });
+
+    expect(body).toContain('Project run run-9 covered:');
+    expect(body).toContain('- `acme/api` @ a1b2c3d');
+    expect(body).toContain('- `acme/web` @ unknown');
+  });
 });

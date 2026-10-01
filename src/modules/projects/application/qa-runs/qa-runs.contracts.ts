@@ -9,6 +9,10 @@ import type {
   QaChecklistTargetPersona,
   QaChecklistVerificationType,
 } from '../qa-checklists/qa-checklists.contracts';
+import type {
+  QaVerificationStatusCounts,
+  RequirementItem,
+} from '../qa-checklists/qa-requirements.contracts';
 
 export type QaRunItemStatus =
   | 'pending'
@@ -31,6 +35,13 @@ export interface QaActor {
   login: string;
 }
 
+/** Who is calling, plus the session's GitHub OAuth token for the read/write fallback chain. */
+export interface QaRunActorContext {
+  userId: string;
+  userLogin: string;
+  oauthToken: string | null;
+}
+
 export interface QaRunItemFixRequest {
   requestedAt: string;
   requestedBy: QaActor;
@@ -39,7 +50,8 @@ export interface QaRunItemFixRequest {
 
 export interface QaRunItemPrevious {
   runId: string;
-  commitSha: string;
+  /** Null when the earlier run was a Project run (it covers several repositories). */
+  commitSha: string | null;
   status: QaRunItemStatus;
 }
 
@@ -160,6 +172,10 @@ export interface QaRunPermissions {
 
 export interface QaRunListItem {
   id: string;
+  /** Always 'repository': Project-scope runs are ProjectQaRunListItem. */
+  scope: 'repository';
+  /** Repository-scope runs are read-only history; the write routes answer QA_RUN_LEGACY_READONLY. */
+  legacy: true;
   projectId: string;
   /** Null once the checklist was deleted with its workspace; checklistName/Version stay. */
   checklistId: string | null;
@@ -237,3 +253,119 @@ export const QA_OPEN_DEFECT_STATUSES: readonly QaRunItemStatus[] = [
 /** Default and maximum page size for GET .../qa-runs. */
 export const QA_RUNS_LIST_DEFAULT_LIMIT = 20;
 export const QA_RUNS_LIST_MAX_LIMIT = 100;
+
+// ---------------------------------------------------------------------
+// Project-scope runs (docs/design/project-requirements.md, section 2.4)
+// ---------------------------------------------------------------------
+
+/** The Verification track. New writes never use 'in_progress'. */
+export type QaProjectVerificationStatus =
+  | 'pending'
+  | 'passed'
+  | 'failed'
+  | 'blocked'
+  | 'returned_to_dev';
+
+/** Settable through PATCH on a Project run item: every status except 'in_progress'. */
+export const QA_PROJECT_VERIFICATION_STATUSES: readonly QaProjectVerificationStatus[] =
+  ['pending', 'passed', 'failed', 'blocked', 'returned_to_dev'];
+
+export type { QaVerificationStatusCounts };
+
+/** One repository of the Project: the head the run captured vs the head now. */
+export interface QaHeadStatus {
+  projectId: string;
+  repoFullName: string;
+  /** The uat head captured when the run started; null when no run is being compared. */
+  runSha: string | null;
+  /** The uat head right now; null when it could not be read. */
+  currentSha: string | null;
+  /** True when a run exists and this repository's head differs from (or is absent in) it. */
+  moved: boolean;
+}
+
+export interface ProjectQaRunItem extends QaRunItem {
+  /** The requirement item this was snapshotted from; null once that item was deleted. */
+  sourceItemId: string | null;
+  requirementId: string | null;
+  requirementName: string | null;
+  requirementKind: 'functional' | 'system' | null;
+  acceptanceCriteria: string | null;
+  /** The source item's CURRENT Progress (live, not snapshotted); null when the source was deleted. */
+  progress: 'todo' | 'in_progress' | 'done' | null;
+}
+
+export interface ProjectQaRunPermissions {
+  canSetVerification: boolean;
+  canSignOff: boolean;
+  canReopen: boolean;
+  canDispatch: boolean;
+}
+
+export interface ProjectQaRunListItem {
+  id: string;
+  scope: 'project';
+  deliveryProjectId: string;
+  deliveryProjectName: string;
+  branch: string;
+  status: QaRunStatus;
+  createdBy: QaActor;
+  createdAt: string;
+  updatedAt: string;
+  summary: QaRunSummaryCounts;
+  signoff: QaSignoff | null;
+}
+
+export interface ProjectQaRun extends ProjectQaRunListItem {
+  /** One entry per repository the run covers (or covers now), with its captured and current head. */
+  repositories: QaHeadStatus[];
+  /** Any covered repository moved since the run, or a repository joined the Project. */
+  stale: boolean;
+  /** Informational: requirements were created, edited, archived or reordered after the run started (open) or was signed off. */
+  requirementsChanged: boolean;
+  items: ProjectQaRunItem[];
+  permissions: ProjectQaRunPermissions;
+  /** First report per stage across the covered repositories. */
+  automation: QaRunAutomation;
+  automationByRepository: Array<{
+    projectId: string;
+    repoFullName: string;
+    automation: QaRunAutomation;
+  }>;
+}
+
+export interface ProjectQaCurrentRun {
+  run: ProjectQaRun | null;
+  heads: QaHeadStatus[];
+  stale: boolean;
+}
+
+export interface QaProjectRunsPage {
+  runs: ProjectQaRunListItem[];
+  next: string | null;
+}
+
+/** One requirement item on the project-wide My QA items feed. */
+export interface QaMyItemsFeedItem {
+  requirement: {
+    id: string;
+    name: string;
+    kind: 'functional' | 'system';
+  };
+  item: RequirementItem;
+  runId: string | null;
+  runItem: ProjectQaRunItem | null;
+}
+
+export interface ProjectMyQaItems {
+  /** The current run item is returned_to_dev. */
+  returned: QaMyItemsFeedItem[];
+  /** Progress is in_progress (and not returned). */
+  inProgress: QaMyItemsFeedItem[];
+  /** Progress is todo (and not returned). */
+  todo: QaMyItemsFeedItem[];
+  /** Progress is done and the run item is still pending (or no run exists yet): QA's queue. */
+  readyForQa: QaMyItemsFeedItem[];
+}
+
+export const QA_PROJECT_RUN_BRANCH = 'uat';

@@ -3,18 +3,29 @@ import { Module } from '@nestjs/common';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
+import { HierarchyProjectLinkModule } from '#modules/identity-access/hierarchy/project-link/hierarchy-project-link.module.js';
+import { RuntimeModule } from '#modules/runtime/runtime.module.js';
 import {
   ProjectQaChecklistsController,
   QaChecklistsController,
   WorkspaceQaChecklistsController,
 } from '../../api/qa-checklists.controller';
 import { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
+import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { QaAccessService } from './qa-access.service';
 import { QaChecklistsService } from './qa-checklists.service';
+import { QaProjectContextService } from './qa-project-context.service';
 
 @Module({
-  imports: [DatabaseModule, EventsModule],
+  imports: [
+    DatabaseModule,
+    EventsModule,
+    // PROJECT_LINK_PORT (a repository's Project, a Project's repositories).
+    HierarchyProjectLinkModule,
+    // DEPLOYMENT_TARGETS_QUERY: which repository of a Project is its frontend.
+    RuntimeModule,
+  ],
   controllers: [
     WorkspaceQaChecklistsController,
     QaChecklistsController,
@@ -23,6 +34,7 @@ import { QaChecklistsService } from './qa-checklists.service';
   providers: [
     SessionAuthGuard,
     QaChecklistsRepository,
+    QaRequirementsRepository,
     // ProjectsRepository is declared here too, even though ProjectsModule
     // (which imports this module) already provides it. Nest scopes a
     // provider to the module that declares it — a provider in ProjectsModule
@@ -36,6 +48,7 @@ import { QaChecklistsService } from './qa-checklists.service';
     // extra object, not a second connection pool or any behavioral drift.
     ProjectsRepository,
     QaAccessService,
+    QaProjectContextService,
     QaChecklistsService,
   ],
   // QaChecklistsRepository is also exported so the qa-runs sibling module
@@ -46,6 +59,12 @@ import { QaChecklistsService } from './qa-checklists.service';
   // would require ProjectsModule to export it too, which it deliberately
   // does not. QaChecklistsRepository has no such constraint: it is only ever
   // provided here, so exporting it is the clean option.
-  exports: [QaChecklistsService, QaAccessService, QaChecklistsRepository],
+  exports: [
+    QaChecklistsService,
+    QaAccessService,
+    QaChecklistsRepository,
+    QaRequirementsRepository,
+    QaProjectContextService,
+  ],
 })
 export class QaChecklistsModule {}

@@ -1,8 +1,11 @@
 import type { QaPromotionChecklist } from '../application/qa-runs/qa-promotion.contracts';
-import type { QaVerdict } from '../application/qa-runs/qa-runs.contracts';
+import type {
+  QaHeadStatus,
+  QaVerdict,
+} from '../application/qa-runs/qa-runs.contracts';
 
 /**
- * Plain function, not an injectable class -- same reasoning as
+ * Plain functions, not injectable classes -- same reasoning as
  * qa-run-access.rules.ts: this has no dependency to wire, so a function
  * keeps it pure data in, data out, and exhaustively unit-testable without a
  * DI container.
@@ -151,4 +154,143 @@ export function evaluateQaPromotionGate(
     checklists.every((checklist) => checklist.approvedForHead);
 
   return { checklists, eligible, reasons };
+}
+
+// ---------------------------------------------------------------------
+// Per-Project gate (docs/design/project-requirements.md, section 3)
+// ---------------------------------------------------------------------
+
+/**
+ * A repository may merge uat to main only when the LATEST SIGNED-OFF Project
+ * run is APPROVED and still current for EVERY repository of the Project:
+ *   - every repository's uat head was readable;
+ *   - the Project has at least one requirement, and a signed-off run exists;
+ *   - that run's active verdict is APPROVED (Rejected and Conditional block);
+ *   - the run has a coverage row for every repository of the Project, and each
+ *     captured head equals the repository's head now. A repository that moved,
+ *     or that joined the Project after the run, makes the run stale for all.
+ *
+ * Using the latest signed-off run (not "any approved run") means a later
+ * Rejected sign-off on newer heads blocks even when an older run was approved.
+ * A single-repository Project degenerates to the old per-repository rule: one
+ * head, one run, the same verdict check. Open runs never count.
+ */
+export interface QaProjectGateRepository {
+  projectId: string;
+  repoFullName: string;
+  /** The uat head now; null when it could not be read. */
+  currentSha: string | null;
+}
+
+export interface QaProjectGateRun {
+  id: string;
+  /** The run's active sign-off verdict; null only on a data inconsistency (defensive). */
+  verdict: QaVerdict | null;
+  signedAt: string;
+  /** The heads the run captured when it started. */
+  coverage: ReadonlyArray<{ projectId: string; headSha: string }>;
+}
+
+export interface QaProjectGateInput {
+  repositories: readonly QaProjectGateRepository[];
+  requirementCount: number;
+  latestSignedOffRun: QaProjectGateRun | null;
+}
+
+export interface QaProjectGateResult {
+  eligible: boolean;
+  reasons: string[];
+  repositories: QaHeadStatus[];
+  run: {
+    id: string;
+    verdict: QaVerdict;
+    signedAt: string;
+    stale: boolean;
+  } | null;
+}
+
+function repoLabel(repoFullName: string): string {
+  return repoFullName.split('/').pop() || repoFullName;
+}
+
+export function evaluateProjectPromotionGate(
+  input: QaProjectGateInput,
+): QaProjectGateResult {
+  const reasons: string[] = [];
+  const run = input.latestSignedOffRun;
+  const captured = new Map(
+    (run?.coverage ?? []).map((row) => [row.projectId, row.headSha]),
+  );
+
+  const repositories: QaHeadStatus[] = input.repositories.map((repository) => {
+    const runSha = run ? (captured.get(repository.projectId) ?? null) : null;
+    const moved =
+      run !== null &&
+      repository.currentSha !== null &&
+      runSha !== repository.currentSha;
+    return {
+      projectId: repository.projectId,
+      repoFullName: repository.repoFullName,
+      runSha,
+      currentSha: repository.currentSha,
+      moved,
+    };
+  });
+
+  for (const repository of input.repositories) {
+    if (repository.currentSha === null) {
+      reasons.push(
+        `Could not read the uat head of "${repoLabel(repository.repoFullName)}"`,
+      );
+    }
+  }
+  if (input.requirementCount === 0) {
+    reasons.push('This Project has no QA requirements');
+  }
+
+  let stale = false;
+  if (!run) {
+    reasons.push('No QA run covers the current uat heads');
+  } else {
+    stale = repositories.some((repository) => repository.moved);
+    if (run.verdict === 'REJECTED') {
+      reasons.push('Latest sign-off is Rejected');
+    } else if (run.verdict === 'CONDITIONAL') {
+      reasons.push('Latest sign-off is Conditional (only Approved counts)');
+    } else if (run.verdict === null) {
+      reasons.push('Latest sign-off has no recorded verdict');
+    }
+    for (const repository of repositories) {
+      if (!repository.moved) {
+        continue;
+      }
+      const label = repoLabel(repository.repoFullName);
+      reasons.push(
+        repository.runSha === null
+          ? `Project run is stale: "${label}" was added to the Project after the run`
+          : `Project run is stale: "${label}" moved from ${shortSha(repository.runSha)} to ${shortSha(repository.currentSha as string)}`,
+      );
+    }
+  }
+
+  const eligible =
+    reasons.length === 0 &&
+    run !== null &&
+    run.verdict === 'APPROVED' &&
+    !stale;
+
+  return {
+    eligible,
+    reasons,
+    repositories,
+    run:
+      run && run.verdict
+        ? {
+            id: run.id,
+            verdict: run.verdict,
+            signedAt: run.signedAt,
+            stale,
+          }
+        : null,
+  };
 }
