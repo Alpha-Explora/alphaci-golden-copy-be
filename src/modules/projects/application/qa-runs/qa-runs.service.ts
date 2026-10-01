@@ -1,79 +1,49 @@
-import { randomUUID } from 'node:crypto';
-
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
-  Inject,
   Injectable,
   NotFoundException,
-  Optional,
 } from '@nestjs/common';
 
 import { QA_BRANCH } from '#kernel/config/pipeline-branches';
-import {
-  AuditEventPublisher,
-  NotificationEventPublisher,
-} from '#kernel/events/platform-event-publisher.js';
 import type { DeploymentProjectReference } from '#kernel/ports/deployment-runtime.port';
-import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import { canRequestRetest } from '../../domain/qa-run-access.rules';
+import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
+import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import {
-  canCreateRun,
-  canReopenRun,
-  canRequestRetest as roleCanRequestRetest,
-  canSetReturnedToDev,
-  canSignOff as roleCanSignOff,
-  personaAllowsRole,
-} from '../../domain/qa-run-access.rules';
-import {
-  QaChecklistsRepository,
-  type QaChecklistItemRow,
-} from '../../infrastructure/qa-checklists.repository';
-import {
-  QaRunItemsChangedError,
-  QaRunNotOpenError,
   QaRunsRepository,
-  type QaReturnedItemRow,
   type QaRunItemRow,
   type QaRunSignoffRow,
   type QaVerificationRunRow,
 } from '../../infrastructure/qa-runs.repository';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
+import { QaProjectContextService } from '../qa-checklists/qa-project-context.service';
+import { qaRunLegacyReadonly } from '../qa-checklists/qa-errors';
+import { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
 import { QaAutomationService } from './qa-automation.service';
 import { matchAutomatedResult } from './qa-automation-matching';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
+import { QaProjectRunsService } from './qa-project-runs.service';
+import { computeSummary, toRunItem, toSignoff } from './qa-run.mappers';
 import {
-  QA_OPEN_DEFECT_STATUSES,
   QA_RUNS_LIST_DEFAULT_LIMIT,
   QA_RUNS_LIST_MAX_LIMIT,
-  type QaActor,
+  type ProjectQaRun,
+  type QaMyItems,
+  type QaMyItemsFeedItem,
+  type QaReturnedItem,
   type QaRun,
+  type QaRunActorContext,
   type QaRunAutomation,
   type QaRunItem,
   type QaRunItemPrevious,
-  type QaRunItemStatus,
   type QaRunListItem,
   type QaRunPermissions,
-  type QaRunSummaryCounts,
-  type QaMyItems,
-  type QaReturnedItem,
-  type QaSignoff,
 } from './qa-runs.contracts';
-import type { CreateQaRunDto } from './dto/create-qa-run.dto';
-import type { PatchQaRunItemDto } from './dto/patch-qa-run-item.dto';
 import type { RequestRetestDto } from './dto/request-retest.dto';
-import type { SignoffQaRunDto } from './dto/signoff-qa-run.dto';
 
-type AuditEventSink = Pick<AuditEventPublisher, 'recordProjectEvent'>;
-type NotificationEventSink = Pick<NotificationEventPublisher, 'record'>;
-
-export interface QaRunActorContext {
-  userId: string;
-  userLogin: string;
-  /** The session's GitHub OAuth token, for commit resolution's token fallback chain. */
-  oauthToken: string | null;
-}
+export type { QaRunActorContext };
 
 /**
  * Fields modeled as `T | undefined` (not `field?: T`): the controller always
@@ -93,34 +63,38 @@ export interface QaCurrentRunResult {
   run: QaRun | null;
 }
 
-const QA_RUN_EVENTS = {
-  created: 'qa.run.created',
-  signedOff: 'qa.run.signed_off',
-  reopened: 'qa.run.reopened',
-  itemStatusChanged: 'qa.item.status_changed',
-} as const;
+/** Repository-scope runs can no longer change: every control is off. */
+const READ_ONLY_PERMISSIONS: QaRunPermissions = {
+  canUpdateItems: false,
+  canReturnToDev: false,
+  canRequestRetest: false,
+  canSignOff: false,
+  canReopen: false,
+};
 
-const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
-const RETEST_NOTIFICATION_TRUNCATE_LENGTH = 300;
-const SIGNOFF_SUMMARY_TRUNCATE_LENGTH = 300;
-
+/**
+ * Repository-scope QA runs, now READ-ONLY HISTORY (docs/design/
+ * project-requirements.md, section 4.3). QA verifies once per Project; the
+ * Project run lives in QaProjectRunsService. This service keeps the reads the
+ * deployed frontend still calls (list, current, get, report) so history stays
+ * visible, refuses every write with 409 QA_RUN_LEGACY_READONLY, and derives the
+ * two deprecated per-repository feeds from the repository's Project.
+ *
+ * Deprecated: remove with the routes, once the frontend ships on the Project
+ * routes.
+ */
 @Injectable()
 export class QaRunsService {
   constructor(
     private readonly repository: QaRunsRepository,
-    private readonly qaChecklistsRepository: QaChecklistsRepository,
     private readonly access: QaAccessService,
     private readonly commitResolution: QaCommitResolutionService,
     private readonly automation: QaAutomationService,
-    // Explicit token: AuditEventSink is a type alias, which TypeScript emits
-    // as `Object` in design:paramtypes, so without @Inject Nest finds no
-    // provider and @Optional() silently injects undefined.
-    @Optional()
-    @Inject(AuditEventPublisher)
-    private readonly auditEventsService?: AuditEventSink,
-    @Optional()
-    @Inject(NotificationEventPublisher)
-    private readonly notificationEventsService?: NotificationEventSink,
+    private readonly projectContext: QaProjectContextService,
+    private readonly projectRunsService: QaProjectRunsService,
+    private readonly projectRunsRepository: QaProjectRunsRepository,
+    private readonly requirementsRepository: QaRequirementsRepository,
+    private readonly requirementsService: QaRequirementsService,
   ) {}
 
   async listForProject(
@@ -163,8 +137,12 @@ export class QaRunsService {
     checklistId: string | undefined,
   ): Promise<QaCurrentRunResult> {
     const project = await this.requireVisibleProject(projectId, actor.userId);
-    const normalizedBranch = this.normalizeBranch(branch);
-    this.requireHostedBranch(normalizedBranch);
+    const normalizedBranch = branch.trim();
+    if (normalizedBranch !== QA_BRANCH) {
+      throw new BadRequestException(
+        `QA verification runs are only supported on the ${QA_BRANCH} branch.`,
+      );
+    }
 
     const resolved = await this.commitResolution.resolve(
       this.toProjectReference(project, actor.userId),
@@ -176,20 +154,14 @@ export class QaRunsService {
     }
 
     const trimmedChecklistId = checklistId?.trim();
-    if (!trimmedChecklistId) {
-      return {
-        commitSha: resolved.commitSha,
-        commitSource: resolved.commitSource,
-        run: null,
-      };
-    }
-
-    const runRow = await this.repository.findRunByKey(
-      projectId,
-      trimmedChecklistId,
-      normalizedBranch,
-      resolved.commitSha,
-    );
+    const runRow = trimmedChecklistId
+      ? await this.repository.findRunByKey(
+          projectId,
+          trimmedChecklistId,
+          normalizedBranch,
+          resolved.commitSha,
+        )
+      : null;
     if (!runRow) {
       return {
         commitSha: resolved.commitSha,
@@ -198,7 +170,6 @@ export class QaRunsService {
       };
     }
 
-    const role = await this.access.findAppRole(actor.userId);
     const [items, signoff] = await Promise.all([
       this.repository.listItemsByRunId(runRow.id),
       this.repository.findActiveSignoff(runRow.id),
@@ -206,79 +177,8 @@ export class QaRunsService {
     return {
       commitSha: resolved.commitSha,
       commitSource: resolved.commitSource,
-      run: await this.assembleRun(project, runRow, items, signoff, role),
+      run: await this.assembleRun(project, runRow, items, signoff),
     };
-  }
-
-  async create(
-    projectId: string,
-    actor: QaRunActorContext,
-    dto: CreateQaRunDto,
-  ): Promise<{ created: boolean; run: QaRun }> {
-    const project = await this.requireVisibleProject(projectId, actor.userId);
-
-    const role = await this.access.findAppRole(actor.userId);
-    if (!canCreateRun(role)) {
-      throw new ForbiddenException(
-        'Only QA, a lead, or an admin may start a verification run.',
-      );
-    }
-
-    const branch = this.normalizeBranch(dto.branch);
-    this.requireHostedBranch(branch);
-
-    const checklist = await this.requireChecklistSharedToProject(
-      projectId,
-      dto.checklistId,
-    );
-
-    const resolved = await this.commitResolution.resolve(
-      this.toProjectReference(project, actor.userId),
-      branch,
-      actor.oauthToken,
-    );
-    if (!resolved) {
-      throw new ConflictException(
-        `No deployed or pushed commit was found for ${branch}.`,
-      );
-    }
-
-    const checklistItems = await this.checklistItemsFor(checklist.id);
-
-    const result = await this.repository.createRun({
-      projectId,
-      checklistId: checklist.id,
-      checklistVersion: checklist.version,
-      checklistName: checklist.name,
-      branch,
-      commitSha: resolved.commitSha,
-      commitSource: resolved.commitSource,
-      createdBy: actor.userId,
-      createdByLogin: actor.userLogin,
-      checklistItems,
-    });
-
-    if (result.created) {
-      await this.recordAudit(
-        QA_RUN_EVENTS.created,
-        project,
-        actor.userId,
-        result.run,
-        { branch, commitSha: resolved.commitSha },
-      );
-    }
-
-    const signoff = result.created
-      ? null
-      : await this.repository.findActiveSignoff(result.run.id);
-    const run = await this.assembleRun(
-      project,
-      result.run,
-      result.items,
-      signoff,
-      role,
-    );
-    return { created: result.created, run };
   }
 
   async getById(
@@ -288,386 +188,187 @@ export class QaRunsService {
   ): Promise<QaRun> {
     const project = await this.requireVisibleProject(projectId, userId);
     const run = await this.requireRun(projectId, runId);
-
-    const [items, signoff, role] = await Promise.all([
-      this.repository.listItemsByRunId(run.id),
-      this.repository.findActiveSignoff(run.id),
-      this.access.findAppRole(userId),
-    ]);
-    return this.assembleRun(project, run, items, signoff, role);
-  }
-
-  async updateItem(
-    projectId: string,
-    actor: QaRunActorContext,
-    runId: string,
-    itemId: string,
-    dto: PatchQaRunItemDto,
-  ): Promise<QaRun> {
-    const project = await this.requireVisibleProject(projectId, actor.userId);
-    const run = await this.requireRun(projectId, runId);
-    const item = await this.requireItem(run.id, itemId);
-    this.requireRunOpen(run);
-
-    const role = await this.access.findAppRole(actor.userId);
-    if (!personaAllowsRole(item.target_persona, role)) {
-      throw new ForbiddenException('You are not allowed to update this item.');
-    }
-    if (dto.status === 'returned_to_dev' && !canSetReturnedToDev(role)) {
-      throw new ForbiddenException(
-        'Only QA, a lead, or an admin may return an item to development.',
-      );
-    }
-
-    const effectiveSeverity =
-      dto.defectSeverity !== undefined
-        ? dto.defectSeverity
-        : item.defect_severity;
-    if (
-      dto.status !== undefined &&
-      (dto.status === 'failed' || dto.status === 'returned_to_dev') &&
-      !effectiveSeverity
-    ) {
-      throw new BadRequestException(
-        'A defect severity is required to mark this item failed or returned to dev.',
-      );
-    }
-
-    const runActor = { id: actor.userId, login: actor.userLogin };
-    const updated = await this.withOpenRun(() =>
-      this.repository.updateItem(
-        run.id,
-        itemId,
-        dto.expectedRowVersion,
-        {
-          status: dto.status,
-          notes: dto.notes,
-          defectSeverity: dto.defectSeverity,
-          reproductionSteps: dto.reproductionSteps,
-        },
-        runActor,
-        item.status,
-      ),
-    );
-    if (!updated) {
-      // `code` is the machine-readable signal the frontend keys its
-      // "Reload run" action on; the sentence is for people.
-      throw new ConflictException({
-        code: 'QA_ITEM_STALE',
-        message: `This item has changed (expected row version ${dto.expectedRowVersion}); reload and try again.`,
-      });
-    }
-
-    if (dto.status !== undefined) {
-      await this.recordAudit(
-        QA_RUN_EVENTS.itemStatusChanged,
-        project,
-        actor.userId,
-        run,
-        { itemId, fromStatus: item.status, toStatus: updated.status },
-      );
-      await this.notifyOnStatusChange(
-        project,
-        run,
-        updated,
-        runActor,
-        actor.oauthToken,
-      );
-    }
-
     const [items, signoff] = await Promise.all([
       this.repository.listItemsByRunId(run.id),
       this.repository.findActiveSignoff(run.id),
     ]);
-    return this.assembleRun(project, run, items, signoff, role);
+    return this.assembleRun(project, run, items, signoff);
   }
 
+  // ---------------------------------------------------------------------
+  // Writes: refused. Repository-scope runs are history.
+  // ---------------------------------------------------------------------
+
+  /** Creating a repository-scope run is refused with a pointer to the Project's runs. */
+  async create(projectId: string, actor: QaRunActorContext): Promise<never> {
+    await this.requireVisibleProject(projectId, actor.userId);
+    throw await this.readonlyError(projectId);
+  }
+
+  /** PATCH item, sign-off, reopen and dispatch on a repository-scope run. */
+  async refuseWrite(
+    projectId: string,
+    actor: QaRunActorContext,
+    runId: string,
+  ): Promise<never> {
+    await this.requireVisibleProject(projectId, actor.userId);
+    await this.requireRun(projectId, runId);
+    throw await this.readonlyError(projectId);
+  }
+
+  /**
+   * POST .../items/:itemId/request-retest. On a repository-scope run:
+   * QA_RUN_LEGACY_READONLY. On a Project run (addressed through any of the
+   * Project's repositories) it is an alias that sets the item's Progress to
+   * `done`, with the same effects and notification, and answers with the
+   * Project run.
+   */
   async requestRetest(
     projectId: string,
     actor: QaRunActorContext,
     runId: string,
     itemId: string,
     dto: RequestRetestDto,
-  ): Promise<QaRun> {
-    const project = await this.requireVisibleProject(projectId, actor.userId);
-    const run = await this.requireRun(projectId, runId);
-    const item = await this.requireItem(run.id, itemId);
-    this.requireRunOpen(run);
+  ): Promise<ProjectQaRun> {
+    await this.requireVisibleProject(projectId, actor.userId);
+
+    const legacyRun = await this.repository.findRunForProject(projectId, runId);
+    if (legacyRun) {
+      throw await this.readonlyError(projectId);
+    }
+
+    const project =
+      await this.projectContext.findProjectOfRepository(projectId);
+    const found = project
+      ? await this.projectRunsRepository.findRunItemWithProjectRun(itemId)
+      : null;
+    if (
+      !project ||
+      !found ||
+      found.run.id !== runId ||
+      found.run.delivery_project_id !== project.deliveryProjectId
+    ) {
+      throw new NotFoundException('QA run not found');
+    }
 
     const role = await this.access.findAppRole(actor.userId);
-    if (!roleCanRequestRetest(role)) {
+    if (!canRequestRetest(role)) {
       throw new ForbiddenException(
         'Only a developer, lead, or admin may request a retest.',
       );
     }
-    if (item.status !== 'returned_to_dev') {
-      throw new ConflictException(
-        'This item is not currently returned to dev.',
+
+    const { requirement_id: requirementId, source_item_id: sourceItemId } =
+      found.item;
+    const source =
+      requirementId && sourceItemId
+        ? await this.requirementsRepository.findItem(
+            requirementId,
+            sourceItemId,
+          )
+        : null;
+    if (!requirementId || !sourceItemId || !source) {
+      throw new NotFoundException(
+        'The requirement behind this item was removed.',
       );
     }
 
-    const previousVerifierId = item.verified_by;
-    const runActor = { id: actor.userId, login: actor.userLogin };
-    const note = dto.note ?? null;
-    const updated = await this.withOpenRun(() =>
-      this.repository.requestRetest(run.id, itemId, runActor, note),
+    await this.requirementsService.setProgress(
+      requirementId,
+      sourceItemId,
+      actor,
+      {
+        progress: 'done',
+        expectedRowVersion: source.row_version,
+        note: dto.note ?? null,
+      },
     );
-    if (!updated) {
-      throw new ConflictException(
-        'This item is not currently returned to dev.',
-      );
-    }
-
-    // Re-test reaches the previous verifier plus the workspace's QA team
-    // (spec §3), never the developer who asked for it.
-    const qaIds = project.workspace_id
-      ? await this.access.listWorkspaceQaIds(project.workspace_id)
-      : [];
-    await this.notifyMany(
-      this.dedupeExcludingActor([previousVerifierId, ...qaIds], actor.userId),
-      project.id,
-      'qa.item.retest_requested',
-      `A retest was requested for "${updated.title}" on ${run.branch}`,
-      note
-        ? this.truncate(note, RETEST_NOTIFICATION_TRUNCATE_LENGTH)
-        : 'No additional notes.',
+    return this.projectRunsService.getById(
+      project.deliveryProjectId,
+      actor,
+      runId,
     );
-
-    const [items, signoff] = await Promise.all([
-      this.repository.listItemsByRunId(run.id),
-      this.repository.findActiveSignoff(run.id),
-    ]);
-    return this.assembleRun(project, run, items, signoff, role);
   }
 
-  async signoff(
-    projectId: string,
-    actor: QaRunActorContext,
-    runId: string,
-    dto: SignoffQaRunDto,
-  ): Promise<QaRun> {
-    const project = await this.requireVisibleProject(projectId, actor.userId);
-    const run = await this.requireRun(projectId, runId);
-    this.requireRunOpen(run);
-
-    const role = await this.access.findAppRole(actor.userId);
-    if (!roleCanSignOff(role)) {
-      throw new ForbiddenException(
-        'Only QA, a lead, or an admin may sign off a run.',
-      );
-    }
-
-    const items = await this.repository.listItemsByRunId(run.id);
-    this.validateVerdict(dto, items);
-
-    const now = new Date().toISOString();
-    const signoffId = randomUUID();
-    const summary = dto.summary ?? null;
-    const conditions = dto.conditions ?? null;
-    const signedBy: QaActor = { id: actor.userId, login: actor.userLogin };
-
-    const signedOffRun: QaVerificationRunRow = {
-      ...run,
-      status: 'signed_off',
-      updated_at: now,
-    };
-    const signoffForReport: QaSignoff = {
-      id: signoffId,
-      verdict: dto.verdict,
-      summary,
-      conditions,
-      signedBy,
-      signedAt: now,
-    };
-    const reportBase = await this.assembleRun(
-      project,
-      signedOffRun,
-      items,
-      null,
-      role,
-    );
-    const report: QaRun = { ...reportBase, signoff: signoffForReport };
-
-    const result = await this.repository
-      .createSignoff({
-        id: signoffId,
-        runId: run.id,
-        verdict: dto.verdict,
-        summary,
-        conditions,
-        signedBy: actor.userId,
-        signedByLogin: actor.userLogin,
-        signedAt: now,
-        reportJson: report as unknown as Record<string, unknown>,
-        expectedItems: {
-          count: items.length,
-          rowVersionSum: items.reduce((sum, item) => sum + item.row_version, 0),
-        },
-      })
-      .catch((error: unknown) => {
-        if (error instanceof QaRunItemsChangedError) {
-          throw new ConflictException({
-            code: 'QA_RUN_CHANGED',
-            message:
-              'This run changed while you were signing off. Review the latest results and sign off again.',
-          });
-        }
-        throw error;
-      });
-    if (!result) {
-      throw new ConflictException(
-        'This run is signed off. Reopen it to make changes.',
-      );
-    }
-
-    await this.recordAudit(
-      QA_RUN_EVENTS.signedOff,
-      project,
-      actor.userId,
-      result.run,
-      { verdict: dto.verdict },
-    );
-    await this.notifySignoff(project, result.run, result.signoff, actor.userId);
-
-    return this.assembleRun(project, result.run, items, result.signoff, role);
-  }
-
-  async reopen(
-    projectId: string,
-    actor: QaRunActorContext,
-    runId: string,
-  ): Promise<QaRun> {
-    const project = await this.requireVisibleProject(projectId, actor.userId);
-    const run = await this.requireRun(projectId, runId);
-
-    const role = await this.access.findAppRole(actor.userId);
-    if (!canReopenRun(role)) {
-      throw new ForbiddenException(
-        'Only a lead or admin may reopen a signed-off run.',
-      );
-    }
-    if (run.status !== 'signed_off') {
-      throw new ConflictException('This run is not signed off.');
-    }
-
-    const reopened = await this.repository.reopenRun(run.id, {
-      id: actor.userId,
-      login: actor.userLogin,
-    });
-    if (!reopened) {
-      throw new ConflictException('This run is not signed off.');
-    }
-
-    await this.recordAudit(
-      QA_RUN_EVENTS.reopened,
-      project,
-      actor.userId,
-      reopened,
-      {},
-    );
-
-    const [items, signoff] = await Promise.all([
-      this.repository.listItemsByRunId(reopened.id),
-      this.repository.findActiveSignoff(reopened.id),
-    ]);
-    return this.assembleRun(project, reopened, items, signoff, role);
-  }
+  // ---------------------------------------------------------------------
+  // Deprecated per-repository feeds, derived from the repository's Project
+  // ---------------------------------------------------------------------
 
   async listReturnedItems(
     projectId: string,
-    userId: string,
+    actor: QaRunActorContext,
   ): Promise<{ items: QaReturnedItem[] }> {
-    const project = await this.requireVisibleProject(projectId, userId);
-    const role = await this.access.findAppRole(userId);
-    const rows = await this.repository.listReturnedItemsForProject(projectId);
-    const items = await this.assembleFeedItems(rows, project, role);
-    return { items };
-  }
-
-  async listMyItems(projectId: string, userId: string): Promise<QaMyItems> {
-    // Deliberately two separate round trips (requireVisibleProject/findAppRole
-    // done again inside listReturnedItems) rather than threading the
-    // already-fetched project/role through -- same defense-in-depth choice
-    // qa-report.service.ts makes for its own frozen-vs-live split, over a
-    // shared code path that could silently drift the two branches apart.
-    const project = await this.requireVisibleProject(projectId, userId);
-    const role = await this.access.findAppRole(userId);
-
-    const [returnedResult, developerRows] = await Promise.all([
-      this.listReturnedItems(projectId, userId),
-      this.repository.listOpenDeveloperItemsForProject(projectId, QA_BRANCH),
-    ]);
-    const developerItems = await this.assembleFeedItems(
-      developerRows,
-      project,
-      role,
-    );
-
-    return { returned: returnedResult.items, developerItems };
+    const feed = await this.projectFeed(projectId, actor);
+    return { items: await this.toLegacyItems(projectId, feed.returned) };
   }
 
   /**
-   * Shared by listReturnedItems and listMyItems' developerItems half: both
-   * feed off QaReturnedItemRow-shaped rows spanning every OPEN run in the
-   * project, so unlike assembleRun (one run, one automation lookup) two rows
-   * here can belong to different runs with different (branch, commitSha).
-   * Deduped by that pair rather than looked up once per row -- rows sharing
-   * a run (the common case) share one CI lookup.
+   * `returned` = the Project's returned items; `developerItems` = its
+   * in-progress and to-do items that have a run item. An item with no run item
+   * yet cannot be expressed in the old shape (it has no run), so it only shows
+   * on the Project-wide feed.
    */
-  private async assembleFeedItems(
-    rows: QaReturnedItemRow[],
-    project: ProvisionedProjectRow,
-    role: PlatformAppRole,
-  ): Promise<QaReturnedItem[]> {
-    if (rows.length === 0) {
-      return [];
+  async listMyItems(
+    projectId: string,
+    actor: QaRunActorContext,
+  ): Promise<QaMyItems> {
+    const feed = await this.projectFeed(projectId, actor);
+    const [returned, developerItems] = await Promise.all([
+      this.toLegacyItems(projectId, feed.returned),
+      this.toLegacyItems(projectId, [...feed.inProgress, ...feed.todo]),
+    ]);
+    return { returned, developerItems };
+  }
+
+  private async projectFeed(projectId: string, actor: QaRunActorContext) {
+    await this.requireVisibleProject(projectId, actor.userId);
+    const project =
+      await this.projectContext.findProjectOfRepository(projectId);
+    if (!project) {
+      return { returned: [], inProgress: [], todo: [], readyForQa: [] };
     }
+    return this.projectRunsService.myItems(project.deliveryProjectId, actor);
+  }
 
-    const priorIds = rows
-      .map((row) => row.item.prior_run_item_id)
-      .filter((id): id is string => id !== null);
-    const priorSummaries =
-      await this.repository.findPriorItemSummaries(priorIds);
-
-    const automationCache = new Map<string, Promise<QaRunAutomation>>();
-    const automationFor = (
-      branch: string,
-      commitSha: string,
-    ): Promise<QaRunAutomation> => {
-      const key = `${branch}::${commitSha}`;
-      const cached = automationCache.get(key);
-      if (cached) {
-        return cached;
-      }
-      const pending = this.automation.forRun(
-        project.repo_full_name,
-        branch,
-        commitSha,
-      );
-      automationCache.set(key, pending);
-      return pending;
-    };
-
-    return Promise.all(
-      rows.map(async (row) => ({
-        runId: row.item.run_id,
-        branch: row.runBranch,
-        commitSha: row.runCommitSha,
-        checklistName: row.runChecklistName,
-        item: this.toRunItem(
-          row.item,
-          this.priorFor(row.item, priorSummaries),
-          'open',
-          role,
-          await automationFor(row.runBranch, row.runCommitSha),
-        ),
-      })),
+  private async toLegacyItems(
+    projectId: string,
+    entries: QaMyItemsFeedItem[],
+  ): Promise<QaReturnedItem[]> {
+    const withRun = entries.filter(
+      (
+        entry,
+      ): entry is QaMyItemsFeedItem & {
+        runId: string;
+        runItem: NonNullable<QaMyItemsFeedItem['runItem']>;
+      } => entry.runId !== null && entry.runItem !== null,
     );
+    const coverage = await this.projectRunsRepository.listCoverageByRunIds([
+      ...new Set(withRun.map((entry) => entry.runId)),
+    ]);
+    return withRun.map((entry) => ({
+      runId: entry.runId,
+      branch: QA_BRANCH,
+      commitSha:
+        coverage.get(entry.runId)?.find((row) => row.project_id === projectId)
+          ?.head_sha ?? '',
+      checklistName: entry.requirement.name,
+      item: entry.runItem,
+    }));
   }
 
   // ---------------------------------------------------------------------
   // Access / lookup helpers
   // ---------------------------------------------------------------------
+
+  private async readonlyError(projectId: string) {
+    const project =
+      await this.projectContext.findProjectOfRepository(projectId);
+    return qaRunLegacyReadonly(
+      project
+        ? `/delivery-projects/${project.deliveryProjectId}/qa-runs`
+        : null,
+    );
+  }
 
   private async requireVisibleProject(
     projectId: string,
@@ -689,79 +390,6 @@ export class QaRunsService {
       throw new NotFoundException('QA run not found');
     }
     return run;
-  }
-
-  private async requireItem(
-    runId: string,
-    itemId: string,
-  ): Promise<QaRunItemRow> {
-    const item = await this.repository.findItemForRun(runId, itemId);
-    if (!item) {
-      throw new NotFoundException('QA run item not found');
-    }
-    return item;
-  }
-
-  /**
-   * Runs an item write whose transaction re-checks, under a lock on the run
-   * row, that the run is still open. requireRunOpen() answers the common case
-   * early; this closes the window where a signoff commits in between.
-   */
-  private async withOpenRun<T>(write: () => Promise<T>): Promise<T> {
-    try {
-      return await write();
-    } catch (error) {
-      if (error instanceof QaRunNotOpenError) {
-        throw new ConflictException(
-          'This run is signed off. Reopen it to make changes.',
-        );
-      }
-      throw error;
-    }
-  }
-
-  private requireRunOpen(run: QaVerificationRunRow): void {
-    if (run.status === 'signed_off') {
-      throw new ConflictException(
-        'This run is signed off. Reopen it to make changes.',
-      );
-    }
-  }
-
-  private async requireChecklistSharedToProject(
-    projectId: string,
-    checklistId: string,
-  ) {
-    const checklists =
-      await this.qaChecklistsRepository.listByProject(projectId);
-    const checklist = checklists.find((item) => item.id === checklistId);
-    if (!checklist) {
-      throw new ConflictException(
-        'This checklist is not shared to this project, or is archived.',
-      );
-    }
-    return checklist;
-  }
-
-  private async checklistItemsFor(
-    checklistId: string,
-  ): Promise<QaChecklistItemRow[]> {
-    const map = await this.qaChecklistsRepository.listItemsByChecklistIds([
-      checklistId,
-    ]);
-    return map.get(checklistId) ?? [];
-  }
-
-  private requireHostedBranch(branch: string): void {
-    if (branch !== QA_BRANCH) {
-      throw new BadRequestException(
-        `QA verification runs are only supported on the ${QA_BRANCH} branch.`,
-      );
-    }
-  }
-
-  private normalizeBranch(branch: string): string {
-    return branch.trim();
   }
 
   private normalizeOptionalBranch(branch: string | undefined): string | null {
@@ -790,34 +418,6 @@ export class QaRunsService {
     };
   }
 
-  private validateVerdict(dto: SignoffQaRunDto, items: QaRunItemRow[]): void {
-    if (dto.verdict === 'APPROVED') {
-      const notPassed = items.filter((item) => item.status !== 'passed').length;
-      if (notPassed > 0) {
-        throw new ConflictException(
-          `${notPassed} item(s) are not yet passed; an APPROVED sign-off requires every item to be passed.`,
-        );
-      }
-      return;
-    }
-    if (dto.verdict === 'CONDITIONAL') {
-      const stillInProgress = items.some(
-        (item) => item.status === 'pending' || item.status === 'in_progress',
-      );
-      if (stillInProgress) {
-        throw new ConflictException(
-          'A CONDITIONAL sign-off requires no item to remain pending or in progress.',
-        );
-      }
-      if (!dto.conditions || dto.conditions.trim().length === 0) {
-        throw new BadRequestException(
-          'conditions is required for a CONDITIONAL verdict.',
-        );
-      }
-    }
-    // REJECTED: always allowed, no item-state requirement.
-  }
-
   // ---------------------------------------------------------------------
   // Assembly (row -> API contract)
   // ---------------------------------------------------------------------
@@ -827,7 +427,6 @@ export class QaRunsService {
     run: QaVerificationRunRow,
     items: QaRunItemRow[],
     signoff: QaRunSignoffRow | null,
-    role: PlatformAppRole,
   ): Promise<QaRun> {
     const [priorSummaries, runAutomation] = await Promise.all([
       this.repository.findPriorItemSummaries(
@@ -842,35 +441,35 @@ export class QaRunsService {
       ),
     ]);
 
-    const runItems = items.map((item) =>
-      this.toRunItem(
-        item,
-        this.priorFor(item, priorSummaries),
-        run.status,
-        role,
-        runAutomation,
-      ),
-    );
-
     return {
       ...this.toListItem(run, items, signoff),
-      items: runItems,
-      permissions: this.computePermissions(run, items, role),
+      items: items.map((item) =>
+        this.toLegacyRunItem(item, priorSummaries, runAutomation),
+      ),
+      permissions: READ_ONLY_PERMISSIONS,
       automation: runAutomation,
     };
   }
 
-  private priorFor(
+  private toLegacyRunItem(
     item: QaRunItemRow,
-    priorSummaries: Map<
-      string,
-      { runId: string; commitSha: string; status: QaRunItemStatus }
-    >,
-  ): QaRunItemPrevious | null {
-    if (!item.prior_run_item_id) {
-      return null;
-    }
-    return priorSummaries.get(item.prior_run_item_id) ?? null;
+    priorSummaries: Map<string, QaRunItemPrevious>,
+    runAutomation: QaRunAutomation,
+  ): QaRunItem {
+    return toRunItem(
+      item,
+      item.prior_run_item_id
+        ? (priorSummaries.get(item.prior_run_item_id) ?? null)
+        : null,
+      false,
+      matchAutomatedResult(
+        {
+          verificationType: item.verification_type,
+          testIdentifier: item.test_identifier,
+        },
+        runAutomation,
+      ),
+    );
   }
 
   private toListItem(
@@ -880,6 +479,8 @@ export class QaRunsService {
   ): QaRunListItem {
     return {
       id: run.id,
+      scope: 'repository',
+      legacy: true,
       projectId: run.project_id,
       checklistId: run.checklist_id,
       checklistName: run.checklist_name,
@@ -891,292 +492,8 @@ export class QaRunsService {
       createdBy: { id: run.created_by, login: run.created_by_login },
       createdAt: run.created_at,
       updatedAt: run.updated_at,
-      summary: this.computeSummary(items),
-      signoff: signoff ? this.toSignoff(signoff) : null,
+      summary: computeSummary(items),
+      signoff: signoff ? toSignoff(signoff) : null,
     };
-  }
-
-  private computeSummary(items: QaRunItemRow[]): QaRunSummaryCounts {
-    const byStatus: Record<QaRunItemStatus, number> = {
-      pending: 0,
-      in_progress: 0,
-      passed: 0,
-      failed: 0,
-      blocked: 0,
-      returned_to_dev: 0,
-    };
-    let blockers = 0;
-    for (const item of items) {
-      byStatus[item.status] += 1;
-      if (
-        QA_OPEN_DEFECT_STATUSES.includes(item.status) &&
-        item.defect_severity === 'blocker'
-      ) {
-        blockers += 1;
-      }
-    }
-    const openDefects = QA_OPEN_DEFECT_STATUSES.reduce(
-      (sum, status) => sum + byStatus[status],
-      0,
-    );
-    return { total: items.length, byStatus, openDefects, blockers };
-  }
-
-  private toSignoff(row: QaRunSignoffRow): QaSignoff {
-    return {
-      id: row.id,
-      verdict: row.verdict,
-      summary: row.summary,
-      conditions: row.conditions,
-      signedBy: { id: row.signed_by, login: row.signed_by_login },
-      signedAt: row.signed_at,
-    };
-  }
-
-  private toRunItem(
-    row: QaRunItemRow,
-    previous: QaRunItemPrevious | null,
-    runStatus: QaVerificationRunRow['status'],
-    role: PlatformAppRole,
-    runAutomation: QaRunAutomation,
-  ): QaRunItem {
-    return {
-      id: row.id,
-      runId: row.run_id,
-      position: row.position,
-      title: row.title,
-      description: row.description,
-      targetPersona: row.target_persona,
-      verificationType: row.verification_type,
-      testIdentifier: row.test_identifier,
-      status: row.status,
-      notes: row.notes,
-      defectSeverity: row.defect_severity,
-      reproductionSteps: row.reproduction_steps,
-      fixRequest: row.fix_requested_at
-        ? {
-            requestedAt: row.fix_requested_at,
-            requestedBy: {
-              id: row.fix_requested_by as string,
-              login: row.fix_requested_by_login as string,
-            },
-            note: row.fix_note,
-          }
-        : null,
-      verifiedBy: row.verified_by
-        ? { id: row.verified_by, login: row.verified_by_login as string }
-        : null,
-      verifiedAt: row.verified_at,
-      rowVersion: row.row_version,
-      canUpdate:
-        runStatus === 'open' && personaAllowsRole(row.target_persona, role),
-      previous,
-      automated: matchAutomatedResult(
-        {
-          verificationType: row.verification_type,
-          testIdentifier: row.test_identifier,
-        },
-        runAutomation,
-      ),
-    };
-  }
-
-  private computePermissions(
-    run: QaVerificationRunRow,
-    items: QaRunItemRow[],
-    role: PlatformAppRole,
-  ): QaRunPermissions {
-    const open = run.status === 'open';
-    return {
-      canUpdateItems:
-        open &&
-        items.some((item) => personaAllowsRole(item.target_persona, role)),
-      canReturnToDev: open && canSetReturnedToDev(role),
-      canRequestRetest: open && roleCanRequestRetest(role),
-      canSignOff: open && roleCanSignOff(role),
-      canReopen: !open && canReopenRun(role),
-    };
-  }
-
-  // ---------------------------------------------------------------------
-  // Audit + notifications
-  // ---------------------------------------------------------------------
-
-  private async recordAudit(
-    eventCode: string,
-    project: ProvisionedProjectRow,
-    actorUserId: string,
-    run: QaVerificationRunRow,
-    metadata: Record<string, unknown>,
-  ): Promise<void> {
-    await this.auditEventsService?.recordProjectEvent({
-      workspaceId: project.workspace_id ?? null,
-      projectId: project.id,
-      actorUserId,
-      eventCode,
-      message: `QA run "${run.checklist_name}" on ${run.branch}: ${eventCode.split('.').pop()}`,
-      metadata: {
-        runId: run.id,
-        checklistId: run.checklist_id,
-        branch: run.branch,
-        ...metadata,
-      },
-    });
-  }
-
-  private async notifyOnStatusChange(
-    project: ProvisionedProjectRow,
-    run: QaVerificationRunRow,
-    updated: QaRunItemRow,
-    actor: { id: string; login: string },
-    oauthToken: string | null,
-  ): Promise<void> {
-    if (updated.status === 'returned_to_dev') {
-      const recipients = await this.returnedToDevRecipients(
-        project,
-        run,
-        actor.id,
-        oauthToken,
-      );
-      const parts = [
-        updated.defect_severity
-          ? `Severity: ${updated.defect_severity}.`
-          : null,
-        updated.notes
-          ? this.truncate(updated.notes, NOTIFICATION_BODY_TRUNCATE_LENGTH)
-          : null,
-      ].filter((part): part is string => Boolean(part));
-      await this.notifyMany(
-        recipients,
-        project.id,
-        'qa.item.returned_to_dev',
-        `QA returned "${updated.title}" on ${run.branch}`,
-        parts.length > 0 ? parts.join(' ') : 'No additional notes.',
-      );
-    }
-
-    if (updated.status === 'blocked' && updated.defect_severity === 'blocker') {
-      const leadIds = project.workspace_id
-        ? await this.access.listWorkspaceLeadIds(project.workspace_id)
-        : [];
-      const recipients = this.dedupeExcludingActor(leadIds, actor.id);
-      await this.notifyMany(
-        recipients,
-        project.id,
-        'qa.item.blocked',
-        `QA marked "${updated.title}" a blocker on ${run.branch}`,
-        updated.notes
-          ? this.truncate(updated.notes, NOTIFICATION_BODY_TRUNCATE_LENGTH)
-          : 'No additional notes.',
-      );
-    }
-  }
-
-  private async notifySignoff(
-    project: ProvisionedProjectRow,
-    run: QaVerificationRunRow,
-    signoff: QaRunSignoffRow,
-    actorId: string,
-  ): Promise<void> {
-    const leadIds = project.workspace_id
-      ? await this.access.listWorkspaceLeadIds(project.workspace_id)
-      : [];
-    const recipients = this.dedupeExcludingActor(
-      [run.created_by, project.user_id, ...leadIds],
-      actorId,
-    );
-    await this.notifyMany(
-      recipients,
-      project.id,
-      'qa.run.signed_off',
-      `QA run signed off (${signoff.verdict}) on ${run.branch}`,
-      signoff.summary
-        ? this.truncate(signoff.summary, SIGNOFF_SUMMARY_TRUNCATE_LENGTH)
-        : `Verdict: ${signoff.verdict}.`,
-    );
-  }
-
-  /**
-   * Owner + workspace leads + workspace developers, plus (best effort) the
-   * author of the commit under test when they map to an ALPHACI user who can
-   * see the project. Minus the actor, deduplicated.
-   */
-  private async returnedToDevRecipients(
-    project: ProvisionedProjectRow,
-    run: QaVerificationRunRow,
-    actorId: string,
-    oauthToken: string | null,
-  ): Promise<string[]> {
-    const [teamIds, authorId] = await Promise.all([
-      project.workspace_id
-        ? this.access.listWorkspaceLeadAndDeveloperIds(project.workspace_id)
-        : Promise.resolve([] as string[]),
-      this.visibleCommitAuthor(project, run, actorId, oauthToken),
-    ]);
-    return this.dedupeExcludingActor(
-      [project.user_id, ...teamIds, authorId],
-      actorId,
-    );
-  }
-
-  private async visibleCommitAuthor(
-    project: ProvisionedProjectRow,
-    run: QaVerificationRunRow,
-    actorId: string,
-    oauthToken: string | null,
-  ): Promise<string | null> {
-    const authorId = await this.commitResolution.resolveCommitAuthorUserId(
-      project.repo_full_name,
-      actorId,
-      run.commit_sha,
-      oauthToken,
-    );
-    if (!authorId) {
-      return null;
-    }
-    try {
-      const visible = await this.access.findVisibleProject(
-        project.id,
-        authorId,
-      );
-      return visible ? authorId : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private dedupeExcludingActor(
-    ids: Array<string | null | undefined>,
-    excludeUserId: string,
-  ): string[] {
-    const set = new Set<string>();
-    for (const id of ids) {
-      if (id && id !== excludeUserId) {
-        set.add(id);
-      }
-    }
-    return [...set];
-  }
-
-  private truncate(value: string, max: number): string {
-    return value.length > max ? `${value.slice(0, max)}…` : value;
-  }
-
-  private async notifyMany(
-    userIds: string[],
-    projectId: string,
-    eventCode: string,
-    title: string,
-    body: string,
-  ): Promise<void> {
-    const notifications = this.notificationEventsService;
-    if (!notifications || userIds.length === 0) {
-      return;
-    }
-    await Promise.all(
-      userIds.map((userId) =>
-        notifications.record({ userId, projectId, eventCode, title, body }),
-      ),
-    );
   }
 }

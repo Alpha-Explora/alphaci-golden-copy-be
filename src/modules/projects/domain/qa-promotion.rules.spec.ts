@@ -1,5 +1,8 @@
 import {
+  evaluateProjectPromotionGate,
   evaluateQaPromotionGate,
+  type QaProjectGateInput,
+  type QaProjectGateRun,
   type QaPromotionChecklistCandidate,
 } from './qa-promotion.rules';
 
@@ -228,5 +231,180 @@ describe('evaluateQaPromotionGate', () => {
     expect(result.reasons).toEqual([
       `"Smoke checklist": no QA run on uat @ ${SHORT_SHA}`,
     ]);
+  });
+});
+
+describe('evaluateProjectPromotionGate', () => {
+  const API = { projectId: 'p-api', repoFullName: 'acme/api' };
+  const WEB = { projectId: 'p-web', repoFullName: 'acme/web' };
+  const SHA_API = 'a'.repeat(40);
+  const SHA_WEB = 'b'.repeat(40);
+  const MOVED = 'c'.repeat(40);
+
+  const run = (
+    overrides: Partial<QaProjectGateRun> = {},
+  ): QaProjectGateRun => ({
+    id: 'run-1',
+    verdict: 'APPROVED',
+    signedAt: '2026-10-01T00:00:00Z',
+    coverage: [
+      { projectId: 'p-api', headSha: SHA_API },
+      { projectId: 'p-web', headSha: SHA_WEB },
+    ],
+    ...overrides,
+  });
+
+  const input = (
+    overrides: Partial<QaProjectGateInput> = {},
+  ): QaProjectGateInput => ({
+    repositories: [
+      { ...API, currentSha: SHA_API },
+      { ...WEB, currentSha: SHA_WEB },
+    ],
+    requirementCount: 3,
+    latestSignedOffRun: run(),
+    ...overrides,
+  });
+
+  it('is eligible when the latest signed-off run is Approved and current for every repository', () => {
+    const result = evaluateProjectPromotionGate(input());
+
+    expect(result.eligible).toBe(true);
+    expect(result.reasons).toEqual([]);
+    expect(result.run).toEqual({
+      id: 'run-1',
+      verdict: 'APPROVED',
+      signedAt: '2026-10-01T00:00:00Z',
+      stale: false,
+    });
+    expect(result.repositories.map((repo) => repo.moved)).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  it('blocks when no signed-off run exists (an open run never counts)', () => {
+    const result = evaluateProjectPromotionGate(
+      input({ latestSignedOffRun: null }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toEqual(['No QA run covers the current uat heads']);
+    expect(result.run).toBeNull();
+    expect(result.repositories.every((repo) => repo.runSha === null)).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    ['REJECTED', 'Latest sign-off is Rejected'],
+    ['CONDITIONAL', 'Latest sign-off is Conditional (only Approved counts)'],
+  ] as const)('blocks a %s verdict', (verdict, reason) => {
+    const result = evaluateProjectPromotionGate(
+      input({ latestSignedOffRun: run({ verdict }) }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toEqual([reason]);
+    expect(result.run?.verdict).toBe(verdict);
+  });
+
+  it('blocks every repository when one repository moved, and names it', () => {
+    const result = evaluateProjectPromotionGate(
+      input({
+        repositories: [
+          { ...API, currentSha: SHA_API },
+          { ...WEB, currentSha: MOVED },
+        ],
+      }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.run?.stale).toBe(true);
+    expect(result.reasons).toEqual([
+      'Project run is stale: "web" moved from bbbbbbb to ccccccc',
+    ]);
+    expect(result.repositories).toEqual([
+      { ...API, runSha: SHA_API, currentSha: SHA_API, moved: false },
+      { ...WEB, runSha: SHA_WEB, currentSha: MOVED, moved: true },
+    ]);
+  });
+
+  it('is stale when a repository joined the Project after the run', () => {
+    const result = evaluateProjectPromotionGate(
+      input({
+        latestSignedOffRun: run({
+          coverage: [{ projectId: 'p-api', headSha: SHA_API }],
+        }),
+      }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.run?.stale).toBe(true);
+    expect(result.reasons).toEqual([
+      'Project run is stale: "web" was added to the Project after the run',
+    ]);
+  });
+
+  it('blocks when a head could not be read, without calling the run stale', () => {
+    const result = evaluateProjectPromotionGate(
+      input({
+        repositories: [
+          { ...API, currentSha: SHA_API },
+          { ...WEB, currentSha: null },
+        ],
+      }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toEqual(['Could not read the uat head of "web"']);
+    expect(result.run?.stale).toBe(false);
+  });
+
+  it('blocks a Project with no requirements even when a run is Approved', () => {
+    const result = evaluateProjectPromotionGate(input({ requirementCount: 0 }));
+
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toEqual(['This Project has no QA requirements']);
+  });
+
+  it('degenerates to the old rule for a single-repository Project', () => {
+    const single = {
+      repositories: [{ ...API, currentSha: SHA_API }],
+      latestSignedOffRun: run({
+        coverage: [{ projectId: 'p-api', headSha: SHA_API }],
+      }),
+    };
+
+    expect(evaluateProjectPromotionGate(input(single)).eligible).toBe(true);
+    expect(
+      evaluateProjectPromotionGate(
+        input({
+          ...single,
+          repositories: [{ ...API, currentSha: MOVED }],
+        }),
+      ).eligible,
+    ).toBe(false);
+  });
+
+  it('judges the NEWEST signed-off run: a Rejected sign-off on newer heads blocks an older Approved one', () => {
+    // The repository supplies the latest signed-off run; the older Approved run
+    // is simply not the input. Rejected on current heads must block.
+    const result = evaluateProjectPromotionGate(
+      input({ latestSignedOffRun: run({ id: 'run-2', verdict: 'REJECTED' }) }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.run?.id).toBe('run-2');
+  });
+
+  it('reports a defensive missing verdict as a blocking reason', () => {
+    const result = evaluateProjectPromotionGate(
+      input({ latestSignedOffRun: run({ verdict: null }) }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toEqual(['Latest sign-off has no recorded verdict']);
+    expect(result.run).toBeNull();
   });
 });

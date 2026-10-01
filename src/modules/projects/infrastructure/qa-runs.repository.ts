@@ -15,21 +15,48 @@ import type {
   QaVerdict,
 } from '../application/qa-runs/qa-runs.contracts';
 
-export interface QaVerificationRunRow {
+interface QaRunRowBase {
   id: string;
-  project_id: string;
-  /** Null once its checklist was deleted (workspace deletion); the run keeps its snapshot. */
+  /** Null once its checklist was deleted (workspace deletion); the run keeps its snapshot. Always null on a Project run. */
   checklist_id: string | null;
   checklist_version: number;
+  /** A Project run carries the Project's name here. */
   checklist_name: string;
   branch: string;
-  commit_sha: string;
   commit_source: QaCommitSource;
   status: QaRunStatus;
   created_by: string;
   created_by_login: string;
   created_at: string;
   updated_at: string;
+  scope: 'repository' | 'project';
+  delivery_project_id: string | null;
+  heads_fingerprint: string | null;
+}
+
+/** A repository-scope run: read-only history since Project requirements. */
+export interface QaVerificationRunRow extends QaRunRowBase {
+  scope: 'repository';
+  project_id: string;
+  commit_sha: string;
+}
+
+/** A Project run: covers every repository of a Project; the heads live in qa_run_repositories. */
+export interface QaProjectRunRow extends QaRunRowBase {
+  scope: 'project';
+  project_id: null;
+  commit_sha: null;
+  delivery_project_id: string;
+  heads_fingerprint: string;
+}
+
+export type QaAnyRunRow = QaVerificationRunRow | QaProjectRunRow;
+
+export interface QaRunRepositoryRow {
+  run_id: string;
+  project_id: string;
+  repo_full_name: string;
+  head_sha: string;
 }
 
 export interface QaRunItemRow {
@@ -56,6 +83,11 @@ export interface QaRunItemRow {
   verified_at: string | null;
   row_version: number;
   updated_at: string;
+  /** Project runs only: the requirement this item was snapshotted from. */
+  requirement_id: string | null;
+  requirement_name: string | null;
+  requirement_kind: 'functional' | 'system' | null;
+  acceptance_criteria: string | null;
 }
 
 export interface QaRunSignoffRow {
@@ -119,6 +151,29 @@ export interface UpdateQaRunItemPatch {
 export interface RunActor {
   id: string;
   login: string;
+}
+
+/**
+ * The two-track rules a Project run adds to a Verification write (design doc
+ * 6.3 decision 1 and section 2.4). Passed here, not decided here: the service
+ * says which apply, the transaction enforces them under the item locks.
+ */
+export interface QaProjectItemRules {
+  /** 'passed' needs the source requirement item's Progress to be 'done'. */
+  requireProgressDoneForPass: boolean;
+  /** 'returned_to_dev' puts the source item's Progress back to 'in_progress'. */
+  resetProgressOnReturn: boolean;
+}
+
+/**
+ * 'passed' was refused inside the transaction: the source requirement item's
+ * Progress is not 'done', or the source item no longer exists.
+ */
+export class QaProgressNotDoneError extends Error {
+  constructor(itemId: string) {
+    super(`QA run item ${itemId} cannot pass: its Progress is not done`);
+    this.name = 'QaProgressNotDoneError';
+  }
 }
 
 export interface CreateSignoffInput {
@@ -355,7 +410,7 @@ export class QaRunsRepository {
     runId: string,
   ): Promise<QaVerificationRunRow | null> {
     const result = await this.databaseService.query<QaVerificationRunRow>(
-      `SELECT * FROM projects.qa_verification_runs WHERE id = $1 AND project_id = $2;`,
+      `SELECT * FROM projects.qa_verification_runs WHERE id = $1 AND project_id = $2 AND scope = 'repository';`,
       [runId, projectId],
     );
     return result.rows[0] ?? null;
@@ -487,11 +542,14 @@ export class QaRunsRepository {
   async findPriorItemSummaries(
     ids: string[],
   ): Promise<
-    Map<string, { runId: string; commitSha: string; status: QaRunItemStatus }>
+    Map<
+      string,
+      { runId: string; commitSha: string | null; status: QaRunItemStatus }
+    >
   > {
     const map = new Map<
       string,
-      { runId: string; commitSha: string; status: QaRunItemStatus }
+      { runId: string; commitSha: string | null; status: QaRunItemStatus }
     >();
     if (ids.length === 0) {
       return map;
@@ -499,7 +557,7 @@ export class QaRunsRepository {
     const result = await this.databaseService.query<{
       id: string;
       run_id: string;
-      commit_sha: string;
+      commit_sha: string | null;
       status: QaRunItemStatus;
     }>(
       `
@@ -536,9 +594,15 @@ export class QaRunsRepository {
     patch: UpdateQaRunItemPatch,
     actor: RunActor,
     previousStatus: QaRunItemStatus,
+    rules?: QaProjectItemRules,
   ): Promise<QaRunItemRow | null> {
     return this.databaseService.withTransaction(async (client) => {
+      // Lock order, everywhere: run row -> requirement item -> run item. A
+      // Progress write only ever takes the requirement item, so no cycle.
       await lockOpenRunForItemWrite(client, runId);
+      if (rules?.requireProgressDoneForPass && patch.status === 'passed') {
+        await this.assertSourceProgressDone(client, runId, itemId);
+      }
       const result = await client.query<QaRunItemRow>(
         `
           UPDATE projects.qa_run_items
@@ -625,8 +689,52 @@ export class QaRunsRepository {
         ],
       );
 
+      if (
+        rules?.resetProgressOnReturn &&
+        patch.status === 'returned_to_dev' &&
+        updated.source_item_id
+      ) {
+        // QA sent it back, so the developer is working on it again.
+        await client.query(
+          `
+            UPDATE projects.qa_checklist_items
+            SET progress = 'in_progress', progress_by = $2, progress_by_login = $3,
+                progress_at = NOW(), row_version = row_version + 1, updated_at = NOW()
+            WHERE id = $1 AND progress <> 'in_progress';
+          `,
+          [updated.source_item_id, actor.id, actor.login],
+        );
+      }
+
       return updated;
     });
+  }
+
+  /**
+   * Under a FOR SHARE lock on the source requirement item (so its Progress
+   * cannot move until this transaction ends), refuses unless it is 'done'. A
+   * run item whose source was deleted cannot be passed either.
+   */
+  private async assertSourceProgressDone(
+    client: PoolClient,
+    runId: string,
+    itemId: string,
+  ): Promise<void> {
+    const source = await client.query<{ source_item_id: string | null }>(
+      `SELECT source_item_id FROM projects.qa_run_items WHERE id = $1 AND run_id = $2;`,
+      [itemId, runId],
+    );
+    const sourceItemId = source.rows[0]?.source_item_id;
+    if (!sourceItemId) {
+      throw new QaProgressNotDoneError(itemId);
+    }
+    const progress = await client.query<{ progress: string }>(
+      `SELECT progress FROM projects.qa_checklist_items WHERE id = $1 FOR SHARE;`,
+      [sourceItemId],
+    );
+    if (progress.rows[0]?.progress !== 'done') {
+      throw new QaProgressNotDoneError(itemId);
+    }
   }
 
   /**
@@ -693,7 +801,7 @@ export class QaRunsRepository {
    */
   async createSignoff(
     input: CreateSignoffInput,
-  ): Promise<{ run: QaVerificationRunRow; signoff: QaRunSignoffRow } | null> {
+  ): Promise<{ run: QaAnyRunRow; signoff: QaRunSignoffRow } | null> {
     return this.databaseService.withTransaction(async (client) => {
       const locked = await client.query<{ status: string }>(
         `SELECT status FROM projects.qa_verification_runs WHERE id = $1 FOR UPDATE;`,
@@ -723,7 +831,7 @@ export class QaRunsRepository {
         throw new QaRunItemsChangedError(input.runId);
       }
 
-      const runResult = await client.query<QaVerificationRunRow>(
+      const runResult = await client.query<QaAnyRunRow>(
         `
           UPDATE projects.qa_verification_runs
           SET status = 'signed_off', updated_at = $2
@@ -770,12 +878,9 @@ export class QaRunsRepository {
    * Reopens a SIGNED_OFF run and supersedes its active signoff in the same
    * transaction. Returns null if the run was not signed off.
    */
-  async reopenRun(
-    runId: string,
-    actor: RunActor,
-  ): Promise<QaVerificationRunRow | null> {
+  async reopenRun(runId: string, actor: RunActor): Promise<QaAnyRunRow | null> {
     return this.databaseService.withTransaction(async (client) => {
-      const runResult = await client.query<QaVerificationRunRow>(
+      const runResult = await client.query<QaAnyRunRow>(
         `
           UPDATE projects.qa_verification_runs
           SET status = 'open', updated_at = NOW()

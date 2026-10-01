@@ -7,6 +7,10 @@ import type {
   QaChecklistTargetPersona,
   QaChecklistVerificationType,
 } from '../application/qa-checklists/qa-checklists.contracts';
+import type {
+  QaProgress,
+  QaRequirementKind,
+} from '../application/qa-checklists/qa-requirements.contracts';
 
 /** Postgres SQLSTATE for a unique-constraint violation (the active-name index). */
 export const QA_UNIQUE_VIOLATION = '23505';
@@ -22,6 +26,10 @@ export interface QaChecklistRow {
   updated_by: string | null;
   created_at: string;
   updated_at: string;
+  kind: QaRequirementKind;
+  /** The owning Project (hierarchy delivery project); null = unassigned legacy checklist. */
+  delivery_project_id: string | null;
+  legacy_checklist_id: string | null;
 }
 
 export interface QaChecklistItemRow {
@@ -33,6 +41,13 @@ export interface QaChecklistItemRow {
   target_persona: QaChecklistTargetPersona;
   verification_type: QaChecklistVerificationType;
   test_identifier: string | null;
+  acceptance_criteria: string | null;
+  progress: QaProgress;
+  progress_by: string | null;
+  progress_by_login: string | null;
+  progress_at: string | null;
+  row_version: number;
+  updated_at: string;
 }
 
 export interface CreateQaChecklistInput {
@@ -41,6 +56,9 @@ export interface CreateQaChecklistInput {
   description: string | null;
   createdBy: string;
   items: QaChecklistItemInput[];
+  /** Defaults to a legacy, unassigned 'system' checklist. */
+  kind?: QaRequirementKind;
+  deliveryProjectId?: string | null;
 }
 
 export interface UpdateQaChecklistMetaPatch {
@@ -59,11 +77,19 @@ export class QaChecklistsRepository {
     return this.databaseService.withTransaction(async (client) => {
       const result = await client.query<QaChecklistRow>(
         `
-          INSERT INTO projects.qa_checklists (workspace_id, name, description, created_by)
-          VALUES ($1, $2, $3, $4)
+          INSERT INTO projects.qa_checklists
+            (workspace_id, name, description, created_by, kind, delivery_project_id)
+          VALUES ($1, $2, $3, $4, $5, $6)
           RETURNING *;
         `,
-        [input.workspaceId, input.name, input.description, input.createdBy],
+        [
+          input.workspaceId,
+          input.name,
+          input.description,
+          input.createdBy,
+          input.kind ?? 'system',
+          input.deliveryProjectId ?? null,
+        ],
       );
       const checklist = result.rows[0];
       if (!checklist) {
@@ -103,7 +129,25 @@ export class QaChecklistsRepository {
     return result.rows;
   }
 
-  /** Non-archived checklists shared to this project — the contract's stated scope. */
+  /** The Project's requirements (functional first, then system, oldest first). */
+  async listByDeliveryProject(
+    deliveryProjectId: string,
+    options: { kind?: QaRequirementKind; includeArchived: boolean },
+  ): Promise<QaChecklistRow[]> {
+    const result = await this.databaseService.query<QaChecklistRow>(
+      `
+        SELECT * FROM projects.qa_checklists
+        WHERE delivery_project_id = $1
+          AND ($2::text IS NULL OR kind = $2)
+          AND ($3::boolean OR archived_at IS NULL)
+        ORDER BY (kind = 'functional') DESC, created_at, id;
+      `,
+      [deliveryProjectId, options.kind ?? null, options.includeArchived],
+    );
+    return result.rows;
+  }
+
+  /** Non-archived checklists shared to this project — the legacy sharing scope. */
   async listByProject(projectId: string): Promise<QaChecklistRow[]> {
     const result = await this.databaseService.query<QaChecklistRow>(
       `
@@ -170,11 +214,19 @@ export class QaChecklistsRepository {
     return map;
   }
 
-  /** Case-insensitive, active-only (archived_at IS NULL) name collision check. */
+  /**
+   * Case-insensitive, active-only (archived_at IS NULL) name collision check
+   * within one scope: a Project and kind, or (the default) the unassigned
+   * legacy 'system' scope. Mirrors uq_qa_requirements_scope_name_active.
+   */
   async hasActiveNameConflict(
     workspaceId: string,
     name: string,
     excludeId?: string,
+    scope: {
+      deliveryProjectId: string | null;
+      kind: QaRequirementKind;
+    } = { deliveryProjectId: null, kind: 'system' },
   ): Promise<boolean> {
     const result = await this.databaseService.query<{ exists: boolean }>(
       `
@@ -183,10 +235,18 @@ export class QaChecklistsRepository {
           WHERE workspace_id = $1
             AND lower(name) = lower($2)
             AND archived_at IS NULL
+            AND delivery_project_id IS NOT DISTINCT FROM $4::uuid
+            AND kind = $5
             AND ($3::uuid IS NULL OR id <> $3)
         ) AS exists;
       `,
-      [workspaceId, name, excludeId ?? null],
+      [
+        workspaceId,
+        name,
+        excludeId ?? null,
+        scope.deliveryProjectId,
+        scope.kind,
+      ],
     );
     return result.rows[0]?.exists ?? false;
   }
@@ -290,6 +350,19 @@ export class QaChecklistsRepository {
     const result = await this.databaseService.query(
       `DELETE FROM projects.qa_checklists WHERE workspace_id = $1;`,
       [workspaceId],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  /**
+   * Deletes every requirement of a deleted Project. Items cascade; QA runs
+   * keep their history (checklist_id and requirement_id are ON DELETE SET
+   * NULL, and each run snapshots its items and names).
+   */
+  async deleteByDeliveryProject(deliveryProjectId: string): Promise<number> {
+    const result = await this.databaseService.query(
+      `DELETE FROM projects.qa_checklists WHERE delivery_project_id = $1;`,
+      [deliveryProjectId],
     );
     return result.rowCount ?? 0;
   }
@@ -405,7 +478,7 @@ export class QaChecklistsRepository {
     });
   }
 
-  private async insertItemsWithClient(
+  async insertItemsWithClient(
     client: Pick<PoolClient, 'query'>,
     checklistId: string,
     items: QaChecklistItemInput[],
@@ -425,15 +498,17 @@ export class QaChecklistsRepository {
           item.targetPersona,
           item.verificationType,
           item.testIdentifier ?? null,
+          item.acceptanceCriteria ?? null,
         );
-        return `($1, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+        return `($1, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
       })
       .join(',\n');
 
     const result = await client.query<QaChecklistItemRow>(
       `
         INSERT INTO projects.qa_checklist_items (
-          checklist_id, "position", title, description, target_persona, verification_type, test_identifier
+          checklist_id, "position", title, description, target_persona, verification_type, test_identifier,
+          acceptance_criteria
         )
         VALUES ${rowsSql}
         RETURNING *;

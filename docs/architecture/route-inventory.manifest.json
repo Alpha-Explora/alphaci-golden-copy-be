@@ -1,11 +1,11 @@
 {
-  "routeCount": 181,
+  "routeCount": 202,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "95ad783400b61f720c888d1042400ab56f390bed40ede2a3027fd1b165322d7c",
+  "referenceSha256": "dff2762cba76c40bdf2eadc51626aa2dc00f74360a6b8ff037f19d86eeaea225",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "95ad783400b61f720c888d1042400ab56f390bed40ede2a3027fd1b165322d7c",
+  "baselineSha256": "dff2762cba76c40bdf2eadc51626aa2dc00f74360a6b8ff037f19d86eeaea225",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -107,6 +107,32 @@
         "POST /api/v1/workspaces/{workspaceId}/members",
         "PATCH /api/v1/workspaces/{workspaceId}/members/{memberId}",
         "DELETE /api/v1/workspaces/{workspaceId}/members/{memberId}"
+      ]
+    },
+    {
+      "reason": "Project requirements: Product owners define functional (Feature -> User stories) and system requirements inside a Project, developers report Progress, QA verifies once per Project through Project-scope runs (design: docs/design/project-requirements.md, ADR-0014). The repository-scope run routes stay as read-only history.",
+      "routes": [
+        "DELETE /api/v1/requirements/{id}/items/{itemId}",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/current",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/report",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa/my-items",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/requirements",
+        "GET /api/v1/requirements/{id}",
+        "GET /api/v1/workspaces/{workspaceId}/qa-requirements/overview",
+        "PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}",
+        "PATCH /api/v1/requirements/{id}",
+        "PATCH /api/v1/requirements/{id}/items/{itemId}",
+        "PATCH /api/v1/requirements/{id}/items/{itemId}/progress",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/automation/dispatch",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/reopen",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/signoff",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/requirements",
+        "POST /api/v1/requirements/{id}/archive",
+        "POST /api/v1/requirements/{id}/items",
+        "PUT /api/v1/requirements/{id}/items/order"
       ]
     }
   ]

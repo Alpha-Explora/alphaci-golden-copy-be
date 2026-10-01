@@ -7,19 +7,32 @@ import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
 import {
+  DeliveryProjectQaMyItemsController,
+  DeliveryProjectQaRunsController,
+} from '../../api/qa-project-runs.controller';
+import {
+  DeliveryProjectRequirementsController,
+  RequirementsController,
+  WorkspaceQaRequirementsController,
+} from '../../api/qa-requirements.controller';
+import {
   ProjectQaMyItemsController,
   ProjectQaPromotionController,
   ProjectQaReturnedItemsController,
   ProjectQaRunsController,
 } from '../../api/qa-runs.controller';
+import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
 import { QaChecklistsModule } from '../qa-checklists/qa-checklists.module';
+import { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
 import { QaAutomationDispatchService } from './qa-automation-dispatch.service';
 import { QaAutomationService } from './qa-automation.service';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
+import { QaProjectRunsService } from './qa-project-runs.service';
 import { QaPromotionService } from './qa-promotion.service';
 import { QaReportService } from './qa-report.service';
 import { QaRunsService } from './qa-runs.service';
+import { QaUatHeadsService } from './qa-uat-heads.service';
 
 @Module({
   imports: [
@@ -46,10 +59,19 @@ import { QaRunsService } from './qa-runs.service';
     ProjectQaReturnedItemsController,
     ProjectQaMyItemsController,
     ProjectQaPromotionController,
+    DeliveryProjectQaRunsController,
+    DeliveryProjectQaMyItemsController,
+    DeliveryProjectRequirementsController,
+    RequirementsController,
+    WorkspaceQaRequirementsController,
   ],
   providers: [
     SessionAuthGuard,
     QaRunsRepository,
+    QaProjectRunsRepository,
+    QaUatHeadsService,
+    QaRequirementsService,
+    QaProjectRunsService,
     QaCommitResolutionService,
     QaAutomationService,
     QaAutomationDispatchService,
@@ -57,6 +79,13 @@ import { QaRunsService } from './qa-runs.service';
     QaReportService,
     QaPromotionService,
   ],
-  exports: [QaRunsService, QaReportService, QaPromotionService],
+  exports: [
+    QaRunsService,
+    QaReportService,
+    QaPromotionService,
+    // Implements DELIVERY_PROJECT_DATA_CLEANUP (bound in ProjectProvisioningModule).
+    QaRequirementsService,
+    QaProjectRunsService,
+  ],
 })
 export class QaRunsModule {}

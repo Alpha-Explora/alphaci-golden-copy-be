@@ -21,6 +21,9 @@ export interface QaChecklistItem {
   targetPersona: QaChecklistTargetPersona;
   verificationType: QaChecklistVerificationType;
   testIdentifier: string | null;
+  acceptanceCriteria: string | null;
+  /** The developer Progress track; meaningful on Project requirements. */
+  progress: 'todo' | 'in_progress' | 'done';
 }
 
 /** Input shape for one item. `position` is implied by array index, not sent. */
@@ -30,6 +33,8 @@ export interface QaChecklistItemInput {
   targetPersona: QaChecklistTargetPersona;
   verificationType: QaChecklistVerificationType;
   testIdentifier?: string | null;
+  /** Requirement items only (User stories); legacy checklist items have none. */
+  acceptanceCriteria?: string | null;
 }
 
 export interface QaChecklist {
@@ -44,6 +49,11 @@ export interface QaChecklist {
   updatedAt: string;
   items: QaChecklistItem[];
   sharedProjectIds: string[];
+  /** 'system' for every legacy checklist. */
+  kind: 'functional' | 'system';
+  /** The owning Project; null = unassigned legacy checklist. */
+  deliveryProjectId: string | null;
+  legacyChecklistId: string | null;
 }
 
 /** Max checklist items, enforced at the DTO layer and defensively in the service. */

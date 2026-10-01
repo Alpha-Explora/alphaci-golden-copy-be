@@ -62,8 +62,20 @@ const { ProjectProvisioningApplicationService } =
 const { NotificationEventPublisher } =
   require('../../src/kernel/events/platform-event-publisher.js') as typeof import('../../src/kernel/events/platform-event-publisher.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { QaRunsService } =
-  require('../../src/modules/projects/application/qa-runs/qa-runs.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-runs.service.js');
+const { QaProjectRunsService } =
+  require('../../src/modules/projects/application/qa-runs/qa-project-runs.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-project-runs.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaRequirementsService } =
+  require('../../src/modules/projects/application/qa-checklists/qa-requirements.service.js') as typeof import('../../src/modules/projects/application/qa-checklists/qa-requirements.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaProjectContextService } =
+  require('../../src/modules/projects/application/qa-checklists/qa-project-context.service.js') as typeof import('../../src/modules/projects/application/qa-checklists/qa-project-context.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DELIVERY_PROJECT_DATA_CLEANUP } =
+  require('../../src/kernel/ports/delivery-project-data-cleanup.port.js') as typeof import('../../src/kernel/ports/delivery-project-data-cleanup.port.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DeliveryProjectsService } =
+  require('../../src/modules/identity-access/hierarchy/application/delivery-projects.service.js') as typeof import('../../src/modules/identity-access/hierarchy/application/delivery-projects.service.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { QaChecklistsService } =
   require('../../src/modules/projects/application/qa-checklists/qa-checklists.service.js') as typeof import('../../src/modules/projects/application/qa-checklists/qa-checklists.service.js');
@@ -340,7 +352,8 @@ describe('HTTP application boot', () => {
    * injected by an explicit token; this proves the REAL publishers arrive.
    */
   it.each([
-    ['QaRunsService', () => QaRunsService, true],
+    ['QaProjectRunsService', () => QaProjectRunsService, true],
+    ['QaRequirementsService', () => QaRequirementsService, true],
     ['QaChecklistsService', () => QaChecklistsService, false],
     ['ProjectWorkflowsService', () => ProjectWorkflowsService, true],
     ['QaPromotionService', () => QaPromotionService, true],
@@ -371,6 +384,53 @@ describe('HTTP application boot', () => {
     },
     60_000,
   );
+
+  /*
+   * Project requirements cross three boundaries that only prove out at the
+   * composition root: PROJECT_LINK_PORT (a Project's repositories, owned by
+   * identity-access) and DEPLOYMENT_TARGETS_QUERY (which repository is the
+   * frontend, owned by runtime) feed QaProjectContextService, and
+   * DELIVERY_PROJECT_DATA_CLEANUP (bound by projects, consumed by
+   * identity-access when a Project is deleted) must resolve to the real
+   * requirements service rather than arrive undefined.
+   */
+  it('wires the Project context ports and the Project delete cleanup', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const context: unknown = app.get(QaProjectContextService, {
+        strict: false,
+      });
+      const wired = context as {
+        projectLink?: {
+          getDeliveryProject?: unknown;
+          listDeliveryProjectsForGroup?: unknown;
+        };
+        deploymentTargets?: { listDeploymentTargets?: unknown };
+      };
+      expect(typeof wired.projectLink?.getDeliveryProject).toBe('function');
+      expect(typeof wired.projectLink?.listDeliveryProjectsForGroup).toBe(
+        'function',
+      );
+      expect(typeof wired.deploymentTargets?.listDeploymentTargets).toBe(
+        'function',
+      );
+
+      const cleanup = app.get(DELIVERY_PROJECT_DATA_CLEANUP, { strict: false });
+      expect(cleanup).toBe(app.get(QaRequirementsService, { strict: false }));
+
+      const deliveryProjects: unknown = app.get(DeliveryProjectsService, {
+        strict: false,
+      });
+      expect(
+        (deliveryProjects as { deliveryProjectDataCleanup?: unknown })
+          .deliveryProjectDataCleanup,
+      ).toBe(cleanup);
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
 
   /*
    * Phase 5 role gates. Each of these reads the caller's global app_role

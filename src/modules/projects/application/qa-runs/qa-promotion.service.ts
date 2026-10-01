@@ -3,7 +3,6 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -21,25 +20,27 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 import { canMergeQaPromotion } from '../../domain/qa-run-access.rules';
-import {
-  evaluateQaPromotionGate,
-  type QaPromotionChecklistCandidate,
-} from '../../domain/qa-promotion.rules';
-import type { QaChecklistRow } from '../../infrastructure/qa-checklists.repository';
-import { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
-import {
-  QaRunsRepository,
-  type QaVerificationRunRow,
-} from '../../infrastructure/qa-runs.repository';
+import { evaluateProjectPromotionGate } from '../../domain/qa-promotion.rules';
+import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
+import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
+import {
+  QaProjectContextService,
+  type QaProjectRepository,
+} from '../qa-checklists/qa-project-context.service';
+import { qaProjectRequired } from '../qa-checklists/qa-errors';
 import { buildQaPromotionPullRequestBody } from './qa-promotion.pr-body';
 import type {
+  QaPromotionChecklist,
   QaPromotionMergeResult,
   QaPromotionPullRequestRef,
   QaPromotionStatus,
 } from './qa-promotion.contracts';
-import type { QaRunActorContext } from './qa-runs.service';
+import type { QaHeadStatus, QaRunActorContext } from './qa-runs.contracts';
+import { QaUatHeadsService } from './qa-uat-heads.service';
+
+export type { QaRunActorContext };
 
 type QaPromotionStatusCore = Omit<QaPromotionStatus, 'canMerge'>;
 
@@ -56,11 +57,20 @@ type PullRequestResolution =
 
 const PROMOTION_MERGED_EVENT = 'qa.promotion.merged';
 const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
+const UNFILED_REASON =
+  'This repository is not filed under a Project; QA requirements belong to Projects';
 
 /**
- * "Merge to main" (Slice 6): the promotion gate (GET) and the merge action
- * (POST) for carrying a QA-approved uat commit to main. Reuses
- * ProjectWorkspaceService.mergePullRequest's behaviour (merge with the
+ * "Merge to main": the promotion gate (GET) and the merge action (POST) for
+ * carrying a QA-approved uat commit to main.
+ *
+ * The gate is per PROJECT (docs/design/project-requirements.md, section 3): a
+ * repository may merge only when the latest signed-off Project run is
+ * Approved and still current for EVERY repository of its Project. A repository
+ * filed under no Project is blocked (QA_PROJECT_REQUIRED on merge): it has no
+ * requirements and no run.
+ *
+ * Reuses ProjectWorkspaceService.mergePullRequest's behaviour (merge with the
  * user's own OAuth token, return GitHub's refusal text as merged:false)
  * without depending on that service directly -- ProjectWorkspaceService
  * lives in a sibling application/workspace/ area with no shared module
@@ -69,12 +79,12 @@ const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
  */
 @Injectable()
 export class QaPromotionService {
-  private readonly logger = new Logger(QaPromotionService.name);
-
   constructor(
     private readonly access: QaAccessService,
-    private readonly qaChecklistsRepository: QaChecklistsRepository,
-    private readonly qaRunsRepository: QaRunsRepository,
+    private readonly projectContext: QaProjectContextService,
+    private readonly requirements: QaRequirementsRepository,
+    private readonly projectRuns: QaProjectRunsRepository,
+    private readonly heads: QaUatHeadsService,
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService: GithubProjectPort,
     // Explicit token: a type alias erases to `Object` in design:paramtypes,
@@ -118,6 +128,9 @@ export class QaPromotionService {
     // be relied on to have called GET moments before, and even if it did,
     // uat may have moved since.
     const status = await this.computeStatus(project, actor);
+    if (status.scope === 'unfiled') {
+      throw qaProjectRequired();
+    }
     if (!status.eligible) {
       throw new ConflictException({
         code: 'QA_PROMOTION_BLOCKED',
@@ -125,7 +138,8 @@ export class QaPromotionService {
         reasons: status.reasons,
       });
     }
-    // Guaranteed non-null: eligible only becomes true when headSha is known.
+    // Guaranteed non-null: eligible only becomes true when every head, this
+    // repository's included, was read.
     const headSha = status.headSha as string;
 
     if (!actor.oauthToken) {
@@ -177,7 +191,14 @@ export class QaPromotionService {
       };
     }
 
-    await this.recordMergeAudit(project, actor, pr, headSha, result.sha);
+    await this.recordMergeAudit(
+      project,
+      actor,
+      pr,
+      headSha,
+      result.sha,
+      status,
+    );
     await this.notifyLeadsExcludingActor(project, actor, pr, headSha);
 
     return {
@@ -196,162 +217,129 @@ export class QaPromotionService {
     project: ProvisionedProjectRow,
     actor: QaRunActorContext,
   ): Promise<QaPromotionStatusCore> {
-    const readToken = await this.resolveReadToken(
-      project.repo_full_name,
-      actor.userId,
-      actor.oauthToken,
-    );
-
-    const headSha = readToken
-      ? await this.readBranchHeadSha(readToken, project.repo_full_name)
-      : null;
-
-    const checklistRows = await this.qaChecklistsRepository.listByProject(
+    const self: QaProjectRepository = {
+      projectId: project.id,
+      name: project.service_name || project.repo_full_name,
+      repoFullName: project.repo_full_name,
+    };
+    const folder = await this.projectContext.findProjectOfRepository(
       project.id,
     );
-    const candidates = await this.buildChecklistCandidates(
-      project.id,
-      checklistRows,
-      headSha,
-    );
-    const gate = evaluateQaPromotionGate({ headSha, checklists: candidates });
+    const pullRequest = await this.findPromotionPullRequest(self, actor);
 
-    const pullRequest = readToken
-      ? await this.findPromotionPullRequest(readToken, project.repo_full_name)
-      : null;
+    if (!folder) {
+      const reading = await this.heads.readHead(self, actor);
+      const headSha = reading.kind === 'ok' ? reading.sha : null;
+      return {
+        qaBranch: QA_BRANCH,
+        targetBranch: QA_PROMOTION_TARGET_BRANCH,
+        headSha,
+        scope: 'unfiled',
+        deliveryProject: null,
+        run: null,
+        repositories: [
+          {
+            projectId: self.projectId,
+            repoFullName: self.repoFullName,
+            runSha: null,
+            currentSha: headSha,
+            moved: false,
+          },
+        ],
+        requirementsChanged: false,
+        checklists: [],
+        eligible: false,
+        reasons: [UNFILED_REASON],
+        pullRequest,
+      };
+    }
+
+    // Every repository of the Project, this one included even if its
+    // hierarchy row is somehow missing from the folder listing.
+    const repositories = folder.repositories.some(
+      (repository) => repository.projectId === self.projectId,
+    )
+      ? folder.repositories
+      : [self, ...folder.repositories];
+
+    const [readings, requirementRows, latest] = await Promise.all([
+      this.heads.readHeads(repositories, actor),
+      this.requirements.listActiveByDeliveryProject(folder.deliveryProjectId),
+      this.projectRuns.findLatestSignedOff(folder.deliveryProjectId),
+    ]);
+
+    const gate = evaluateProjectPromotionGate({
+      repositories: readings.map((reading) => ({
+        projectId: reading.repository.projectId,
+        repoFullName: reading.repository.repoFullName,
+        currentSha: reading.kind === 'ok' ? reading.sha : null,
+      })),
+      requirementCount: requirementRows.length,
+      latestSignedOffRun: latest
+        ? {
+            id: latest.run.id,
+            verdict: latest.signoff.verdict,
+            signedAt: latest.signoff.signed_at,
+            coverage: latest.repositories.map((row) => ({
+              projectId: row.project_id,
+              headSha: row.head_sha,
+            })),
+          }
+        : null,
+    });
+
+    const requirementsChanged = latest
+      ? await this.requirements.requirementsChangedSince(
+          folder.deliveryProjectId,
+          latest.signoff.signed_at,
+        )
+      : false;
+    const own = gate.repositories.find(
+      (repository) => repository.projectId === self.projectId,
+    );
+
+    // Deprecated: one entry per requirement, each carrying the Project-level
+    // result, for the frontend that predates Project requirements.
+    const checklists: QaPromotionChecklist[] = requirementRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      runId: gate.run?.id ?? null,
+      verdict: gate.run?.verdict ?? null,
+      runStatus: gate.run ? 'signed_off' : null,
+      approvedForHead: gate.eligible,
+    }));
 
     return {
       qaBranch: QA_BRANCH,
       targetBranch: QA_PROMOTION_TARGET_BRANCH,
-      headSha,
-      checklists: gate.checklists,
+      headSha: own?.currentSha ?? null,
+      scope: 'project',
+      deliveryProject: { id: folder.deliveryProjectId, name: folder.name },
+      run: gate.run,
+      repositories: gate.repositories,
+      requirementsChanged,
+      checklists,
       eligible: gate.eligible,
       reasons: gate.reasons,
       pullRequest,
     };
   }
 
-  private async buildChecklistCandidates(
-    projectId: string,
-    checklists: QaChecklistRow[],
-    headSha: string | null,
-  ): Promise<QaPromotionChecklistCandidate[]> {
-    if (headSha === null || checklists.length === 0) {
-      return checklists.map((checklist) => ({
-        id: checklist.id,
-        name: checklist.name,
-        run: null,
-      }));
-    }
-
-    const runs = await Promise.all(
-      checklists.map((checklist) =>
-        this.qaRunsRepository.findRunByKey(
-          projectId,
-          checklist.id,
-          QA_BRANCH,
-          headSha,
-        ),
-      ),
-    );
-    const runIds = runs
-      .filter((run): run is QaVerificationRunRow => run !== null)
-      .map((run) => run.id);
-    const signoffsByRunId =
-      await this.qaRunsRepository.findActiveSignoffsByRunIds(runIds);
-
-    return checklists.map((checklist, index) => {
-      const run = runs[index];
-      if (!run) {
-        return { id: checklist.id, name: checklist.name, run: null };
-      }
-      const signoff = signoffsByRunId.get(run.id);
-      return {
-        id: checklist.id,
-        name: checklist.name,
-        run: {
-          id: run.id,
-          status: run.status,
-          activeVerdict: signoff?.verdict ?? null,
-        },
-      };
-    });
-  }
-
-  /**
-   * Reads with the same 3-tier precedence as
-   * QaCommitResolutionService.resolveReadToken (enforced-org installation
-   * token, then the per-user-repo installation token, then the caller's own
-   * OAuth token) -- reimplemented here rather than reused because that
-   * method is private to a sibling service. This status is readable by
-   * anyone who can see the project, so it deliberately does NOT require the
-   * caller's own token the way the write path below does; a caller with no
-   * personal GitHub sign-in still sees the gate through the installation
-   * token.
-   */
-  private async resolveReadToken(
-    repoFullName: string,
-    userId: string,
-    oauthToken: string | null,
-  ): Promise<string | null> {
-    const enforcedToken = await this.enforcedOrgToken(repoFullName);
-    if (enforcedToken) {
-      return enforcedToken;
-    }
-
-    const installationToken =
-      await this.githubService.getInstallationAccessTokenForUserRepo(
-        userId,
-        repoFullName,
-      );
-    if (installationToken) {
-      return installationToken;
-    }
-
-    return oauthToken;
-  }
-
-  private async enforcedOrgToken(repoFullName: string): Promise<string | null> {
-    const enforcedOrg = this.githubService.getEnforcedOrg();
-    if (!enforcedOrg) {
-      return null;
-    }
-
-    const owner = repoFullName.split('/')[0];
-    if (owner?.toLowerCase() !== enforcedOrg.toLowerCase()) {
-      return null;
-    }
-
-    try {
-      const context =
-        await this.githubService.getOrganizationProvisioningContextByLogin(
-          enforcedOrg,
-        );
-      return context.accessToken;
-    } catch (error) {
-      this.logger.warn(
-        `Could not resolve the ${enforcedOrg} installation for ${repoFullName}: ${(error as Error).message}`,
-      );
-      return null;
-    }
-  }
-
-  private async readBranchHeadSha(
-    token: string,
-    repoFullName: string,
-  ): Promise<string | null> {
-    const branches = await this.githubService.listBranches(token, repoFullName);
-    const head = branches.find((candidate) => candidate.name === QA_BRANCH);
-    return head?.commitSha ?? null;
-  }
-
   private async findPromotionPullRequest(
-    token: string,
-    repoFullName: string,
+    repository: QaProjectRepository,
+    actor: QaRunActorContext,
   ): Promise<QaPromotionPullRequestRef | null> {
+    const token = await this.heads.resolveReadToken(
+      repository.repoFullName,
+      actor.userId,
+      actor.oauthToken,
+    );
+    if (!token) {
+      return null;
+    }
     const summary = await this.githubService.findOpenPullRequest(
       token,
-      repoFullName,
+      repository.repoFullName,
       QA_BRANCH,
       QA_PROMOTION_TARGET_BRANCH,
     );
@@ -361,7 +349,7 @@ export class QaPromotionService {
 
     const detail = await this.githubService.getPullRequest(
       token,
-      repoFullName,
+      repository.repoFullName,
       summary.number,
     );
     // Extreme race: the PR was closed/merged between the two reads above.
@@ -390,6 +378,15 @@ export class QaPromotionService {
     const body = buildQaPromotionPullRequestBody(
       status.checklists,
       status.headSha as string,
+      status.run
+        ? {
+            runId: status.run.id,
+            repositories: status.repositories.map((repository) => ({
+              repoFullName: repository.repoFullName,
+              runSha: repository.runSha,
+            })),
+          }
+        : undefined,
     );
 
     const created = await this.githubService.openPullRequest(
@@ -435,6 +432,7 @@ export class QaPromotionService {
     pr: ResolvedPullRequest,
     headSha: string,
     mergeSha: string | null,
+    status: QaPromotionStatusCore,
   ): Promise<void> {
     await this.auditEventsService?.recordProjectEvent({
       workspaceId: project.workspace_id ?? null,
@@ -447,6 +445,8 @@ export class QaPromotionService {
         pullRequestUrl: pr.url,
         headSha,
         mergeSha,
+        deliveryProjectId: status.deliveryProject?.id ?? null,
+        runId: status.run?.id ?? null,
       },
     });
   }
@@ -505,3 +505,5 @@ export class QaPromotionService {
     return project;
   }
 }
+
+export type { QaHeadStatus };

@@ -12,7 +12,13 @@
  */
 
 import type { QaRunSignoffRow } from '../../infrastructure/qa-runs.repository';
-import type { QaRun, QaRunItem, QaRunItemStatus } from './qa-runs.contracts';
+import type {
+  QaRun,
+  QaRunItem,
+  QaRunItemStatus,
+  QaRunListItem,
+} from './qa-runs.contracts';
+import type { ProjectQaRunListItem } from './qa-runs.contracts';
 import {
   QA_REPORT_SCHEMA_VERSION,
   type QaReport,
@@ -50,7 +56,13 @@ function round4(value: number): number {
   return Math.round(value * 10000) / 10000;
 }
 
-export function buildQaReportSummary(run: QaRun): QaReportSummary {
+/** What the summary needs from a run, shared by repository-scope and Project runs. */
+type SummarizableRun = Pick<
+  QaRunListItem | ProjectQaRunListItem,
+  'summary' | 'signoff'
+>;
+
+export function buildQaReportSummary(run: SummarizableRun): QaReportSummary {
   const { byStatus, total, openDefects, blockers } = run.summary;
   return {
     totalItems: total,
@@ -67,7 +79,9 @@ export function buildQaReportSummary(run: QaRun): QaReportSummary {
   };
 }
 
-export function buildQaReportDefects(run: QaRun): QaReportDefect[] {
+export function buildQaReportDefects(run: {
+  items: readonly QaRunItem[];
+}): QaReportDefect[] {
   return run.items
     .filter((item): item is QaRunItem & { status: QaReportDefectStatus } =>
       isDefectStatus(item.status),

@@ -82,6 +82,20 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
     return this.repository.findProjectFolder(projectId);
   }
 
+  /** See ProjectLinkPort.getDeliveryProject. Errors propagate on purpose. */
+  getDeliveryProject(
+    deliveryProjectId: string,
+  ): Promise<ProjectFolderLink | null> {
+    return this.repository.findDeliveryProject(deliveryProjectId);
+  }
+
+  /** See ProjectLinkPort.listDeliveryProjectsForGroup. Errors propagate on purpose. */
+  listDeliveryProjectsForGroup(
+    groupId: string,
+  ): Promise<Array<{ id: string; name: string }>> {
+    return this.repository.listActiveDeliveryProjects(groupId);
+  }
+
   /**
    * Returns the linked repository id and its delivery project id, or null
    * when no link was needed or possible. Never throws — see class doc.

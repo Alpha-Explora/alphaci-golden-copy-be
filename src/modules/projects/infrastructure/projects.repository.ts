@@ -433,6 +433,15 @@ export class ProjectsRepository
     return result.rows.map((row) => row.id);
   }
 
+  /** The owning user of a provisioned project, or null if it does not exist. */
+  async findOwnerId(projectId: string): Promise<string | null> {
+    const result = await this.databaseService.query<{ user_id: string }>(
+      `SELECT user_id FROM projects.provisioned_projects WHERE id = $1 LIMIT 1;`,
+      [projectId],
+    );
+    return result.rows[0]?.user_id ?? null;
+  }
+
   /** The GitHub login recorded for a user, or null if the user is unknown. */
   async findUserLogin(userId: string): Promise<string | null> {
     const result = await this.databaseService.query<{ login: string }>(

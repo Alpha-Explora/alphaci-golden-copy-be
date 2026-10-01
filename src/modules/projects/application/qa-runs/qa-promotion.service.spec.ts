@@ -1,559 +1,401 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
+import type { GithubProjectPort } from '#kernel/ports/github.port';
+import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import type {
   AuditEventPublisher,
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
-import type {
-  GitHubBranchSummary,
-  GitHubPullRequestDetail,
-  GitHubPullRequestSummary,
-  GithubProjectPort,
-} from '#kernel/ports/github.port';
-import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
-import type { QaChecklistRow } from '../../infrastructure/qa-checklists.repository';
-import type { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
-import type {
-  QaRunSignoffRow,
-  QaRunsRepository,
-  QaVerificationRunRow,
-} from '../../infrastructure/qa-runs.repository';
-import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
+import type { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
+import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import type { QaAccessService } from '../qa-checklists/qa-access.service';
+import type {
+  QaProjectContext,
+  QaProjectContextService,
+} from '../qa-checklists/qa-project-context.service';
 import { QaPromotionService } from './qa-promotion.service';
-import type { QaRunActorContext } from './qa-runs.service';
+import type { QaUatHeadsService } from './qa-uat-heads.service';
 
-const SHA = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+const SHA_API = 'a'.repeat(40);
+const SHA_WEB = 'b'.repeat(40);
+const MOVED = 'c'.repeat(40);
 
-const projectRow = (
-  overrides: Partial<ProvisionedProjectRow> = {},
-): ProvisionedProjectRow => ({
-  id: 'project-1',
-  user_id: 'owner-1',
-  repo_full_name: 'org/repo',
-  template_id: 'be-nestjs',
-  service_name: 'api',
-  workflow_path: '.github/workflows/ci.yml',
-  status: 'provisioned',
-  github_commit_sha: null,
-  github_commit_url: null,
-  failure_reason: null,
-  repo_url: null,
-  visibility: null,
-  repo_shape: null,
-  project_type_id: null,
-  workflow_recipe_id: null,
-  project_options: null,
-  workspace_id: 'workspace-1',
-  is_example: false,
-  created_at: '2026-09-25T00:00:00.000Z',
-  updated_at: '2026-09-25T00:00:00.000Z',
-  ...overrides,
+const actor = { userId: 'lead-1', userLogin: 'lead', oauthToken: 'gho_token' };
+
+const API = { projectId: 'p-api', name: 'api', repoFullName: 'acme/api' };
+const WEB = { projectId: 'p-web', name: 'web', repoFullName: 'acme/web' };
+
+const folder = (): QaProjectContext => ({
+  deliveryProjectId: 'dp-1',
+  groupId: 'group-1',
+  name: 'Checkout',
+  repositories: [API, WEB],
 });
 
-const checklistRow = (
-  overrides: Partial<QaChecklistRow> = {},
-): QaChecklistRow => ({
-  id: 'checklist-1',
-  workspace_id: 'workspace-1',
-  name: 'Release checklist',
-  description: null,
-  version: 1,
-  archived_at: null,
-  created_by: 'lead-1',
-  updated_by: null,
-  created_at: '2026-09-25T00:00:00.000Z',
-  updated_at: '2026-09-25T00:00:00.000Z',
-  ...overrides,
-});
+type HeadMap = Record<string, string | null>;
 
-const runRow = (
-  overrides: Partial<QaVerificationRunRow> = {},
-): QaVerificationRunRow => ({
-  id: 'run-1',
-  project_id: 'project-1',
-  checklist_id: 'checklist-1',
-  checklist_version: 1,
-  checklist_name: 'Release checklist',
-  branch: 'uat',
-  commit_sha: SHA,
-  commit_source: 'deployment',
-  status: 'signed_off',
-  created_by: 'creator-1',
-  created_by_login: 'creator-login',
-  created_at: '2026-09-25T00:00:00.000Z',
-  updated_at: '2026-09-25T00:00:00.000Z',
-  ...overrides,
-});
-
-const signoffRow = (
-  overrides: Partial<QaRunSignoffRow> = {},
-): QaRunSignoffRow => ({
-  id: 'signoff-1',
-  run_id: 'run-1',
-  verdict: 'APPROVED',
-  summary: null,
-  conditions: null,
-  signed_by: 'qa-1',
-  signed_by_login: 'qa-login',
-  signed_at: '2026-09-25T01:00:00.000Z',
-  report_json: {},
-  superseded_at: null,
-  superseded_by: null,
-  superseded_by_login: null,
-  ...overrides,
-});
-
-const branch = (
-  overrides: Partial<GitHubBranchSummary> = {},
-): GitHubBranchSummary => ({
-  name: 'uat',
-  protected: true,
-  commitSha: SHA,
-  ...overrides,
-});
-
-const pullRequestSummary = (
-  overrides: Partial<GitHubPullRequestSummary> = {},
-): GitHubPullRequestSummary => ({
-  number: 42,
-  title: 'Promote uat to main',
-  state: 'open',
-  draft: false,
-  merged: false,
-  htmlUrl: 'https://github.com/org/repo/pull/42',
-  headRef: 'uat',
-  baseRef: 'main',
-  author: 'lead-login',
-  authorAvatarUrl: null,
-  createdAt: '2026-09-25T00:00:00.000Z',
-  updatedAt: '2026-09-25T00:00:00.000Z',
-  additions: null,
-  deletions: null,
-  changedFiles: null,
-  ...overrides,
-});
-
-const pullRequestDetail = (
-  overrides: Partial<GitHubPullRequestDetail> = {},
-): GitHubPullRequestDetail => ({
-  ...pullRequestSummary(),
-  mergeable: true,
-  mergeableState: 'clean',
-  headSha: SHA,
-  body: null,
-  ...overrides,
-});
-
-const makeAccess = (
-  overrides: Partial<jest.Mocked<QaAccessService>> = {},
-): jest.Mocked<QaAccessService> =>
-  ({
-    findVisibleProject: jest.fn().mockResolvedValue(projectRow()),
-    findAppRole: jest.fn().mockResolvedValue('lead' as PlatformAppRole),
-    listWorkspaceLeadIds: jest.fn().mockResolvedValue([]),
-    ...overrides,
-  }) as unknown as jest.Mocked<QaAccessService>;
-
-const makeChecklistsRepository = (
-  overrides: Partial<jest.Mocked<QaChecklistsRepository>> = {},
-): jest.Mocked<QaChecklistsRepository> =>
-  ({
-    listByProject: jest.fn().mockResolvedValue([checklistRow()]),
-    ...overrides,
-  }) as unknown as jest.Mocked<QaChecklistsRepository>;
-
-const makeRunsRepository = (
-  overrides: Partial<jest.Mocked<QaRunsRepository>> = {},
-): jest.Mocked<QaRunsRepository> =>
-  ({
-    findRunByKey: jest.fn().mockResolvedValue(runRow()),
-    findActiveSignoffsByRunIds: jest
+function setup({
+  role = 'lead',
+  filed = true,
+  heads = { 'acme/api': SHA_API, 'acme/web': SHA_WEB },
+  requirementCount = 2,
+  verdict = 'APPROVED',
+  covered = [
+    { project_id: 'p-api', head_sha: SHA_API },
+    { project_id: 'p-web', head_sha: SHA_WEB },
+  ],
+  pullRequest = null,
+}: {
+  role?: PlatformAppRole;
+  filed?: boolean;
+  heads?: HeadMap;
+  requirementCount?: number;
+  verdict?: 'APPROVED' | 'REJECTED' | 'CONDITIONAL' | null;
+  covered?: Array<{ project_id: string; head_sha: string }>;
+  pullRequest?: { number: number; htmlUrl: string; headSha: string } | null;
+} = {}) {
+  const access = {
+    findVisibleProject: jest.fn().mockResolvedValue({
+      id: 'p-api',
+      repo_full_name: 'acme/api',
+      service_name: 'api',
+      workspace_id: 'group-1',
+    }),
+    findAppRole: jest.fn().mockResolvedValue(role),
+    listWorkspaceLeadIds: jest.fn().mockResolvedValue(['lead-1', 'lead-2']),
+  } as unknown as jest.Mocked<QaAccessService>;
+  const projectContext = {
+    findProjectOfRepository: jest
       .fn()
-      .mockResolvedValue(new Map([['run-1', signoffRow()]])),
-    ...overrides,
-  }) as unknown as jest.Mocked<QaRunsRepository>;
-
-const makeGithub = (
-  overrides: Partial<jest.Mocked<GithubProjectPort>> = {},
-): jest.Mocked<GithubProjectPort> =>
-  ({
-    getEnforcedOrg: jest.fn().mockReturnValue(''),
-    getOrganizationProvisioningContextByLogin: jest.fn(),
-    getInstallationAccessTokenForUserRepo: jest
+      .mockResolvedValue(filed ? folder() : null),
+  } as unknown as jest.Mocked<QaProjectContextService>;
+  const requirements = {
+    listActiveByDeliveryProject: jest.fn().mockResolvedValue(
+      Array.from({ length: requirementCount }, (_, i) => ({
+        id: `req-${i}`,
+        name: `Requirement ${i}`,
+      })),
+    ),
+    requirementsChangedSince: jest.fn().mockResolvedValue(false),
+  } as unknown as jest.Mocked<QaRequirementsRepository>;
+  const projectRuns = {
+    findLatestSignedOff: jest.fn().mockResolvedValue(
+      verdict === null && covered.length === 0
+        ? null
+        : {
+            run: { id: 'run-1' },
+            signoff: { verdict, signed_at: '2026-10-01T00:00:00Z' },
+            repositories: covered.map((row) => ({ run_id: 'run-1', ...row })),
+          },
+    ),
+  } as unknown as jest.Mocked<QaProjectRunsRepository>;
+  const readOne = (repository: { repoFullName: string }) => {
+    const sha = heads[repository.repoFullName];
+    return sha
+      ? { kind: 'ok', repository, sha }
+      : { kind: 'unreadable', repository };
+  };
+  const headsService = {
+    readHeads: jest
       .fn()
-      .mockResolvedValue('installation-token'),
-    listBranches: jest.fn().mockResolvedValue([branch()]),
-    findOpenPullRequest: jest.fn().mockResolvedValue(pullRequestSummary()),
-    getPullRequest: jest.fn().mockResolvedValue(pullRequestDetail()),
+      .mockImplementation((repos: Array<{ repoFullName: string }>) =>
+        Promise.resolve(repos.map(readOne)),
+      ),
+    readHead: jest
+      .fn()
+      .mockImplementation((repo: { repoFullName: string }) =>
+        Promise.resolve(readOne(repo)),
+      ),
+    resolveReadToken: jest.fn().mockResolvedValue('read-token'),
+  } as unknown as jest.Mocked<QaUatHeadsService>;
+  const github = {
+    findOpenPullRequest: jest
+      .fn()
+      .mockResolvedValue(
+        pullRequest
+          ? { number: pullRequest.number, htmlUrl: pullRequest.htmlUrl }
+          : null,
+      ),
+    getPullRequest: jest
+      .fn()
+      .mockResolvedValue({ headSha: pullRequest?.headSha ?? SHA_API }),
     openPullRequest: jest.fn().mockResolvedValue({
       created: true,
-      pullRequest: pullRequestSummary(),
+      pullRequest: { number: 7, htmlUrl: 'https://github.com/acme/api/pull/7' },
     }),
-    mergePullRequest: jest.fn().mockResolvedValue({
-      merged: true,
-      message: 'Merged.',
-      sha: 'merged-sha',
-    }),
-    ...overrides,
-  }) as unknown as jest.Mocked<GithubProjectPort>;
+    mergePullRequest: jest
+      .fn()
+      .mockResolvedValue({ merged: true, sha: 'merge-sha', message: 'Merged' }),
+  } as unknown as jest.Mocked<GithubProjectPort>;
+  const audit = {
+    recordProjectEvent: jest.fn().mockResolvedValue(undefined),
+  } as unknown as jest.Mocked<AuditEventPublisher>;
+  const notifications = {
+    record: jest.fn().mockResolvedValue(undefined),
+  } as unknown as jest.Mocked<NotificationEventPublisher>;
 
-const makeAudit = () =>
-  ({
-    recordProjectEvent: jest.fn(),
-  }) as unknown as jest.Mocked<AuditEventPublisher>;
-
-const makeNotifications = () =>
-  ({ record: jest.fn() }) as unknown as jest.Mocked<NotificationEventPublisher>;
-
-const actor: QaRunActorContext = {
-  userId: 'lead-1',
-  userLogin: 'lead-login',
-  oauthToken: 'gho_actor_token',
-};
-
-interface Overrides {
-  access?: jest.Mocked<QaAccessService>;
-  checklists?: jest.Mocked<QaChecklistsRepository>;
-  runs?: jest.Mocked<QaRunsRepository>;
-  github?: jest.Mocked<GithubProjectPort>;
-  audit?: jest.Mocked<AuditEventPublisher>;
-  notifications?: jest.Mocked<NotificationEventPublisher>;
-}
-
-function makeService(overrides: Overrides = {}) {
-  const access = overrides.access ?? makeAccess();
-  const checklists = overrides.checklists ?? makeChecklistsRepository();
-  const runs = overrides.runs ?? makeRunsRepository();
-  const github = overrides.github ?? makeGithub();
-  const audit = overrides.audit ?? makeAudit();
-  const notifications = overrides.notifications ?? makeNotifications();
-
-  return {
-    service: new QaPromotionService(
-      access,
-      checklists,
-      runs,
-      github,
-      audit,
-      notifications,
-    ),
+  const service = new QaPromotionService(
     access,
-    checklists,
-    runs,
+    projectContext,
+    requirements,
+    projectRuns,
+    headsService,
     github,
     audit,
     notifications,
-  };
+  );
+  return { service, access, github, audit, notifications, headsService };
 }
 
-describe('QaPromotionService.getStatus', () => {
-  it('404s when the project is not visible', async () => {
-    const { service } = makeService({
-      access: makeAccess({
-        findVisibleProject: jest.fn().mockResolvedValue(null),
-      }),
+describe('QaPromotionService.getStatus (per-Project gate)', () => {
+  it('is eligible when the latest signed-off run is Approved and current for every repository', async () => {
+    const { service } = setup();
+
+    const status = await service.getStatus('p-api', actor);
+
+    expect(status).toMatchObject({
+      scope: 'project',
+      deliveryProject: { id: 'dp-1', name: 'Checkout' },
+      eligible: true,
+      reasons: [],
+      headSha: SHA_API,
+      canMerge: true,
+      requirementsChanged: false,
+      run: { id: 'run-1', verdict: 'APPROVED', stale: false },
     });
-
-    await expect(service.getStatus('project-1', actor)).rejects.toThrow(
-      NotFoundException,
-    );
-  });
-
-  it('reports eligible: true and canMerge: true for a lead when every checklist is approved on the current head', async () => {
-    const { service } = makeService();
-
-    const status = await service.getStatus('project-1', actor);
-
-    expect(status.qaBranch).toBe('uat');
-    expect(status.targetBranch).toBe('main');
-    expect(status.headSha).toBe(SHA);
-    expect(status.eligible).toBe(true);
-    expect(status.reasons).toEqual([]);
-    expect(status.canMerge).toBe(true);
+    expect(status.repositories).toHaveLength(2);
+    // Deprecated per-requirement entries carry the Project-level result.
     expect(status.checklists).toEqual([
-      {
-        id: 'checklist-1',
-        name: 'Release checklist',
-        runId: 'run-1',
-        verdict: 'APPROVED',
-        runStatus: 'signed_off',
-        approvedForHead: true,
-      },
+      expect.objectContaining({ name: 'Requirement 0', approvedForHead: true }),
+      expect.objectContaining({ name: 'Requirement 1', approvedForHead: true }),
     ]);
-    expect(status.pullRequest).toEqual({
-      number: 42,
-      url: 'https://github.com/org/repo/pull/42',
-      headSha: SHA,
-    });
   });
 
-  it('canMerge is false for a qa-role caller even though the gate itself is eligible', async () => {
-    const { service } = makeService({
-      access: makeAccess({ findAppRole: jest.fn().mockResolvedValue('qa') }),
+  it('blocks this repository when ANOTHER repository of the Project moved', async () => {
+    const { service } = setup({
+      heads: { 'acme/api': SHA_API, 'acme/web': MOVED },
     });
 
-    const status = await service.getStatus('project-1', actor);
+    const status = await service.getStatus('p-api', actor);
 
-    expect(status.eligible).toBe(true);
-    expect(status.canMerge).toBe(false);
-  });
-
-  it('headSha null and no pull request when the branch head cannot be read (no usable token)', async () => {
-    const { service } = makeService({
-      github: makeGithub({
-        getInstallationAccessTokenForUserRepo: jest
-          .fn()
-          .mockResolvedValue(null),
-      }),
-      access: makeAccess(),
-    });
-    const noTokenActor: QaRunActorContext = { ...actor, oauthToken: null };
-
-    const status = await service.getStatus('project-1', noTokenActor);
-
-    expect(status.headSha).toBeNull();
     expect(status.eligible).toBe(false);
-    expect(status.reasons).toContain('Could not read the uat branch head');
-    expect(status.pullRequest).toBeNull();
+    expect(status.run?.stale).toBe(true);
+    expect(status.reasons).toEqual([
+      'Project run is stale: "web" moved from bbbbbbb to ccccccc',
+    ]);
+    expect(status.headSha).toBe(SHA_API);
   });
 
-  it('pullRequest is null when there is no open uat->main pull request', async () => {
-    const { service } = makeService({
-      github: makeGithub({
-        findOpenPullRequest: jest.fn().mockResolvedValue(null),
-      }),
-    });
+  it('blocks on a Rejected latest sign-off and when a head is unreadable', async () => {
+    const rejected = await setup({ verdict: 'REJECTED' }).service.getStatus(
+      'p-api',
+      actor,
+    );
+    expect(rejected.eligible).toBe(false);
+    expect(rejected.reasons).toEqual(['Latest sign-off is Rejected']);
 
-    const status = await service.getStatus('project-1', actor);
-
-    expect(status.pullRequest).toBeNull();
+    const unreadable = await setup({
+      heads: { 'acme/api': SHA_API, 'acme/web': null },
+    }).service.getStatus('p-api', actor);
+    expect(unreadable.eligible).toBe(false);
+    expect(unreadable.reasons).toEqual([
+      'Could not read the uat head of "web"',
+    ]);
   });
-});
 
-describe('QaPromotionService.merge — access', () => {
-  it('404s when the project is not visible', async () => {
-    const { service } = makeService({
-      access: makeAccess({
-        findVisibleProject: jest.fn().mockResolvedValue(null),
-      }),
+  it('blocks with no signed-off run, and with no requirements', async () => {
+    const noRun = await setup({ verdict: null, covered: [] }).service.getStatus(
+      'p-api',
+      actor,
+    );
+    expect(noRun.run).toBeNull();
+    expect(noRun.reasons).toContain('No QA run covers the current uat heads');
+
+    const noRequirements = await setup({
+      requirementCount: 0,
+    }).service.getStatus('p-api', actor);
+    expect(noRequirements.eligible).toBe(false);
+    expect(noRequirements.reasons).toEqual([
+      'This Project has no QA requirements',
+    ]);
+  });
+
+  it('blocks a repository filed under no Project', async () => {
+    const { service } = setup({ filed: false });
+
+    const status = await service.getStatus('p-api', actor);
+
+    expect(status).toMatchObject({
+      scope: 'unfiled',
+      deliveryProject: null,
+      eligible: false,
+      checklists: [],
+    });
+    expect(status.reasons).toEqual([
+      'This repository is not filed under a Project; QA requirements belong to Projects',
+    ]);
+  });
+
+  it('exposes the open promotion pull request', async () => {
+    const { service } = setup({
+      pullRequest: { number: 9, htmlUrl: 'https://x/pull/9', headSha: SHA_API },
     });
 
-    await expect(service.merge('project-1', actor)).rejects.toThrow(
+    const status = await service.getStatus('p-api', actor);
+
+    expect(status.pullRequest).toEqual({
+      number: 9,
+      url: 'https://x/pull/9',
+      headSha: SHA_API,
+    });
+  });
+
+  it('404s a repository the caller cannot see', async () => {
+    const { service, access } = setup();
+    access.findVisibleProject.mockResolvedValue(null);
+
+    await expect(service.getStatus('p-api', actor)).rejects.toThrow(
       NotFoundException,
     );
   });
-
-  it('403s for a qa-role caller (not lead|admin), without recomputing the gate', async () => {
-    const checklists = makeChecklistsRepository();
-    const { service } = makeService({
-      access: makeAccess({ findAppRole: jest.fn().mockResolvedValue('qa') }),
-      checklists,
-    });
-
-    await expect(service.merge('project-1', actor)).rejects.toThrow(
-      ForbiddenException,
-    );
-    expect(checklists.listByProject).not.toHaveBeenCalled();
-  });
-
-  it('403s for a member-role caller', async () => {
-    const { service } = makeService({
-      access: makeAccess({
-        findAppRole: jest.fn().mockResolvedValue('member'),
-      }),
-    });
-
-    await expect(service.merge('project-1', actor)).rejects.toThrow(
-      ForbiddenException,
-    );
-  });
 });
 
-describe('QaPromotionService.merge — gate recheck', () => {
-  it('409s with QA_PROMOTION_BLOCKED and the gate reasons when not eligible', async () => {
-    const { service } = makeService({
-      runs: makeRunsRepository({
-        findRunByKey: jest.fn().mockResolvedValue(null),
-      }),
+describe('QaPromotionService.merge', () => {
+  it('forbids a caller who is not lead|admin', async () => {
+    const { service, github } = setup({ role: 'qa' });
+
+    await expect(service.merge('p-api', actor)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('409 QA_PROJECT_REQUIRED for an unfiled repository', async () => {
+    const { service, github } = setup({ filed: false });
+
+    await expect(service.merge('p-api', actor)).rejects.toMatchObject({
+      response: { code: 'QA_PROJECT_REQUIRED' },
+    });
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('409 QA_PROMOTION_BLOCKED with reasons when the gate is closed', async () => {
+    const { service, github } = setup({
+      heads: { 'acme/api': SHA_API, 'acme/web': MOVED },
     });
 
-    await expect(service.merge('project-1', actor)).rejects.toMatchObject({
-      response: expect.objectContaining({
+    await expect(service.merge('p-api', actor)).rejects.toMatchObject({
+      response: {
         code: 'QA_PROMOTION_BLOCKED',
-        reasons: [`"Release checklist": no QA run on uat @ ${SHA.slice(0, 7)}`],
-      }),
-    });
-  });
-});
-
-describe('QaPromotionService.merge — GITHUB_REAUTH', () => {
-  it('409s with GITHUB_REAUTH when the session has no GitHub token, without calling GitHub to merge', async () => {
-    const github = makeGithub();
-    const { service } = makeService({ github });
-    const noTokenActor: QaRunActorContext = { ...actor, oauthToken: null };
-
-    await expect(
-      service.merge('project-1', noTokenActor),
-    ).rejects.toMatchObject({
-      response: expect.objectContaining({ code: 'GITHUB_REAUTH' }),
+        reasons: expect.any(Array) as string[],
+      },
     });
     expect(github.mergePullRequest).not.toHaveBeenCalled();
-    expect(github.openPullRequest).not.toHaveBeenCalled();
-  });
-});
-
-describe('QaPromotionService.merge — pull request resolution', () => {
-  it('reuses the existing open pull request rather than creating one', async () => {
-    const github = makeGithub();
-    const { service } = makeService({ github });
-
-    const result = await service.merge('project-1', actor);
-
-    expect(github.openPullRequest).not.toHaveBeenCalled();
-    expect(github.mergePullRequest).toHaveBeenCalledWith(
-      'gho_actor_token',
-      'org/repo',
-      42,
-      { method: 'merge', sha: SHA },
-    );
-    expect(result.pullRequest).toEqual({
-      number: 42,
-      url: 'https://github.com/org/repo/pull/42',
-    });
   });
 
-  it('creates a pull request with the user token when none is open, then merges it', async () => {
-    const github = makeGithub({
-      findOpenPullRequest: jest.fn().mockResolvedValue(null),
-    });
-    const { service } = makeService({ github });
+  it('opens the promotion PR listing the run and its repositories, merges at the checked sha, audits and notifies the other leads', async () => {
+    const { service, github, audit, notifications } = setup();
 
-    const result = await service.merge('project-1', actor);
-
-    expect(github.openPullRequest).toHaveBeenCalledWith(
-      'gho_actor_token',
-      'org/repo',
-      expect.objectContaining({
-        title: 'Promote uat to main',
-        head: 'uat',
-        base: 'main',
-        body: expect.stringContaining('Release checklist'),
-      }),
-    );
-    expect(github.mergePullRequest).toHaveBeenCalledWith(
-      'gho_actor_token',
-      'org/repo',
-      42,
-      { method: 'merge', sha: SHA },
-    );
-    expect(result.merged).toBe(true);
-  });
-
-  it("returns merged:false with GitHub's message and no pull request when creation is refused", async () => {
-    const github = makeGithub({
-      findOpenPullRequest: jest.fn().mockResolvedValue(null),
-      openPullRequest: jest.fn().mockResolvedValue({
-        created: false,
-        message: 'No commits between main and uat.',
-      }),
-    });
-    const { service } = makeService({ github });
-
-    const result = await service.merge('project-1', actor);
+    const result = await service.merge('p-api', actor);
 
     expect(result).toEqual({
-      merged: false,
-      sha: null,
-      message: 'No commits between main and uat.',
-      pullRequest: null,
+      merged: true,
+      sha: 'merge-sha',
+      message: 'Merged',
+      pullRequest: { number: 7, url: 'https://github.com/acme/api/pull/7' },
     });
-    expect(github.mergePullRequest).not.toHaveBeenCalled();
-  });
-
-  it('409s with QA_UAT_MOVED when the existing pull request head differs from the checked headSha', async () => {
-    const github = makeGithub({
-      getPullRequest: jest
-        .fn()
-        .mockResolvedValue(pullRequestDetail({ headSha: 'f'.repeat(40) })),
-    });
-    const { service } = makeService({ github });
-
-    await expect(service.merge('project-1', actor)).rejects.toMatchObject({
-      response: expect.objectContaining({ code: 'QA_UAT_MOVED' }),
-    });
-    expect(github.mergePullRequest).not.toHaveBeenCalled();
-  });
-});
-
-describe('QaPromotionService.merge — GitHub refusal passthrough', () => {
-  it("returns merged:false with GitHub's own refusal text (e.g. required reviews), not an exception", async () => {
-    const github = makeGithub({
-      mergePullRequest: jest.fn().mockResolvedValue({
-        merged: false,
-        message:
-          'At least 1 approving review is required by reviewers with write access.',
-        sha: null,
-      }),
-    });
-    const { service, audit, notifications } = makeService({ github });
-
-    const result = await service.merge('project-1', actor);
-
-    expect(result).toEqual({
-      merged: false,
-      sha: null,
-      message:
-        'At least 1 approving review is required by reviewers with write access.',
-      pullRequest: { number: 42, url: 'https://github.com/org/repo/pull/42' },
-    });
-    expect(audit.recordProjectEvent).not.toHaveBeenCalled();
-    expect(notifications.record).not.toHaveBeenCalled();
-  });
-});
-
-describe('QaPromotionService.merge — success', () => {
-  it('records the qa.promotion.merged audit event and notifies workspace leads, excluding the actor', async () => {
-    const { service, access, audit, notifications } = makeService({
-      access: makeAccess({
-        findAppRole: jest.fn().mockResolvedValue('lead'),
-        listWorkspaceLeadIds: jest
-          .fn()
-          .mockResolvedValue(['lead-1', 'lead-2', 'lead-3']),
-      }),
-    });
-
-    const result = await service.merge('project-1', actor);
-
-    expect(result.merged).toBe(true);
-    expect(result.sha).toBe('merged-sha');
+    const body = (github.openPullRequest.mock.calls[0]?.[2] as { body: string })
+      .body;
+    expect(body).toContain('Project run run-1 covered:');
+    expect(body).toContain('`acme/web` @ bbbbbbb');
+    expect(github.mergePullRequest).toHaveBeenCalledWith(
+      'gho_token',
+      'acme/api',
+      7,
+      { method: 'merge', sha: SHA_API },
+    );
     expect(audit.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspaceId: 'workspace-1',
-        projectId: 'project-1',
-        actorUserId: 'lead-1',
         eventCode: 'qa.promotion.merged',
+        metadata: expect.objectContaining({
+          deliveryProjectId: 'dp-1',
+          runId: 'run-1',
+        }) as Record<string, unknown>,
       }),
     );
-    // lead-1 is the actor and must be excluded.
-    expect(notifications.record).toHaveBeenCalledTimes(2);
-    const notifiedUserIds = notifications.record.mock.calls
-      .map((call) => call[0].userId)
-      .sort();
-    expect(notifiedUserIds).toEqual(['lead-2', 'lead-3']);
-    expect(access.listWorkspaceLeadIds).toHaveBeenCalledWith('workspace-1');
+    expect(notifications.record).toHaveBeenCalledTimes(1);
+    expect(notifications.record).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'lead-2' }),
+    );
   });
 
-  it('sends no notifications when the only lead is the actor', async () => {
-    const { service, notifications } = makeService({
-      access: makeAccess({
-        findAppRole: jest.fn().mockResolvedValue('lead'),
-        listWorkspaceLeadIds: jest.fn().mockResolvedValue(['lead-1']),
-      }),
+  it('409 QA_UAT_MOVED when the pull request head is not the checked head', async () => {
+    const { service } = setup({
+      pullRequest: { number: 9, htmlUrl: 'https://x/pull/9', headSha: MOVED },
     });
 
-    await service.merge('project-1', actor);
+    await expect(service.merge('p-api', actor)).rejects.toMatchObject({
+      response: { code: 'QA_UAT_MOVED' },
+    });
+  });
 
-    expect(notifications.record).not.toHaveBeenCalled();
+  it('409 GITHUB_REAUTH without a session token', async () => {
+    const { service } = setup();
+
+    await expect(
+      service.merge('p-api', { ...actor, oauthToken: null }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('returns merged:false with GitHub text when GitHub refuses', async () => {
+    const { service, github } = setup();
+    github.mergePullRequest.mockResolvedValue({
+      merged: false,
+      sha: null,
+      message: 'Required status check missing',
+    } as never);
+
+    const result = await service.merge('p-api', actor);
+
+    expect(result).toMatchObject({
+      merged: false,
+      message: 'Required status check missing',
+    });
+  });
+});
+
+describe('end to end: two repositories, one Project', () => {
+  it('approve, merge A, B moves, A is blocked; after a new approval both are eligible', async () => {
+    // Merging A leaves uat untouched, so B stays eligible while nothing moved.
+    const approved = setup();
+    expect((await approved.service.getStatus('p-api', actor)).eligible).toBe(
+      true,
+    );
+    await approved.service.merge('p-api', actor);
+    expect((await approved.service.getStatus('p-api', actor)).eligible).toBe(
+      true,
+    );
+
+    // B's uat moves: A is blocked too.
+    const moved = setup({ heads: { 'acme/api': SHA_API, 'acme/web': MOVED } });
+    expect((await moved.service.getStatus('p-api', actor)).eligible).toBe(
+      false,
+    );
+
+    // A new run on the new heads, approved: both eligible again.
+    const reapproved = setup({
+      heads: { 'acme/api': SHA_API, 'acme/web': MOVED },
+      covered: [
+        { project_id: 'p-api', head_sha: SHA_API },
+        { project_id: 'p-web', head_sha: MOVED },
+      ],
+    });
+    expect((await reapproved.service.getStatus('p-api', actor)).eligible).toBe(
+      true,
+    );
   });
 });

@@ -4,9 +4,13 @@
  * Nest/pg imports, same rule as qa-runs.contracts.ts.
  */
 
-import type { QaVerdict } from './qa-runs.contracts';
+import type { QaHeadStatus, QaVerdict } from './qa-runs.contracts';
 
-/** One checklist shared to the project and whether its run approves the current uat head. */
+/**
+ * DEPRECATED (kept for the frontend that predates Project requirements): one
+ * entry per requirement of the Project, each carrying the Project-level
+ * result in approvedForHead. Read run / repositories instead.
+ */
 export interface QaPromotionChecklist {
   id: string;
   name: string;
@@ -25,13 +29,31 @@ export interface QaPromotionPullRequestRef {
   headSha: string;
 }
 
+/** The latest signed-off Project run and whether it is still current for every repository. */
+export interface QaPromotionRun {
+  id: string;
+  verdict: QaVerdict;
+  signedAt: string;
+  stale: boolean;
+}
+
 export interface QaPromotionStatus {
   qaBranch: string;
   targetBranch: string;
-  /** The CURRENT head of qaBranch on GitHub (the branch tip, not a deployed commit). Null when unreadable. */
+  /** The CURRENT head of THIS repository's qaBranch on GitHub (the branch tip, not a deployed commit). Null when unreadable. */
   headSha: string | null;
+  /** 'unfiled' = the repository belongs to no Project, so the gate is blocked (QA_PROJECT_REQUIRED on merge). */
+  scope: 'project' | 'unfiled';
+  deliveryProject: { id: string; name: string } | null;
+  /** The latest signed-off Project run; null when the Project has none. */
+  run: QaPromotionRun | null;
+  /** Every repository of the Project: the head the run captured vs the head now. */
+  repositories: QaHeadStatus[];
+  /** Informational: requirements changed after the run was signed off. Never blocks. */
+  requirementsChanged: boolean;
+  /** Deprecated; see QaPromotionChecklist. */
   checklists: QaPromotionChecklist[];
-  /** True only when headSha is known, at least one checklist is shared, and every one is approvedForHead. */
+  /** True only when the latest signed-off Project run is APPROVED and current for every repository. */
   eligible: boolean;
   /** What blocks eligibility, one entry per reason (may be empty when eligible). */
   reasons: string[];

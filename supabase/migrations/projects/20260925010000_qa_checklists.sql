@@ -33,9 +33,19 @@ CREATE TABLE IF NOT EXISTS projects.qa_checklists (
 -- Partial + functional, so it cannot be an inline table constraint: enforces
 -- one active (non-archived) checklist per case-insensitive name per
 -- workspace, while letting an archived checklist's name be reused.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_qa_checklists_workspace_name_active
-  ON projects.qa_checklists (workspace_id, lower(name))
-  WHERE archived_at IS NULL;
+--
+-- Guarded: 20261001010000_project_requirements.sql replaces this index with a
+-- Project-scoped one, after which the same name legitimately exists in two
+-- Projects. Without the guard, re-running the whole tree (a normal recovery
+-- step) would fail here trying to recreate the old, stricter index.
+DO $$
+BEGIN
+  IF to_regclass('projects.uq_qa_requirements_scope_name_active') IS NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_qa_checklists_workspace_name_active
+      ON projects.qa_checklists (workspace_id, lower(name))
+      WHERE archived_at IS NULL;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_qa_checklists_workspace
   ON projects.qa_checklists (workspace_id, created_at DESC);

@@ -96,3 +96,77 @@ describe('HierarchyProjectLinkRepository.link — unique Project name', () => {
     expect(sqls.some((s) => s.includes('pg_advisory'))).toBe(false);
   });
 });
+
+describe('HierarchyProjectLinkRepository Project lookups', () => {
+  const rows = [
+    {
+      delivery_project_id: 'dp-1',
+      group_id: 'g-1',
+      delivery_project_name: 'Checkout',
+      provisioned_project_id: 'p-api',
+      repository_name: 'api',
+      repo_full_name: 'acme/api',
+    },
+    {
+      delivery_project_id: 'dp-1',
+      group_id: 'g-1',
+      delivery_project_name: 'Checkout',
+      provisioned_project_id: null,
+      repository_name: 'ghost',
+      repo_full_name: null,
+    },
+  ];
+
+  function repo(result: unknown[]) {
+    const query = jest.fn().mockResolvedValue({ rows: result });
+    return {
+      query,
+      repository: new HierarchyProjectLinkRepository({
+        query,
+      } as unknown as DatabaseService),
+    };
+  }
+
+  it('findDeliveryProject reads a Project by its own id, with its non-archived repositories', async () => {
+    const { query, repository } = repo(rows);
+
+    const folder = await repository.findDeliveryProject('dp-1');
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE dp.id = $1'),
+      ['dp-1'],
+    );
+    expect(folder).toEqual({
+      deliveryProjectId: 'dp-1',
+      groupId: 'g-1',
+      name: 'Checkout',
+      repositories: [
+        { projectId: 'p-api', name: 'api', repoFullName: 'acme/api' },
+        { projectId: null, name: 'ghost', repoFullName: null },
+      ],
+    });
+  });
+
+  it('findDeliveryProject is null for an unknown Project, and findProjectFolder still resolves by repository', async () => {
+    expect(await repo([]).repository.findDeliveryProject('nope')).toBeNull();
+
+    const { query, repository } = repo(rows);
+    await repository.findProjectFolder('p-api');
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('self.provisioned_project_id = $1'),
+      ['p-api'],
+    );
+  });
+
+  it('listActiveDeliveryProjects lists a group active Projects oldest first', async () => {
+    const { query, repository } = repo([{ id: 'dp-1', name: 'Checkout' }]);
+
+    expect(await repository.listActiveDeliveryProjects('g-1')).toEqual([
+      { id: 'dp-1', name: 'Checkout' },
+    ]);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'active'"),
+      ['g-1'],
+    );
+  });
+});

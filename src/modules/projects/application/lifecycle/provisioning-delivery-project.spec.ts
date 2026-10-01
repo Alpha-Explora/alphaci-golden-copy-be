@@ -161,6 +161,8 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
+      getDeliveryProject: jest.fn().mockResolvedValue(null),
+      listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest
@@ -193,6 +195,8 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
+      getDeliveryProject: jest.fn().mockResolvedValue(null),
+      listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest.fn(),
@@ -214,6 +218,8 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
+      getDeliveryProject: jest.fn().mockResolvedValue(null),
+      listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest.fn(async () => {
@@ -242,6 +248,8 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
     const hierarchyProjectLinkService: ProjectLinkPort = {
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
+      getDeliveryProject: jest.fn().mockResolvedValue(null),
+      listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
       ensureLink: jest.fn().mockResolvedValue(null),
       assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest
@@ -270,6 +278,8 @@ describe('ProjectProvisioningApplicationService, project_created fan-out (single
   const link = (): ProjectLinkPort => ({
     getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
     getProjectFolder: jest.fn().mockResolvedValue(null),
+    getDeliveryProject: jest.fn().mockResolvedValue(null),
+    listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
     ensureLink: jest.fn().mockResolvedValue(null),
     assertProjectNameAvailableForCreate: jest.fn(),
     assertDeliveryProjectAvailableForCreate: jest.fn(),
@@ -389,6 +399,8 @@ describe('ProjectProvisioningApplicationService — projectName (new Project on 
   const link = (over: Partial<ProjectLinkPort> = {}): ProjectLinkPort => ({
     getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
     getProjectFolder: jest.fn().mockResolvedValue(null),
+    getDeliveryProject: jest.fn().mockResolvedValue(null),
+    listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
     ensureLink: jest.fn().mockResolvedValue(null),
     assertProjectNameAvailableForCreate: jest.fn().mockResolvedValue(undefined),
     assertDeliveryProjectAvailableForCreate: jest.fn(),
@@ -518,6 +530,8 @@ describe('ProjectProvisioningApplicationService - persona gate on repository cre
   const link = (): ProjectLinkPort => ({
     getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
     getProjectFolder: jest.fn().mockResolvedValue(null),
+    getDeliveryProject: jest.fn().mockResolvedValue(null),
+    listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
     ensureLink: jest.fn().mockResolvedValue(null),
     assertProjectNameAvailableForCreate: jest.fn(),
     assertDeliveryProjectAvailableForCreate: jest.fn(),

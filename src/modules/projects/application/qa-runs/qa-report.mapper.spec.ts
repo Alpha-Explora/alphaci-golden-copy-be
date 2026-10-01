@@ -61,6 +61,8 @@ const run = (overrides: Partial<QaRun> = {}): QaRun => {
   const items = overrides.items ?? [item()];
   return {
     id: 'run-1',
+    scope: 'repository' as const,
+    legacy: true as const,
     projectId: 'project-1',
     checklistId: 'checklist-1',
     checklistName: 'Release checklist',

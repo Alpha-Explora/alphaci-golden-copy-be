@@ -32,19 +32,20 @@ Authorization in AlphaCI is driven by the global `identity.app_users.app_role` c
 | | Archive / Delete Project (incl. a Project folder with its repositories) | **Allowed** | Restricted | Restricted | `canManageProjectLifecycle(appRole)` in `ProjectLifecycleService.disconnectProject`; folder delete `DELETE /delivery-projects/:id` |
 | **Repository Management** | Create Repository under Project | Restricted | Restricted | **Allowed** (member of the Project's team) | `canCreateRepository(appRole)` in `HierarchyAccessService.assertCanCreateUnderDeliveryProject` (`POST /delivery-projects/:id/repositories`) |
 | | Move Repository between Folders | **Allowed** | Restricted | Restricted | `useMoveRepositoryViewModel` |
-| **QA Checklists** | Create / Edit Checklist Template | **Allowed** | Read-Only | Read-Only | `QaChecklistsService.assertManage` via `canManageRequirements(appRole)` (lead, admin; independent of repository creation) |
-| | Share Checklist to Project | **Allowed** | Read-Only | Read-Only | `useFolderChecklistsViewModel` |
+| **Project Requirements** | Create / Edit / Archive Requirements (Features with User stories, System requirements) | **Allowed** | Read-Only | Read-Only | `QaRequirementsService.assertManage` via `canManageRequirements(appRole)` (lead, admin; independent of repository creation); others `403 REQUIREMENT_MANAGE_FORBIDDEN`. Requirements belong to the Project and apply to every repository in it; there is no per-repository sharing |
+| | Set item Progress (`todo`, `in_progress`, `done`) | **Allowed** | Restricted | **Primary Role** | `canSetProgress(role)` (member, lead, admin) in `QaRequirementsService.setProgress`; QA `403 PROGRESS_FORBIDDEN`. `done` means ready for QA |
 | **QA Studio (UAT)** | Access QA Studio (`#qa`) | **Allowed (UAT)** | **Allowed (Primary)** | Restricted (Hidden) | `QA_STUDIO_ROLES` (`['qa', 'lead', 'admin']`) |
 | | Live Preview Canvas (Desktop/Tablet/Phone) | Can View & Test | Can View & Test | Restricted | `useStudioViewportViewModel` |
 | | Trigger Playwright Tests | Can Trigger | Can Trigger | Restricted | `roleCanDispatch(appRole)` |
-| **Verification Execution** | Mark Items (`Passed`, `Failed`, `Blocked`) | Can Execute | **Primary Role** (every item) | Can Execute (developer and shared items; not QA-only checks) | `personaAllowsRole` (`qa-run-access.rules.ts`), surfaced as `item.canUpdate` |
+| **Verification Execution** | Start a Project run (once per Project, across every repository's `uat` head) | Can Execute | **Primary Role** | Restricted | `canCreateRun(role)` |
+| | Mark Items (`Passed`, `Failed`, `Blocked`) | Can Execute | **Primary Role** (every item) | Restricted (reports Progress instead) | `canSetVerification(role)` (qa, lead, admin; developers `403 VERIFICATION_FORBIDDEN`), surfaced as `permissions.canSetVerification`. `Passed` needs the item's Progress to be `done` (`409 QA_PROGRESS_NOT_DONE`) |
 | | Send Back to Dev (`Returned to dev`) | Can Execute | **Primary Role** | Restricted | `canSetReturnedToDev(role)` |
 | | Sign Off Run (`Approved`, `Rejected`, `Conditional`) | Can Sign Off | **Primary Role** | Restricted | `canSignOff(role)` |
 | | Export QA Report (PDF / Markdown) | Can Export | Can Export | Read-Only | `useQaExportViewModel` |
-| **Developer Resolution** | View "My QA items" Card (Overview) | Read-Only | Can View (project-wide) | **Primary Role** (project-wide: every developer's items, not only the caller's) | `my-qa-items-card.tsx` |
-| | `Mark fixed & request re-test` | Can Submit | Restricted | **Primary Role** | `canRequestRetest(role)` |
+| **Developer Resolution** | View "My QA items" Card (Overview) | Read-Only | Can View (project-wide) | **Primary Role** (project-wide: every developer's items, not only the caller's) | `GET /delivery-projects/:id/qa/my-items` (`returned`, `inProgress`, `todo`, `readyForQa`) |
+| | Mark an item `done` (re-queues a returned item for QA) | Can Submit | Restricted | **Primary Role** | `canSetProgress(role)`; the old `request-retest` route is an alias for Progress `done` |
 | **Release Promotion** | View "Ready for Production" Gate | Can View | Can View | Read-Only | `promotion-card.tsx` |
-| | **`Merge to main`** (Release to Production) | **Authorized (Sole)** | Restricted (Hidden) | Restricted (Hidden) | `canMergeQaPromotion(role)` (HTTP 403 for others) |
+| | **`Merge to main`** (Release to Production) | **Authorized (Sole)** | Restricted (Hidden) | Restricted (Hidden) | `canMergeQaPromotion(role)` (HTTP 403 for others); gate is per Project, see §5 |
 | **CI/CD & Code** | CI Stage Stepper & Tool Logs (`Runs` Tab) | Summary View | Summary View | **Deep Debug View** | `runs-by-branch.ts` |
 | | Create PR: `<own-branch> → dev` | Allowed | Restricted | **Primary Role** | `CreatePullRequestView` |
 | | Create PR: `dev → uat` | Allowed | Restricted | **Primary Role** | `CreatePullRequestView` / Automated CI job |
@@ -56,7 +57,7 @@ Authorization in AlphaCI is driven by the global `identity.app_users.app_role` c
 | **Team Administration** | Manage Members & Workspace Roles | **Full Access** | Restricted | Restricted | `group-members.service.ts` |
 | **Inbox & Notifications** | Receives "Project Created" Alert | **Yes** | Optional | **Yes** | `NotificationEventsService.record` |
 | | Receives "Returned to Dev" Alert | Yes (Owner) | No (Sender) | **Yes** | `qa.item.returned_to_dev` |
-| | Receives "Re-test Requested" Alert | Read-Only | **Yes** | No (Sender) | `qa.item.retest_requested` |
+| | Receives "Ready for QA" Alert (Progress set to `done`) | Read-Only | **Yes** | No (Sender) | `qa.item.retest_requested` |
 
 ---
 
@@ -118,7 +119,7 @@ Code strictly flows forward:
   - `base`: **`main`**
   - **Nobody opens or merges this PR by hand.** The CI `promote-to-main` job opens it automatically after a `uat` build; `createPullRequest` refuses base `main` (403 `MAIN_PR_RESTRICTED`) and the generic merge endpoint refuses it (403 `MAIN_MERGE_VIA_QA_STUDIO`) for every role.
   - Controlled strictly inside QA Studio via the **"Ready for production"** card.
-  - The **`Merge to main`** button becomes active **only when 100% of shared QA checklists are signed off as `APPROVED` on UAT's current head SHA**.
+  - The **`Merge to main`** button becomes active **only when the Project's latest signed-off QA run is `APPROVED` and still current for every repository of the Project**: it captured the `uat` head of each repository, and each of those heads is still the head now. If any repository moves, or a repository joins the Project, the run is stale for all of them and QA runs again. A repository filed under no Project is blocked (`409 QA_PROJECT_REQUIRED`). Editing requirements after a sign-off does not block the merge; the card shows "Requirements changed since sign-off" and a lead may reopen.
   - Merged solely by **Team Lead** or **Admin**.
 
 ---
@@ -141,7 +142,7 @@ Defect Metadata Recorded                Notification Dispatched
                  "My QA items" Card
                  - Developer inspects notes & repro steps
                  - Developer fixes code and pushes
-                 - Clicks "Mark fixed & request re-test"
+                 - Sets the item's Progress to "done"
                              │
                              ▼
                  QA Re-tests in QA Studio

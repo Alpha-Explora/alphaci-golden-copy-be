@@ -41,6 +41,9 @@ const runRow = (
   overrides: Partial<QaVerificationRunRow> = {},
 ): QaVerificationRunRow => ({
   id: 'run-1',
+  scope: 'repository',
+  delivery_project_id: null,
+  heads_fingerprint: null,
   project_id: 'project-1',
   checklist_id: 'checklist-1',
   checklist_version: 1,
@@ -58,6 +61,8 @@ const runRow = (
 
 const frozenQaRun: QaRun = {
   id: 'run-1',
+  scope: 'repository' as const,
+  legacy: true as const,
   projectId: 'project-1',
   checklistId: 'checklist-1',
   checklistName: 'Release checklist',
@@ -121,6 +126,8 @@ const signoffRow = (
 
 const openQaRun: QaRun = {
   id: 'run-1',
+  scope: 'repository' as const,
+  legacy: true as const,
   projectId: 'project-1',
   checklistId: 'checklist-1',
   checklistName: 'Release checklist',

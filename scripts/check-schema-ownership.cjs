@@ -163,6 +163,12 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
     pairs(['env_provisioning.project_deployment_targets']),
   ],
   [
+    // One-time backfill of Project-owned requirements from the legacy share
+    // table; the runtime path reads hierarchy.* through ProjectLinkPort.
+    'projects/20261001010000_project_requirements.sql',
+    pairs(['hierarchy.repositories', 'hierarchy.delivery_projects']),
+  ],
+  [
     'runtime/20260608_env_provisioning.sql',
     pairs(['identity.app_users', 'projects.provisioned_projects']),
   ],
