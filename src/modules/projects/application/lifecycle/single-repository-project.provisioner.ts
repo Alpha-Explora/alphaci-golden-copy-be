@@ -133,6 +133,7 @@ export class SingleRepositoryProjectProvisioner {
             await this.support.workspaceGate.resolveWorkspaceIdForCreate(
               userId,
               dto.workspaceId,
+              dto.deliveryProjectId,
             ),
           repoFullName,
           templateId,
@@ -283,6 +284,7 @@ export class SingleRepositoryProjectProvisioner {
     await this.support.workspaceGate.resolveWorkspaceIdForCreate(
       userId,
       dto.workspaceId,
+      dto.deliveryProjectId,
     );
 
     // 1. Build workflow YAML from the given templateId
@@ -357,6 +359,7 @@ export class SingleRepositoryProjectProvisioner {
           await this.support.workspaceGate.resolveWorkspaceIdForCreate(
             userId,
             dto.workspaceId,
+            dto.deliveryProjectId,
           ),
         repoFullName: dto.repoFullName,
         templateId: dto.templateId,

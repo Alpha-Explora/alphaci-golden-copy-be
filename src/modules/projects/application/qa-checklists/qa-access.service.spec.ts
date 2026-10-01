@@ -4,7 +4,6 @@ import type { ProjectsRepository } from '../../infrastructure/projects.repositor
 const makeProjectsRepository = (overrides: Partial<ProjectsRepository> = {}) =>
   ({
     canCreateInWorkspace: jest.fn().mockResolvedValue(false),
-    isGlobalProjectCreator: jest.fn().mockResolvedValue(false),
     findByIdAndUser: jest.fn().mockResolvedValue(null),
     findAppRole: jest.fn().mockResolvedValue('member'),
     listWorkspaceLeadIds: jest.fn().mockResolvedValue([]),
@@ -27,16 +26,19 @@ describe('QaAccessService', () => {
     );
   });
 
-  it('canManage delegates to ProjectsRepository.isGlobalProjectCreator', async () => {
+  it.each([
+    ['admin', true],
+    ['lead', true],
+    ['member', false],
+    ['qa', false],
+  ])('canManage (checklists) for %s is %s', async (role, expected) => {
     const projectsRepository = makeProjectsRepository({
-      isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
+      findAppRole: jest.fn().mockResolvedValue(role),
     });
     const access = new QaAccessService(projectsRepository);
 
-    await expect(access.canManage('user-1')).resolves.toBe(true);
-    expect(projectsRepository.isGlobalProjectCreator).toHaveBeenCalledWith(
-      'user-1',
-    );
+    await expect(access.canManage('user-1')).resolves.toBe(expected);
+    expect(projectsRepository.findAppRole).toHaveBeenCalledWith('user-1');
   });
 
   it('findVisibleProjectWorkspace calls findByIdAndUser with no allowedRoles arg (default visibility)', async () => {

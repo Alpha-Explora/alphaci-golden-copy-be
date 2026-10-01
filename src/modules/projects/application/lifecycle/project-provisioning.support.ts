@@ -248,8 +248,16 @@ export class ProjectProvisioningSupport {
     );
   }
 
-  resolveWorkspaceIdForCreate(userId: string, workspaceId?: string | null) {
-    return this.workspaceGate.resolveWorkspaceIdForCreate(userId, workspaceId);
+  resolveWorkspaceIdForCreate(
+    userId: string,
+    workspaceId?: string | null,
+    deliveryProjectId?: string | null,
+  ) {
+    return this.workspaceGate.resolveWorkspaceIdForCreate(
+      userId,
+      workspaceId,
+      deliveryProjectId,
+    );
   }
 
   resolveSetupBranch(accessToken: string, owner: string, repo: string) {

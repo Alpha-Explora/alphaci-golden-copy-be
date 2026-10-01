@@ -77,7 +77,7 @@ const makeProjectsRepository = () =>
     }),
     updateStatus: jest.fn().mockResolvedValue(undefined),
     deleteByIdAndUser: jest.fn().mockResolvedValue(true),
-    isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
+    findAppRole: jest.fn().mockResolvedValue('admin'),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>

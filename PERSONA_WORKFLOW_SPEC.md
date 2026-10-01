@@ -27,12 +27,12 @@ Authorization in AlphaCI is driven by the global `identity.app_users.app_role` c
 
 | Feature Area | Specific Action | Team Lead (Product Owner) | QA Team | Developer | Enforcement Mechanism |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Project Creation** | Create Project Folder | **Allowed** | Restricted | Restricted | `isGlobalCreatorRole(appRole)` |
-| | Provision New Project / Stack | **Allowed** | Restricted | Restricted | `isGlobalProjectCreator(userId)` |
+| **Project Creation** | Create Project Folder | **Allowed** | Restricted | Restricted | `canCreateProjectFolder(appRole)` (lead, admin) in `HierarchyAccessService.assertCanCreateProjectInGroup` / `assertCanCreateUnderSystem`; refusal `403 PROJECT_CREATE_FORBIDDEN` |
+| | Provision New Project / Stack (create a repository) | Restricted | Restricted | **Allowed, only into an existing Project of their team** | `canCreateRepository(appRole)` (member, admin) + `repositoryCreateRequiresProject` in `WorkspaceGateService.assertCanCreateRepositories`; lead/QA `403 REPOSITORY_CREATE_FORBIDDEN`, Developer without a Project `400 PROJECT_REQUIRED`. Admin unchanged (Project optional). Covers `POST /projects`, `/projects/setup`, `/existing-repos/*`, `POST /github/repos` (admin only) |
 | | Archive / Delete Project (incl. a Project folder with its repositories) | **Allowed** | Restricted | Restricted | `canManageProjectLifecycle(appRole)` in `ProjectLifecycleService.disconnectProject`; folder delete `DELETE /delivery-projects/:id` |
-| **Repository Management** | Create Repository under Project | **Allowed** | Restricted | Restricted | `assertGlobalCreatorRole(userId)` |
+| **Repository Management** | Create Repository under Project | Restricted | Restricted | **Allowed** (member of the Project's team) | `canCreateRepository(appRole)` in `HierarchyAccessService.assertCanCreateUnderDeliveryProject` (`POST /delivery-projects/:id/repositories`) |
 | | Move Repository between Folders | **Allowed** | Restricted | Restricted | `useMoveRepositoryViewModel` |
-| **QA Checklists** | Create / Edit Checklist Template | **Allowed** | Read-Only | Read-Only | `QaChecklistsService.assertManage` |
+| **QA Checklists** | Create / Edit Checklist Template | **Allowed** | Read-Only | Read-Only | `QaChecklistsService.assertManage` via `canManageRequirements(appRole)` (lead, admin; independent of repository creation) |
 | | Share Checklist to Project | **Allowed** | Read-Only | Read-Only | `useFolderChecklistsViewModel` |
 | **QA Studio (UAT)** | Access QA Studio (`#qa`) | **Allowed (UAT)** | **Allowed (Primary)** | Restricted (Hidden) | `QA_STUDIO_ROLES` (`['qa', 'lead', 'admin']`) |
 | | Live Preview Canvas (Desktop/Tablet/Phone) | Can View & Test | Can View & Test | Restricted | `useStudioViewportViewModel` |

@@ -250,6 +250,7 @@ export async function persistMultiRepoStandaloneRow(input: {
       workspaceId: await support.workspaceGate.resolveWorkspaceIdForCreate(
         userId,
         dto.workspaceId,
+        dto.deliveryProjectId,
       ),
       repoFullName,
       templateId,

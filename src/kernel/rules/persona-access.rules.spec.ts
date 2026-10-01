@@ -2,6 +2,10 @@ import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import {
   canBeAssignedRepository,
   canCreatePullRequest,
+  canCreateProjectFolder,
+  canCreateRepository,
+  canManageRequirements,
+  repositoryCreateRequiresProject,
   canManageEnvVars,
   canManageProjectLifecycle,
   canMergeViaWorkspace,
@@ -178,5 +182,50 @@ describe('visibleBranchesFor', () => {
     expect(names(visibleBranchesFor('intern', 'alice', all, null))).toEqual([
       'dev',
     ]);
+  });
+});
+
+describe('Project / repository create rules', () => {
+  it.each([
+    ['admin', true],
+    ['lead', true],
+    ['member', false],
+    ['qa', false],
+  ] as const)('canCreateProjectFolder(%s) is %s', (role, expected) => {
+    expect(canCreateProjectFolder(role)).toBe(expected);
+  });
+
+  it.each([
+    ['admin', true],
+    ['lead', true],
+    ['member', false],
+    ['qa', false],
+  ] as const)('canManageRequirements(%s) is %s', (role, expected) => {
+    expect(canManageRequirements(role)).toBe(expected);
+  });
+
+  it.each([
+    ['admin', true],
+    ['lead', false],
+    ['member', true],
+    ['qa', false],
+  ] as const)('canCreateRepository(%s) is %s', (role, expected) => {
+    expect(canCreateRepository(role)).toBe(expected);
+  });
+
+  it.each([
+    ['admin', false],
+    ['lead', false],
+    ['member', true],
+    ['qa', false],
+  ] as const)('repositoryCreateRequiresProject(%s) is %s', (role, expected) => {
+    expect(repositoryCreateRequiresProject(role)).toBe(expected);
+  });
+
+  it('fails closed for an unknown role', () => {
+    const unknown = 'viewer' as PlatformAppRole;
+    expect(canCreateProjectFolder(unknown)).toBe(false);
+    expect(canCreateRepository(unknown)).toBe(false);
+    expect(canManageRequirements(unknown)).toBe(false);
   });
 });

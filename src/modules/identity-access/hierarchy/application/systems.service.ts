@@ -125,7 +125,7 @@ export class SystemsService {
     userId: string,
     dto: CreateEmptyProjectDto,
   ): Promise<DeliveryProjectRecord> {
-    await this.accessService.assertCanCreateInGroup(groupId, userId);
+    await this.accessService.assertCanCreateProjectInGroup(groupId, userId);
 
     // Same uniqueness rule as project creation (409 PROJECT_NAME_TAKEN),
     // re-checked under a per-(team, name) lock so two concurrent creates of

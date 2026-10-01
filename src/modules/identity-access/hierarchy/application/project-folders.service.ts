@@ -6,6 +6,11 @@ import {
   type WorkspaceProjectRole,
   type WorkspaceProjectSummary,
 } from '#kernel/ports/project-lookup.port';
+import {
+  canCreateProjectFolder,
+  canCreateRepository,
+} from '#kernel/rules/persona-access.rules';
+import type { AppRole } from '#modules/identity-access/admin/index.js';
 import { GROUP_MANAGER_ROLES } from '../domain/hierarchy.types';
 import type { RepositoryStatus } from '../domain/hierarchy.types';
 import {
@@ -49,6 +54,13 @@ export interface ProjectFoldersResult {
   groupId: string;
   /** Team lead, delegated lead or platform admin: may create, move and attach. */
   canManage: boolean;
+  /** Persona may create a Project in this team (lead | admin). */
+  canCreateProject: boolean;
+  /**
+   * Persona may create a repository (developer | admin). A developer always
+   * files it into one of `folders`; only an admin may create without one.
+   */
+  canCreateRepository: boolean;
   folders: ProjectFolder[];
   /** Team projects with no hierarchy repository row at all. */
   unfiled: UnfiledProject[];
@@ -74,6 +86,7 @@ export class ProjectFoldersService {
     userId: string,
   ): Promise<ProjectFoldersResult> {
     const canManage = await this.resolveCanManage(groupId, userId);
+    const role = await this.resolvePersona(userId);
 
     const [rows, linkedProjectIds, projects] = await Promise.all([
       this.projectFoldersRepository.listFolderRows(groupId),
@@ -84,6 +97,8 @@ export class ProjectFoldersService {
     return {
       groupId,
       canManage,
+      canCreateProject: canCreateProjectFolder(role),
+      canCreateRepository: canCreateRepository(role),
       folders: groupFolders(rows, new Map(projects.map((p) => [p.id, p]))),
       unfiled: projects
         .filter((project) => !linkedProjectIds.has(project.id))
@@ -96,6 +111,12 @@ export class ProjectFoldersService {
           repoShape: project.repoShape,
         })),
     };
+  }
+
+  /** Global persona; a platform admin is always 'admin'. */
+  private async resolvePersona(userId: string): Promise<AppRole> {
+    if (await this.accessService.isPlatformAdmin(userId)) return 'admin';
+    return this.accessService.getAppRole(userId);
   }
 
   private async resolveCanManage(

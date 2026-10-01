@@ -21,9 +21,10 @@ import {
   APP_ROLE_LOOKUP,
   type AppRoleLookup,
 } from '#kernel/ports/app-role.port';
+import { repositoryCreateForbidden } from '#kernel/rules/persona-access.errors';
 import {
   canCreatePullRequest,
-  canManageProjectLifecycle,
+  canCreateRepository,
   selfServicePullRequestBase,
 } from '#kernel/rules/persona-access.rules';
 import type { DiscoverExistingRepoDto } from './dto/discover-existing-repo.dto';
@@ -276,22 +277,20 @@ export class ExistingReposService {
 
   /**
    * Onboarding an existing repository installs CI on it with the App's
-   * installation token, so it is a Lead/Admin action: the same global
-   * app_role gate as project creation (WorkspaceGateService.
-   * assertCanCreateProjects / isGlobalProjectCreator). Returns the role so
+   * installation token, so it is a repository-create action: Developer/Admin
+   * only (canCreateRepository), the same global app_role gate as the create
+   * wizard (WorkspaceGateService.assertCanCreateRepositories). The Project the
+   * repository is filed under is chosen on POST /projects/setup, which enforces
+   * PROJECT_REQUIRED for a Developer; discover and setup-pr carry no Project
+   * field. Returns the role so
    * callers can apply the pull-request rule; an unresolved role falls back to
-   * 'member' and is refused (fail closed).
+   * 'qa' and is refused (fail closed).
    */
   private async assertCanOnboard(userId: string) {
-    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'member';
-    if (!canManageProjectLifecycle(role)) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        error: 'Forbidden',
-        code: 'PROJECT_ROLE_FORBIDDEN',
-        message:
-          'Only a Lead or Admin can onboard an existing repository. Ask a team lead to do it for you.',
-      });
+    // Unresolved role -> 'qa' (least privileged): refused, fail closed.
+    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'qa';
+    if (!canCreateRepository(role)) {
+      throw repositoryCreateForbidden();
     }
     return role;
   }

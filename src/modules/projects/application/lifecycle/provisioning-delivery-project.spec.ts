@@ -1,4 +1,9 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { ProjectProvisioningApplicationService } from './project-provisioning-application.service';
 import type { CatalogService } from '../catalog/catalog.service';
@@ -47,14 +52,14 @@ const makeGithubService = () =>
     deleteRepo: jest.fn().mockResolvedValue(true),
   }) as unknown as GithubService;
 
-const makeProjectsRepository = () =>
+const makeProjectsRepository = (appRole = 'admin') =>
   ({
     create: jest.fn().mockResolvedValue({ id: 'project-1' }),
     updateStatus: jest.fn().mockResolvedValue(undefined),
     deleteByIdAndUser: jest.fn().mockResolvedValue(true),
     // Both required for resolveWorkspaceIdForCreate('w1') to resolve rather
     // than throw before the deliveryProjectId gate is even reached.
-    isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
+    findAppRole: jest.fn().mockResolvedValue(appRole),
     canCreateInWorkspace: jest.fn().mockResolvedValue(true),
     listWorkspaceLeadAndDeveloperIds: jest
       .fn()
@@ -91,9 +96,10 @@ const baseDto = {
 function makeService(
   hierarchyProjectLinkService: ProjectLinkPort,
   notificationEventPublisher?: { record: jest.Mock },
+  appRole = 'admin',
 ) {
   const githubService = makeGithubService();
-  const projectsRepository = makeProjectsRepository();
+  const projectsRepository = makeProjectsRepository(appRole);
   const ciService = makeCiService();
 
   const service = new ProjectProvisioningApplicationService(
@@ -505,5 +511,114 @@ describe('ProjectProvisioningApplicationService — projectName (new Project on 
     expect(
       githubService.getInstallationAccessTokenForUserRepo,
     ).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProjectProvisioningApplicationService - persona gate on repository creation', () => {
+  const link = (): ProjectLinkPort => ({
+    getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+    getProjectFolder: jest.fn().mockResolvedValue(null),
+    ensureLink: jest.fn().mockResolvedValue(null),
+    assertProjectNameAvailableForCreate: jest.fn(),
+    assertDeliveryProjectAvailableForCreate: jest.fn(),
+  });
+  const setupDto = {
+    templateId: 'be-nestjs',
+    serviceName: 'api',
+    repoFullName: 'owner/repo',
+    workspaceId: 'w1',
+  };
+
+  it.each(['lead', 'qa'])(
+    '%s is refused 403 REPOSITORY_CREATE_FORBIDDEN on create and setup, before GitHub',
+    async (role) => {
+      const { service, githubService } = makeService(link(), undefined, role);
+      const attempts = [
+        () =>
+          service.createProject('user-1', 'octocat', 'gh-token', {
+            ...baseDto,
+            deliveryProjectId: 'dp-1',
+          }),
+        () =>
+          service.setupProject('user-1', 'gh-token', {
+            ...setupDto,
+            deliveryProjectId: 'dp-1',
+          }),
+      ];
+      for (const attempt of attempts) {
+        const error = await attempt().catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getResponse()).toMatchObject({
+          code: 'REPOSITORY_CREATE_FORBIDDEN',
+        });
+      }
+      expect(githubService.createRepo).not.toHaveBeenCalled();
+    },
+  );
+
+  it('a member without a Project is refused 400 PROJECT_REQUIRED on create and setup', async () => {
+    const { service, githubService } = makeService(link(), undefined, 'member');
+    const attempts = [
+      () => service.createProject('user-1', 'octocat', 'gh-token', baseDto),
+      () =>
+        service.createProject('user-1', 'octocat', 'gh-token', {
+          ...baseDto,
+          projectName: 'New folder',
+        }),
+      () => service.setupProject('user-1', 'gh-token', setupDto),
+    ];
+    for (const attempt of attempts) {
+      const error = await attempt().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        code: 'PROJECT_REQUIRED',
+      });
+    }
+    expect(githubService.createRepo).not.toHaveBeenCalled();
+  });
+
+  it('a member into an existing Project proceeds to the Project availability check and GitHub', async () => {
+    const hierarchy = link();
+    const { service, githubService } = makeService(
+      hierarchy,
+      undefined,
+      'member',
+    );
+    await expect(
+      service.createProject('user-1', 'octocat', 'gh-token', {
+        ...baseDto,
+        deliveryProjectId: 'dp-1',
+      }),
+    ).resolves.toMatchObject({ id: 'project-1' });
+    expect(
+      hierarchy.assertDeliveryProjectAvailableForCreate,
+    ).toHaveBeenCalled();
+    expect(githubService.createRepo).toHaveBeenCalled();
+  });
+
+  it("a member into another team's Project keeps the existing refusal", async () => {
+    const hierarchy = link();
+    (
+      hierarchy.assertDeliveryProjectAvailableForCreate as jest.Mock
+    ).mockRejectedValue(new NotFoundException('Group not found'));
+    const { service, githubService } = makeService(
+      hierarchy,
+      undefined,
+      'member',
+    );
+    await expect(
+      service.createProject('user-1', 'octocat', 'gh-token', {
+        ...baseDto,
+        deliveryProjectId: 'dp-other',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(githubService.createRepo).not.toHaveBeenCalled();
+  });
+
+  it('an admin is unchanged: create works without a Project', async () => {
+    const { service } = makeService(link(), undefined, 'admin');
+    await expect(
+      service.createProject('user-1', 'octocat', 'gh-token', baseDto),
+    ).resolves.toMatchObject({ id: 'project-1' });
   });
 });
