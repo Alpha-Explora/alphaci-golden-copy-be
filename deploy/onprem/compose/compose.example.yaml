@@ -37,5 +37,20 @@ services:
       - caddy-data:/data
     depends_on: [frontend, backend]
 
+  # Optional public access without opening a router port or touching DNS on
+  # the host: an outbound Cloudflare Tunnel to Caddy's plain-HTTP listener.
+  # Enable with COMPOSE_PROFILES=tunnel in /opt/alphaci/agent.env. The token
+  # (TUNNEL_TOKEN=...) lives in /opt/alphaci/secrets/cloudflared.env, and the
+  # public hostname is set in the tunnel's dashboard (service: http://caddy:80),
+  # so changing the domain never means editing this file.
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    env_file:
+      - /opt/alphaci/secrets/cloudflared.env
+    depends_on: [caddy]
+
 volumes:
   caddy-data: {}
