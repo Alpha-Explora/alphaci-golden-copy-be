@@ -198,7 +198,14 @@ export class ExistingReposService {
     const role = await this.assertCanOnboard(userId);
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
     // Refuse main before any GitHub call: main is reached only by promotion.
-    if (dto.baseBranch && !canCreatePullRequest(role, dto.baseBranch)) {
+    if (
+      dto.baseBranch &&
+      !canCreatePullRequest(
+        role,
+        dto.baseBranch,
+        `alphaci/${this.sanitizeBranchSlug(dto.serviceName)}-ci`,
+      )
+    ) {
       throw this.mainPrRestricted();
     }
     await this.assertCallerCanReadRepo(oauthAccessToken, owner, repo);

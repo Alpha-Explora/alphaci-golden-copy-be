@@ -76,7 +76,7 @@ function build(
         merged: false,
         htmlUrl: 'https://github.com/o/r/pull/7',
         headRef: 'feature',
-        baseRef: 'uat',
+        baseRef: 'dev',
         author: null,
         authorAvatarUrl: null,
         createdAt: '',
@@ -453,7 +453,7 @@ describe('ProjectWorkspaceService', () => {
     // tests below), so the other tests in this block — which are about
     // token/title/body/audit behaviour, not the base-branch gate — use a
     // non-production branch.
-    const INPUT = { base: 'uat', head: 'feature', title: '  Add login  ' };
+    const INPUT = { base: 'dev', head: 'feature', title: '  Add login  ' };
     const CREATED = {
       created: true as const,
       pullRequest: { number: 7, htmlUrl: 'https://github.com/o/r/pull/7' },
@@ -470,7 +470,7 @@ describe('ProjectWorkspaceService', () => {
       expect(openPullRequest).toHaveBeenCalledWith(
         'gho_user',
         'Alpha-Explora/orders-api',
-        { title: 'Add login', base: 'uat', head: 'feature', draft: false },
+        { title: 'Add login', base: 'dev', head: 'feature', draft: false },
       );
       expect(getInstallationAccessTokenForUserRepo).not.toHaveBeenCalled();
     });
@@ -617,6 +617,125 @@ describe('ProjectWorkspaceService', () => {
         ).resolves.toEqual(CREATED);
       },
     );
+  });
+
+  describe('developer pull request routes', () => {
+    const CREATED = {
+      created: true as const,
+      pullRequest: { number: 7, htmlUrl: 'https://github.com/o/r/pull/7' },
+    };
+    const ROUTE_RESTRICTED = {
+      statusCode: 403,
+      code: 'PR_ROUTE_RESTRICTED',
+      message:
+        'Developers open pull requests from a feature branch into dev, and from dev into uat.',
+    };
+
+    it.each([
+      ['feature', 'uat'],
+      ['uat', 'dev'],
+    ])('refuses a member opening %s -> %s', async (head, base) => {
+      const openPullRequest = jest.fn();
+      const { service } = build({
+        appRole: 'member',
+        github: { openPullRequest } as unknown as Partial<GithubService>,
+      });
+
+      const error = await caught(
+        service.createPullRequest('p1', 'u1', 'gho_user', {
+          base,
+          head,
+          title: 't',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).getResponse()).toMatchObject(
+        ROUTE_RESTRICTED,
+      );
+      expect(openPullRequest).not.toHaveBeenCalled();
+    });
+
+    it('allows a member to open dev -> uat', async () => {
+      const { service } = build({
+        appRole: 'member',
+        github: {
+          openPullRequest: jest.fn(() => Promise.resolve(CREATED)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.createPullRequest('p1', 'u1', 'gho_user', {
+          base: 'uat',
+          head: 'dev',
+          title: 't',
+        }),
+      ).resolves.toEqual(CREATED);
+    });
+
+    it('allows a lead to open feature -> uat', async () => {
+      const { service } = build({
+        appRole: 'lead',
+        github: {
+          openPullRequest: jest.fn(() => Promise.resolve(CREATED)),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.createPullRequest('p1', 'u1', 'gho_user', {
+          base: 'uat',
+          head: 'feature',
+          title: 't',
+        }),
+      ).resolves.toEqual(CREATED);
+    });
+
+    it.each([
+      ['feature', 'uat'],
+      ['uat', 'dev'],
+    ])(
+      'refuses a member merging %s -> %s, reading the head from the PR',
+      async (headRef, baseRef) => {
+        const mergePullRequest = jest.fn();
+        const { service } = build({
+          appRole: 'member',
+          github: {
+            mergePullRequest,
+            getPullRequest: jest.fn(() =>
+              Promise.resolve({ number: 7, headRef, baseRef }),
+            ),
+          } as unknown as Partial<GithubService>,
+        });
+
+        const error = await caught(
+          service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge'),
+        );
+
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getResponse()).toMatchObject(
+          ROUTE_RESTRICTED,
+        );
+        expect(mergePullRequest).not.toHaveBeenCalled();
+      },
+    );
+
+    it('allows a member to merge dev -> uat', async () => {
+      const { service } = build({
+        appRole: 'member',
+        github: {
+          mergePullRequest: jest.fn(() =>
+            Promise.resolve({ merged: true, message: 'ok', sha: 'a' }),
+          ),
+          getPullRequest: jest.fn(() =>
+            Promise.resolve({ number: 7, headRef: 'dev', baseRef: 'uat' }),
+          ),
+        } as unknown as Partial<GithubService>,
+      });
+
+      await expect(
+        service.mergePullRequest('p1', 'u1', 'gho_user', 7, 'merge'),
+      ).resolves.toMatchObject({ merged: true });
+    });
   });
 
   describe('merge pull request', () => {

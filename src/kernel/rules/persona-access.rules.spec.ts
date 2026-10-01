@@ -11,46 +11,36 @@ import {
 
 const ALL_ROLES: readonly PlatformAppRole[] = ['admin', 'lead', 'qa', 'member'];
 
-describe('canMergeViaWorkspace', () => {
-  it.each(ALL_ROLES)('refuses %s into the production branch, main', (role) => {
-    expect(canMergeViaWorkspace(role, 'main')).toBe(false);
-  });
+// [head, base] pairs; 'feature/x' stands for any non-pipeline branch.
+const ROUTES: readonly (readonly [string, string])[] = [
+  ['feature/x', 'dev'],
+  ['feature/x', 'uat'],
+  ['dev', 'uat'],
+  ['uat', 'dev'],
+  ['dev', 'main'],
+  ['feature/x', 'main'],
+  ['uat', 'main'],
+];
 
-  it.each(['admin', 'lead', 'member'] as const)(
-    'allows %s to merge into a non-production branch',
-    (role) => {
-      expect(canMergeViaWorkspace(role, 'uat')).toBe(true);
-      expect(canMergeViaWorkspace(role, 'dev')).toBe(true);
-    },
-  );
+const EXPECTED: Record<PlatformAppRole, readonly boolean[]> = {
+  //      f>dev f>uat dev>uat uat>dev dev>main f>main uat>main
+  admin: [true, true, true, true, false, false, false],
+  lead: [true, true, true, true, false, false, false],
+  member: [true, false, true, false, false, false, false],
+  qa: [false, false, false, false, false, false, false],
+};
 
-  it('refuses qa on any base, production or not', () => {
-    expect(canMergeViaWorkspace('qa', 'uat')).toBe(false);
-    expect(canMergeViaWorkspace('qa', 'dev')).toBe(false);
-    expect(canMergeViaWorkspace('qa', 'main')).toBe(false);
-  });
-});
-
-describe('canCreatePullRequest', () => {
-  it.each(ALL_ROLES)(
-    'refuses %s opening a pull request into the production branch, main',
-    (role) => {
-      expect(canCreatePullRequest(role, 'main')).toBe(false);
-    },
-  );
-
-  it.each(['admin', 'lead', 'member'] as const)(
-    'allows %s to open a pull request into a non-production branch',
-    (role) => {
-      expect(canCreatePullRequest(role, 'uat')).toBe(true);
-      expect(canCreatePullRequest(role, 'dev')).toBe(true);
-    },
-  );
-
-  it('refuses qa on any base, production or not', () => {
-    expect(canCreatePullRequest('qa', 'uat')).toBe(false);
-    expect(canCreatePullRequest('qa', 'dev')).toBe(false);
-    expect(canCreatePullRequest('qa', 'main')).toBe(false);
+describe.each([
+  ['canMergeViaWorkspace', canMergeViaWorkspace],
+  ['canCreatePullRequest', canCreatePullRequest],
+])('%s', (_name, rule) => {
+  describe.each(ALL_ROLES)('%s', (role) => {
+    it.each(ROUTES.map((r, i) => [r[0], r[1], EXPECTED[role][i]] as const))(
+      '%s -> %s is %s',
+      (head, base, allowed) => {
+        expect(rule(role, base, head)).toBe(allowed);
+      },
+    );
   });
 });
 

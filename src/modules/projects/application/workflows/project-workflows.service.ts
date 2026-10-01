@@ -235,7 +235,8 @@ export class ProjectWorkflowsService {
     // who may not open this PR must not spend quota or reach GitHub.
     const row = await this.loadOwnedProject(projectId, userId);
     const role = await this.projectsRepository.findAppRole(userId);
-    this.assertMayOpenPullRequest(role, WORKING_BRANCH);
+    const branchName = `alphaci/workflow-update-${this.timestampForBranch()}`;
+    this.assertMayOpenPullRequest(role, WORKING_BRANCH, branchName);
     await this.assertWithinQuota(userId);
     const token = await this.resolveProvisioningToken(
       userId,
@@ -258,8 +259,7 @@ export class ProjectWorkflowsService {
     // Never the repository default branch (main is production): dev, else
     // uat, else refuse. The role rule is re-applied to the resolved base.
     const baseBranch = await this.resolvePullRequestBase(token, owner, repo);
-    this.assertMayOpenPullRequest(role, baseBranch);
-    const branchName = `alphaci/workflow-update-${this.timestampForBranch()}`;
+    this.assertMayOpenPullRequest(role, baseBranch, branchName);
     await this.githubService.createBranch(
       token,
       owner,
@@ -358,9 +358,12 @@ export class ProjectWorkflowsService {
   private assertMayOpenPullRequest(
     role: Parameters<typeof canCreatePullRequest>[0],
     base: string,
+    head: string,
   ): void {
-    // An unresolved role is not in any allow-list, so it is refused.
-    if (!canCreatePullRequest(role, base)) {
+    // An unresolved role is not in any allow-list, so it is refused. A
+    // Developer passes only for base dev (generated head into dev), so a repo
+    // with only uat refuses them here, before any branch is created.
+    if (!canCreatePullRequest(role, base, head)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',
