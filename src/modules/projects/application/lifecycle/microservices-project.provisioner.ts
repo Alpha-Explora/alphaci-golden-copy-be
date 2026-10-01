@@ -8,7 +8,10 @@ import {
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import type { CreateProjectResponse } from './projects.service.types';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
-import type { ProjectProvisioningSupport } from './project-provisioning.support';
+import {
+  newChainLinkOptions,
+  type ProjectProvisioningSupport,
+} from './project-provisioning.support';
 import {
   buildPackedBackendBundle,
   buildPackedCreateResponse,
@@ -118,9 +121,7 @@ export class MicroservicesProjectProvisioner {
         repoFullName,
         repoUrl,
         bundle: backendBundle,
-        ...(dto.deliveryProjectId
-          ? { deliveryProjectId: dto.deliveryProjectId }
-          : { chainName: dto.repoName }),
+        ...newChainLinkOptions(dto, dto.repoName),
       });
       backendRow = backendLink.row;
       await installPackedRepoSecrets({

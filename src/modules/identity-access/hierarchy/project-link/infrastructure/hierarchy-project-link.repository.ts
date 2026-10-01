@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type { ProjectFolderLink } from '#kernel/ports/project-link.port';
+import {
+  ACTIVE_PROJECT_NAME_EXISTS_SQL,
+  ProjectNameTakenException,
+  projectNameLockKey,
+} from '../../domain/project-name';
 
 export interface LinkProjectInput {
   projectId: string;
@@ -10,6 +15,12 @@ export interface LinkProjectInput {
   name: string;
   /** Name for a newly auto-created system/delivery-project chain; falls back to `name`. */
   chainName?: string;
+  /**
+   * True when `chainName` is a caller-chosen Project name: it must be unique
+   * among the team's non-archived Projects (checked under an advisory lock in
+   * the chain transaction). False keeps the legacy, unchecked naming.
+   */
+  enforceUniqueChainName?: boolean;
   repoFullName: string;
   visibility: 'private' | 'public';
   createdBy: string;
@@ -44,6 +55,18 @@ export class HierarchyProjectLinkRepository {
     const result = await this.databaseService.query<{ exists: boolean }>(
       `SELECT TRUE AS exists FROM orgs.workspaces WHERE id = $1 AND kind = 'team' LIMIT 1;`,
       [workspaceId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /** True when the team already has a non-archived Project with this name. */
+  async isProjectNameTaken(
+    workspaceId: string,
+    name: string,
+  ): Promise<boolean> {
+    const result = await this.databaseService.query(
+      ACTIVE_PROJECT_NAME_EXISTS_SQL,
+      [workspaceId, name],
     );
     return result.rows.length > 0;
   }
@@ -222,9 +245,27 @@ export class HierarchyProjectLinkRepository {
     input: LinkProjectInput,
   ): Promise<LinkResult | null> {
     const chainName = input.chainName ?? input.name;
-    return this.databaseService.withClient(async (client) => {
+    let nameTaken = false;
+    const result = await this.databaseService.withClient(async (client) => {
       await client.query('BEGIN');
       try {
+        if (input.enforceUniqueChainName) {
+          // Serialize same-name creators for this team, then re-check: the
+          // pre-provisioning gate cannot see a Project committed after it ran.
+          await client.query(
+            `SELECT pg_advisory_xact_lock(hashtextextended($1, 0));`,
+            [projectNameLockKey(input.workspaceId, chainName)],
+          );
+          const clash = await client.query(ACTIVE_PROJECT_NAME_EXISTS_SQL, [
+            input.workspaceId,
+            chainName,
+          ]);
+          if (clash.rows.length > 0) {
+            await client.query('ROLLBACK');
+            nameTaken = true;
+            return null;
+          }
+        }
         const system = await client.query<{ id: string }>(
           `
             INSERT INTO hierarchy.systems (group_id, name, owner_id, status)
@@ -286,5 +327,7 @@ export class HierarchyProjectLinkRepository {
         throw error;
       }
     });
+    if (nameTaken) throw new ProjectNameTakenException(chainName);
+    return result;
   }
 }

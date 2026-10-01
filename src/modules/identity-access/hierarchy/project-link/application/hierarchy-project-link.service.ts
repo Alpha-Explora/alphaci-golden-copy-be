@@ -5,6 +5,7 @@ import type {
   ProjectFolderLink,
   ProjectLinkPort,
 } from '#kernel/ports/project-link.port';
+import { ProjectNameTakenException } from '../../domain/project-name';
 import { DeliveryProjectsRepository } from '../../infrastructure/delivery-projects.repository';
 import { HierarchyAccessService } from '../../application/hierarchy-access.service';
 import { HierarchyProjectLinkRepository } from '../infrastructure/hierarchy-project-link.repository';
@@ -16,6 +17,8 @@ export interface EnsureProjectLinkInput {
   name: string;
   /** Name for a newly auto-created system/delivery-project chain; falls back to `name`. */
   chainName?: string;
+  /** `chainName` is a caller-chosen Project name that must be unique in the team. */
+  enforceUniqueChainName?: boolean;
   repoFullName: string;
   visibility?: string | null;
   createdBy: string;
@@ -109,6 +112,7 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         workspaceId: input.workspaceId,
         name,
         ...(input.chainName !== undefined && { chainName: input.chainName }),
+        ...(input.enforceUniqueChainName && { enforceUniqueChainName: true }),
         repoFullName: input.repoFullName,
         visibility: input.visibility === 'public' ? 'public' : 'private',
         createdBy: input.createdBy,
@@ -118,12 +122,28 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         }),
       });
     } catch (error) {
+      // The one loud failure: a Project-name race lost after provisioning
+      // started. The caller removes its row and (create paths) the repository.
+      if (error instanceof ProjectNameTakenException) throw error;
       this.logger.warn(
         `Could not link project ${input.projectId} into the hierarchy: ${
           error instanceof Error ? error.message : JSON.stringify(error)
         }`,
       );
       return null;
+    }
+  }
+
+  /** See ProjectLinkPort.assertProjectNameAvailableForCreate. */
+  async assertProjectNameAvailableForCreate(input: {
+    workspaceId: string;
+    name: string;
+  }): Promise<void> {
+    const name = input.name.trim();
+    // Personal workspaces have no hierarchy, so no Project names to clash with.
+    if (!(await this.repository.isTeamWorkspace(input.workspaceId))) return;
+    if (await this.repository.isProjectNameTaken(input.workspaceId, name)) {
+      throw new ProjectNameTakenException(name);
     }
   }
 

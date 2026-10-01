@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 
 import { ProjectProvisioningApplicationService } from './project-provisioning-application.service';
 import type { CatalogService } from '../catalog/catalog.service';
@@ -156,6 +156,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
+      assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest
         .fn()
         .mockRejectedValue(new NotFoundException('Delivery project not found')),
@@ -187,6 +188,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
+      assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest.fn(),
     };
     const { service, githubService } = makeService(hierarchyProjectLinkService);
@@ -207,6 +209,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
+      assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest.fn(async () => {
         calls.push('gate');
       }),
@@ -234,6 +237,7 @@ describe('ProjectProvisioningApplicationService — deliveryProjectId validation
       getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
       getProjectFolder: jest.fn().mockResolvedValue(null),
       ensureLink: jest.fn().mockResolvedValue(null),
+      assertProjectNameAvailableForCreate: jest.fn(),
       assertDeliveryProjectAvailableForCreate: jest
         .fn()
         .mockRejectedValue(new NotFoundException('Delivery project not found')),
@@ -261,6 +265,7 @@ describe('ProjectProvisioningApplicationService, project_created fan-out (single
     getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
     getProjectFolder: jest.fn().mockResolvedValue(null),
     ensureLink: jest.fn().mockResolvedValue(null),
+    assertProjectNameAvailableForCreate: jest.fn(),
     assertDeliveryProjectAvailableForCreate: jest.fn(),
   });
 
@@ -365,5 +370,140 @@ describe('ProjectProvisioningApplicationService, project_created fan-out (single
         body: expect.stringContaining('@tone created project owner/repo'),
       }),
     );
+  });
+});
+
+const nameTaken = () =>
+  new ConflictException({
+    code: 'PROJECT_NAME_TAKEN',
+    message: 'A Project named "Payments" already exists in this team.',
+  });
+
+describe('ProjectProvisioningApplicationService — projectName (new Project on create)', () => {
+  const link = (over: Partial<ProjectLinkPort> = {}): ProjectLinkPort => ({
+    getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+    getProjectFolder: jest.fn().mockResolvedValue(null),
+    ensureLink: jest.fn().mockResolvedValue(null),
+    assertProjectNameAvailableForCreate: jest.fn().mockResolvedValue(undefined),
+    assertDeliveryProjectAvailableForCreate: jest.fn(),
+    ...over,
+  });
+
+  it('single repo: names the new chain after projectName and enforces uniqueness', async () => {
+    const hierarchy = link();
+    const { service } = makeService(hierarchy);
+
+    await service.createProject('user-1', 'octocat', 'gh-token', {
+      ...baseDto,
+      projectName: '  Payments Platform ',
+    });
+
+    expect(hierarchy.assertProjectNameAvailableForCreate).toHaveBeenCalledWith({
+      workspaceId: 'w1',
+      name: 'Payments Platform',
+    });
+    expect(hierarchy.ensureLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chainName: 'Payments Platform',
+        enforceUniqueChainName: true,
+      }),
+    );
+  });
+
+  it('old callers without projectName are unchanged (no gate, no chainName, no enforcement)', async () => {
+    const hierarchy = link();
+    const { service } = makeService(hierarchy);
+
+    await service.createProject('user-1', 'octocat', 'gh-token', baseDto);
+
+    expect(
+      hierarchy.assertProjectNameAvailableForCreate,
+    ).not.toHaveBeenCalled();
+    const input = (hierarchy.ensureLink as jest.Mock).mock.calls[0]?.[0];
+    expect(input).not.toHaveProperty('chainName');
+    expect(input).not.toHaveProperty('enforceUniqueChainName');
+  });
+
+  it('deliveryProjectId wins: projectName is ignored and not checked', async () => {
+    const hierarchy = link();
+    const { service } = makeService(hierarchy);
+
+    await service.createProject('user-1', 'octocat', 'gh-token', {
+      ...baseDto,
+      projectName: 'Ignored',
+      deliveryProjectId: 'dp-1',
+    });
+
+    expect(
+      hierarchy.assertProjectNameAvailableForCreate,
+    ).not.toHaveBeenCalled();
+    const input = (hierarchy.ensureLink as jest.Mock).mock.calls[0]?.[0];
+    expect(input).toMatchObject({ deliveryProjectId: 'dp-1' });
+    expect(input).not.toHaveProperty('chainName');
+  });
+
+  it('a duplicate name fails 409 PROJECT_NAME_TAKEN before any GitHub call', async () => {
+    const hierarchy = link({
+      assertProjectNameAvailableForCreate: jest
+        .fn()
+        .mockRejectedValue(nameTaken()),
+    });
+    const { service, githubService } = makeService(hierarchy);
+
+    await expect(
+      service.createProject('user-1', 'octocat', 'gh-token', {
+        ...baseDto,
+        projectName: 'Payments',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(githubService.createRepo).not.toHaveBeenCalled();
+    expect(
+      githubService.getInstallationAccessTokenForUser,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('losing the name race after the repo exists removes the project row and the repo, and fails 409', async () => {
+    const hierarchy = link({
+      ensureLink: jest.fn().mockRejectedValue(nameTaken()),
+    });
+    const { service, githubService, projectsRepository } =
+      makeService(hierarchy);
+
+    await expect(
+      service.createProject('user-1', 'octocat', 'gh-token', {
+        ...baseDto,
+        projectName: 'Payments',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+    );
+    expect(githubService.deleteRepo).toHaveBeenCalled();
+  });
+
+  it('setupProject gates a duplicate name before its first GitHub call', async () => {
+    const hierarchy = link({
+      assertProjectNameAvailableForCreate: jest
+        .fn()
+        .mockRejectedValue(nameTaken()),
+    });
+    const { service, githubService } = makeService(hierarchy);
+
+    await expect(
+      service.setupProject('user-1', 'gh-token', {
+        templateId: 'be-nestjs',
+        serviceName: 'api',
+        repoFullName: 'owner/repo',
+        workspaceId: 'w1',
+        projectName: 'Payments',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(
+      githubService.getInstallationAccessTokenForUserRepo,
+    ).not.toHaveBeenCalled();
   });
 });

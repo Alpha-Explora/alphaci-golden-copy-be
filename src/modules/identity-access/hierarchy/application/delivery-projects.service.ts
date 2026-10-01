@@ -21,6 +21,7 @@ import {
 } from '../infrastructure/delivery-projects.repository';
 import { RepositoriesRepository } from '../infrastructure/repositories.repository';
 import { SystemsRepository } from '../infrastructure/systems.repository';
+import { ProjectNameTakenException } from '../domain/project-name';
 import type { CreateDeliveryProjectDto } from '../api/dto/create-delivery-project.dto';
 import type { DeleteDeliveryProjectDto } from '../api/dto/delete-delivery-project.dto';
 import type { UpdateDeliveryProjectDto } from '../api/dto/update-delivery-project.dto';
@@ -90,6 +91,25 @@ export class DeliveryProjectsService {
     @Inject(PROJECT_LIFECYCLE_PORT)
     private readonly projectLifecyclePort: ProjectLifecyclePort,
   ) {}
+
+  /** Throws 409 PROJECT_NAME_TAKEN when the team already has this Project name. */
+  async assertProjectNameAvailable(
+    groupId: string,
+    name: string,
+  ): Promise<void> {
+    if (await this.deliveryProjectsRepository.isNameTaken(groupId, name)) {
+      throw new ProjectNameTakenException(name.trim());
+    }
+  }
+
+  /** Serializes same-name Project creation for a team; see the repository. */
+  withProjectNameLock<T>(
+    groupId: string,
+    name: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    return this.deliveryProjectsRepository.withNameLock(groupId, name, fn);
+  }
 
   async createDeliveryProject(
     systemId: string,

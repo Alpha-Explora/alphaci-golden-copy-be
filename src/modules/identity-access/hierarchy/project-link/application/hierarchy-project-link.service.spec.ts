@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 
 import type { DeliveryProjectsRepository } from '../../infrastructure/delivery-projects.repository';
 import type { HierarchyAccessService } from '../../application/hierarchy-access.service';
@@ -16,6 +20,7 @@ function build(overrides: Partial<HierarchyProjectLinkRepository> = {}) {
       Promise.resolve(null),
     ),
     link,
+    isProjectNameTaken: jest.fn(() => Promise.resolve(false)),
     ...overrides,
   } as unknown as HierarchyProjectLinkRepository;
 
@@ -275,6 +280,94 @@ describe('HierarchyProjectLinkService', () => {
           userId: 'u1',
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('assertProjectNameAvailableForCreate', () => {
+    it('passes when no active Project has the name', async () => {
+      const { service, repository } = build();
+      await expect(
+        service.assertProjectNameAvailableForCreate({
+          workspaceId: 'w1',
+          name: '  Payments ',
+        }),
+      ).resolves.toBeUndefined();
+      expect(repository.isProjectNameTaken).toHaveBeenCalledWith(
+        'w1',
+        'Payments',
+      );
+    });
+
+    it('throws 409 PROJECT_NAME_TAKEN with the contract message when taken', async () => {
+      const { service } = build({
+        isProjectNameTaken: jest.fn(() => Promise.resolve(true)),
+      });
+      const error = await service
+        .assertProjectNameAvailableForCreate({
+          workspaceId: 'w1',
+          name: 'Payments',
+        })
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toEqual({
+        code: 'PROJECT_NAME_TAKEN',
+        message: 'A Project named "Payments" already exists in this team.',
+      });
+    });
+
+    it('skips personal workspaces (no hierarchy, no Projects)', async () => {
+      const { service, repository } = build({
+        isTeamWorkspace: jest.fn(() => Promise.resolve(false)),
+      });
+      await expect(
+        service.assertProjectNameAvailableForCreate({
+          workspaceId: 'w1',
+          name: 'Payments',
+        }),
+      ).resolves.toBeUndefined();
+      expect(repository.isProjectNameTaken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('ensureLink name enforcement', () => {
+    it('passes chainName and enforceUniqueChainName through to the repository', async () => {
+      const { service, link } = build();
+      await service.ensureLink({
+        ...BASE,
+        chainName: 'Payments',
+        enforceUniqueChainName: true,
+      });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chainName: 'Payments',
+          enforceUniqueChainName: true,
+        }),
+      );
+    });
+
+    it('propagates a lost name race (409) instead of swallowing it', async () => {
+      const { ProjectNameTakenException } = jest.requireActual<
+        typeof import('../../domain/project-name')
+      >('../../domain/project-name');
+      const { service } = build({
+        link: jest.fn(() =>
+          Promise.reject(new ProjectNameTakenException('Payments')),
+        ),
+      } as never);
+      await expect(
+        service.ensureLink({
+          ...BASE,
+          chainName: 'Payments',
+          enforceUniqueChainName: true,
+        }),
+      ).rejects.toBeInstanceOf(ProjectNameTakenException);
+    });
+
+    it('still swallows other link failures (best-effort contract)', async () => {
+      const { service } = build({
+        link: jest.fn(() => Promise.reject(new Error('db down'))),
+      } as never);
+      await expect(service.ensureLink(BASE)).resolves.toBeNull();
     });
   });
 });

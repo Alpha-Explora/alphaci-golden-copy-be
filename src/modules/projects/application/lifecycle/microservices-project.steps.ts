@@ -221,6 +221,8 @@ export async function persistPackedBackendRow(input: {
   deliveryProjectId?: string;
   /** Name for a newly auto-created system/delivery-project chain. */
   chainName?: string;
+  /** `chainName` is a caller-chosen Project name that must be unique in the team. */
+  enforceUniqueChainName?: boolean;
 }): Promise<{ row: ProvisionedProjectRow; deliveryProjectId: string | null }> {
   const {
     support,
@@ -233,6 +235,7 @@ export async function persistPackedBackendRow(input: {
     bundle,
     deliveryProjectId,
     chainName,
+    enforceUniqueChainName,
   } = input;
 
   return support.createProjectRow(
@@ -261,6 +264,7 @@ export async function persistPackedBackendRow(input: {
     {
       ...(deliveryProjectId !== undefined && { deliveryProjectId }),
       ...(chainName !== undefined && { chainName }),
+      ...(enforceUniqueChainName && { enforceUniqueChainName }),
     },
   );
 }
@@ -439,7 +443,7 @@ export async function persistPackedFrontendRowIfPushed(input: {
       },
       input.pairDeliveryProjectId
         ? { deliveryProjectId: input.pairDeliveryProjectId }
-        : { chainName: input.dto.repoName },
+        : { chainName: input.dto.projectName?.trim() || input.dto.repoName },
     );
   } catch (err) {
     input.logger.warn(

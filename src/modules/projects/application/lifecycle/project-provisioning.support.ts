@@ -93,6 +93,35 @@ export interface WorkflowBundleOptions {
  * standalone, microservices-shape, multi-repository, and setup flows. The
  * use-case classes own the ordering and business decisions.
  */
+export interface NewProjectLinkOptions {
+  /** Link into this existing delivery project instead of creating a new chain. */
+  deliveryProjectId?: string;
+  /** Name for a newly auto-created system/delivery-project chain. */
+  chainName?: string;
+  /** `chainName` is a caller-chosen Project name that must be unique in the team. */
+  enforceUniqueChainName?: boolean;
+}
+
+/**
+ * Link options for the row that creates a NEW hierarchy chain. A
+ * caller-chosen `projectName` names the chain and is uniqueness-enforced;
+ * without it the legacy name (`legacyChainName`, or the service name when
+ * omitted) applies unchecked. An explicit deliveryProjectId wins over both.
+ */
+export function newChainLinkOptions(
+  dto: { projectName?: string; deliveryProjectId?: string },
+  legacyChainName?: string,
+): NewProjectLinkOptions {
+  if (dto.deliveryProjectId) {
+    return { deliveryProjectId: dto.deliveryProjectId };
+  }
+  const projectName = dto.projectName?.trim();
+  if (projectName) {
+    return { chainName: projectName, enforceUniqueChainName: true };
+  }
+  return legacyChainName !== undefined ? { chainName: legacyChainName } : {};
+}
+
 export class ProjectProvisioningSupport {
   private readonly logger = new Logger(ProjectProvisioningSupport.name);
 
@@ -529,7 +558,7 @@ export class ProjectProvisioningSupport {
 
   async createProjectRow(
     input: Parameters<ProjectsRepository['create']>[0],
-    linkOptions?: { deliveryProjectId?: string; chainName?: string },
+    linkOptions?: NewProjectLinkOptions,
   ): Promise<{
     row: Awaited<ReturnType<ProjectsRepository['create']>>;
     /**
@@ -543,23 +572,62 @@ export class ProjectProvisioningSupport {
   }> {
     const row = await this.projectsRepository.create(input);
 
-    const link = await this.hierarchyProjectLinkService?.ensureLink({
-      projectId: row.id,
-      workspaceId: input.workspaceId ?? null,
-      name: input.serviceName,
-      repoFullName: input.repoFullName,
-      visibility: input.visibility ?? null,
-      createdBy: input.userId,
-      projectStatus: input.status ?? 'provisioning',
-      ...(linkOptions?.chainName !== undefined && {
-        chainName: linkOptions.chainName,
-      }),
-      ...(linkOptions?.deliveryProjectId !== undefined && {
-        deliveryProjectId: linkOptions.deliveryProjectId,
-      }),
-    });
+    let link: Awaited<ReturnType<ProjectLinkPort['ensureLink']>> | undefined;
+    try {
+      link = await this.hierarchyProjectLinkService?.ensureLink({
+        projectId: row.id,
+        workspaceId: input.workspaceId ?? null,
+        name: input.serviceName,
+        repoFullName: input.repoFullName,
+        visibility: input.visibility ?? null,
+        createdBy: input.userId,
+        projectStatus: input.status ?? 'provisioning',
+        ...(linkOptions?.chainName !== undefined && {
+          chainName: linkOptions.chainName,
+        }),
+        ...(linkOptions?.enforceUniqueChainName && {
+          enforceUniqueChainName: true,
+        }),
+        ...(linkOptions?.deliveryProjectId !== undefined && {
+          deliveryProjectId: linkOptions.deliveryProjectId,
+        }),
+      });
+    } catch (error) {
+      // Lost the Project-name race after the repo may already exist: drop the
+      // row we just wrote so the caller's compensation (which removes the
+      // GitHub repo on create paths) leaves nothing half-created, then fail.
+      await this.projectsRepository
+        .deleteByIdAndUser(row.id, input.userId)
+        .catch((deleteError: unknown) => {
+          this.logger.warn(
+            `Could not remove project row ${row.id} after a failed link: ${String(deleteError)}`,
+          );
+        });
+      throw error;
+    }
 
     return { row, deliveryProjectId: link?.deliveryProjectId ?? null };
+  }
+
+  /**
+   * Up-front gate for a caller-chosen Project name. Must run BEFORE any
+   * GitHub call. No-op when no name was given, an existing Project is being
+   * joined, or no hierarchy is wired up; personal workspaces are skipped by
+   * the hierarchy service (they have no Projects).
+   */
+  async assertProjectNameAvailableForCreate(input: {
+    projectName: string | undefined;
+    deliveryProjectId: string | undefined;
+    workspaceId: string | null;
+  }): Promise<void> {
+    const name = input.projectName?.trim();
+    if (!name || input.deliveryProjectId || !input.workspaceId) return;
+    await this.hierarchyProjectLinkService?.assertProjectNameAvailableForCreate(
+      {
+        workspaceId: input.workspaceId,
+        name,
+      },
+    );
   }
 
   /**
