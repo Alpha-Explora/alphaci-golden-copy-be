@@ -4,6 +4,7 @@ import {
   ProjectsRepository,
   type ProvisionedProjectRow,
 } from '../../infrastructure/projects.repository';
+import { canManageRequirements } from '#kernel/rules/persona-access.rules';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 
 /**
@@ -40,12 +41,15 @@ export class QaAccessService {
   }
 
   /**
-   * True for a global admin or lead. This is the write gate. Callers must
+   * True for a global admin or lead (canManageRequirements). This is the
+   * write gate - independent of who may create repositories. Callers must
    * check canAccessWorkspace() first so a non-member gets 404 rather than a
    * 403 that would leak "this workspace exists, you're just not allowed."
    */
   async canManage(userId: string): Promise<boolean> {
-    return this.projectsRepository.isGlobalProjectCreator(userId);
+    return canManageRequirements(
+      await this.projectsRepository.findAppRole(userId),
+    );
   }
 
   /**

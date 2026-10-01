@@ -74,7 +74,7 @@ describe('ExistingReposService', () => {
 
   beforeEach(() => {
     githubService = makeGithubService();
-    appRoleLookup = { findAppRole: jest.fn().mockResolvedValue('lead') };
+    appRoleLookup = { findAppRole: jest.fn().mockResolvedValue('member') };
     service = new ExistingReposService(
       githubService,
       makeCatalogService(),
@@ -233,8 +233,8 @@ jobs:
       serviceName: 'app',
     };
 
-    it.each(['member', 'qa'])(
-      'refuses %s on discover and setup-pr with PROJECT_ROLE_FORBIDDEN, no GitHub call',
+    it.each(['lead', 'qa'])(
+      'refuses %s on discover and setup-pr with REPOSITORY_CREATE_FORBIDDEN, no GitHub call',
       async (role) => {
         for (const attempt of [
           () => {
@@ -251,7 +251,7 @@ jobs:
           const error = await attempt().catch((e: unknown) => e);
           expect(error).toBeInstanceOf(ForbiddenException);
           expect((error as ForbiddenException).getResponse()).toMatchObject({
-            code: 'PROJECT_ROLE_FORBIDDEN',
+            code: 'REPOSITORY_CREATE_FORBIDDEN',
           });
         }
         expect(githubService.getRepo).not.toHaveBeenCalled();
@@ -311,7 +311,7 @@ jobs:
       ).rejects.toBeInstanceOf(BadGatewayException);
     });
 
-    it.each(['admin', 'lead'])(
+    it.each(['admin', 'member'])(
       'refuses an explicit main base for %s with MAIN_PR_RESTRICTED before any GitHub call',
       async (role) => {
         appRoleLookup.findAppRole.mockResolvedValueOnce(role);

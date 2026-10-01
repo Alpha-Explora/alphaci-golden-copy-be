@@ -3,7 +3,7 @@ import type { TestingModule } from '@nestjs/testing';
 import { GithubController } from './github.controller.js';
 import { GithubService } from '../infrastructure/github.service.js';
 import type { Request } from 'express';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { APP_ROLE_LOOKUP } from '#kernel/ports/app-role.port';
 
 const fakeRepos = [
@@ -65,7 +65,7 @@ describe('GithubController', () => {
 
   beforeEach(async () => {
     service = makeGithubService();
-    appRoleLookup.findAppRole.mockReset().mockResolvedValue('lead');
+    appRoleLookup.findAppRole.mockReset().mockResolvedValue('admin');
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [GithubController],
@@ -263,8 +263,8 @@ describe('GithubController', () => {
   });
 
   describe('POST /github/repos role gate', () => {
-    it.each(['member', 'qa'])(
-      'refuses %s with PROJECT_ROLE_FORBIDDEN before touching GitHub',
+    it.each(['lead', 'qa'])(
+      'refuses %s with REPOSITORY_CREATE_FORBIDDEN before touching GitHub',
       async (role) => {
         appRoleLookup.findAppRole.mockResolvedValueOnce(role);
         const error = await controller
@@ -272,21 +272,36 @@ describe('GithubController', () => {
           .catch((e: unknown) => e);
         expect(error).toBeInstanceOf(ForbiddenException);
         expect((error as ForbiddenException).getResponse()).toMatchObject({
-          code: 'PROJECT_ROLE_FORBIDDEN',
+          code: 'REPOSITORY_CREATE_FORBIDDEN',
+          message: 'Developers create repositories inside a Project.',
         });
         expect(service.createRepo).not.toHaveBeenCalled();
       },
     );
+
+    it('asks a member for a Project: a bare repository belongs to none (400 PROJECT_REQUIRED)', async () => {
+      appRoleLookup.findAppRole.mockResolvedValueOnce('member');
+      const error = await controller
+        .createRepo(makeRequest('gho'), { name: 'x' } as never)
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        code: 'PROJECT_REQUIRED',
+        message: 'Choose the Project this repository belongs to.',
+      });
+      expect(service.createRepo).not.toHaveBeenCalled();
+    });
 
     it('fails closed when the role cannot be resolved', async () => {
       appRoleLookup.findAppRole.mockResolvedValueOnce(undefined);
       await expect(
         controller.createRepo(makeRequest('gho'), { name: 'x' } as never),
       ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(service.createRepo).not.toHaveBeenCalled();
     });
 
-    it.each(['admin', 'lead'])('lets %s create a repository', async (role) => {
-      appRoleLookup.findAppRole.mockResolvedValueOnce(role);
+    it('lets an admin create a repository', async () => {
+      appRoleLookup.findAppRole.mockResolvedValueOnce('admin');
       await expect(
         controller.createRepo(makeRequest('gho'), { name: 'x' } as never),
       ).resolves.toMatchObject({ defaultBranch: 'main' });

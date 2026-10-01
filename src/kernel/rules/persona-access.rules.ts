@@ -138,6 +138,46 @@ export function canManageProjectLifecycle(role: PlatformAppRole): boolean {
   return PROJECT_MANAGEMENT_ROLES.includes(role);
 }
 
+const PROJECT_CREATOR_ROLES: readonly PlatformAppRole[] = ['admin', 'lead'];
+const REPOSITORY_CREATOR_ROLES: readonly PlatformAppRole[] = [
+  'admin',
+  'member',
+];
+
+/**
+ * Whether `role` may create a Project (an empty hierarchy delivery project):
+ * Product owners ('lead') and admins. Developers and QA never do.
+ */
+export function canCreateProjectFolder(role: PlatformAppRole): boolean {
+  return PROJECT_CREATOR_ROLES.includes(role);
+}
+
+/**
+ * Whether `role` may create or onboard a repository (create wizard, existing
+ * repo setup, hierarchy create, raw GitHub repo create): Developers ('member')
+ * and admins. Product owners ('lead') and QA never do - leads make the Project,
+ * developers fill it. Existing repositories are untouched by this rule.
+ */
+export function canCreateRepository(role: PlatformAppRole): boolean {
+  return REPOSITORY_CREATOR_ROLES.includes(role);
+}
+
+/**
+ * Whether a repository create by `role` must name an existing Project. Only
+ * admins may omit it (the legacy auto-created Project); a Developer always
+ * files the repository into a Project a Product owner already made.
+ */
+export function repositoryCreateRequiresProject(
+  role: PlatformAppRole,
+): boolean {
+  return canCreateRepository(role) && role !== 'admin';
+}
+
+/** Whether `role` may create or edit a Project's QA checklists (requirements). */
+export function canManageRequirements(role: PlatformAppRole): boolean {
+  return PROJECT_CREATOR_ROLES.includes(role);
+}
+
 const REPOSITORY_ASSIGNEE_ROLES: readonly PlatformAppRole[] = ['member'];
 
 /**

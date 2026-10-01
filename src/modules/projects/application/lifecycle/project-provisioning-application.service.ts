@@ -136,6 +136,7 @@ export class ProjectProvisioningApplicationService {
       await this.support.workspaceGate.resolveWorkspaceIdForCreate(
         userId,
         dto.workspaceId,
+        dto.deliveryProjectId,
       );
 
     // Same ordering rule for a caller-chosen Project name: 409 before GitHub.
@@ -211,6 +212,7 @@ export class ProjectProvisioningApplicationService {
         await this.support.workspaceGate.resolveWorkspaceIdForCreate(
           userId,
           dto.workspaceId,
+          dto.deliveryProjectId,
         );
       await this.support.assertProjectNameAvailableForCreate({
         projectName: dto.projectName,

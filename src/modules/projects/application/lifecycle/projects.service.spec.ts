@@ -108,9 +108,8 @@ const makeProjectsRepository = () =>
     // app_role is the disconnect/lifecycle authority (see
     // persona-access.rules.ts); default to a persona allowed to disconnect
     // so tests unrelated to the role gate do not each need to set it.
-    findAppRole: jest.fn().mockResolvedValue('lead'),
+    findAppRole: jest.fn().mockResolvedValue('admin'),
     listByUser: jest.fn().mockResolvedValue([]),
-    isGlobalProjectCreator: jest.fn().mockResolvedValue(true),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>
@@ -2274,7 +2273,7 @@ jobs:
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
       create: jest.fn(),
-      findAppRole: jest.fn().mockResolvedValue('lead'),
+      findAppRole: jest.fn().mockResolvedValue('admin'),
       findByIdAndUser: jest.fn().mockResolvedValue({
         id: 'project-1',
         user_id: 'user-1',
@@ -2434,7 +2433,7 @@ jobs:
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
       create: jest.fn(),
-      findAppRole: jest.fn().mockResolvedValue('lead'),
+      findAppRole: jest.fn().mockResolvedValue('admin'),
       findByIdAndUser: jest.fn().mockResolvedValue({
         id: 'project-1',
         user_id: 'user-1',
@@ -2675,7 +2674,7 @@ jobs:
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
       create: jest.fn(),
-      findAppRole: jest.fn().mockResolvedValue('lead'),
+      findAppRole: jest.fn().mockResolvedValue('admin'),
       findByIdAndUser: jest.fn().mockResolvedValue({
         id: 'project-1',
         user_id: 'user-1',
@@ -2776,7 +2775,7 @@ jobs:
         id: 'project-1',
         repo_full_name: 'tone/orders-api',
       }),
-      findAppRole: jest.fn().mockResolvedValue('lead'),
+      findAppRole: jest.fn().mockResolvedValue('admin'),
     };
     const githubServiceSpy = makeGithubService();
     const disconnectService = makeProjectsService(

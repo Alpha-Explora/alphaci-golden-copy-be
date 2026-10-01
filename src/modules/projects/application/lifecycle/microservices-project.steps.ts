@@ -244,6 +244,7 @@ export async function persistPackedBackendRow(input: {
       workspaceId: await support.workspaceGate.resolveWorkspaceIdForCreate(
         userId,
         dto.workspaceId,
+        dto.deliveryProjectId,
       ),
       repoFullName,
       templateId: bundle.templateId,
@@ -418,6 +419,7 @@ export async function persistPackedFrontendRowIfPushed(input: {
           await input.support.workspaceGate.resolveWorkspaceIdForCreate(
             input.userId,
             input.dto.workspaceId,
+            input.dto.deliveryProjectId,
           ),
         repoFullName: input.repoFullName,
         templateId: input.frontendBundle.templateId,

@@ -10,11 +10,19 @@ import {
   WORKSPACES_PORT,
   type WorkspacesPort,
 } from '#kernel/ports/workspaces.port';
+import {
+  projectRequired,
+  repositoryCreateForbidden,
+} from '#kernel/rules/persona-access.errors';
+import {
+  canCreateRepository,
+  repositoryCreateRequiresProject,
+} from '#kernel/rules/persona-access.rules';
 
 /**
  * Workspace gating for project creation.
  *
- * Extracted verbatim from ProjectsService: the Lead/Admin creator gate and
+ * Extracted from ProjectsService: the Developer/Admin repository creator gate and
  * the workspace resolution rules (explicit group membership or the single-
  * team implicit default).
  */
@@ -27,24 +35,30 @@ export class WorkspaceGateService {
   ) {}
 
   /**
-   * Creating a project is a Lead/Admin action, not a Developer one.
+   * Creating a REPOSITORY (the create wizard, existing-repo setup) is a
+   * Developer/Admin action, and a Developer always files it into an existing
+   * Project. Product owners ('lead') and QA create Projects, not repositories.
    *
-   * This is the same standard HierarchyAccessService.assertGlobalCreatorRole
-   * applies to systems, delivery projects and repositories - a project is the
-   * same kind of act, and having two different answers to "who may create
-   * things here" is how a product ends up with a role model nobody can predict.
+   *   admin:        allowed, Project optional (unchanged).
+   *   member:       allowed only with a deliveryProjectId (400 PROJECT_REQUIRED).
+   *   lead, qa:     403 REPOSITORY_CREATE_FORBIDDEN.
    *
-   * Deliberately keyed on the GLOBAL app_role rather than the workspace role: a
-   * workspace delegated_lead whose app_role is member is a Developer with
-   * extra rights inside one team, not someone who may provision repositories.
+   * Keyed on the GLOBAL app_role (ProjectsRepository.findAppRole folds platform
+   * admins into 'admin'), never the workspace role. Whether the Project exists,
+   * is active and belongs to the chosen team is checked separately by
+   * assertDeliveryProjectAvailableForCreate.
    */
-  async assertCanCreateProjects(userId: string): Promise<void> {
-    if (await this.projectsRepository.isGlobalProjectCreator(userId)) {
-      return;
+  async assertCanCreateRepositories(
+    userId: string,
+    deliveryProjectId?: string | null,
+  ): Promise<void> {
+    const role = await this.projectsRepository.findAppRole(userId);
+    if (!canCreateRepository(role)) {
+      throw repositoryCreateForbidden();
     }
-    throw new ForbiddenException(
-      'Only a Lead or Admin can create projects. Ask a team lead to create it for you.',
-    );
+    if (repositoryCreateRequiresProject(role) && !deliveryProjectId) {
+      throw projectRequired();
+    }
   }
 
   /**
@@ -87,8 +101,9 @@ export class WorkspaceGateService {
   async resolveWorkspaceIdForCreate(
     userId: string,
     workspaceId?: string | null,
+    deliveryProjectId?: string | null,
   ): Promise<string | null> {
-    await this.assertCanCreateProjects(userId);
+    await this.assertCanCreateRepositories(userId, deliveryProjectId);
     if (!workspaceId) {
       // Workspaces disabled entirely: leave the project unscoped as before
       // rather than blocking creation on a module that isn't running.

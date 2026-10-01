@@ -260,4 +260,108 @@ describe('HierarchyAccessService', () => {
       ).not.toHaveBeenCalled();
     });
   });
+
+  describe('create gates (Projects vs repositories)', () => {
+    const membership = {
+      workspaceId: 'group-1',
+      userId: 'user-1',
+      role: 'member' as const,
+      memberId: 'member-1',
+    };
+
+    function arrange(appRole: string, member = true) {
+      groupsRepository.findActiveMembership.mockResolvedValue(
+        member ? membership : null,
+      );
+      groupsRepository.findGroupById.mockResolvedValue({} as never);
+      systemsRepository.findGroupIdForSystem.mockResolvedValue('group-1');
+      deliveryProjectsRepository.findGroupIdForDeliveryProject.mockResolvedValue(
+        'group-1',
+      );
+      platformAdminsRepository.findRole.mockResolvedValue(null);
+      platformAdminsRepository.findAppRole.mockResolvedValue(appRole as never);
+    }
+
+    it.each([
+      ['lead', true],
+      ['admin', true],
+      ['member', false],
+      ['qa', false],
+    ])('Project create under a system: %s allowed=%s', async (role, ok) => {
+      arrange(role);
+      const call = service.assertCanCreateUnderSystem('system-1', 'user-1');
+      if (ok) {
+        await expect(call).resolves.toEqual({ groupId: 'group-1' });
+      } else {
+        await expect(call).rejects.toMatchObject({
+          response: { code: 'PROJECT_CREATE_FORBIDDEN' },
+        });
+      }
+    });
+
+    it.each([
+      ['lead', true],
+      ['admin', true],
+      ['member', false],
+      ['qa', false],
+    ])('empty Project in a group: %s allowed=%s', async (role, ok) => {
+      arrange(role);
+      const call = service.assertCanCreateProjectInGroup('group-1', 'user-1');
+      if (ok) {
+        await expect(call).resolves.toBeUndefined();
+      } else {
+        await expect(call).rejects.toMatchObject({
+          response: { code: 'PROJECT_CREATE_FORBIDDEN' },
+        });
+      }
+    });
+
+    it.each([
+      ['member', true],
+      ['admin', true],
+      ['lead', false],
+      ['qa', false],
+    ])('repository create under a Project: %s allowed=%s', async (role, ok) => {
+      arrange(role);
+      const call = service.assertCanCreateUnderDeliveryProject(
+        'dp-1',
+        'user-1',
+      );
+      if (ok) {
+        await expect(call).resolves.toEqual({ groupId: 'group-1' });
+      } else {
+        await expect(call).rejects.toMatchObject({
+          response: { code: 'REPOSITORY_CREATE_FORBIDDEN' },
+        });
+      }
+    });
+
+    it("refuses a member into another team's Project (404, existence hidden)", async () => {
+      arrange('member', false);
+      await expect(
+        service.assertCanCreateUnderDeliveryProject('dp-other', 'user-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('lets a platform admin create under any Project without membership', async () => {
+      arrange('member', false);
+      platformAdminsRepository.findRole.mockResolvedValue('admin' as never);
+      await expect(
+        service.assertCanCreateUnderDeliveryProject('dp-1', 'user-1'),
+      ).resolves.toEqual({ groupId: 'group-1' });
+    });
+
+    it('createSystem (Project + repository in one step) is admin-only', async () => {
+      for (const role of ['lead', 'member', 'qa']) {
+        arrange(role);
+        await expect(
+          service.assertCanCreateInGroup('group-1', 'user-1'),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      }
+      arrange('admin');
+      await expect(
+        service.assertCanCreateInGroup('group-1', 'user-1'),
+      ).resolves.toBeUndefined();
+    });
+  });
 });

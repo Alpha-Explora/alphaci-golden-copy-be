@@ -9,6 +9,14 @@ import {
   PlatformAdminAccessService,
 } from '#modules/identity-access/admin/index.js';
 import {
+  projectCreateForbidden,
+  repositoryCreateForbidden,
+} from '#kernel/rules/persona-access.errors';
+import {
+  canCreateProjectFolder,
+  canCreateRepository,
+} from '#kernel/rules/persona-access.rules';
+import {
   AssignmentsRepository,
   type AssignmentRecord,
 } from '../infrastructure/assignments.repository';
@@ -76,33 +84,37 @@ export class HierarchyAccessService {
 
   // ─── Global create capability (single-role model) ─────────────────────
   //
-  // Product decision (2026-07-14): the capability to CREATE systems, delivery
-  // projects, and repositories is governed by the GLOBAL app_role assigned in
-  // the Admin Console — NOT the per-group membership tier. Only 'admin' and
-  // 'lead' may create; 'member' is read-/assigned-only. A user still has to be
-  // an active member of the group (so non-members keep getting a 404 that
-  // hides the group's existence), but their group role tier is irrelevant to
-  // this capability — a group 'viewer' who is a global 'lead' can create, and
-  // a group 'admin' who is a global 'member' cannot. Platform admins (and
+  // The capability to CREATE things is governed by the GLOBAL app_role assigned
+  // in the Admin Console - NOT the per-group membership tier (persona rules in
+  // #kernel/rules/persona-access.rules):
+  //   - Projects (delivery projects / empty project folders): lead | admin.
+  //   - Repositories: member (Developer) | admin, always INTO a Project.
+  // A user still has to be an active member of the group (non-members keep
+  // getting a 404 that hides the group's existence). Platform admins (and
   // global 'admin', via isPlatformAdmin) override the membership requirement.
 
-  /**
-   * Throws unless the user is a global creator (app_role 'admin'/'lead', or a
-   * platform admin). Assumes the caller has already established the user's
-   * relationship to the target group (membership or platform-admin override).
-   */
-  private async assertGlobalCreatorRole(userId: string): Promise<void> {
-    // isPlatformAdmin already covers platform_admins rows AND global app_role
-    // 'admin', so the only remaining role to allow explicitly is 'lead'.
+  /** Throws 403 PROJECT_CREATE_FORBIDDEN unless the persona may create Projects. */
+  private async assertCanCreateProjectRole(userId: string): Promise<void> {
+    // isPlatformAdmin already covers platform_admins rows AND global 'admin'.
     if (await this.isPlatformAdmin(userId)) return;
-    if ((await this.getAppRole(userId)) !== 'lead') {
-      throw new ForbiddenException(
-        'Only a Lead or Admin can create systems, delivery projects, or repositories',
-      );
+    if (!canCreateProjectFolder(await this.getAppRole(userId))) {
+      throw projectCreateForbidden();
     }
   }
 
-  /** Create directly under a group (systems). 404 group → 403 role. */
+  /** Throws 403 REPOSITORY_CREATE_FORBIDDEN unless the persona may create repositories. */
+  private async assertCanCreateRepositoryRole(userId: string): Promise<void> {
+    if (await this.isPlatformAdmin(userId)) return;
+    if (!canCreateRepository(await this.getAppRole(userId))) {
+      throw repositoryCreateForbidden();
+    }
+  }
+
+  /**
+   * Create a system directly under a group (system + auto Project + first
+   * repository in one step) - it creates a Project AND a repository, so only a
+   * persona allowed both (admin) passes. 404 group -> 403 role.
+   */
   async assertCanCreateInGroup(groupId: string, userId: string): Promise<void> {
     if (await this.isPlatformAdmin(userId)) {
       const group = await this.groupsRepository.findGroupById(groupId);
@@ -112,10 +124,30 @@ export class HierarchyAccessService {
       return;
     }
     await this.assertGroupMembership(groupId, userId);
-    await this.assertGlobalCreatorRole(userId);
+    await this.assertCanCreateProjectRole(userId);
+    await this.assertCanCreateRepositoryRole(userId);
   }
 
-  /** Create under a system (delivery projects). 404 system → 403 role. */
+  /**
+   * Create an empty Project folder (no repository) under a group: lead | admin.
+   * 404 group -> 403 PROJECT_CREATE_FORBIDDEN.
+   */
+  async assertCanCreateProjectInGroup(
+    groupId: string,
+    userId: string,
+  ): Promise<void> {
+    if (await this.isPlatformAdmin(userId)) {
+      const group = await this.groupsRepository.findGroupById(groupId);
+      if (!group) {
+        throw new NotFoundException('Group not found');
+      }
+      return;
+    }
+    await this.assertGroupMembership(groupId, userId);
+    await this.assertCanCreateProjectRole(userId);
+  }
+
+  /** Create under a system (delivery projects): lead | admin. 404 system -> 403 role. */
   async assertCanCreateUnderSystem(
     systemId: string,
     userId: string,
@@ -126,12 +158,16 @@ export class HierarchyAccessService {
     }
     if (!(await this.isPlatformAdmin(userId))) {
       await this.assertGroupMembership(groupId, userId);
-      await this.assertGlobalCreatorRole(userId);
+      await this.assertCanCreateProjectRole(userId);
     }
     return { groupId };
   }
 
-  /** Create under a delivery project (repositories). 404 dp → 403 role. */
+  /**
+   * Create under a delivery project (repositories): member (an active member
+   * of the Project's team) | admin. 404 dp / non-member -> 403
+   * REPOSITORY_CREATE_FORBIDDEN for lead and qa.
+   */
   async assertCanCreateUnderDeliveryProject(
     deliveryProjectId: string,
     userId: string,
@@ -145,7 +181,7 @@ export class HierarchyAccessService {
     }
     if (!(await this.isPlatformAdmin(userId))) {
       await this.assertGroupMembership(groupId, userId);
-      await this.assertGlobalCreatorRole(userId);
+      await this.assertCanCreateRepositoryRole(userId);
     }
     return { groupId };
   }

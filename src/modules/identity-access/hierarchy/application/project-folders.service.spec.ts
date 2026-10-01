@@ -56,6 +56,7 @@ const pairRows: ProjectFolderRow[] = [
 function setup({
   platformAdmin = false,
   role = 'member',
+  appRole = 'member',
   rows = pairRows,
   linked = ['project-fe', 'project-be'],
   projects = [
@@ -70,6 +71,7 @@ function setup({
 }: {
   platformAdmin?: boolean;
   role?: string;
+  appRole?: string;
   rows?: ProjectFolderRow[];
   linked?: string[];
   projects?: WorkspaceProjectSummary[];
@@ -80,6 +82,7 @@ function setup({
   };
   const access = {
     isPlatformAdmin: jest.fn().mockResolvedValue(platformAdmin),
+    getAppRole: jest.fn().mockResolvedValue(appRole),
     assertGroupMembership: jest.fn().mockResolvedValue({ role }),
   };
   const lookup = {
@@ -94,6 +97,22 @@ function setup({
 }
 
 describe('ProjectFoldersService.listProjectFolders', () => {
+  it.each([
+    ['admin', false, true, true],
+    ['lead', false, true, false],
+    ['member', false, false, true],
+    ['qa', false, false, false],
+    ['member', true, true, true],
+  ])(
+    'persona %s (platform admin %s) gets canCreateProject=%s, canCreateRepository=%s',
+    async (appRole, platformAdmin, canCreateProject, canCreateRepository) => {
+      const { service } = setup({ appRole, platformAdmin });
+      const result = await service.listProjectFolders('group-1', 'user-1');
+      expect(result.canCreateProject).toBe(canCreateProject);
+      expect(result.canCreateRepository).toBe(canCreateRepository);
+    },
+  );
+
   it('returns one folder per project with its repositories and their roles', async () => {
     const { service, lookup } = setup();
 
@@ -101,6 +120,8 @@ describe('ProjectFoldersService.listProjectFolders', () => {
 
     expect(lookup.listWorkspaceProjects).toHaveBeenCalledWith('group-1');
     expect(result.canManage).toBe(false);
+    expect(result.canCreateProject).toBe(false);
+    expect(result.canCreateRepository).toBe(true);
     expect(result.unfiled).toEqual([]);
     expect(result.folders).toEqual([
       {

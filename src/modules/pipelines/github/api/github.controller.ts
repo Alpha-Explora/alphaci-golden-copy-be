@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
   Inject,
   Post,
@@ -15,7 +14,14 @@ import {
   APP_ROLE_LOOKUP,
   type AppRoleLookup,
 } from '#kernel/ports/app-role.port';
-import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
+import {
+  projectRequired,
+  repositoryCreateForbidden,
+} from '#kernel/rules/persona-access.errors';
+import {
+  canCreateRepository,
+  repositoryCreateRequiresProject,
+} from '#kernel/rules/persona-access.rules';
 import { CreateRepoDto } from './dto/create-repo.dto.js';
 import { LinkInstallationDto } from './dto/link-installation.dto';
 import { GithubService } from '../infrastructure/github.service';
@@ -138,18 +144,17 @@ export class GithubController {
   /** POST /github/repos — create a new GitHub repository with branch structure */
   @Post('repos')
   async createRepo(@Req() req: Request, @Body() body: CreateRepoDto) {
-    // Creating a repository is a Lead/Admin action, the same global app_role
-    // gate as project creation (WorkspaceGateService.assertCanCreateProjects).
-    // Unresolved role -> 'member' -> refused (fail closed).
+    // Creating a bare repository has no Project to file it under, so only an
+    // admin may do it; Developers create repositories inside a Project and
+    // Product owners create Projects. Unresolved role -> 'qa' (least
+    // privileged): refused, fail closed.
     const role =
-      (await this.appRoleLookup.findAppRole(req.session.user!.id)) ?? 'member';
-    if (!canManageProjectLifecycle(role)) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        error: 'Forbidden',
-        code: 'PROJECT_ROLE_FORBIDDEN',
-        message: 'Only a Lead or Admin can create repositories.',
-      });
+      (await this.appRoleLookup.findAppRole(req.session.user!.id)) ?? 'qa';
+    if (!canCreateRepository(role)) {
+      throw repositoryCreateForbidden();
+    }
+    if (repositoryCreateRequiresProject(role)) {
+      throw projectRequired();
     }
 
     const accessToken = req.session.githubAccessToken;
