@@ -114,15 +114,24 @@ export class AuthController {
     }
 
     // Role + provenance in one round-trip.
-    const { role: appRole, source: appRoleSource } =
+    const { role: storedAppRole, source: appRoleSource } =
       await this.platformAdminAccessService.findAppRoleWithSource(user.id);
+    const platformRole = await this.platformAdminAccessService.findRole(
+      user.id,
+    );
+    // Effective persona, folded exactly like the server gates
+    // (ProjectsRepository.findAppRole): any platform_admins row is 'admin',
+    // otherwise the stored app_role. Without this a platform admin whose
+    // stored app_role is 'member' got member UI while every API gate treated
+    // them as admin.
+    const appRole = platformRole !== null ? 'admin' : storedAppRole;
 
     return {
       authenticated: true,
       user,
       // null for ordinary users; 'admin' | 'super_admin' for platform admins.
       // The frontend uses this to gate the /admin surface.
-      platformRole: await this.platformAdminAccessService.findRole(user.id),
+      platformRole,
       // Global hierarchy role ('admin' | 'lead' | 'qa' | 'member'). The frontend uses
       // this to gate create actions (systems/repositories) — only admin/lead,
       // and to show the "Team lead" / "Developer" badge in the sidebar.

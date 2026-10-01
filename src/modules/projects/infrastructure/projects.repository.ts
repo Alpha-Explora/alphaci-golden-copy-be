@@ -604,6 +604,29 @@ export class ProjectsRepository
   }
 
   /**
+   * Lower-cased repo names of every provisioned project the caller may see
+   * (same predicate as isRepoVisibleToUser), optionally limited to one
+   * workspace. Backs PROJECT_VISIBILITY_LOOKUP.listVisibleRepoNames.
+   */
+  async listVisibleRepoNames(
+    userId: string,
+    workspaceId?: string,
+  ): Promise<string[]> {
+    const result = await this.databaseService.query<{ repo: string }>(
+      `
+        SELECT DISTINCT lower(pp.repo_full_name) AS repo
+        FROM projects.provisioned_projects AS pp
+        WHERE pp.status = 'provisioned'
+          AND pp.repo_full_name IS NOT NULL
+          AND ($2::uuid IS NULL OR pp.workspace_id = $2::uuid)
+          AND (${projectVisibilitySql('$1')});
+      `,
+      [userId, workspaceId ?? null],
+    );
+    return result.rows.map((r) => r.repo);
+  }
+
+  /**
    * Whether the project row exists at all, regardless of who is asking. Only
    * for telling "gone" apart from "not yours" after a user-scoped lookup
    * missed -- never for authorizing anything.

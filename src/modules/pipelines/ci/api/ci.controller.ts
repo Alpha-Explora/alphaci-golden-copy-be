@@ -87,6 +87,7 @@ export class CiController {
       query.repoFullName,
       query.limit,
       query.offset,
+      query.workspaceId,
     );
   }
 

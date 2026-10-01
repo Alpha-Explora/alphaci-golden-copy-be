@@ -231,18 +231,22 @@ export class CiRunReportsRepository implements CiStageResultsLookup {
   }
 
   /**
-   * Fetch run-stage rows across all repos owned by a user, ordered most-recent
-   * run first. Used when GET /ci/runs is called without a repoFullName filter.
+   * Fetch run-stage rows for a set of repositories, most-recent run first.
+   * Used when GET /ci/runs is called without a repoFullName filter. The caller
+   * resolves the repo set through PROJECT_VISIBILITY_LOOKUP (projects the user
+   * can see, optionally one workspace), so this table is never joined to
+   * projects.* here. Matching is case-insensitive; names must be lower-cased.
    *
-   * @param userId - The authenticated user whose runs to return.
+   * @param repoFullNamesLower - Lower-cased repo_full_name values to include.
    * @param limit - Maximum rows to return (default 150, max 500).
    * @param offset - Rows to skip for pagination (default 0).
    */
-  async findRecentByUser(
-    userId: string,
+  async findRecentByRepos(
+    repoFullNamesLower: string[],
     limit = 150,
     offset = 0,
   ): Promise<CiRunReportRow[]> {
+    if (repoFullNamesLower.length === 0) return [];
     const result = await this.databaseService.query<CiRunReportRow>(
       `
         SELECT
@@ -260,11 +264,11 @@ export class CiRunReportsRepository implements CiStageResultsLookup {
           created_at,
           updated_at
         FROM workflow.ci_run_reports
-        WHERE user_id = $1
+        WHERE lower(repo_full_name) = ANY($1::text[])
         ORDER BY run_id DESC, stage ASC
         LIMIT $2 OFFSET $3;
       `,
-      [userId, limit, offset],
+      [repoFullNamesLower, limit, offset],
     );
 
     return result.rows;

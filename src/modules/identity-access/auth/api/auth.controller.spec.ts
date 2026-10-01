@@ -170,6 +170,20 @@ describe('AuthController', () => {
       });
     });
 
+    it('folds a platform admin into appRole admin and keeps platformRole', async () => {
+      const access = controller['platformAdminAccessService'] as unknown as {
+        findRole: jest.Mock;
+      };
+      access.findRole.mockResolvedValueOnce('admin');
+      const result = await controller.me(makeRequest(fakeUser));
+      expect(result).toMatchObject({ appRole: 'admin', platformRole: 'admin' });
+    });
+
+    it('reports the stored app_role for a non-platform-admin', async () => {
+      const result = await controller.me(makeRequest(fakeUser));
+      expect(result).toMatchObject({ appRole: 'member', platformRole: null });
+    });
+
     it('returns unauthenticated when no user', async () => {
       (authService.getSessionUser as jest.Mock).mockResolvedValueOnce(null);
       const req = makeRequest();

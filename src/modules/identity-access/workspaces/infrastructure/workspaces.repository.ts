@@ -73,11 +73,16 @@ export class WorkspacesRepository {
           workspace.id,
           workspace.name,
           workspace.kind,
-          member.role
+          -- Derived from the GLOBAL app_role, same allow-list as
+          -- groups.repository.ts: the stored member.role is not authoritative.
+          CASE WHEN app_user.app_role IN ('admin', 'lead') THEN 'admin' ELSE 'member' END AS role
         FROM orgs.workspace_members AS member
         JOIN orgs.workspaces AS workspace
           ON workspace.id = member.workspace_id
+        JOIN identity.app_users AS app_user
+          ON app_user.id = member.user_id
         WHERE member.user_id = $1
+          AND member.member_status = 'active'
         ORDER BY workspace.created_at ASC;
       `,
       [userId],
@@ -131,7 +136,8 @@ export class WorkspacesRepository {
         SELECT workspace_id, user_id, role
         FROM orgs.workspace_members
         WHERE workspace_id = $1
-          AND user_id = $2;
+          AND user_id = $2
+          AND member_status = 'active';
       `,
       [workspaceId, userId],
     );

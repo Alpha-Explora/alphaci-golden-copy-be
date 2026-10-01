@@ -17,13 +17,16 @@ const makeRunReportsRepository = () =>
   ({
     upsert: jest.fn(),
     findRecentByRepo: jest.fn(),
-    findRecentByUser: jest.fn(),
+    findRecentByRepos: jest.fn(),
   }) as unknown as CiRunReportsRepository;
 
 /** Defaults to visible so tests that never exercise assertOwnership are unaffected. */
 const makeProjectVisibility = (
   isRepoVisibleToUser: jest.Mock = jest.fn().mockResolvedValue(true),
-): ProjectVisibilityLookup => ({ isRepoVisibleToUser });
+  listVisibleRepoNames: jest.Mock = jest
+    .fn()
+    .mockResolvedValue(['acme/orders-api']),
+): ProjectVisibilityLookup => ({ isRepoVisibleToUser, listVisibleRepoNames });
 
 function row(overrides: Partial<CiRunReportRow>): CiRunReportRow {
   return {
@@ -60,11 +63,13 @@ describe('CiReportsService.getRuns grouping', () => {
   });
 
   it('merges access/quality/package rows sharing a commit SHA into one run, even though each stage has its own GitHub run_id', async () => {
-    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
-      row({ stage: 'package', run_id: '300', status: 'failure' }),
-      row({ stage: 'quality', run_id: '200', status: 'success' }),
-      row({ stage: 'access', run_id: '100', status: 'success' }),
-    ]);
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [
+        row({ stage: 'package', run_id: '300', status: 'failure' }),
+        row({ stage: 'quality', run_id: '200', status: 'success' }),
+        row({ stage: 'access', run_id: '100', status: 'success' }),
+      ],
+    );
 
     const { runs } = await service.getRuns('user-1');
 
@@ -87,17 +92,19 @@ describe('CiReportsService.getRuns grouping', () => {
   });
 
   it('keeps a just-triggered stage pending while it could still be queueing', async () => {
-    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
-      row({
-        stage: 'access',
-        run_id: '400',
-        commit_sha: 'sha-2',
-        status: 'success',
-        // Reported moments ago: quality may simply not have started yet.
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }),
-    ]);
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [
+        row({
+          stage: 'access',
+          run_id: '400',
+          commit_sha: 'sha-2',
+          status: 'success',
+          // Reported moments ago: quality may simply not have started yet.
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+      ],
+    );
 
     const { runs } = await service.getRuns('user-1');
 
@@ -114,14 +121,16 @@ describe('CiReportsService.getRuns grouping', () => {
   it('calls a long-silent stage stalled rather than leaving it pending forever', async () => {
     // A workflow rejected at startup runs no jobs, so it never reports. The
     // run sat on "pending" indefinitely and the pipeline looked merely slow.
-    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
-      row({
-        stage: 'access',
-        run_id: '400',
-        commit_sha: 'sha-2',
-        status: 'success',
-      }),
-    ]);
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [
+        row({
+          stage: 'access',
+          run_id: '400',
+          commit_sha: 'sha-2',
+          status: 'success',
+        }),
+      ],
+    );
 
     const { runs } = await service.getRuns('user-1');
 
@@ -136,10 +145,12 @@ describe('CiReportsService.getRuns grouping', () => {
 
   it('ignores a stale re-run row for a stage that already has a more recent report', async () => {
     // Rows arrive ordered run_id DESC (as the repository query guarantees).
-    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
-      row({ stage: 'access', run_id: '150', status: 'success' }),
-      row({ stage: 'access', run_id: '100', status: 'failure' }),
-    ]);
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [
+        row({ stage: 'access', run_id: '150', status: 'success' }),
+        row({ stage: 'access', run_id: '100', status: 'failure' }),
+      ],
+    );
 
     const { runs } = await service.getRuns('user-1');
 
@@ -173,9 +184,9 @@ describe('CiReportsService.getRuns per-tool checks', () => {
   });
 
   const stageOf = async (results: Record<string, unknown>) => {
-    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
-      row({ stage: 'quality', run_id: '200', status: 'success', results }),
-    ]);
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [row({ stage: 'quality', run_id: '200', status: 'success', results })],
+    );
 
     const { runs } = await service.getRuns('user-1');
     return runs[0]!.stages.find((stage) => stage.stage === 'quality')!;
@@ -301,34 +312,46 @@ describe('CiReportsService.getRuns, one commit promoted across branches', () => 
   });
 
   it('keeps one run per branch instead of collapsing them', async () => {
-    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
-      row({
-        branch: 'main',
-        stage: 'quality',
-        run_id: '600',
-        status: 'success',
-      }),
-      row({
-        branch: 'main',
-        stage: 'access',
-        run_id: '500',
-        status: 'success',
-      }),
-      row({
-        branch: 'uat',
-        stage: 'quality',
-        run_id: '400',
-        status: 'failure',
-      }),
-      row({ branch: 'uat', stage: 'access', run_id: '300', status: 'success' }),
-      row({
-        branch: 'dev',
-        stage: 'quality',
-        run_id: '200',
-        status: 'success',
-      }),
-      row({ branch: 'dev', stage: 'access', run_id: '100', status: 'success' }),
-    ]);
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [
+        row({
+          branch: 'main',
+          stage: 'quality',
+          run_id: '600',
+          status: 'success',
+        }),
+        row({
+          branch: 'main',
+          stage: 'access',
+          run_id: '500',
+          status: 'success',
+        }),
+        row({
+          branch: 'uat',
+          stage: 'quality',
+          run_id: '400',
+          status: 'failure',
+        }),
+        row({
+          branch: 'uat',
+          stage: 'access',
+          run_id: '300',
+          status: 'success',
+        }),
+        row({
+          branch: 'dev',
+          stage: 'quality',
+          run_id: '200',
+          status: 'success',
+        }),
+        row({
+          branch: 'dev',
+          stage: 'access',
+          run_id: '100',
+          status: 'success',
+        }),
+      ],
+    );
 
     const { runs } = await service.getRuns('user-1');
 
@@ -347,29 +370,31 @@ describe('CiReportsService.getRuns, one commit promoted across branches', () => 
   it('does not let one branch result mask another', async () => {
     // The uat run failed while dev and main passed. Collapsed into one group,
     // a reader saw a single status and could not tell which branch broke.
-    (runReportsRepository.findRecentByUser as jest.Mock).mockResolvedValueOnce([
-      row({
-        branch: 'main',
-        stage: 'quality',
-        run_id: '600',
-        status: 'success',
-      }),
-      row({
-        branch: 'uat',
-        stage: 'quality',
-        run_id: '400',
-        status: 'failure',
-      }),
-      row({
-        branch: 'dev',
-        stage: 'quality',
-        run_id: '200',
-        status: 'success',
-      }),
-      row({ branch: 'main', stage: 'access', run_id: '550' }),
-      row({ branch: 'uat', stage: 'access', run_id: '350' }),
-      row({ branch: 'dev', stage: 'access', run_id: '150' }),
-    ]);
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [
+        row({
+          branch: 'main',
+          stage: 'quality',
+          run_id: '600',
+          status: 'success',
+        }),
+        row({
+          branch: 'uat',
+          stage: 'quality',
+          run_id: '400',
+          status: 'failure',
+        }),
+        row({
+          branch: 'dev',
+          stage: 'quality',
+          run_id: '200',
+          status: 'success',
+        }),
+        row({ branch: 'main', stage: 'access', run_id: '550' }),
+        row({ branch: 'uat', stage: 'access', run_id: '350' }),
+        row({ branch: 'dev', stage: 'access', run_id: '150' }),
+      ],
+    );
 
     const { runs } = await service.getRuns('user-1');
 
@@ -436,5 +461,80 @@ describe('CiReportsService.getRuns, repository-scoped visibility', () => {
     expect(
       runReportsRepository.findRecentByRepo as jest.Mock,
     ).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The unscoped list used to be `WHERE user_id = caller` (the project OWNER at
+ * ingest): it showed an owner every run of every team and showed QA /
+ * developers (who own nothing) nothing. It now resolves the caller's VISIBLE
+ * repos through the port and optionally narrows to one workspace.
+ */
+describe('CiReportsService.getRuns, visibility + workspace scoping', () => {
+  let runReportsRepository: CiRunReportsRepository;
+  let projectVisibility: ProjectVisibilityLookup;
+  let service: CiReportsService;
+
+  beforeEach(() => {
+    runReportsRepository = makeRunReportsRepository();
+    projectVisibility = makeProjectVisibility();
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      projectVisibility,
+    );
+  });
+
+  it('reads the runs of the repos the caller can see (a team member who owns nothing)', async () => {
+    (projectVisibility.listVisibleRepoNames as jest.Mock).mockResolvedValueOnce(
+      ['acme/orders-api', 'acme/web'],
+    );
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [row({ run_id: '7' })],
+    );
+
+    const { runs } = await service.getRuns('member-1', undefined, 50, 10);
+
+    expect(projectVisibility.listVisibleRepoNames).toHaveBeenCalledWith(
+      'member-1',
+      undefined,
+    );
+    expect(runReportsRepository.findRecentByRepos).toHaveBeenCalledWith(
+      ['acme/orders-api', 'acme/web'],
+      50,
+      10,
+    );
+    expect(runs).toHaveLength(1);
+  });
+
+  it('passes workspaceId through to narrow to one team', async () => {
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [],
+    );
+
+    await service.getRuns('owner-1', undefined, undefined, undefined, 'ws-1');
+
+    expect(projectVisibility.listVisibleRepoNames).toHaveBeenCalledWith(
+      'owner-1',
+      'ws-1',
+    );
+  });
+
+  it('returns nothing for a non-member (no visible repos)', async () => {
+    (projectVisibility.listVisibleRepoNames as jest.Mock).mockResolvedValueOnce(
+      [],
+    );
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [],
+    );
+
+    const { runs } = await service.getRuns('stranger-1');
+
+    expect(runs).toEqual([]);
+    expect(runReportsRepository.findRecentByRepos).toHaveBeenCalledWith(
+      [],
+      undefined,
+      undefined,
+    );
   });
 });

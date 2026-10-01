@@ -70,7 +70,7 @@ To maintain high developer velocity while preventing visual noise and accidental
 ├────────────────────────────────────────────────────────────────────────┤
 │  Persona     │ Visible Branches in UI Dropdowns                        │
 ├──────────────┼─────────────────────────────────────────────────────────┤
-│  Developer   │ [dev] + [Own feature branches]                          │
+│  Developer   │ [dev], [uat] + [Own feature branches]                  │
 │  QA Team     │ [dev], [uat], [main] (Canonical rungs only)             │
 │  Team Lead   │ [All branches] (Full repository oversight)              │
 │  Pipeline    │ [dev], [uat], [main] (Runs swimlane grouping)           │
@@ -79,7 +79,7 @@ To maintain high developer velocity while preventing visual noise and accidental
 
 1. **Developers (`member`)**:
    - Filtered in `GET /projects/:projectId/workspace/branches`.
-   - Returns the shared working branch (`dev`) and branches authored by that developer (`feature/<login>-*` or commit author match).
+   - Returns the shared working branch (`dev`), `uat` (deliberate: Developers promote `dev → uat`, so they must see the target rung) and branches authored by that developer (`feature/<login>-*` or commit author match).
    - In-progress branches of peer developers are filtered out of individual selector dropdowns.
 
 2. **QA Team (`qa`)**:
@@ -257,7 +257,7 @@ Based on comprehensive inspection of the current codebase, the following 7 enhan
 
 ---
 
-## 9. Implementation Status (2026-09-30)
+## 9. Implementation Status (2026-10-01)
 
 Authority for persona gates is the global `identity.app_users.app_role` (platform admins resolve to `admin`), always as an allow-list. Workspace scoping is still required: the user must be the project owner, an active member of its workspace, or assigned to one of its repositories.
 
@@ -265,11 +265,11 @@ Authority for persona gates is the global `identity.app_users.app_role` (platfor
 |---|---|---|
 | 0 | Delete a Project folder with its repositories (BE #127, FE #70); ghost repositories removed and `provisioned_project_id` cascades on delete | Done |
 | 1 | Merge into `main` only via QA Studio; no manual PRs into `main`; QA cannot open/merge PRs; env vars, reinstall secrets and disconnect on `app_role` lead/admin | Done |
-| 2 | §7 project-created fan-out; §6 returned-to-dev reaches developers, re-test reaches QA; §8.6 notification deep-links | Not started |
-| 3 | §4 / §8.2 role-filtered branch list; §8.4 PR presets; Runs tab summary vs deep debug | Not started |
+| 2 | §7 project-created fan-out; §6 returned-to-dev reaches developers, re-test reaches QA; §8.6 notification deep-links | Done |
+| 3 | §4 / §8.2 role-filtered branch list; §8.4 PR presets; Runs tab summary vs deep debug | Done |
+| 7 | Persona-audit backend fixes: `GET /ci/runs` scoped by project visibility plus optional `workspaceId` (was project-owner only); `GET /workspaces/me` lists active memberships only with the role derived from `app_role`; `/auth/me` `appRole` folds platform admins into `admin`; workspace membership lookups ignore removed members | Done |
 | 4 | §8.5 FE/BE promotion PR pairing (real location: `staged-workflow.builder.ts` + `alphaci-workflow/.github/workflows/promotion.yml`); §8.7 branch-protection drift probe (protection is applied in the provisioners) | Not started |
 
 Known code-vs-spec gaps still open (spec is the intended behaviour):
 - §3 "Ready for Production" card: rendered only inside QA Studio, which Developers cannot open; spec says Developers can view it.
-- Custom domains and the remaining deployment-target actions still authorize on the stored workspace role, not `app_role`.
 - GitHub branch protection uses `restrictions: null`, so a user with write access can still merge `uat → main` directly on github.com; ALPHACI itself no longer offers that path.
