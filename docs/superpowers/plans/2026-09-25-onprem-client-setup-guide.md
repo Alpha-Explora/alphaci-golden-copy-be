@@ -97,6 +97,26 @@ Windows Server 2022 VM with nested virtualization, then the first client.
 - **People:** a Windows administrator for the install, and an operator who will enter application secrets.
 - **Service account:** a local or domain account, for example `alphaci-svc`, that owns the WSL distro and runs the scheduled task.
 
+## Public access and domain
+
+By default the app is reachable on the client's network at `https://<ALPHACI_HOSTNAME>`, using the client's DNS and certificate. For a demo, or a client who wants it reachable from the internet without opening a router port, publish it through an outbound tunnel. Three ways, from quickest to most stable:
+
+| Mode | Domain | Setup | Use for |
+|---|---|---|---|
+| Quick tunnel | Random `*.trycloudflare.com`, changes on restart | `cloudflared tunnel --url https://localhost:443 --no-tls-verify --origin-server-name <ALPHACI_HOSTNAME> --http-host-header <ALPHACI_HOSTNAME>` on Windows | A same-day demo |
+| Named tunnel | Any hostname on a domain whose DNS is on Cloudflare; changed in the dashboard | The `tunnel` service in `compose.example.yaml` | Demos that must keep the same address; clients who allow outbound Cloudflare |
+| Client DNS | The client's own name, internal or public | Client DNS record, a certificate in `/opt/alphaci/tls`, and a firewall or reverse proxy rule | Production |
+
+Named tunnel setup: in Cloudflare Zero Trust, Networks, Tunnels, create a tunnel and copy its token; add a public hostname (for example `app.example.com`) with service `http://caddy:80`; write `TUNNEL_TOKEN=<token>` to `/opt/alphaci/secrets/cloudflared.env` (mode 600); add `COMPOSE_PROFILES=tunnel` to `/opt/alphaci/agent.env`; and use the example `Caddyfile`, whose `:80` listener is reachable only on the Compose network. The agent's next release starts the tunnel with the app. The domain is only the public hostname in the tunnel, so changing it never touches the host or the release. The token is a host secret like the others: it stays in `secrets/` and never goes to AlphaCI or GitHub.
+
+A tunnel exposes the app to the whole internet. Put Cloudflare Access in front of it for anything that is not meant to be public.
+
+- **Host:** Windows Server 2022 x64, 4 vCPU, 16 GB RAM, 100 GB SSD free, local administrator access for the install.
+- **Virtualization:** if the server is a VM, nested virtualization on. Hyper-V: `Set-VMProcessor -VMName <vm> -ExposeVirtualizationExtensions $true`. VMware: "Expose hardware assisted virtualization to the guest OS".
+- **Outbound HTTPS (443) allowed** from the host to: `ghcr.io`, `pkg-containers.githubusercontent.com`, the AlphaCI API host, `download.docker.com`, `archive.ubuntu.com`, `security.ubuntu.com`. During install only: `github.com` and `objects.githubusercontent.com` (WSL and distro downloads). Tell us about any proxy or TLS inspection.
+- **Inbound:** only the application port (443) from the client's user subnets.
+- **DNS and TLS:** a hostname per environment and a certificate plus key (or internal CA) for it.
+
 ## 2. AlphaCI side (before the visit)
 
 1. Define each project's ordered environments, source branches, and sole production role. Assign one provider per environment and slot. In the example, configure `dev` and `uat` frontend targets on Vercel and backend targets on Render, then assign both `main` slots to `onprem-compose` with this production host ID. Record the stable environment and target IDs; do not use a branch name as their identity.
