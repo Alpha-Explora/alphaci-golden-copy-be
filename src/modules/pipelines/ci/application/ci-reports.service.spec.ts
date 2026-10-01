@@ -7,7 +7,7 @@ import type {
 
 const makeDatabaseService = () =>
   ({
-    query: jest.fn(),
+    query: jest.fn().mockResolvedValue({ rows: [] }),
   }) as unknown as DatabaseService;
 
 const makeRunReportsRepository = () =>
