@@ -222,7 +222,9 @@ export class CiReportsService {
         limit,
         offset,
       );
-      return { runs: this.groupIntoRuns(rows) };
+      return {
+        runs: this.groupIntoRuns(rows, await this.environmentRepos(rows)),
+      };
     }
 
     const rows = await this.ciRunReportsRepository.findRecentByUser(
@@ -230,10 +232,38 @@ export class CiReportsService {
       limit,
       offset,
     );
-    return { runs: this.groupIntoRuns(rows) };
+    return {
+      runs: this.groupIntoRuns(rows, await this.environmentRepos(rows)),
+    };
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
+
+  /**
+   * Repositories whose project defines its own environments. Their generated
+   * pipelines end at the package stage: the release is deployed per
+   * environment and has no verify workflow, so waiting for a verify report
+   * would mark every one of their runs as failed.
+   */
+  private async environmentRepos(
+    rows: ReadonlyArray<{ repo_full_name: string }>,
+  ): Promise<ReadonlySet<string>> {
+    const repos = [...new Set(rows.map((row) => row.repo_full_name))];
+    if (repos.length === 0) return new Set();
+    const result = await this.databaseService.query<{
+      repo_full_name: string;
+    }>(
+      `
+        SELECT DISTINCT project.repo_full_name
+        FROM projects.provisioned_projects AS project
+        JOIN projects.project_environments AS environment
+          ON environment.project_id = project.id
+        WHERE project.repo_full_name = ANY($1::text[]);
+      `,
+      [repos],
+    );
+    return new Set(result.rows.map((row) => row.repo_full_name));
+  }
 
   private async resolveUserIdByRepo(repoFullName: string): Promise<string> {
     const result = await this.databaseService.query<OwnershipRow>(
@@ -332,6 +362,7 @@ export class CiReportsService {
 
   private groupIntoRuns(
     rows: Awaited<ReturnType<CiRunReportsRepository['findRecentByRepo']>>,
+    environmentRepos: ReadonlySet<string> = new Set(),
   ): RunGroup[] {
     // access/quality/package are three independent GitHub Actions workflows
     // chained via workflow_run, so each gets its own distinct run_id — they
@@ -438,7 +469,12 @@ export class CiReportsService {
         ),
       );
 
-      const stages: StageReport[] = ALL_STAGES.map((stageName) => {
+      // Environment pipelines have no verify stage to wait for.
+      const expectedStages = environmentRepos.has(group.repoFullName)
+        ? ALL_STAGES.filter((stageName) => stageName !== 'verify')
+        : ALL_STAGES;
+
+      const stages: StageReport[] = expectedStages.map((stageName) => {
         const report = group.stages.get(stageName);
         if (report) {
           return report;
