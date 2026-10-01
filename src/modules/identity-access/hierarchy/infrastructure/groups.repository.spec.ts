@@ -163,3 +163,29 @@ describe('GroupsRepository addMemberDirect', () => {
     expect(params).toEqual(['group-1', 'user-2', 'member', 'actor-1']);
   });
 });
+
+describe('GroupsRepository listMembers', () => {
+  it('returns each member with their global app role for the persona badge', async () => {
+    const db = makeDatabaseService();
+    (db.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        { ...ownerRow, app_role: 'lead' },
+        {
+          ...ownerRow,
+          id: 'member-2',
+          user_id: 'user-2',
+          role: 'member',
+          app_role: 'qa',
+          login: 'qa-one',
+        },
+      ],
+    });
+    const repo = new GroupsRepository(db);
+
+    const members = await repo.listMembers('group-1');
+
+    const [sql] = (db.query as jest.Mock).mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('user_profile.app_role,');
+    expect(members.map((member) => member.appRole)).toEqual(['lead', 'qa']);
+  });
+});

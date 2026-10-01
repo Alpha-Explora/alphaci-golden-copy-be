@@ -35,6 +35,11 @@ export interface GroupMemberRecord {
   groupId: string;
   userId: string;
   role: GroupRole;
+  /**
+   * The member's global persona (identity.app_users.app_role), for labelling
+   * them Lead / QA Team / Developer. Null where a query does not select it.
+   */
+  appRole: MemberAppRole | null;
   memberStatus: MemberStatus;
   login: string;
   name: string;
@@ -67,11 +72,14 @@ interface GroupRow {
   role?: GroupRole;
 }
 
+export type MemberAppRole = 'admin' | 'lead' | 'qa' | 'member';
+
 interface MemberRow {
   id: string;
   workspace_id: string;
   user_id: string;
   role: GroupRole;
+  app_role?: MemberAppRole | null;
   member_status: MemberStatus;
   login: string;
   display_name: string | null;
@@ -369,6 +377,7 @@ export class GroupsRepository {
         SELECT
           member.id, member.workspace_id, member.user_id,
           CASE WHEN user_profile.app_role IN ('admin', 'lead') THEN 'admin' ELSE 'member' END AS role,
+          user_profile.app_role,
           member.member_status,
           member.invited_by, member.invited_at, member.removed_at, member.removed_by, member.removal_reason,
           member.created_at,
@@ -679,6 +688,7 @@ export class GroupsRepository {
       groupId: row.workspace_id,
       userId: row.user_id,
       role: row.role,
+      appRole: row.app_role ?? null,
       memberStatus: row.member_status,
       login: row.login,
       name: row.display_name ?? row.login,
