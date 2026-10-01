@@ -77,7 +77,7 @@ These are exact source-file allowances for current cross-context reads or shared
 | `src/modules/identity-access/hierarchy/infrastructure/group-activity.repository.ts` | `audit.audit_events` |
 | `src/modules/identity-access/hierarchy/infrastructure/groups.repository.ts` | `hierarchy.systems` |
 | `src/modules/identity-access/workspaces/infrastructure/workspaces.repository.ts` | `projects.provisioned_projects` |
-| `src/modules/pipelines/ci/application/ci-reports.service.ts` | `projects.provisioned_projects` |
+| `src/modules/pipelines/ci/application/ci-reports.service.ts` | `projects.project_environments`, `projects.provisioned_projects` |
 | `src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts` | `billing.user_subscriptions`, `identity.app_users`, `projects.provisioned_projects` |
 | `src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts` | `projects.provisioned_projects` |
 | `src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts` | `identity.app_users` |
