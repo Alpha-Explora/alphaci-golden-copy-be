@@ -1,10 +1,15 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsUUID, IsString, Max, Min } from 'class-validator';
 
 export class GetRunsQueryDto {
   @IsOptional()
   @IsString()
   repoFullName?: string;
+
+  /** Team scope for the unfiltered list: only runs of projects in this workspace. */
+  @IsOptional()
+  @IsUUID()
+  workspaceId?: string;
 
   /** Maximum number of run-stage rows to return. Default: 150, max: 500. */
   @IsOptional()

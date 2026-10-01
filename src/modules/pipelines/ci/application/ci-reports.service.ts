@@ -213,14 +213,16 @@ export class CiReportsService {
    * Return grouped runs for the authenticated user.
    *
    * When repoFullName is provided the results are scoped to that repository and
-   * ownership is verified. When omitted the user's runs across all their repos
-   * are returned (no ownership check needed — the query filters by user_id).
+   * visibility is verified. When omitted, runs of every project the caller can SEE
+   * are returned (project visibility, not ingest-time ownership), optionally
+   * narrowed to one workspaceId (team).
    */
   async getRuns(
     userId: string,
     repoFullName?: string,
     limit?: number,
     offset?: number,
+    workspaceId?: string,
   ): Promise<RunsResponse> {
     if (repoFullName) {
       await this.assertOwnership(userId, repoFullName);
@@ -232,8 +234,12 @@ export class CiReportsService {
       return { runs: this.groupIntoRuns(rows) };
     }
 
-    const rows = await this.ciRunReportsRepository.findRecentByUser(
+    const repos = await this.projectVisibility.listVisibleRepoNames(
       userId,
+      workspaceId,
+    );
+    const rows = await this.ciRunReportsRepository.findRecentByRepos(
+      repos,
       limit,
       offset,
     );

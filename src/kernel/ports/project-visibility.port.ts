@@ -17,6 +17,12 @@
 export interface ProjectVisibilityLookup {
   /** True when `userId` may see the project whose repository is `repoFullName`. */
   isRepoVisibleToUser(repoFullName: string, userId: string): Promise<boolean>;
+  /**
+   * Lower-cased repo_full_name of every provisioned project `userId` may see,
+   * optionally narrowed to one workspace (team). Backs the unscoped
+   * GET /ci/runs, which used to filter on the ingest-time project owner.
+   */
+  listVisibleRepoNames(userId: string, workspaceId?: string): Promise<string[]>;
 }
 
 export const PROJECT_VISIBILITY_LOOKUP = Symbol('ProjectVisibilityLookup');

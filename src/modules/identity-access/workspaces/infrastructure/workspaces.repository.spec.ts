@@ -39,6 +39,25 @@ describe('WorkspacesRepository', () => {
     );
   });
 
+  it('lists only active memberships with the role derived from app_role', async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await repository.listForUser('user-1');
+
+    const sql = query.mock.calls[0][0] as string;
+    expect(sql).toContain("member.member_status = 'active'");
+    expect(sql).toContain("app_user.app_role IN ('admin', 'lead')");
+    expect(sql).toContain('JOIN identity.app_users AS app_user');
+  });
+
+  it('findMembership ignores removed members', async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await expect(repository.findMembership('w-1', 'u-1')).resolves.toBeNull();
+
+    expect(query.mock.calls[0][0]).toContain("member_status = 'active'");
+  });
+
   /* Personal workspaces were removed: a workspace IS a team, and the only way
    * into one is being added as a member. Nothing in the repository may create
    * a workspace on a caller's behalf. */

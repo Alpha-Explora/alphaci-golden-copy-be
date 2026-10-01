@@ -478,4 +478,30 @@ describe('ProjectsRepository', () => {
       await expect(repo.findUserLogin('nobody')).resolves.toBeNull();
     });
   });
+
+  describe('listVisibleRepoNames', () => {
+    it('applies the visibility predicate and an optional workspace filter', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [{ repo: 'tone/orders-api' }],
+      });
+
+      await expect(repo.listVisibleRepoNames('u-1', 'w-1')).resolves.toEqual([
+        'tone/orders-api',
+      ]);
+
+      const [sql, values] = (db.query as jest.Mock).mock.calls[0] as [
+        string,
+        unknown[],
+      ];
+      expect(sql).toContain('pp.workspace_id = $2::uuid');
+      expect(sql).toContain("vm.member_status = 'active'");
+      expect(values).toEqual(['u-1', 'w-1']);
+    });
+
+    it('passes a null workspace when unscoped', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+      await repo.listVisibleRepoNames('u-1');
+      expect((db.query as jest.Mock).mock.calls[0][1]).toEqual(['u-1', null]);
+    });
+  });
 });

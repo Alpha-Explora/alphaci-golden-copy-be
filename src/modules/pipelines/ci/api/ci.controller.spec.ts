@@ -180,6 +180,7 @@ describe('CiController', () => {
       'owner/repo',
       undefined,
       undefined,
+      undefined,
     );
     expect(result).toEqual(runsPayload);
   });
@@ -196,6 +197,21 @@ describe('CiController', () => {
       'owner/repo',
       25,
       50,
+      undefined,
+    );
+  });
+
+  it('passes the workspaceId team scope through', async () => {
+    await controller.getRuns(makeRequest('user-1'), {
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+    });
+
+    expect(reportsService.getRuns).toHaveBeenCalledWith(
+      'user-1',
+      undefined,
+      undefined,
+      undefined,
+      '11111111-1111-4111-8111-111111111111',
     );
   });
 
