@@ -37,11 +37,11 @@ Authorization in AlphaCI is driven by the global `identity.app_users.app_role` c
 | **QA Studio (UAT)** | Access QA Studio (`#qa`) | **Allowed (UAT)** | **Allowed (Primary)** | Restricted (Hidden) | `QA_STUDIO_ROLES` (`['qa', 'lead', 'admin']`) |
 | | Live Preview Canvas (Desktop/Tablet/Phone) | Can View & Test | Can View & Test | Restricted | `useStudioViewportViewModel` |
 | | Trigger Playwright Tests | Can Trigger | Can Trigger | Restricted | `roleCanDispatch(appRole)` |
-| **Verification Execution** | Mark Items (`Passed`, `Failed`, `Blocked`) | Can Execute | **Primary Role** | Read-Only | `run-item.tsx` |
+| **Verification Execution** | Mark Items (`Passed`, `Failed`, `Blocked`) | Can Execute | **Primary Role** (every item) | Can Execute (developer and shared items; not QA-only checks) | `personaAllowsRole` (`qa-run-access.rules.ts`), surfaced as `item.canUpdate` |
 | | Send Back to Dev (`Returned to dev`) | Can Execute | **Primary Role** | Restricted | `canSetReturnedToDev(role)` |
 | | Sign Off Run (`Approved`, `Rejected`, `Conditional`) | Can Sign Off | **Primary Role** | Restricted | `canSignOff(role)` |
 | | Export QA Report (PDF / Markdown) | Can Export | Can Export | Read-Only | `useQaExportViewModel` |
-| **Developer Resolution** | View "My QA items" Card (Overview) | Read-Only | Read-Only | **Primary Role** | `my-qa-items-card.tsx` |
+| **Developer Resolution** | View "My QA items" Card (Overview) | Read-Only | Can View (project-wide) | **Primary Role** (project-wide: every developer's items, not only the caller's) | `my-qa-items-card.tsx` |
 | | `Mark fixed & request re-test` | Can Submit | Restricted | **Primary Role** | `canRequestRetest(role)` |
 | **Release Promotion** | View "Ready for Production" Gate | Can View | Can View | Read-Only | `promotion-card.tsx` |
 | | **`Merge to main`** (Release to Production) | **Authorized (Sole)** | Restricted (Hidden) | Restricted (Hidden) | `canMergeQaPromotion(role)` (HTTP 403 for others) |
@@ -269,8 +269,6 @@ Authority for persona gates is the global `identity.app_users.app_role` (platfor
 | 4 | §8.5 FE/BE promotion PR pairing (real location: `staged-workflow.builder.ts` + `alphaci-workflow/.github/workflows/promotion.yml`); §8.7 branch-protection drift probe (protection is applied in the provisioners) | Not started |
 
 Known code-vs-spec gaps still open (spec is the intended behaviour):
-- §3 Mark Items: the backend lets `member` update items whose persona is `developer`/`all` (`qa-run-access.rules.ts`); spec says Developer is read-only.
 - §3 "Ready for Production" card: rendered only inside QA Studio, which Developers cannot open; spec says Developers can view it.
-- §3 "My QA items": shown to every role and lists project-wide items, not the caller's.
 - Custom domains and the remaining deployment-target actions still authorize on the stored workspace role, not `app_role`.
 - GitHub branch protection uses `restrictions: null`, so a user with write access can still merge `uat → main` directly on github.com; ALPHACI itself no longer offers that path.

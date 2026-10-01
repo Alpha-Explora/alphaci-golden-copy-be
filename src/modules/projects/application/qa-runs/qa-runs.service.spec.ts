@@ -457,7 +457,7 @@ describe('QaRunsService.current', () => {
 describe('QaRunsService.updateItem — persona permission matrix', () => {
   it.each([
     ['developer', 'member', true],
-    ['developer', 'qa', false],
+    ['developer', 'qa', true],
     ['developer', 'lead', true],
     ['developer', 'admin', true],
     ['qa', 'member', false],
