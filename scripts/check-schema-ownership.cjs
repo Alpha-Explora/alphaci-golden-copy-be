@@ -226,7 +226,7 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
   ],
   [
     'src/modules/pipelines/ci/application/ci-reports.service.ts',
-    pairs(['projects.provisioned_projects']),
+    pairs(['projects.provisioned_projects', 'projects.project_environments']),
   ],
   [
     'src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts',
