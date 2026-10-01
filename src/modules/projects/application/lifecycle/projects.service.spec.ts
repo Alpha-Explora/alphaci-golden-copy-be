@@ -2617,6 +2617,48 @@ jobs:
     },
   );
 
+  it('refuses a member the workflow PR when only uat exists (feature -> uat), and lets a lead through', async () => {
+    const onlyUat = (role: string) => {
+      const githubWrites = makeGithubService() as unknown as GithubService & {
+        createBranch: jest.Mock;
+        createPullRequest: jest.Mock;
+        branchExists: jest.Mock;
+      };
+      githubWrites.branchExists.mockImplementation(
+        (_t: string, _o: string, _r: string, branch: string) =>
+          Promise.resolve(branch === 'uat'),
+      );
+      return {
+        githubWrites,
+        ...roleGateService(role, provisionedProject, githubWrites),
+      };
+    };
+
+    const member = onlyUat('member');
+    const error = await member.service
+      .createWorkflowUpdatePullRequest('project-1', 'user-1', null, {})
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect((error as ForbiddenException).getResponse()).toMatchObject({
+      code: 'PROJECT_ROLE_FORBIDDEN',
+    });
+    expect(member.githubWrites.createBranch).not.toHaveBeenCalled();
+
+    const lead = onlyUat('lead');
+    await lead.service.createWorkflowUpdatePullRequest(
+      'project-1',
+      'user-1',
+      null,
+      {},
+    );
+    expect(lead.githubWrites.createPullRequest).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'orders-api',
+      expect.objectContaining({ base: 'uat' }),
+    );
+  });
+
   it('answers 404 for an invisible project before the role is read', async () => {
     const { service, projectsRepository } = roleGateService(
       'lead',

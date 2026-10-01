@@ -488,13 +488,15 @@ export class ProjectWorkspaceService {
     }
 
     const role = await this.projectsRepository.findAppRole(userId);
-    if (!canMergeViaWorkspace(role, pullRequest.baseRef)) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        error: 'Forbidden',
-        code: 'PR_ROLE_FORBIDDEN',
-        message: 'Your role cannot merge pull requests in this project.',
-      });
+    if (!canMergeViaWorkspace(role, pullRequest.baseRef, pullRequest.headRef)) {
+      throw role === 'member'
+        ? this.prRouteRestricted()
+        : new ForbiddenException({
+            statusCode: 403,
+            error: 'Forbidden',
+            code: 'PR_ROLE_FORBIDDEN',
+            message: 'Your role cannot merge pull requests in this project.',
+          });
     }
 
     const result = await this.githubService.mergePullRequest(
@@ -596,13 +598,15 @@ export class ProjectWorkspaceService {
     }
 
     const role = await this.projectsRepository.findAppRole(userId);
-    if (!canCreatePullRequest(role, input.base)) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        error: 'Forbidden',
-        code: 'PR_ROLE_FORBIDDEN',
-        message: 'Your role cannot open pull requests in this project.',
-      });
+    if (!canCreatePullRequest(role, input.base, input.head)) {
+      throw role === 'member'
+        ? this.prRouteRestricted()
+        : new ForbiddenException({
+            statusCode: 403,
+            error: 'Forbidden',
+            code: 'PR_ROLE_FORBIDDEN',
+            message: 'Your role cannot open pull requests in this project.',
+          });
     }
 
     const result = await this.githubService.openPullRequest(
@@ -819,5 +823,16 @@ export class ProjectWorkspaceService {
       if (branches.some((branch) => branch.name === name)) return name;
     }
     return branches[0]?.name ?? 'main';
+  }
+
+  /** A Developer's PR that is not feature -> dev or dev -> uat. */
+  private prRouteRestricted(): ForbiddenException {
+    return new ForbiddenException({
+      statusCode: 403,
+      error: 'Forbidden',
+      code: 'PR_ROUTE_RESTRICTED',
+      message:
+        'Developers open pull requests from a feature branch into dev, and from dev into uat.',
+    });
   }
 }

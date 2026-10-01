@@ -42,6 +42,9 @@ import { canRepairBranchProtection } from '../../domain/drift-repair-access.rule
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { ProjectWorkflowsService } from '../workflows/project-workflows.service';
 
+/** Stand-in for the generated `alphaci/...` head: any non-pipeline branch. */
+const GENERATED_PR_HEAD = 'alphaci/drift-repair';
+
 type DriftRepairContext = {
   projectId: string;
   findingId: string;
@@ -170,7 +173,7 @@ export class ProjectDriftRepairService {
    */
   private async assertPullRequestRole(ctx: DriftRepairContext): Promise<void> {
     const role = await this.projectsRepository.findAppRole(ctx.userId);
-    if (!canCreatePullRequest(role, WORKING_BRANCH)) {
+    if (!canCreatePullRequest(role, WORKING_BRANCH, GENERATED_PR_HEAD)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',

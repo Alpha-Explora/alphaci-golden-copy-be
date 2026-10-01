@@ -33,8 +33,9 @@ import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
  * (canMergeQaPromotion-style) so a rule renamed or re-scoped here is renamed
  * or re-scoped on both sides at once.
  *
- *   canMergeViaWorkspace / canCreatePullRequest: admin | lead | member may
- *     act on any branch EXCEPT the production branch — main is reached only
+ *   canMergeViaWorkspace / canCreatePullRequest (isAllowedPullRequestRoute):
+ *     admin | lead may act on any branch EXCEPT the production branch; member
+ *     (Developer) only feature -> dev and dev -> uat — main is reached only
  *     through the promotion flow (dev -> uat auto/manual, uat -> main via
  *     QA Studio's "Ready for production" gate, see qa-promotion.service.ts's
  *     canMergeQaPromotion). qa is never in this allow-list: QA verifies
@@ -50,12 +51,6 @@ import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
  *     are deliberately unchanged.
  */
 
-const WORKSPACE_PULL_REQUEST_ROLES: readonly PlatformAppRole[] = [
-  'admin',
-  'lead',
-  'member',
-];
-
 const PROJECT_MANAGEMENT_ROLES: readonly PlatformAppRole[] = ['admin', 'lead'];
 
 /** The production branch is never reached through the workspace PR endpoints. */
@@ -63,9 +58,45 @@ function isProductionBranch(base: string): boolean {
   return base === QA_PROMOTION_TARGET_BRANCH;
 }
 
+/** Pipeline rungs (dev, uat, main); every other branch is a feature branch. */
+function isPipelineBranch(name: string): boolean {
+  return (PIPELINE_BRANCHES as readonly string[]).includes(name);
+}
+
 /**
- * Whether `role` may merge a workspace pull request whose base is `base`,
- * through the generic `POST .../pull-requests/:number/merge` endpoint.
+ * Whether `role` may route a workspace pull request `head` -> `base` (open or
+ * merge). Allow-lists only:
+ *
+ *   admin, lead: any head, any base except the production branch.
+ *   member:      a non-pipeline head into the working branch (feature -> dev),
+ *                or the working branch into the QA branch (dev -> uat).
+ *                Nothing else: no feature -> uat, nothing out of uat, nothing
+ *                into main.
+ *   qa, other:   nothing.
+ */
+export function isAllowedPullRequestRoute(
+  role: PlatformAppRole,
+  head: string,
+  base: string,
+): boolean {
+  if (isProductionBranch(base)) return false;
+  switch (role) {
+    case 'admin':
+    case 'lead':
+      return true;
+    case 'member':
+      return (
+        (base === WORKING_BRANCH && !isPipelineBranch(head)) ||
+        (head === WORKING_BRANCH && base === QA_BRANCH)
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * Whether `role` may merge a workspace pull request `head` -> `base`, through
+ * the generic `POST .../pull-requests/:number/merge` endpoint.
  *
  * Always false for the production branch, regardless of role: merging into
  * main happens only through QA Studio's promotion gate (canMergeQaPromotion
@@ -74,14 +105,13 @@ function isProductionBranch(base: string): boolean {
 export function canMergeViaWorkspace(
   role: PlatformAppRole,
   base: string,
+  head: string,
 ): boolean {
-  return (
-    !isProductionBranch(base) && WORKSPACE_PULL_REQUEST_ROLES.includes(role)
-  );
+  return isAllowedPullRequestRoute(role, head, base);
 }
 
 /**
- * Whether `role` may open a pull request whose base is `base`, through
+ * Whether `role` may open a pull request `head` -> `base`, through
  * `POST .../pull-requests`.
  *
  * Always false for the production branch, regardless of role: a pull
@@ -90,10 +120,9 @@ export function canMergeViaWorkspace(
 export function canCreatePullRequest(
   role: PlatformAppRole,
   base: string,
+  head: string,
 ): boolean {
-  return (
-    !isProductionBranch(base) && WORKSPACE_PULL_REQUEST_ROLES.includes(role)
-  );
+  return isAllowedPullRequestRoute(role, head, base);
 }
 
 /** Whether `role` may list, provision, validate, or delete a project's environment variables. */
