@@ -120,6 +120,12 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
     ]),
   ],
   [
+    // Backfill reads the outbox (platform-ops) and must null a project or
+    // workspace id that was deleted since, or the audit FKs reject the row.
+    'platform-ops/20261002010000_backfill_dropped_audit_events.sql',
+    pairs(['projects.provisioned_projects', 'orgs.workspaces']),
+  ],
+  [
     'platform-ops/20260617000300_user_feedback.sql',
     pairs(['identity.app_users']),
   ],
@@ -236,7 +242,8 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
   ],
   [
     'src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts',
-    pairs(['projects.provisioned_projects']),
+    // Actor login for the Audit tab (same read-time join as feedback).
+    pairs(['identity.app_users']),
   ],
   [
     'src/modules/platform-ops/notifications/infrastructure/notifications.repository.ts',

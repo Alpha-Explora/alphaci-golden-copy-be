@@ -193,15 +193,28 @@ export interface ProjectSyncSnapshotResponse {
   overview: ProjectOverviewResponse;
 }
 
+export interface ProjectAuditEventItem {
+  id: string;
+  eventCode: string;
+  message: string;
+  actorUserId: string | null;
+  actorLogin: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  /** 'project' = a Project-level event shown on every repository of the Project. */
+  scope: 'repository' | 'project';
+}
+
 export interface ProjectAuditEventsResponse {
   enabled: boolean;
-  items: Array<{
-    id: string;
-    eventCode: string;
-    message: string;
-    actorUserId: string | null;
-    createdAt: string;
-  }>;
+  items: ProjectAuditEventItem[];
+  /** Pass as `?before=` to fetch the next (older) page; null on the last page. */
+  next: string | null;
+}
+
+export interface ProjectAuditEventsOptions {
+  limit?: number;
+  before?: string;
 }
 
 export interface WorkflowSettings {

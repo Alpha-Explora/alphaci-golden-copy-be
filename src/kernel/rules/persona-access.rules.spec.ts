@@ -8,6 +8,7 @@ import {
   repositoryCreateRequiresProject,
   repositoryCreateRequiresFeature,
   canManageEnvVars,
+  canManageHosting,
   canManageProjectLifecycle,
   canMergeViaWorkspace,
   selfServicePullRequestBase,
@@ -49,15 +50,21 @@ describe.each([
   });
 });
 
-describe('canManageEnvVars', () => {
-  it('allows admin and lead only', () => {
-    expect(canManageEnvVars('admin')).toBe(true);
-    expect(canManageEnvVars('lead')).toBe(true);
+describe.each([
+  ['canManageEnvVars', canManageEnvVars],
+  ['canManageHosting', canManageHosting],
+])('%s', (_name, rule) => {
+  it.each([
+    ['admin', true],
+    ['member', true],
+    ['lead', false],
+    ['qa', false],
+  ] as const)('%s -> %s', (role, expected) => {
+    expect(rule(role)).toBe(expected);
   });
 
-  it('refuses qa and member', () => {
-    expect(canManageEnvVars('qa')).toBe(false);
-    expect(canManageEnvVars('member')).toBe(false);
+  it.each([null, undefined])('refuses an unresolved role (%s)', (role) => {
+    expect(rule(role)).toBe(false);
   });
 });
 

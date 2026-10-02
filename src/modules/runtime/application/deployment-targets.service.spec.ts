@@ -173,7 +173,9 @@ describe('DeploymentTargetsService', () => {
     // persona-access.rules.ts's canManageProjectLifecycle); default to a
     // persona allowed to reinstall so tests unrelated to the role gate do
     // not each need to set it.
-    appRoleLookup.findAppRole.mockResolvedValue('lead');
+    // 'admin' passes both the hosting gate (admin | member) and the
+    // lifecycle gate (admin | lead).
+    appRoleLookup.findAppRole.mockResolvedValue('admin');
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
         ownershipMode: 'byo',
@@ -608,7 +610,7 @@ describe('DeploymentTargetsService', () => {
     );
   });
 
-  describe('lifecycle role gate (create / patch / sync / detach)', () => {
+  describe('hosting role gate (create / patch / sync / detach)', () => {
     const calls: Array<[string, () => Promise<unknown>]> = [
       [
         'create',
@@ -649,7 +651,7 @@ describe('DeploymentTargetsService', () => {
       calls.flatMap(
         (c) =>
           [
-            ['member', ...c],
+            ['lead', ...c],
             ['qa', ...c],
           ] as const,
       ),

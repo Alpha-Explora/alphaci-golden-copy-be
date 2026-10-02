@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Logger,
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -39,6 +40,7 @@ import {
 import { ProjectDashboardSnapshotsRepository } from '../../infrastructure/project-dashboard-snapshots.repository';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import type {
+  ProjectAuditEventsOptions,
   ProjectAuditEventsResponse,
   ProjectOverviewResponse,
   ProjectSyncSnapshotResponse,
@@ -65,6 +67,8 @@ import {
  */
 @Injectable()
 export class ProjectDashboardService {
+  private readonly logger = new Logger(ProjectDashboardService.name);
+
   constructor(
     private readonly projectsRepository: ProjectsRepository,
     @Optional()
@@ -264,9 +268,16 @@ export class ProjectDashboardService {
     };
   }
 
+  /**
+   * The repository Audit tab. Visibility is decided here, in the projects
+   * module that owns the predicate: anyone who can see the repository (admin,
+   * owner, team member, assignee) sees its events, not only its creator. A
+   * caller who cannot see it gets 404, like every other project route.
+   */
   async listProjectAuditEvents(
     projectId: string,
     userId: string,
+    options: ProjectAuditEventsOptions = {},
   ): Promise<ProjectAuditEventsResponse> {
     const project = await this.projectsRepository.findByIdAndUser(
       projectId,
@@ -276,12 +287,55 @@ export class ProjectDashboardService {
       throw new NotFoundException('Project not found');
     }
 
-    return (
-      (await this.auditQueryPort?.listProjectEvents(projectId, userId)) ?? {
+    if (!this.auditQueryPort) {
+      return {
         enabled: this.capabilityEnabled('platform.audit-events'),
         items: [],
-      }
-    );
+        next: null,
+      };
+    }
+
+    const page = await this.auditQueryPort.listProjectEvents({
+      projectId,
+      deliveryProjectId: await this.resolveDeliveryProjectId(projectId),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      before: options.before ?? null,
+    });
+    return {
+      enabled: page.enabled,
+      items: page.items.map((event) => ({
+        id: event.id,
+        eventCode: event.eventCode,
+        message: event.message,
+        actorUserId: event.actorUserId,
+        actorLogin: event.actorLogin,
+        metadata: event.metadata,
+        createdAt: event.createdAt,
+        scope: event.scope,
+      })),
+      next: page.next,
+    };
+  }
+
+  /**
+   * The Project (delivery project) a repository is filed under, so Project
+   * level events can be shown on its Audit tab. Best effort: a failed lookup
+   * must not take the whole tab down, it only hides the Project-level events.
+   */
+  private async resolveDeliveryProjectId(
+    projectId: string,
+  ): Promise<string | null> {
+    try {
+      return (
+        (await this.hierarchyProjectLinkService?.getProjectFolder(projectId))
+          ?.deliveryProjectId ?? null
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve the Project for audit of '${projectId}': ${String(error)}`,
+      );
+      return null;
+    }
   }
 
   async getProjectReference(

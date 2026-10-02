@@ -4,11 +4,17 @@ import {
   DEPLOYMENT_CAPABILITY_RESOLVER,
   type CapabilityResolverPort,
 } from '#kernel/composition/capability-resolver.port.js';
+import type {
+  ProjectAuditPage,
+  ProjectAuditQuery,
+} from '#kernel/ports/audit.port';
 import {
   AuditEventsRepository,
-  type AuditEventRecord,
   type CreateAuditEventInput,
 } from '../infrastructure/audit-events.repository';
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
 
 @Injectable()
 export class AuditEventsService {
@@ -43,16 +49,26 @@ export class AuditEventsService {
     }
   }
 
-  async listProjectEvents(
-    projectId: string,
-    userId: string,
-  ): Promise<{ enabled: boolean; items: AuditEventRecord[] }> {
+  async listProjectEvents(query: ProjectAuditQuery): Promise<ProjectAuditPage> {
     if (!this.enabled()) {
-      return { enabled: false, items: [] };
+      return { enabled: false, items: [], next: null };
     }
+    const limit = Math.min(
+      Math.max(Math.trunc(query.limit ?? DEFAULT_PAGE_SIZE), 1),
+      MAX_PAGE_SIZE,
+    );
+    // One extra row tells us whether another page exists.
+    const rows = await this.repository.listForProject({
+      projectId: query.projectId,
+      deliveryProjectId: query.deliveryProjectId ?? null,
+      limit: limit + 1,
+      before: query.before ?? null,
+    });
+    const items = rows.slice(0, limit);
     return {
       enabled: true,
-      items: await this.repository.listByProjectForUser(projectId, userId),
+      items,
+      next: rows.length > limit ? (items.at(-1)?.createdAt ?? null) : null,
     };
   }
 

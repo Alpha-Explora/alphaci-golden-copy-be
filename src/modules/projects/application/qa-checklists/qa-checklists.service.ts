@@ -567,7 +567,14 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
       actorUserId,
       eventCode,
       message: `QA checklist "${checklist.name}" ${eventCode.split('.').pop()}`,
-      metadata: { checklistId: checklist.id, ...metadata },
+      metadata: {
+        checklistId: checklist.id,
+        // Lets the Project's repositories show the event on their Audit tab.
+        ...(checklist.delivery_project_id
+          ? { deliveryProjectId: checklist.delivery_project_id }
+          : {}),
+        ...metadata,
+      },
     });
   }
 }

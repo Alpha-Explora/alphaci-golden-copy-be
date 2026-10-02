@@ -92,7 +92,7 @@ function build(
     ),
   };
   const appRoleLookup = {
-    findAppRole: jest.fn(() => Promise.resolve(overrides.role ?? 'lead')),
+    findAppRole: jest.fn(() => Promise.resolve(overrides.role ?? 'admin')),
   };
   const auditEventsService = { recordProjectEvent: jest.fn() };
 
@@ -223,8 +223,8 @@ describe('CustomDomainsService', () => {
       ).rejects.toThrow(ServiceUnavailableException);
     });
 
-    it('refuses member and qa with HOSTING_LEAD_ONLY before touching the provider', async () => {
-      for (const role of ['member', 'qa']) {
+    it('refuses lead and qa with HOSTING_LEAD_ONLY before touching the provider', async () => {
+      for (const role of ['lead', 'qa']) {
         const { service, deploymentTargetsService, repository } = build({
           role,
         });
@@ -245,8 +245,8 @@ describe('CustomDomainsService', () => {
       }
     });
 
-    it('allows admin and lead', async () => {
-      for (const role of ['admin', 'lead']) {
+    it('allows admin and member (Developer)', async () => {
+      for (const role of ['admin', 'member']) {
         const { service } = build({ role });
         await expect(
           service.addDomain('project-1', 'user-1', {
@@ -388,9 +388,9 @@ describe('CustomDomainsService', () => {
   });
 
   describe('access control on verify/remove', () => {
-    it('verify: member is refused, invisible project is 404', async () => {
+    it('verify: lead is refused, invisible project is 404', async () => {
       await expect(
-        build({ role: 'member' }).service.verifyDomain(
+        build({ role: 'lead' }).service.verifyDomain(
           'project-1',
           'domain-1',
           'user-1',
@@ -419,8 +419,8 @@ describe('CustomDomainsService', () => {
       ).not.toHaveBeenCalled();
     });
 
-    it('remove: member and qa are refused and nothing is deleted', async () => {
-      for (const role of ['member', 'qa']) {
+    it('remove: lead and qa are refused and nothing is deleted', async () => {
+      for (const role of ['lead', 'qa']) {
         const { service, repository } = build({ role });
         await expect(
           service.removeDomain('project-1', 'domain-1', 'user-1'),

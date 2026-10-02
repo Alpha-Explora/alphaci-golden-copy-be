@@ -26,7 +26,10 @@ import {
   USAGE_QUOTA,
   type UsageQuotaPort,
 } from '#kernel/ports/usage-quota.port';
-import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
+import {
+  canManageHosting,
+  canManageProjectLifecycle,
+} from '#kernel/rules/persona-access.rules';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import {
@@ -813,23 +816,24 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
 
   /**
    * Visibility first (404 for a project this user cannot see), then the
-   * global app_role allow-list (403 HOSTING_LEAD_ONLY). The stored workspace
-   * role is not consulted: no membership row must never mean "allowed". A role
-   * that cannot be resolved falls back to 'member', which the allow-list
-   * refuses (fail closed). Same bar as reinstallDeploymentSecrets.
+   * global app_role allow-list (canManageHosting: admin | member; 403
+   * HOSTING_LEAD_ONLY, a legacy code kept so the deployed frontend still maps
+   * it). The stored workspace role is not consulted: no membership row must
+   * never mean "allowed". A role that cannot be resolved is refused (fail
+   * closed).
    */
   private async assertProjectLifecycleAccess(
     projectId: string,
     userId: string,
   ): Promise<DeploymentProjectReference> {
     const project = await this.getProjectOrThrow(projectId, userId);
-    const role = (await this.appRoleLookup?.findAppRole(userId)) ?? 'member';
-    if (!canManageProjectLifecycle(role)) {
+    const role = await this.appRoleLookup?.findAppRole(userId);
+    if (!canManageHosting(role)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',
         code: 'HOSTING_LEAD_ONLY',
-        message: 'Only a lead or admin may manage deployment targets.',
+        message: 'Only Developers and admins can change hosting.',
       });
     }
     return project;

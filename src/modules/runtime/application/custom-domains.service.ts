@@ -19,7 +19,7 @@ import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   type DeploymentProjectReferenceLookup,
 } from '#kernel/ports/deployment-runtime.port';
-import { canManageProjectLifecycle } from '#kernel/rules/persona-access.rules';
+import { canManageHosting } from '#kernel/rules/persona-access.rules';
 import { CustomDomainsRepository } from '../infrastructure/repositories/custom-domains.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import {
@@ -325,21 +325,22 @@ export class CustomDomainsService {
 
   /**
    * Add/verify/remove touch the project's hosting: visibility (404), then the
-   * global app_role allow-list (403 HOSTING_LEAD_ONLY). An unresolved role
-   * falls back to 'member', which the allow-list refuses -- fail closed.
+   * global app_role allow-list (canManageHosting: admin | member; 403
+   * HOSTING_LEAD_ONLY, a legacy code kept for the deployed frontend). An
+   * unresolved role is refused -- fail closed.
    */
   private async assertMutationAccess(
     projectId: string,
     userId: string,
   ): Promise<void> {
     await this.assertProjectVisible(projectId, userId);
-    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'member';
-    if (!canManageProjectLifecycle(role)) {
+    const role = await this.appRoleLookup.findAppRole(userId);
+    if (!canManageHosting(role)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',
         code: 'HOSTING_LEAD_ONLY',
-        message: 'Only a lead or admin may manage custom domains.',
+        message: 'Only Developers and admins can change custom domains.',
       });
     }
   }

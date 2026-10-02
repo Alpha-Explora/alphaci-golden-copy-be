@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -32,6 +33,7 @@ import { ProjectCiRunsService } from '../application/ci-runs/project-ci-runs.ser
 import { ProjectPreviewsService } from '../application/dashboard/project-previews.query-service';
 import { ProjectDriftRepairService } from '../application/drift/project-drift-repair.handler';
 import { ProjectsService } from '../application/lifecycle/projects.service';
+import type { ProjectAuditEventsOptions } from '../application/lifecycle/projects.service.types';
 import { ProjectDashboardService } from '../application/dashboard/project-dashboard.service';
 import { ProjectDriftRepairApplicationService } from '../application/drift/project-drift-repair.service';
 import { ProjectLifecycleService } from '../application/lifecycle/project-lifecycle.service';
@@ -451,7 +453,12 @@ export class ProjectsController {
 
   @Get(':id/audit')
   @UseGuards(SessionAuthGuard)
-  async listProjectAuditEvents(@Req() req: Request, @Param('id') id: string) {
+  async listProjectAuditEvents(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
+  ) {
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
@@ -461,9 +468,13 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
+    const options = parseAuditPaging(limit, before);
     return (
-      this.projectDashboardService?.listProjectAuditEvents(id, userId) ??
-      this.projectsService.listProjectAuditEvents(id, userId)
+      this.projectDashboardService?.listProjectAuditEvents(
+        id,
+        userId,
+        options,
+      ) ?? this.projectsService.listProjectAuditEvents(id, userId, options)
     );
   }
 
@@ -545,4 +556,33 @@ export class ProjectsController {
       this.projectsService.syncProjects(userId, accessToken)
     );
   }
+}
+
+const AUDIT_MAX_LIMIT = 100;
+const AUDIT_CURSOR_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
+
+/** `?limit` (1-100) and `?before=<ISO createdAt>` for the Audit tab. */
+function parseAuditPaging(
+  limit: string | undefined,
+  before: string | undefined,
+): ProjectAuditEventsOptions {
+  const options: ProjectAuditEventsOptions = {};
+  if (limit !== undefined && limit !== '') {
+    const parsed = Number(limit);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new BadRequestException('limit must be a positive integer');
+    }
+    options.limit = Math.min(parsed, AUDIT_MAX_LIMIT);
+  }
+  if (before !== undefined && before !== '') {
+    if (
+      !AUDIT_CURSOR_PATTERN.test(before) ||
+      Number.isNaN(Date.parse(before))
+    ) {
+      throw new BadRequestException('before must be an ISO-8601 timestamp');
+    }
+    options.before = before;
+  }
+  return options;
 }

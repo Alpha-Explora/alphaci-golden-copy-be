@@ -249,16 +249,16 @@ export class RepoConfigBrokerService {
 
     // Repository-level GitHub Actions secrets/variables are written with an
     // installation token, so the authority is the global app_role allow-list
-    // (admin | lead), not manager/assignee derivation. Visibility (404)
-    // came first above; an unresolved role falls back to 'member' (refused).
-    const role = (await this.appRoleLookup.findAppRole(userId)) ?? 'member';
+    // (admin | member), not manager/assignee derivation. Visibility (404)
+    // came first above; an unresolved role is refused (fail closed).
+    const role = await this.appRoleLookup.findAppRole(userId);
     if (!canManageEnvVars(role)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',
         code: 'ENV_VARS_LEAD_ONLY',
         message:
-          'Only a lead or admin may change repository secrets and variables.',
+          'Only Developers and admins can change repository secrets and variables.',
       });
     }
 

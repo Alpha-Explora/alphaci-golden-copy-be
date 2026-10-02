@@ -76,6 +76,7 @@ import {
 import type {
   CreateProjectResponse,
   DisconnectProjectResponse,
+  ProjectAuditEventsOptions,
   ProjectAuditEventsResponse,
   ProjectOverviewResponse,
   ProjectSyncSnapshotResponse,
@@ -474,8 +475,9 @@ export class ProjectsService {
   async listProjectAuditEvents(
     projectId: string,
     userId: string,
+    options: ProjectAuditEventsOptions = {},
   ): Promise<ProjectAuditEventsResponse> {
-    return this.dashboard.listProjectAuditEvents(projectId, userId);
+    return this.dashboard.listProjectAuditEvents(projectId, userId, options);
   }
 
   /** Delegates to ProjectWorkflowsService (owns workflow settings behavior). */

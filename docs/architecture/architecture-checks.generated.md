@@ -31,10 +31,10 @@ This snapshot is generated from the current source tree. It is descriptive evide
 | `identity-access` | 140 | 30 | 9 | 5 | 0 | 0 |
 | `pipelines` | 48 | 14 | 1 | 1 | 0 | 0 |
 | `platform-ops` | 29 | 4 | 0 | 0 | 0 | 0 |
-| `projects` | 209 | 68 | 20 | 5 | 0 | 0 |
+| `projects` | 210 | 69 | 20 | 5 | 0 | 0 |
 | `runtime` | 151 | 55 | 8 | 4 | 0 | 0 |
 
-| Total | 598 | 176 | 38 | 15 | 0 | 0 |
+| Total | 599 | 177 | 38 | 15 | 0 | 0 |
 
 Dead in-process adapters measured by the source report: **0**.
 
