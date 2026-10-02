@@ -26,10 +26,7 @@ import {
   USAGE_QUOTA,
   type UsageQuotaPort,
 } from '#kernel/ports/usage-quota.port';
-import {
-  canManageHosting,
-  canManageProjectLifecycle,
-} from '#kernel/rules/persona-access.rules';
+import { canManageHosting } from '#kernel/rules/persona-access.rules';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import {
@@ -718,8 +715,8 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
 
     // Visibility first (getOwnedTargetOrThrow's own getProjectOrThrow — 404
     // for a project/target this user cannot see), then the persona check:
-    // app_role admin/lead only (see persona-access.rules.ts's
-    // canManageProjectLifecycle), the sole authority now — this rewrites
+    // app_role admin | member (see persona-access.rules.ts's
+    // canManageHosting), the sole authority now — this rewrites
     // the repository's deployment credentials, and for an ALPHACI-managed
     // target that means writing the platform's own provider token, the
     // same bar Detach sets for touching a provider.
@@ -728,13 +725,13 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       targetId,
       userId,
     );
-    const role = (await this.appRoleLookup?.findAppRole(userId)) ?? 'member';
-    if (!canManageProjectLifecycle(role)) {
+    const role = await this.appRoleLookup?.findAppRole(userId);
+    if (!canManageHosting(role)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',
         code: 'PROJECT_ROLE_FORBIDDEN',
-        message: 'Only a lead or admin may reinstall deployment secrets.',
+        message: 'Only Developers and admins can reinstall deployment secrets.',
       });
     }
 

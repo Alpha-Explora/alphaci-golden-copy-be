@@ -42,7 +42,7 @@
 
 ### Changed
 
-- Developers (`app_role` `member`) and admins now manage hosting (deployment targets, custom domains) and environment variables; Product owners (`lead`) lose those edit rights, QA is unchanged. The `HOSTING_LEAD_ONLY` and `ENV_VARS_LEAD_ONLY` codes are kept for the deployed frontend with role-neutral messages, and an unresolved role is now refused instead of defaulting to a persona. Reinstalling deployment secrets, provider connections and disconnecting a project stay admin and lead.
+- Developers (`app_role` `member`) and admins now manage hosting (deployment targets, custom domains) and environment variables; Product owners (`lead`) lose those edit rights, QA is unchanged. The `HOSTING_LEAD_ONLY` and `ENV_VARS_LEAD_ONLY` codes are kept for the deployed frontend with role-neutral messages, and an unresolved role is now refused instead of defaulting to a persona. Reinstalling deployment secrets follows the hosting rule (admin and Developer); provider connections, disconnecting a project and drift repair stay admin and lead.
 - Classified optional provider and live-adapter mode toggles as explicit non-capability flags so the resolver gates base capabilities only on their primary enablement flags.
 - Changed `/api/v1/capabilities` to project its resolved deployment set into the existing compatibility fields and expose top-level `edition` and `capabilityKeys`, preserving the legacy nested response for the default fixture.
 - Changed the deployment-targets, provider-connections, env-vars, and custom-domains controllers to enforce `runtime.env-provisioning` through `CapabilityGuard` before `SubscriptionGuard`; removed the obsolete `EnvFeatureGuard`.

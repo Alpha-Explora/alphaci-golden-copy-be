@@ -1056,8 +1056,8 @@ describe('DeploymentTargetsService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it.each(['qa', 'member'] as const)(
-      'is limited to lead/admin and stops a %s persona before any secret is written',
+    it.each(['qa', 'lead', undefined] as const)(
+      'is limited to Developers/admins and stops a %s persona before any secret is written',
       async (appRole) => {
         const installer = {
           supports: jest.fn().mockReturnValue(true),
@@ -1084,6 +1084,36 @@ describe('DeploymentTargetsService', () => {
         });
         expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
         expect(installer.installForTarget).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['admin', 'member'] as const)(
+      'lets a %s persona reinstall',
+      async (appRole) => {
+        const installer = {
+          supports: jest.fn().mockReturnValue(true),
+          installForTarget: jest
+            .fn()
+            .mockResolvedValue({ githubSecrets: { token: 'T' } }),
+        };
+        ciSecretsInstallers.get.mockReturnValue(installer);
+        deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+          target,
+        );
+        deploymentTargetsRepository.updateProviderMetadata.mockResolvedValueOnce(
+          { ...target },
+        );
+        appRoleLookup.findAppRole.mockResolvedValueOnce(appRole);
+
+        await expect(
+          service.reinstallDeploymentSecrets(
+            'project-1',
+            'target-1',
+            'user-1',
+            'github-token',
+          ),
+        ).resolves.toMatchObject({ reinstalled: true });
+        expect(installer.installForTarget).toHaveBeenCalled();
       },
     );
 
