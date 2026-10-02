@@ -3,9 +3,15 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  InternalServerErrorException,
+  Optional,
 } from '@nestjs/common';
 
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
+import {
+  PROJECT_REQUIREMENTS_READINESS,
+  type ProjectRequirementsReadinessPort,
+} from '#kernel/ports/project-requirements-readiness.port';
 import {
   WORKSPACES_PORT,
   type WorkspacesPort,
@@ -14,8 +20,10 @@ import {
   projectRequired,
   repositoryCreateForbidden,
 } from '#kernel/rules/persona-access.errors';
+import { assertProjectHasFeatureForRepositoryCreate } from '#kernel/rules/project-features.gate';
 import {
   canCreateRepository,
+  repositoryCreateRequiresFeature,
   repositoryCreateRequiresProject,
 } from '#kernel/rules/persona-access.rules';
 
@@ -32,6 +40,9 @@ export class WorkspaceGateService {
     private readonly projectsRepository: ProjectsRepository,
     @Inject(WORKSPACES_PORT)
     private readonly workspacesService: WorkspacesPort | undefined,
+    @Optional()
+    @Inject(PROJECT_REQUIREMENTS_READINESS)
+    private readonly requirementsReadiness?: ProjectRequirementsReadinessPort,
   ) {}
 
   /**
@@ -43,6 +54,13 @@ export class WorkspaceGateService {
    *   member:       allowed only with a deliveryProjectId (400 PROJECT_REQUIRED).
    *   lead, qa:     403 REPOSITORY_CREATE_FORBIDDEN.
    *
+   * A member also needs at least one active Feature in the Project (409
+   * PROJECT_FEATURES_REQUIRED) unless `requireFeatures` is false. Admins are
+   * exempt and the rule is skipped when the QA capability is off. Callers that
+   * run AFTER the GitHub repository exists pass `requireFeatures: false`: the
+   * gate already passed up front, and refusing now (a lead archived the last
+   * Feature mid-provisioning) would strand the repository.
+   *
    * Keyed on the GLOBAL app_role (ProjectsRepository.findAppRole folds platform
    * admins into 'admin'), never the workspace role. Whether the Project exists,
    * is active and belongs to the chosen team is checked separately by
@@ -51,6 +69,7 @@ export class WorkspaceGateService {
   async assertCanCreateRepositories(
     userId: string,
     deliveryProjectId?: string | null,
+    options: { requireFeatures?: boolean } = {},
   ): Promise<void> {
     const role = await this.projectsRepository.findAppRole(userId);
     if (!canCreateRepository(role)) {
@@ -59,6 +78,38 @@ export class WorkspaceGateService {
     if (repositoryCreateRequiresProject(role) && !deliveryProjectId) {
       throw projectRequired();
     }
+    if (options.requireFeatures !== false) {
+      await this.assertProjectHasFeatures(userId, deliveryProjectId, role);
+    }
+  }
+
+  /**
+   * The Feature rule alone. Callers that validate the Project's existence,
+   * team and availability themselves (createProject, setup) run it AFTER that
+   * check, so a member cannot learn whether another team's Project has
+   * Features from the 409-versus-404 difference.
+   */
+  async assertProjectHasFeatures(
+    userId: string,
+    deliveryProjectId?: string | null,
+    knownRole?: Awaited<ReturnType<ProjectsRepository['findAppRole']>>,
+  ): Promise<void> {
+    const role =
+      knownRole ?? (await this.projectsRepository.findAppRole(userId));
+    if (!repositoryCreateRequiresFeature(role)) {
+      return;
+    }
+    if (!this.requirementsReadiness) {
+      // Fail closed: an unwired port must not silently lift the rule.
+      throw new InternalServerErrorException(
+        'Project requirements readiness is not available.',
+      );
+    }
+    await assertProjectHasFeatureForRepositoryCreate(
+      this.requirementsReadiness,
+      role,
+      deliveryProjectId,
+    );
   }
 
   /**
@@ -102,8 +153,9 @@ export class WorkspaceGateService {
     userId: string,
     workspaceId?: string | null,
     deliveryProjectId?: string | null,
+    options: { requireFeatures?: boolean } = {},
   ): Promise<string | null> {
-    await this.assertCanCreateRepositories(userId, deliveryProjectId);
+    await this.assertCanCreateRepositories(userId, deliveryProjectId, options);
     if (!workspaceId) {
       // Workspaces disabled entirely: leave the project unscoped as before
       // rather than blocking creation on a module that isn't running.

@@ -74,6 +74,18 @@ const { QaProjectContextService } =
 const { DELIVERY_PROJECT_DATA_CLEANUP } =
   require('../../src/kernel/ports/delivery-project-data-cleanup.port.js') as typeof import('../../src/kernel/ports/delivery-project-data-cleanup.port.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { PROJECT_REQUIREMENTS_READINESS } =
+  require('../../src/kernel/ports/project-requirements-readiness.port.js') as typeof import('../../src/kernel/ports/project-requirements-readiness.port.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectRequirementsReadinessAdapter } =
+  require('../../src/modules/projects/application/qa-checklists/project-requirements-readiness.adapter.js') as typeof import('../../src/modules/projects/application/qa-checklists/project-requirements-readiness.adapter.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { RepositoriesService } =
+  require('../../src/modules/identity-access/hierarchy/application/repositories.service.js') as typeof import('../../src/modules/identity-access/hierarchy/application/repositories.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectFoldersService } =
+  require('../../src/modules/identity-access/hierarchy/application/project-folders.service.js') as typeof import('../../src/modules/identity-access/hierarchy/application/project-folders.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { DeliveryProjectsService } =
   require('../../src/modules/identity-access/hierarchy/application/delivery-projects.service.js') as typeof import('../../src/modules/identity-access/hierarchy/application/delivery-projects.service.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -394,6 +406,50 @@ describe('HTTP application boot', () => {
    * identity-access when a Project is deleted) must resolve to the real
    * requirements service rather than arrive undefined.
    */
+  /**
+   * The Feature-before-repository rule: identity-access (hierarchy create,
+   * project-folders) and the projects provisioning gate must resolve the REAL
+   * readiness adapter, not an undefined from an @Optional dependency.
+   */
+  it('wires the Project requirements readiness port to its real implementation', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const readiness = app.get(PROJECT_REQUIREMENTS_READINESS, {
+        strict: false,
+      });
+      expect(readiness).toBeInstanceOf(ProjectRequirementsReadinessAdapter);
+
+      const repositories: unknown = app.get(RepositoriesService, {
+        strict: false,
+      });
+      expect(
+        (repositories as { requirementsReadiness?: unknown })
+          .requirementsReadiness,
+      ).toBe(readiness);
+      const folders: unknown = app.get(ProjectFoldersService, {
+        strict: false,
+      });
+      expect(
+        (folders as { requirementsReadiness?: unknown }).requirementsReadiness,
+      ).toBe(readiness);
+
+      const provisioning: unknown = app.get(
+        ProjectProvisioningApplicationService,
+        { strict: false },
+      );
+      const support = (
+        provisioning as {
+          support: { requirementsReadiness?: unknown };
+        }
+      ).support;
+      expect(support.requirementsReadiness).toBe(readiness);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('wires the Project context ports and the Project delete cleanup', async () => {
     const app = await createHttpApplication();
     await app.init();

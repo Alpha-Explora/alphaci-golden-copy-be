@@ -1,3 +1,7 @@
+import {
+  PROJECT_REQUIREMENTS_READINESS,
+  type ProjectRequirementsReadinessPort,
+} from '#kernel/ports/project-requirements-readiness.port';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -256,6 +260,7 @@ export class ProjectsService {
         (...args) => this.pushWorkflowFile(...args),
         this.workflowFragmentRegistry,
         this.deploymentProvisioningDefaults,
+        this.requirementsReadiness,
       ));
   }
 
@@ -326,6 +331,9 @@ export class ProjectsService {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    @Inject(PROJECT_REQUIREMENTS_READINESS)
+    private readonly requirementsReadiness?: ProjectRequirementsReadinessPort,
   ) {
     // GithubModule cannot import ProjectsModule (that would create a
     // Projects → Github → Projects cycle), so GithubService can't inject

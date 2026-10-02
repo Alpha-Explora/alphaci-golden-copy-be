@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { PROJECT_REQUIREMENTS_READINESS } from '#kernel/ports/project-requirements-readiness.port';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
@@ -15,6 +16,7 @@ import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.r
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { QaAccessService } from './qa-access.service';
 import { QaChecklistsService } from './qa-checklists.service';
+import { ProjectRequirementsReadinessAdapter } from './project-requirements-readiness.adapter';
 import { QaProjectContextService } from './qa-project-context.service';
 
 @Module({
@@ -50,6 +52,12 @@ import { QaProjectContextService } from './qa-project-context.service';
     QaAccessService,
     QaProjectContextService,
     QaChecklistsService,
+    // Feature-before-repository rule; the bridge module exposes it by token.
+    ProjectRequirementsReadinessAdapter,
+    {
+      provide: PROJECT_REQUIREMENTS_READINESS,
+      useExisting: ProjectRequirementsReadinessAdapter,
+    },
   ],
   // QaChecklistsRepository is also exported so the qa-runs sibling module
   // (which needs to read checklist rows/items when creating a run) can
@@ -65,6 +73,8 @@ import { QaProjectContextService } from './qa-project-context.service';
     QaChecklistsRepository,
     QaRequirementsRepository,
     QaProjectContextService,
+    ProjectRequirementsReadinessAdapter,
+    PROJECT_REQUIREMENTS_READINESS,
   ],
 })
 export class QaChecklistsModule {}

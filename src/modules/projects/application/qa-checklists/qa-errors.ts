@@ -81,13 +81,36 @@ export const verificationForbidden = () =>
     ),
   );
 
-export const requirementNameTaken = (name: string) =>
+/** `index` (0-based) is set by the batch create: which entry collided. */
+export const requirementNameTaken = (name: string, index?: number) =>
   new ConflictException(
     body(
       409,
       'Conflict',
       'REQUIREMENT_NAME_TAKEN',
       `A requirement named "${name}" already exists in this Project.`,
+      index === undefined ? {} : { index },
+    ),
+  );
+
+export const requirementBatchInvalid = (max: number) =>
+  new BadRequestException(
+    body(
+      400,
+      'Bad Request',
+      'REQUIREMENT_BATCH_INVALID',
+      `A batch holds between 1 and ${max} requirements.`,
+    ),
+  );
+
+export const requirementBatchDuplicateName = (name: string, index: number) =>
+  new BadRequestException(
+    body(
+      400,
+      'Bad Request',
+      'REQUIREMENT_BATCH_DUPLICATE_NAME',
+      `"${name}" appears more than once in this batch.`,
+      { index },
     ),
   );
 

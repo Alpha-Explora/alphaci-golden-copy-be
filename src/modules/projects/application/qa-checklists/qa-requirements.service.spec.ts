@@ -1,10 +1,11 @@
 import { NotFoundException } from '@nestjs/common';
 
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
-import type {
-  QaChecklistItemRow,
-  QaChecklistRow,
-  QaChecklistsRepository,
+import {
+  QaChecklistBatchInsertError,
+  type QaChecklistItemRow,
+  type QaChecklistRow,
+  type QaChecklistsRepository,
 } from '../../infrastructure/qa-checklists.repository';
 import type { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
@@ -84,6 +85,19 @@ function setup({
       .fn()
       .mockResolvedValue(new Map([['req-1', [itemRow()]]])),
     hasActiveNameConflict: jest.fn().mockResolvedValue(false),
+    createManyWithItems: jest
+      .fn()
+      .mockImplementation((inputs: Array<{ name: string }>) =>
+        Promise.resolve(
+          inputs.map((input, index) => ({
+            checklist: requirementRow({
+              id: `req-${index + 1}`,
+              name: input.name,
+            }),
+            items: [itemRow({ id: `item-${index + 1}` })],
+          })),
+        ),
+      ),
     createWithItems: jest.fn().mockResolvedValue({
       checklist: requirementRow(),
       items: [itemRow()],
@@ -499,5 +513,201 @@ describe('QaRequirementsService reads', () => {
     await expect(
       service.overview('group-1', 'stranger', false),
     ).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('QaRequirementsService.createBatch', () => {
+  const draft = (name: string) => ({
+    name,
+    items: [{ title: `${name} story`, acceptanceCriteria: 'ok' }],
+  });
+
+  it('creates every requirement in one transaction and answers in request order', async () => {
+    const { service, checklists, audit } = setup();
+
+    const result = await service.createBatch(DP, 'lead-1', {
+      kind: 'functional',
+      requirements: [draft('  Checkout '), draft('Search'), draft('Profile')],
+    });
+
+    expect(checklists.createManyWithItems).toHaveBeenCalledTimes(1);
+    expect(checklists.createWithItems).not.toHaveBeenCalled();
+    expect(checklists.createManyWithItems.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({
+        name: 'Checkout',
+        kind: 'functional',
+        deliveryProjectId: DP,
+        workspaceId: 'group-1',
+        createdBy: 'lead-1',
+      }),
+      expect.objectContaining({ name: 'Search' }),
+      expect.objectContaining({ name: 'Profile' }),
+    ]);
+    expect(result.requirements.map((r) => r.name)).toEqual([
+      'Checkout',
+      'Search',
+      'Profile',
+    ]);
+    // The same shape the single create returns.
+    expect(result.requirements[0]).toMatchObject({
+      kind: 'functional',
+      deliveryProjectId: DP,
+      progressCounts: { todo: 1, in_progress: 0, done: 0 },
+    });
+    expect(result.requirements[0]?.items[0]).toMatchObject({
+      progress: 'todo',
+      canSetProgress: true,
+    });
+    expect(audit.recordProjectEvent).toHaveBeenCalledTimes(3);
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventCode: 'qa.requirement.created' }),
+    );
+  });
+
+  it('is atomic: a failure mid-batch creates nothing and records no audit', async () => {
+    const { service, checklists, audit } = setup();
+    checklists.createManyWithItems.mockRejectedValue(new Error('boom'));
+
+    await expect(
+      service.createBatch(DP, 'lead-1', {
+        kind: 'system',
+        requirements: [draft('A'), draft('B')],
+      }),
+    ).rejects.toThrow('boom');
+    expect(audit.recordProjectEvent).not.toHaveBeenCalled();
+  });
+
+  it('maps a unique violation inside the transaction to REQUIREMENT_NAME_TAKEN with the index', async () => {
+    const { service, checklists, audit } = setup();
+    checklists.createManyWithItems.mockRejectedValue(
+      new QaChecklistBatchInsertError(1, { code: '23505' }),
+    );
+
+    await expect(
+      service.createBatch(DP, 'lead-1', {
+        kind: 'system',
+        requirements: [draft('A'), draft('B'), draft('C')],
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'REQUIREMENT_NAME_TAKEN', index: 1, statusCode: 409 },
+    });
+    expect(audit.recordProjectEvent).not.toHaveBeenCalled();
+  });
+
+  it('refuses a name that collides with an existing active requirement, naming the index', async () => {
+    const { service, checklists } = setup();
+    checklists.hasActiveNameConflict.mockImplementation(
+      (_group: string, name: string) => Promise.resolve(name === 'B'),
+    );
+
+    await expect(
+      service.createBatch(DP, 'lead-1', {
+        kind: 'functional',
+        requirements: [draft('A'), draft('B'), draft('C')],
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'REQUIREMENT_NAME_TAKEN', index: 1 },
+    });
+    expect(checklists.hasActiveNameConflict).toHaveBeenCalledWith(
+      'group-1',
+      'A',
+      undefined,
+      { deliveryProjectId: DP, kind: 'functional' },
+    );
+    expect(checklists.createManyWithItems).not.toHaveBeenCalled();
+  });
+
+  it('refuses a duplicate name inside the batch (trimmed, case-insensitive) at the SECOND occurrence', async () => {
+    const { service, checklists } = setup();
+
+    await expect(
+      service.createBatch(DP, 'lead-1', {
+        kind: 'functional',
+        requirements: [draft('Alpha'), draft('Beta'), draft('  alpha ')],
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 400,
+        code: 'REQUIREMENT_BATCH_DUPLICATE_NAME',
+        index: 2,
+      },
+    });
+    expect(checklists.createManyWithItems).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty batch and more than 20 with REQUIREMENT_BATCH_INVALID', async () => {
+    const { service, checklists } = setup();
+
+    await expect(
+      service.createBatch(DP, 'lead-1', { kind: 'system', requirements: [] }),
+    ).rejects.toMatchObject({
+      response: { statusCode: 400, code: 'REQUIREMENT_BATCH_INVALID' },
+    });
+    await expect(
+      service.createBatch(DP, 'lead-1', {
+        kind: 'system',
+        requirements: Array.from({ length: 21 }, (_, i) => draft(`R${i}`)),
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'REQUIREMENT_BATCH_INVALID' },
+    });
+    expect(checklists.createManyWithItems).not.toHaveBeenCalled();
+
+    // Exactly 20 is fine.
+    await expect(
+      service.createBatch(DP, 'lead-1', {
+        kind: 'system',
+        requirements: Array.from({ length: 20 }, (_, i) => draft(`R${i}`)),
+      }),
+    ).resolves.toMatchObject({ requirements: expect.any(Array) });
+  });
+
+  it('rejects an unknown kind', async () => {
+    const { service } = setup();
+    await expect(
+      service.createBatch(DP, 'lead-1', {
+        kind: 'epic',
+        requirements: [draft('A')],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'REQUIREMENT_KIND_INVALID' } });
+  });
+
+  it.each(['member', 'qa'] as const)(
+    '%s gets 403 REQUIREMENT_MANAGE_FORBIDDEN',
+    async (role) => {
+      const { service, checklists } = setup({ role });
+      await expect(
+        service.createBatch(DP, 'user-1', {
+          kind: 'system',
+          requirements: [draft('A')],
+        }),
+      ).rejects.toMatchObject({
+        response: { code: 'REQUIREMENT_MANAGE_FORBIDDEN' },
+      });
+      expect(checklists.createManyWithItems).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['lead', 'admin'] as const)('%s may create a batch', async (role) => {
+    const { service } = setup({ role });
+    const result = await service.createBatch(DP, 'user-1', {
+      kind: 'functional',
+      requirements: [draft('A')],
+    });
+    expect(result.requirements).toHaveLength(1);
+  });
+
+  it('a non-member gets 404 before any role check', async () => {
+    const fixture = setup();
+    fixture.projectContext.requireProject.mockRejectedValue(
+      new NotFoundException('Project not found'),
+    );
+    await expect(
+      fixture.service.createBatch(DP, 'stranger', {
+        kind: 'system',
+        requirements: [draft('A')],
+      }),
+    ).rejects.toThrow(NotFoundException);
+    expect(fixture.access.canManage).not.toHaveBeenCalled();
   });
 });

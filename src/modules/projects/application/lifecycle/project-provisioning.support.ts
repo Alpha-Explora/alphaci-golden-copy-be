@@ -42,6 +42,7 @@ import {
 } from './sonar-cloud-setup.service';
 import { ProvisioningTokenService } from './provisioning-token.service';
 import { SetupBranchService } from './setup-branch.service';
+import type { ProjectRequirementsReadinessPort } from '#kernel/ports/project-requirements-readiness.port';
 import { WorkspaceGateService } from './workspace-gate.service';
 import { ProductEventsService } from './product-events.service';
 import { ProjectWorkflowFilesService } from '../workflows/project-workflow-files.service';
@@ -142,6 +143,7 @@ export class ProjectProvisioningSupport {
   readonly hierarchyProjectLinkService: ProjectLinkPort | undefined;
   readonly workflowFilePusher: WorkflowFilePusher | undefined;
   readonly workflowFragmentRegistry: WorkflowFragmentRegistry | undefined;
+  readonly requirementsReadiness: ProjectRequirementsReadinessPort | undefined;
 
   private sonarSetupLazy?: SonarCloudSetupService;
   private workflowFilesLazy?: ProjectWorkflowFilesService;
@@ -168,6 +170,7 @@ export class ProjectProvisioningSupport {
     hierarchyProjectLinkService: ProjectLinkPort | undefined;
     workflowFilePusher: WorkflowFilePusher | undefined;
     workflowFragmentRegistry: WorkflowFragmentRegistry | undefined;
+    requirementsReadiness: ProjectRequirementsReadinessPort | undefined;
   }) {
     this.catalogService = dependencies.catalogService;
     this.githubService = dependencies.githubService;
@@ -186,6 +189,7 @@ export class ProjectProvisioningSupport {
     this.hierarchyProjectLinkService = dependencies.hierarchyProjectLinkService;
     this.workflowFilePusher = dependencies.workflowFilePusher;
     this.workflowFragmentRegistry = dependencies.workflowFragmentRegistry;
+    this.requirementsReadiness = dependencies.requirementsReadiness;
   }
 
   get sonar(): SonarCloudSetupService {
@@ -218,6 +222,7 @@ export class ProjectProvisioningSupport {
     return (this.workspaceGateLazy ??= new WorkspaceGateService(
       this.projectsRepository,
       this.workspacesService,
+      this.requirementsReadiness,
     ));
   }
 
@@ -252,11 +257,13 @@ export class ProjectProvisioningSupport {
     userId: string,
     workspaceId?: string | null,
     deliveryProjectId?: string | null,
+    options?: { requireFeatures?: boolean },
   ) {
     return this.workspaceGate.resolveWorkspaceIdForCreate(
       userId,
       workspaceId,
       deliveryProjectId,
+      options,
     );
   }
 

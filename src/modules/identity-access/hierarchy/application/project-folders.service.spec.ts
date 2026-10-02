@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 
+import type { ProjectRequirementsReadinessPort } from '#kernel/ports/project-requirements-readiness.port';
 import type {
   ProjectLookupPort,
   WorkspaceProjectSummary,
@@ -57,6 +58,7 @@ function setup({
   platformAdmin = false,
   role = 'member',
   appRole = 'member',
+  featureCounts = {},
   rows = pairRows,
   linked = ['project-fe', 'project-be'],
   projects = [
@@ -75,6 +77,7 @@ function setup({
   rows?: ProjectFolderRow[];
   linked?: string[];
   projects?: WorkspaceProjectSummary[];
+  featureCounts?: Record<string, number>;
 } = {}) {
   const repository = {
     listFolderRows: jest.fn().mockResolvedValue(rows),
@@ -88,12 +91,23 @@ function setup({
   const lookup = {
     listWorkspaceProjects: jest.fn().mockResolvedValue(projects),
   };
+  const readiness = {
+    isFeatureRuleEnabled: jest.fn().mockReturnValue(true),
+    countActiveFeatures: jest
+      .fn()
+      .mockImplementation((ids: string[]) =>
+        Promise.resolve(
+          new Map(ids.map((id) => [id, featureCounts[id] ?? 0] as const)),
+        ),
+      ),
+  };
   const service = new ProjectFoldersService(
     repository as unknown as ProjectFoldersRepository,
     access as unknown as HierarchyAccessService,
     lookup as unknown as ProjectLookupPort,
+    readiness as unknown as ProjectRequirementsReadinessPort,
   );
-  return { service, repository, access, lookup };
+  return { service, repository, access, lookup, readiness };
 }
 
 describe('ProjectFoldersService.listProjectFolders', () => {
@@ -129,6 +143,7 @@ describe('ProjectFoldersService.listProjectFolders', () => {
         systemId: 'system-testfinals',
         name: 'testfinals',
         createdAt: '2026-09-01T00:00:00Z',
+        featureCount: 0,
         repositories: [
           {
             repositoryId: 'repo-fe',
@@ -148,6 +163,30 @@ describe('ProjectFoldersService.listProjectFolders', () => {
           }),
         ],
       },
+    ]);
+  });
+
+  it('adds featureCount per folder from one batched read (no N+1)', async () => {
+    const { service, readiness } = setup({
+      featureCounts: { 'dp-testfinals': 2 },
+      rows: [
+        ...pairRows,
+        row({ delivery_project_id: 'dp-empty', name: 'empty' }),
+      ],
+    });
+
+    const result = await service.listProjectFolders('group-1', 'dev-1');
+
+    expect(
+      result.folders.map((f) => [f.deliveryProjectId, f.featureCount]),
+    ).toEqual([
+      ['dp-testfinals', 2],
+      ['dp-empty', 0],
+    ]);
+    expect(readiness.countActiveFeatures).toHaveBeenCalledTimes(1);
+    expect(readiness.countActiveFeatures).toHaveBeenCalledWith([
+      'dp-testfinals',
+      'dp-empty',
     ]);
   });
 
