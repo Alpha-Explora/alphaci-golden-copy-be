@@ -295,6 +295,23 @@ describe('RepositoriesService.createRepository Feature gate', () => {
     expect(projectLookup.createHierarchyManagedProject).not.toHaveBeenCalled();
   });
 
+  it.each([0, 2])(
+    'a member naming a Project they cannot access gets the access error whatever its Feature count (%s)',
+    async (featureCount) => {
+      const { service, accessService, githubService, readiness } = setup({
+        featureCount,
+      });
+      accessService.assertCanCreateUnderDeliveryProject.mockRejectedValue(
+        new NotFoundException('Group not found'),
+      );
+      await expect(
+        service.createRepository('dp-other', 'dev-1', 'token', dto),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(readiness.countActiveFeatures).not.toHaveBeenCalled();
+      expect(githubService.createRepo).not.toHaveBeenCalled();
+    },
+  );
+
   it('a member into a Project with a Feature creates the repository', async () => {
     const { service, githubService, readiness } = setup({ featureCount: 2 });
     await service.createRepository('dp-1', 'dev-1', 'token', dto);

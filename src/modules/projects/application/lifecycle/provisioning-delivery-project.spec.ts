@@ -640,6 +640,39 @@ describe('ProjectProvisioningApplicationService - persona gate on repository cre
     expect(githubService.createRepo).not.toHaveBeenCalled();
   });
 
+  it.each([0, 3])(
+    "a member naming another team's Project gets the same 404 whatever its Feature count (%s), never reaching GitHub or the Feature count",
+    async (featureCount) => {
+      const hierarchy = link();
+      (
+        hierarchy.assertDeliveryProjectAvailableForCreate as jest.Mock
+      ).mockRejectedValue(new NotFoundException('Group not found'));
+      const { service, githubService, readiness } = makeService(
+        hierarchy,
+        undefined,
+        'member',
+        { featureCount },
+      );
+      const attempts = [
+        () =>
+          service.createProject('user-1', 'octocat', 'gh-token', {
+            ...baseDto,
+            deliveryProjectId: 'dp-other',
+          }),
+        () =>
+          service.setupProject('user-1', 'gh-token', {
+            ...setupDto,
+            deliveryProjectId: 'dp-other',
+          }),
+      ];
+      for (const attempt of attempts) {
+        await expect(attempt()).rejects.toBeInstanceOf(NotFoundException);
+      }
+      expect(readiness.countActiveFeatures).not.toHaveBeenCalled();
+      expect(githubService.createRepo).not.toHaveBeenCalled();
+    },
+  );
+
   it('a member into a Project with no Feature is refused 409 PROJECT_FEATURES_REQUIRED on create and setup, before GitHub', async () => {
     const { service, githubService, readiness } = makeService(
       link(),

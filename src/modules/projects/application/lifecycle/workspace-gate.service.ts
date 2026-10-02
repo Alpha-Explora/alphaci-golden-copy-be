@@ -78,22 +78,38 @@ export class WorkspaceGateService {
     if (repositoryCreateRequiresProject(role) && !deliveryProjectId) {
       throw projectRequired();
     }
-    if (
-      options.requireFeatures !== false &&
-      repositoryCreateRequiresFeature(role)
-    ) {
-      if (!this.requirementsReadiness) {
-        // Fail closed: an unwired port must not silently lift the rule.
-        throw new InternalServerErrorException(
-          'Project requirements readiness is not available.',
-        );
-      }
-      await assertProjectHasFeatureForRepositoryCreate(
-        this.requirementsReadiness,
-        role,
-        deliveryProjectId,
+    if (options.requireFeatures !== false) {
+      await this.assertProjectHasFeatures(userId, deliveryProjectId, role);
+    }
+  }
+
+  /**
+   * The Feature rule alone. Callers that validate the Project's existence,
+   * team and availability themselves (createProject, setup) run it AFTER that
+   * check, so a member cannot learn whether another team's Project has
+   * Features from the 409-versus-404 difference.
+   */
+  async assertProjectHasFeatures(
+    userId: string,
+    deliveryProjectId?: string | null,
+    knownRole?: Awaited<ReturnType<ProjectsRepository['findAppRole']>>,
+  ): Promise<void> {
+    const role =
+      knownRole ?? (await this.projectsRepository.findAppRole(userId));
+    if (!repositoryCreateRequiresFeature(role)) {
+      return;
+    }
+    if (!this.requirementsReadiness) {
+      // Fail closed: an unwired port must not silently lift the rule.
+      throw new InternalServerErrorException(
+        'Project requirements readiness is not available.',
       );
     }
+    await assertProjectHasFeatureForRepositoryCreate(
+      this.requirementsReadiness,
+      role,
+      deliveryProjectId,
+    );
   }
 
   /**

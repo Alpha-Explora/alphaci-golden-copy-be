@@ -148,6 +148,9 @@ export class ProjectProvisioningApplicationService {
         userId,
         dto.workspaceId,
         dto.deliveryProjectId,
+        // The Feature rule runs below, after the Project is known to exist,
+        // belong to the team and be available (no 409-vs-404 side channel).
+        { requireFeatures: false },
       );
 
     // Same ordering rule for a caller-chosen Project name: 409 before GitHub.
@@ -166,6 +169,11 @@ export class ProjectProvisioningApplicationService {
         workspaceId,
         userId,
       });
+      // Still before the first GitHub call (resolveRepositoryProvisioning).
+      await this.support.workspaceGate.assertProjectHasFeatures(
+        userId,
+        dto.deliveryProjectId,
+      );
     }
 
     const {
@@ -224,6 +232,7 @@ export class ProjectProvisioningApplicationService {
           userId,
           dto.workspaceId,
           dto.deliveryProjectId,
+          { requireFeatures: false },
         );
       await this.support.assertProjectNameAvailableForCreate({
         projectName: dto.projectName,
@@ -236,6 +245,10 @@ export class ProjectProvisioningApplicationService {
           workspaceId,
           userId,
         });
+        await this.support.workspaceGate.assertProjectHasFeatures(
+          userId,
+          dto.deliveryProjectId,
+        );
       }
     }
 
