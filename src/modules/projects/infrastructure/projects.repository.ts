@@ -616,6 +616,34 @@ export class ProjectsRepository
   }
 
   /**
+   * Every provisioned (not failed, orphaned or still provisioning) repository
+   * the caller may see, with no page cap. Backs the admin bulk operations that
+   * must reach all of them (list endpoints are capped at 100).
+   */
+  async listVisibleProvisioned(
+    userId: string,
+  ): Promise<
+    Array<{ id: string; repo_full_name: string; workspace_id: string | null }>
+  > {
+    const result = await this.databaseService.query<{
+      id: string;
+      repo_full_name: string;
+      workspace_id: string | null;
+    }>(
+      `
+        SELECT pp.id, pp.repo_full_name, pp.workspace_id
+        FROM projects.provisioned_projects AS pp
+        WHERE pp.status = 'provisioned'
+          AND pp.repo_full_name IS NOT NULL
+          AND (${projectVisibilitySql('$1')})
+        ORDER BY lower(pp.repo_full_name), pp.created_at;
+      `,
+      [userId],
+    );
+    return result.rows;
+  }
+
+  /**
    * Whether the project row exists at all, regardless of who is asking. Only
    * for telling "gone" apart from "not yours" after a user-scoped lookup
    * missed -- never for authorizing anything.

@@ -14,3 +14,4 @@
 * [ADR-0012: Configurable deployment targets](adr-0012-configurable-deployment-targets.md) - proposed: provider per project slot and branch; the first planned mix uses Vercel/Render for `dev` and `uat`, and customer-hosted Compose for `main`.
 * [ADR-0013: QA verification runs](adr-0013-qa-verification-runs.md) - QA Team persona, commit-keyed snapshotted runs, server-enforced sign-off with a frozen report, and automated results shown beside manual verdicts.
 * [ADR-0014: Project requirements](adr-0014-project-requirements.md) - requirements owned by a Project, developer Progress and QA Verification as separate tracks, one QA run per Project, and a per-Project merge-to-main gate. Supersedes the per-repository parts of ADR-0013.
+* [ADR-0015: GitHub activity ingest and pull-request-only branches](adr-0015-github-activity-and-pr-only-branches.md) - pull request required on dev, uat and main, and repository GitHub activity polled into the Audit trail.

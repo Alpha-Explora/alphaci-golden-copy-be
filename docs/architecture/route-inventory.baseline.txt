@@ -64,6 +64,7 @@ GET /api/v1/projects
 GET /api/v1/projects/{id}/audit
 GET /api/v1/projects/{id}/ci-runs
 GET /api/v1/projects/{id}/ci-runs/{runId}
+GET /api/v1/projects/{id}/commits
 GET /api/v1/projects/{id}/deployments
 GET /api/v1/projects/{id}/drift
 GET /api/v1/projects/{id}/overview
@@ -126,6 +127,7 @@ PATCH /api/v1/requirements/{id}
 PATCH /api/v1/requirements/{id}/items/{itemId}
 PATCH /api/v1/requirements/{id}/items/{itemId}/progress
 PATCH /api/v1/systems/{systemId}
+POST /api/v1/admin/branch-protection/apply
 POST /api/v1/admin/users/{id}/app-role/reset
 POST /api/v1/admin/users/{id}/role
 POST /api/v1/auth/account/restore
@@ -161,6 +163,8 @@ POST /api/v1/notifications/{id}/read
 POST /api/v1/projects
 POST /api/v1/projects/setup
 POST /api/v1/projects/sync
+POST /api/v1/projects/{id}/audit/sync
+POST /api/v1/projects/{id}/branch-protection
 POST /api/v1/projects/{id}/ci-runs/{runId}/rerun
 POST /api/v1/projects/{id}/drift/run
 POST /api/v1/projects/{id}/drift/{findingId}/repair

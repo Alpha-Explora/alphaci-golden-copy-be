@@ -9,8 +9,10 @@ import type {
   AuditEventPublisher,
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
+import { PROTECTED_BRANCHES } from '#kernel/config/pipeline-branches';
 import type { CiProjectPort } from '#kernel/ports/ci-project.port';
 import type { GithubProjectPort } from '#kernel/ports/github.port';
+import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
 import type { ProjectLinkPort } from '#kernel/ports/project-link.port';
 import type { UsageQuotaPort } from '#kernel/ports/usage-quota.port';
 import type { WorkspacesPort } from '#kernel/ports/workspaces.port';
@@ -51,6 +53,13 @@ import type {
   StagedWorkflowFile,
 } from '../workflows/index';
 import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+
+/** One branch's outcome, as recorded in the audit event and the admin report. */
+export interface GithubBranchProtectionResult {
+  name: string;
+  status: 'applied' | 'unchanged' | 'missing' | 'failed';
+  error?: string;
+}
 
 export type WorkflowFilePusher = (
   accessToken: string,
@@ -774,6 +783,78 @@ export class ProjectProvisioningSupport {
     } catch (error) {
       this.logger.warn(
         `project_created announcement failed for ${input.repoFullName}: ${String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Requires a pull request on dev, uat and main of a repository provisioning
+   * just filled (the initial "ci: add ALPHACI workflow" commits are already
+   * pushed, which is why this runs last). Best effort by design: a repository
+   * that provisioned fine must not be torn down because GitHub refused the
+   * rule, so a failure logs a warning and records
+   * `project_branch_protection_failed`; success records
+   * `project_branch_protection_applied`. Never throws.
+   */
+  async protectPipelineBranches(input: {
+    token: string;
+    owner: string;
+    repo: string;
+    userId: string;
+    projectId: string;
+    workspaceId?: string | null;
+  }): Promise<void> {
+    const repoFullName = `${input.owner}/${input.repo}`;
+    const branches: GithubBranchProtectionResult[] = [];
+    for (const name of PROTECTED_BRANCHES) {
+      try {
+        const outcome = await this.githubService.ensurePullRequestProtection(
+          input.token,
+          input.owner,
+          input.repo,
+          name,
+          { seedStatusChecks: [ENV_GUARD_CHECK_CONTEXT] },
+        );
+        branches.push({ name, ...outcome });
+      } catch (error) {
+        branches.push({
+          name,
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const failed = branches.filter((branch) => branch.status === 'failed');
+    if (failed.length > 0) {
+      this.logger.warn(
+        `Branch protection failed on ${repoFullName}: ${failed
+          .map((branch) => `${branch.name} (${branch.error ?? 'unknown'})`)
+          .join('; ')}`,
+      );
+    }
+    try {
+      await (
+        this.auditEventPublisher ?? this.auditEventsService
+      )?.recordProjectEvent({
+        actorUserId: input.userId,
+        workspaceId: input.workspaceId ?? null,
+        projectId: input.projectId,
+        eventCode:
+          failed.length > 0
+            ? 'project_branch_protection_failed'
+            : 'project_branch_protection_applied',
+        message:
+          failed.length > 0
+            ? `Branch protection could not be applied to ${failed
+                .map((branch) => branch.name)
+                .join(', ')}`
+            : 'Pull requests are now required on dev, uat and main',
+        metadata: { repoFullName, branches },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not record the branch protection event for ${repoFullName}: ${String(error)}`,
       );
     }
   }

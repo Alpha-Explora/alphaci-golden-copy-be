@@ -256,3 +256,105 @@ describe('ProjectProvisioningSupport.notifyProjectCreated', () => {
     expect(listWorkspaceLeadAndDeveloperIds).not.toHaveBeenCalled();
   });
 });
+
+describe('ProjectProvisioningSupport.protectPipelineBranches', () => {
+  const make = (
+    ensure: jest.Mock,
+    publisher: { recordProjectEvent: jest.Mock } | undefined,
+  ) =>
+    new ProjectProvisioningSupport({
+      catalogService: {} as never,
+      githubService: { ensurePullRequestProtection: ensure } as never,
+      projectsRepository: {} as never,
+      ciService: {} as never,
+      projectDeploymentProvisioningService: {} as never,
+      deploymentProvisioningDefaults: undefined,
+      configService: undefined,
+      usageQuotaService: undefined,
+      auditEventsService: undefined,
+      workspacesService: undefined,
+      notificationEventPublisher: undefined,
+      auditEventPublisher: publisher as never,
+      hierarchyProjectLinkService: undefined,
+      workflowFilePusher: undefined,
+      workflowFragmentRegistry: undefined,
+      requirementsReadiness: undefined,
+    });
+
+  const input = {
+    token: 'tok',
+    owner: 'acme',
+    repo: 'storefront',
+    userId: 'user-1',
+    projectId: 'project-1',
+    workspaceId: 'team-1',
+  };
+
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  it('requires a pull request on dev, uat and main, seeding the env-guard check, and records it', async () => {
+    const ensure = jest.fn().mockResolvedValue({ status: 'applied' });
+    const publisher = { recordProjectEvent: jest.fn() };
+
+    await make(ensure, publisher).protectPipelineBranches(input);
+
+    expect(ensure.mock.calls).toEqual(
+      ['dev', 'uat', 'main'].map((branch) => [
+        'tok',
+        'acme',
+        'storefront',
+        branch,
+        { seedStatusChecks: ['env-guard'] },
+      ]),
+    );
+    expect(publisher.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCode: 'project_branch_protection_applied',
+        projectId: 'project-1',
+        workspaceId: 'team-1',
+        actorUserId: 'user-1',
+        metadata: expect.objectContaining({
+          repoFullName: 'acme/storefront',
+        }),
+      }),
+    );
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('never fails provisioning: a refusal or a throw logs a warning and records project_branch_protection_failed', async () => {
+    const ensure = jest
+      .fn()
+      .mockResolvedValueOnce({ status: 'applied' })
+      .mockResolvedValueOnce({ status: 'failed', error: 'HTTP 403 on uat' })
+      .mockRejectedValueOnce(new Error('network down'));
+    const publisher = { recordProjectEvent: jest.fn() };
+
+    await expect(
+      make(ensure, publisher).protectPipelineBranches(input),
+    ).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('uat (HTTP 403 on uat); main (network down)'),
+    );
+    expect(publisher.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCode: 'project_branch_protection_failed',
+        message: 'Branch protection could not be applied to uat, main',
+      }),
+    );
+  });
+
+  it('still works when no audit sink is wired', async () => {
+    const ensure = jest.fn().mockResolvedValue({ status: 'missing' });
+
+    await expect(
+      make(ensure, undefined).protectPipelineBranches(input),
+    ).resolves.toBeUndefined();
+  });
+});

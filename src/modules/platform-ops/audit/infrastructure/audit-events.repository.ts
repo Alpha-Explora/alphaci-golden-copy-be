@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import type {
+  ExternalAuditBatch,
+  GithubActivitySyncState,
+} from '#kernel/ports/audit.port';
 
 export interface AuditEventRecord {
   id: string;
@@ -35,11 +39,17 @@ interface AuditEventRow {
 
 interface AuditEventListRowRaw extends AuditEventRow {
   actor_login: string | null;
+  external_id: string | null;
 }
 
 export interface AuditEventListRow extends AuditEventRecord {
   actorLogin: string | null;
-  scope: 'repository' | 'project';
+  scope: 'repository' | 'project' | 'github';
+}
+
+interface GithubSyncRow {
+  etag: string | null;
+  last_synced_at: string;
 }
 
 @Injectable()
@@ -104,6 +114,7 @@ export class AuditEventsRepository {
           event.project_id,
           event.actor_user_id,
           user_profile.login AS actor_login,
+          event.external_id,
           event.event_code,
           event.message,
           event.metadata_json,
@@ -132,8 +143,138 @@ export class AuditEventsRepository {
     return result.rows.map((row) => ({
       ...this.toRecord(row),
       actorLogin: row.actor_login,
-      scope: row.project_id === null ? 'project' : 'repository',
+      scope: row.external_id?.startsWith('github:')
+        ? 'github'
+        : row.project_id === null
+          ? 'project'
+          : 'repository',
     }));
+  }
+
+  /** The subset of `externalIds` already stored. */
+  async findRecordedExternalIds(externalIds: string[]): Promise<Set<string>> {
+    if (externalIds.length === 0) {
+      return new Set();
+    }
+    const result = await this.databaseService.query<{ external_id: string }>(
+      `
+        SELECT external_id
+        FROM audit.audit_events
+        WHERE external_id = ANY($1::text[]);
+      `,
+      [externalIds],
+    );
+    return new Set(result.rows.map((row) => row.external_id));
+  }
+
+  /**
+   * Inserts events that happened outside ALPHACI (GitHub activity), one
+   * statement for the whole batch. `external_id` is unique, so re-syncing the
+   * same GitHub events is a no-op (ON CONFLICT DO NOTHING). The actor login is
+   * resolved to an ALPHACI user in the same statement; no match leaves
+   * actor_user_id NULL. created_at is the event's own time, not now().
+   */
+  async insertExternalBatch(batch: ExternalAuditBatch): Promise<number> {
+    if (batch.events.length === 0) {
+      return 0;
+    }
+    const result = await this.databaseService.query<{ id: string }>(
+      `
+        INSERT INTO audit.audit_events (
+          workspace_id,
+          project_id,
+          actor_user_id,
+          event_code,
+          message,
+          metadata_json,
+          created_at,
+          external_id
+        )
+        SELECT
+          $1::uuid,
+          $2::uuid,
+          (
+            SELECT profile.id
+            FROM identity.app_users AS profile
+            WHERE e.actor_login IS NOT NULL
+              AND lower(profile.login) = lower(e.actor_login)
+            LIMIT 1
+          ),
+          e.event_code,
+          e.message,
+          e.metadata::jsonb,
+          e.created_at,
+          e.external_id
+        FROM unnest(
+          $3::text[],
+          $4::text[],
+          $5::text[],
+          $6::text[],
+          $7::text[],
+          $8::timestamptz[]
+        ) AS e(
+          external_id,
+          event_code,
+          message,
+          actor_login,
+          metadata,
+          created_at
+        )
+        ON CONFLICT (external_id) DO NOTHING
+        RETURNING id;
+      `,
+      [
+        batch.workspaceId,
+        batch.projectId,
+        batch.events.map((event) => event.externalId),
+        batch.events.map((event) => event.eventCode),
+        batch.events.map((event) => event.message),
+        batch.events.map((event) => event.actorLogin),
+        batch.events.map((event) => JSON.stringify(event.metadata)),
+        batch.events.map((event) => event.occurredAt),
+      ],
+    );
+    return result.rows.length;
+  }
+
+  async findGithubSyncState(
+    repoFullName: string,
+  ): Promise<GithubActivitySyncState | null> {
+    const result = await this.databaseService.query<GithubSyncRow>(
+      `
+        SELECT
+          etag,
+          to_char(
+            last_synced_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS last_synced_at
+        FROM audit.github_event_syncs
+        WHERE repo_full_name = lower($1);
+      `,
+      [repoFullName],
+    );
+    const row = result.rows[0];
+    return row ? { etag: row.etag, syncedAt: row.last_synced_at } : null;
+  }
+
+  async saveGithubSyncState(
+    repoFullName: string,
+    state: GithubActivitySyncState,
+  ): Promise<void> {
+    await this.databaseService.query(
+      `
+        INSERT INTO audit.github_event_syncs (
+          repo_full_name,
+          etag,
+          last_synced_at
+        )
+        VALUES (lower($1), $2, $3::timestamptz)
+        ON CONFLICT (repo_full_name) DO UPDATE SET
+          etag = EXCLUDED.etag,
+          last_synced_at = EXCLUDED.last_synced_at;
+      `,
+      [repoFullName, state.etag, state.syncedAt],
+    );
   }
 
   private toRecord(row: AuditEventRow): AuditEventRecord {

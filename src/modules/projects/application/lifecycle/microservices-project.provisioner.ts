@@ -157,6 +157,8 @@ export class MicroservicesProjectProvisioner {
         provisioningToken,
         ownerLogin,
         repoName,
+        userId,
+        project: backendRow,
       });
 
       // Repo is now fully usable; failures past this point must not delete it.

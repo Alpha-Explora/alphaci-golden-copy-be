@@ -89,7 +89,11 @@ describe('ProjectDriftRepairService', () => {
   }
 
   describe('repair_branch_protection', () => {
-    const githubService = { applyBranchProtection: jest.fn() };
+    const githubService = {
+      ensurePullRequestProtection: jest
+        .fn()
+        .mockResolvedValue({ status: 'applied' }),
+    };
     const branchFinding = (overrides: Record<string, unknown> = {}) => ({
       id: 'finding-bp',
       projectId: 'project-1',
@@ -138,7 +142,7 @@ describe('ProjectDriftRepairService', () => {
         status: 'completed',
         result: { branch: 'uat' },
       });
-      expect(githubService.applyBranchProtection).toHaveBeenCalledWith(
+      expect(githubService.ensurePullRequestProtection).toHaveBeenCalledWith(
         'gh-token',
         'tone',
         'orders-api',
@@ -154,34 +158,65 @@ describe('ProjectDriftRepairService', () => {
       'refuses %s and never touches GitHub',
       async (role) => {
         await expect(repairAs(role)).rejects.toThrow(ForbiddenException);
-        expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+        expect(
+          githubService.ensurePullRequestProtection,
+        ).not.toHaveBeenCalled();
         expect(findingsRepository.markStatus).not.toHaveBeenCalled();
       },
     );
 
-    it('refuses a finding that is not a uat/main protection finding', async () => {
+    it('refuses a finding that is not a pipeline-branch protection finding', async () => {
       findingsRepository.findByIdForProject.mockResolvedValue(
-        branchFinding({ code: 'branch_dev_protected' }),
+        branchFinding({ code: 'branch_dev_protected_legacy' }),
       );
 
       await expect(repairAs('lead')).rejects.toThrow(
         'does not support finding',
       );
-      expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+      expect(githubService.ensurePullRequestProtection).not.toHaveBeenCalled();
     });
 
-    it('refuses to repair dev even if a finding names it', async () => {
+    it('repairs dev too: every pipeline branch needs a pull request', async () => {
       findingsRepository.findByIdForProject.mockResolvedValue(
         branchFinding({ details: { branch: 'dev' } }),
       );
 
+      await expect(repairAs('lead')).resolves.toMatchObject({
+        status: 'completed',
+        result: { branch: 'dev' },
+      });
+      expect(githubService.ensurePullRequestProtection).toHaveBeenCalledWith(
+        'gh-token',
+        'tone',
+        'orders-api',
+        'dev',
+      );
+    });
+
+    it('refuses a branch outside the pipeline', async () => {
+      findingsRepository.findByIdForProject.mockResolvedValue(
+        branchFinding({ details: { branch: 'feature/x' } }),
+      );
+
       await expect(repairAs('lead')).rejects.toThrow(BadRequestException);
-      expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+      expect(githubService.ensurePullRequestProtection).not.toHaveBeenCalled();
+    });
+
+    it('does not resolve the finding when GitHub refuses the rule', async () => {
+      githubService.ensurePullRequestProtection.mockResolvedValueOnce({
+        status: 'failed',
+        error: 'HTTP 403 on uat: the credential lacks admin permission',
+      });
+
+      await expect(repairAs('lead')).rejects.toThrow(
+        'could not be applied to uat',
+      );
+      expect(findingsRepository.markStatus).not.toHaveBeenCalled();
     });
 
     it('needs a GitHub session', async () => {
       await expect(repairAs('lead', null)).rejects.toThrow(BadRequestException);
-      expect(githubService.applyBranchProtection).not.toHaveBeenCalled();
+      expect(githubService.ensurePullRequestProtection).not.toHaveBeenCalled();
     });
   });
 

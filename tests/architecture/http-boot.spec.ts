@@ -126,6 +126,19 @@ const { GithubController } =
 const { DEPLOYMENT_PROJECT_REFERENCE_LOOKUP } =
   require('../../src/kernel/ports/deployment-runtime.port.js') as typeof import('../../src/kernel/ports/deployment-runtime.port.js');
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { AUDIT_EXTERNAL_INGEST_PORT } =
+  require('../../src/kernel/ports/audit.port.js') as typeof import('../../src/kernel/ports/audit.port.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectGithubActivityService } =
+  require('../../src/modules/projects/application/github-activity/project-github-activity.service.js') as typeof import('../../src/modules/projects/application/github-activity/project-github-activity.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectBranchProtectionService } =
+  require('../../src/modules/projects/application/branch-protection/project-branch-protection.service.js') as typeof import('../../src/modules/projects/application/branch-protection/project-branch-protection.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectDashboardService } =
+  require('../../src/modules/projects/application/dashboard/project-dashboard.service.js') as typeof import('../../src/modules/projects/application/dashboard/project-dashboard.service.js');
+
 describe('HTTP application boot', () => {
   it('initializes the real Express middleware and serves health without a DB', async () => {
     const app = await createHttpApplication();
@@ -539,6 +552,42 @@ describe('HTTP application boot', () => {
           .findProjectReference,
       ).toBe('function');
       expect(instance.projectReferenceLookup).toBe(lookup);
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  /*
+   * GitHub activity in the Audit trail: the ingest port is optional in the
+   * services that use it (so a unit test can omit it), which means a missed
+   * binding would not fail the boot - the Audit tab would just never show any
+   * GitHub activity. Reads the private fields back to prove each optional
+   * dependency is the real provider and not a silent undefined.
+   */
+  it('wires the GitHub activity sync, the audit ingest port and branch protection auditing', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const ingest = app.get(AUDIT_EXTERNAL_INGEST_PORT, { strict: false });
+      const publisher = app.get(AuditEventPublisher, { strict: false });
+      const activity = app.get(ProjectGithubActivityService, {
+        strict: false,
+      });
+      const dashboard = app.get(ProjectDashboardService, { strict: false });
+      const protection = app.get(ProjectBranchProtectionService, {
+        strict: false,
+      });
+
+      expect(typeof ingest.ingestExternalEvents).toBe('function');
+      expect((activity as unknown as { ingest?: unknown }).ingest).toBe(ingest);
+      expect(
+        (dashboard as unknown as { githubActivity?: unknown }).githubActivity,
+      ).toBe(activity);
+      expect(
+        (protection as unknown as { auditEventPublisher?: unknown })
+          .auditEventPublisher,
+      ).toBe(publisher);
     } finally {
       await app.close();
     }

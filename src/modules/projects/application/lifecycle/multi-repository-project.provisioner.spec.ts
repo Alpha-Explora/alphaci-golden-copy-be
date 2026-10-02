@@ -24,8 +24,11 @@ function fakeSupport() {
       createRepo: jest.fn(),
       setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
       createBranch: jest.fn().mockResolvedValue(undefined),
-      applyBranchProtection: jest.fn().mockResolvedValue(undefined),
+      ensurePullRequestProtection: jest
+        .fn()
+        .mockResolvedValue({ status: 'applied' }),
     },
+    protectPipelineBranches: jest.fn().mockResolvedValue(undefined),
     pushStarterFiles: jest.fn().mockResolvedValue(undefined),
     createProjectRow: jest
       .fn()

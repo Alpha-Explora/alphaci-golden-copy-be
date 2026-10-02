@@ -13,10 +13,7 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
-import {
-  PIPELINE_BRANCHES,
-  PROTECTED_BRANCHES,
-} from '#kernel/config/pipeline-branches';
+import { PROTECTED_BRANCHES } from '#kernel/config/pipeline-branches';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import { EnvVarsRepository } from '../infrastructure/repositories/env-vars.repository';
 import type {
@@ -293,24 +290,6 @@ export class ProjectDriftService implements DeploymentDriftQuery {
       details: { branch, repoFullName: project.repoFullName },
     });
     const findings: ProjectDriftFindingInput[] = [];
-
-    const workingBranch = PIPELINE_BRANCHES[0];
-    const working = await this.githubService.getBranchProtectionSummary(
-      githubAccessToken,
-      owner,
-      repo,
-      workingBranch,
-    );
-    if (working?.pullRequestRequired) {
-      findings.push(
-        finding(
-          'warning',
-          'branch_dev_protected',
-          workingBranch,
-          `Branch ${workingBranch} requires pull requests, but developers must be able to push to it directly.`,
-        ),
-      );
-    }
 
     for (const branch of PROTECTED_BRANCHES) {
       const summary = await this.githubService.getBranchProtectionSummary(

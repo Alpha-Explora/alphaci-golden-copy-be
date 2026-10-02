@@ -3,7 +3,7 @@ import type { WorkflowFragmentBranch } from '#kernel/ports/workflow-fragment.por
 /**
  * The promotion flow, in order, for every provisioned repository.
  *
- *   dev  → where work lands, and the only tier developers push to directly.
+ *   dev  → where work lands, reached by pull request from a feature branch.
  *   uat  → the QA tier, protected, reached by promotion from dev.
  *   main → production, protected, reached by promotion from uat.
  *
@@ -27,7 +27,7 @@ export const PIPELINE_BRANCHES = [
 
 export type PipelineBranch = (typeof PIPELINE_BRANCHES)[number];
 
-/** The working tier developers push to; first rung of the promotion flow. */
+/** The working tier work lands on; first rung of the promotion flow. */
 export const WORKING_BRANCH = PIPELINE_BRANCHES[0];
 
 /** Production, and the branch every provisioned repository starts on. */
@@ -48,27 +48,28 @@ export const BRANCHES_CREATED_ON_PROVISION = PIPELINE_BRANCHES.filter(
 /**
  * Branches that receive protection rules and required status checks.
  *
- * Everything above the working tier. `dev` is deliberately unprotected: it is
- * where developers push, and requiring a pull request there would make the
- * promotion flow start one step too late.
+ * Every tier of the flow. Nobody pushes to any of them directly: work reaches
+ * `dev` through a pull request from a feature branch, `uat` from `dev`, and
+ * `main` only through QA Studio's "Merge to main". `dev` used to be left
+ * unprotected so developers could push to it, and that is exactly how commits
+ * landed with no pull request, no review trail and nothing in the Pull
+ * requests list. The rule is "pull request required, zero approvals" so
+ * ALPHACI-driven merges keep working; see GithubService.ensurePullRequestProtection.
  */
-export const PROTECTED_BRANCHES = PIPELINE_BRANCHES.filter(
-  (branch) => branch !== PIPELINE_BRANCHES[0],
-);
+export const PROTECTED_BRANCHES: readonly PipelineBranch[] = PIPELINE_BRANCHES;
 
 /**
  * Branches that get hosted infrastructure: a service, a deploy job, and an
  * address something can be tested against.
  *
- * `dev` is deliberately absent. It is where developers push, and a developer
+ * `dev` is deliberately absent. It is where work lands, and a developer
  * runs their own branch locally — so a hosted dev tier is a service per
  * project that nobody visits, paid for on every plan and kept warm by nothing.
  * dev still builds and still runs the full quality stage; it simply has
  * nowhere to deploy to.
  *
- * Separate from PROTECTED_BRANCHES even though the two hold the same names
- * today. One answers "what may be pushed to directly" and the other answers
- * "what costs money to run" — and a future tier could easily be one without
+ * Separate from PROTECTED_BRANCHES. One answers "what needs a pull request"
+ * and the other answers "what costs money to run" — and a future tier could easily be one without
  * being the other. Collapsing them would make that a silent change.
  *
  * Written out rather than derived so the list reads as a decision, with

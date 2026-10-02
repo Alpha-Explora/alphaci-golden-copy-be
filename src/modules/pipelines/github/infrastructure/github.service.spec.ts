@@ -1896,56 +1896,6 @@ describe('GithubService', () => {
       ).rejects.toThrow('setActionsSecret: failed to fetch public key');
     });
 
-    it('applies branch protection with the expected GitHub endpoint', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true });
-
-      await expect(
-        service.applyBranchProtection('gh-token', 'tone', 'orders-api', 'test'),
-      ).resolves.toBeUndefined();
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://api.github.com/repos/tone/orders-api/branches/test/protection',
-        expect.objectContaining({ method: 'PUT' }),
-      );
-    });
-
-    it('requires the env-guard status check on protected branches by default', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true });
-
-      await service.applyBranchProtection(
-        'gh-token',
-        'tone',
-        'orders-api',
-        'test',
-      );
-
-      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
-      const body = JSON.parse(init.body) as {
-        required_status_checks: { strict: boolean; contexts: string[] } | null;
-      };
-      expect(body.required_status_checks).toEqual({
-        strict: false,
-        contexts: ['env-guard'],
-      });
-    });
-
-    it('omits required status checks when explicitly given none', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true });
-
-      await service.applyBranchProtection(
-        'gh-token',
-        'tone',
-        'orders-api',
-        'test',
-        [],
-      );
-
-      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
-      const body = JSON.parse(init.body) as {
-        required_status_checks: unknown;
-      };
-      expect(body.required_status_checks).toBeNull();
-    });
-
     describe('getBranchProtectionSummary', () => {
       it('reads the protection facts of a protected branch', async () => {
         fetchMock.mockResolvedValueOnce({
@@ -1997,15 +1947,27 @@ describe('GithubService', () => {
       });
     });
 
-    it('does not throw when branch protection fails', async () => {
-      fetchMock.mockResolvedValueOnce({
-        ok: false,
-        status: 403,
-      });
+    it('reports a refused rule as failed instead of throwing', async () => {
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, status: 200 })
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          text: () => Promise.resolve('{"message":"Resource not accessible"}'),
+        });
 
       await expect(
-        service.applyBranchProtection('gh-token', 'tone', 'orders-api', 'main'),
-      ).resolves.toBeUndefined();
+        service.ensurePullRequestProtection(
+          'gh-token',
+          'tone',
+          'orders-api',
+          'main',
+        ),
+      ).resolves.toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining('Administration: write'),
+      });
     });
   });
 
