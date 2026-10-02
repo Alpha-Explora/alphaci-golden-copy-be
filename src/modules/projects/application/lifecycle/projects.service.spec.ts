@@ -1841,9 +1841,13 @@ jobs:
             eventCode: 'workflow_pr_created',
             message: 'Workflow update PR created',
             actorUserId: 'user-1',
+            actorLogin: 'octo',
+            metadata: { pullRequestNumber: 42 },
             createdAt: '2026-06-14T00:00:00.000Z',
+            scope: 'repository',
           },
         ],
+        next: null,
       }),
     };
     const auditService = makeProjectsService(
@@ -1874,18 +1878,23 @@ jobs:
           eventCode: 'workflow_pr_created',
           message: 'Workflow update PR created',
           actorUserId: 'user-1',
+          actorLogin: 'octo',
+          metadata: { pullRequestNumber: 42 },
           createdAt: '2026-06-14T00:00:00.000Z',
+          scope: 'repository',
         },
       ],
+      next: null,
     });
     expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
       'project-1',
       'user-1',
     );
-    expect(auditEventsService.listProjectEvents).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-    );
+    expect(auditEventsService.listProjectEvents).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      deliveryProjectId: null,
+      before: null,
+    });
   });
 
   it('creates a local dashboard snapshot without calling live provider APIs', async () => {

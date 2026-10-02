@@ -125,9 +125,23 @@ export function canCreatePullRequest(
   return isAllowedPullRequestRoute(role, head, base);
 }
 
+const HOSTING_CONFIG_ROLES: readonly PlatformAppRole[] = ['admin', 'member'];
+
 /** Whether `role` may list, provision, validate, or delete a project's environment variables. */
-export function canManageEnvVars(role: PlatformAppRole): boolean {
-  return PROJECT_MANAGEMENT_ROLES.includes(role);
+export function canManageEnvVars(
+  role: PlatformAppRole | null | undefined,
+): boolean {
+  return role != null && HOSTING_CONFIG_ROLES.includes(role);
+}
+
+/**
+ * Whether `role` may add, change, verify or remove a project's hosting:
+ * deployment targets and custom domains.
+ */
+export function canManageHosting(
+  role: PlatformAppRole | null | undefined,
+): boolean {
+  return role != null && HOSTING_CONFIG_ROLES.includes(role);
 }
 
 /**

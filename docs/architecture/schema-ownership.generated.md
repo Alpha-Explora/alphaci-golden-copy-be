@@ -52,6 +52,7 @@ These are exact file-to-schema.table allowances required for historical migratio
 | `pipelines/20260614000100_ci_run_reports.sql` | `identity.app_users` |
 | `platform-ops/20260614000300_workspaces_audit_notifications.sql` | `orgs.workspace_members`, `orgs.workspaces`, `projects.provisioned_projects` |
 | `platform-ops/20260617000300_user_feedback.sql` | `identity.app_users` |
+| `platform-ops/20261002010000_backfill_dropped_audit_events.sql` | `orgs.workspaces`, `projects.provisioned_projects` |
 | `projects/20260609_backfill_projects_schema_from_public.sql` | `billing.subscription_plans`, `billing.user_subscriptions`, `ci.project_ci_tokens`, `github_app.github_installation_accounts`, `github_app.github_installations`, `identity.app_users`, `identity.oauth_states`, `platform.outbox_events`, `public.app_users`, `public.github_installation_repos`, `public.github_installations`, `public.oauth_states`, `public.outbox_events`, `public.project_ci_tokens`, `public.provisioned_projects`, `public.subscription_plans`, `public.user_subscriptions`, `public.workflow_generations` |
 | `projects/20260611192953_project_dashboard_snapshots.sql` | `identity.app_users` |
 | `projects/20260611200404_workflow_settings_preview.sql` | `identity.app_users` |
@@ -78,7 +79,7 @@ These are exact source-file allowances for current cross-context reads or shared
 | `src/modules/identity-access/workspaces/infrastructure/workspaces.repository.ts` | `projects.provisioned_projects` |
 | `src/modules/pipelines/ci/application/ci-reports.service.ts` | `projects.provisioned_projects` |
 | `src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts` | `billing.user_subscriptions`, `identity.app_users`, `projects.provisioned_projects` |
-| `src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts` | `projects.provisioned_projects` |
+| `src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts` | `identity.app_users` |
 | `src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts` | `identity.app_users` |
 | `src/modules/platform-ops/notifications/infrastructure/notifications.repository.ts` | `hierarchy.repositories` |
 | `src/modules/projects/infrastructure/projects.repository.ts` | `hierarchy.repositories`, `hierarchy.repository_assignments`, `identity.app_users`, `identity.platform_admins`, `orgs.workspace_members` |

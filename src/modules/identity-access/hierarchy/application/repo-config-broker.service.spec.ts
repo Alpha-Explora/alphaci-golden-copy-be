@@ -29,7 +29,7 @@ function build(options: { role?: string | undefined; visible?: boolean } = {}) {
   const auditEventsService = { recordProjectEvent: jest.fn() };
   const appRoleLookup = {
     findAppRole: jest.fn(() =>
-      Promise.resolve('role' in options ? options.role : 'lead'),
+      Promise.resolve('role' in options ? options.role : 'member'),
     ),
   };
   const service = new RepoConfigBrokerService(
@@ -44,7 +44,7 @@ function build(options: { role?: string | undefined; visible?: boolean } = {}) {
 }
 
 describe('RepoConfigBrokerService role gate', () => {
-  it.each(['admin', 'lead'])(
+  it.each(['admin', 'member'])(
     'lets %s write a variable and a secret',
     async (role) => {
       const { service, secretsProvider } = build({ role });
@@ -55,7 +55,7 @@ describe('RepoConfigBrokerService role gate', () => {
     },
   );
 
-  it.each(['member', 'qa'])(
+  it.each(['lead', 'qa'])(
     '%s (even an assignee) gets ENV_VARS_LEAD_ONLY on write and delete, no GitHub call',
     async (role) => {
       const { service, secretsProvider } = build({ role });

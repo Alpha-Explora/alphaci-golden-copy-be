@@ -71,39 +71,78 @@ describe('AuditEventsRepository', () => {
     ).rejects.toThrow('Audit event insert did not return a row');
   });
 
-  it('lists project audit events for the owning user', async () => {
+  it('lists a repository and its Project events without reading projects.*', async () => {
     query.mockResolvedValueOnce({
       rows: [
         {
           id: 'event-1',
           workspace_id: 'workspace-1',
           project_id: 'project-1',
-          actor_user_id: null,
+          actor_user_id: 'user-9',
+          actor_login: 'dev-nine',
           event_code: 'drift_detected',
           message: 'Drift detected',
           metadata_json: { severity: 'warning' },
-          created_at: '2026-06-14T00:00:00.000Z',
+          created_at: '2026-06-14T00:00:00.123456Z',
+        },
+        {
+          id: 'event-2',
+          workspace_id: 'workspace-1',
+          project_id: null,
+          actor_user_id: null,
+          actor_login: null,
+          event_code: 'qa.requirement.created',
+          message: 'QA requirement "Login" created',
+          metadata_json: JSON.stringify({ deliveryProjectId: 'dp-1' }),
+          created_at: '2026-06-13T00:00:00.000000Z',
         },
       ],
     });
 
     await expect(
-      repository.listByProjectForUser('project-1', 'user-1', 10),
+      repository.listForProject({
+        projectId: 'project-1',
+        deliveryProjectId: 'dp-1',
+        limit: 10,
+        before: '2026-06-15T00:00:00.000000Z',
+      }),
     ).resolves.toEqual([
       {
         id: 'event-1',
         workspaceId: 'workspace-1',
         projectId: 'project-1',
-        actorUserId: null,
+        actorUserId: 'user-9',
+        actorLogin: 'dev-nine',
         eventCode: 'drift_detected',
         message: 'Drift detected',
         metadata: { severity: 'warning' },
-        createdAt: '2026-06-14T00:00:00.000Z',
+        createdAt: '2026-06-14T00:00:00.123456Z',
+        scope: 'repository',
+      },
+      {
+        id: 'event-2',
+        workspaceId: 'workspace-1',
+        projectId: null,
+        actorUserId: null,
+        actorLogin: null,
+        eventCode: 'qa.requirement.created',
+        message: 'QA requirement "Login" created',
+        metadata: { deliveryProjectId: 'dp-1' },
+        createdAt: '2026-06-13T00:00:00.000000Z',
+        scope: 'project',
       },
     ]);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining('JOIN projects.provisioned_projects'),
-      ['project-1', 'user-1', 10],
-    );
+    const [sql, params] = query.mock.calls.at(-1) as [string, unknown[]];
+    // No creator filter and no cross-schema join: the projects module has
+    // already authorised the caller.
+    expect(sql).not.toContain('projects.provisioned_projects');
+    expect(sql).not.toContain('user_id =');
+    expect(sql).toContain("metadata_json ->> 'deliveryProjectId'");
+    expect(params).toEqual([
+      'project-1',
+      'dp-1',
+      '2026-06-15T00:00:00.000000Z',
+      10,
+    ]);
   });
 });

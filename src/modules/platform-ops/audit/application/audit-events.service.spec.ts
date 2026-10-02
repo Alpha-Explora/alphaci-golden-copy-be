@@ -3,7 +3,7 @@ import { AuditEventsService } from './audit-events.service';
 describe('AuditEventsService', () => {
   const repository = {
     create: jest.fn(),
-    listByProjectForUser: jest.fn(),
+    listForProject: jest.fn(),
   };
   const capabilityResolver = { deployment: jest.fn() };
 
@@ -80,8 +80,73 @@ describe('AuditEventsService', () => {
     );
 
     await expect(
-      service.listProjectEvents('project-1', 'user-1'),
-    ).resolves.toEqual({ enabled: false, items: [] });
-    expect(repository.listByProjectForUser).not.toHaveBeenCalled();
+      service.listProjectEvents({ projectId: 'project-1' }),
+    ).resolves.toEqual({ enabled: false, items: [], next: null });
+    expect(repository.listForProject).not.toHaveBeenCalled();
+  });
+
+  describe('listProjectEvents paging', () => {
+    const row = (n: number) => ({
+      id: `event-${n}`,
+      createdAt: `2026-06-14T00:00:0${n}.000000Z`,
+      actorLogin: null,
+      scope: 'repository',
+    });
+
+    it('passes the Project and cursor through and defaults to 50', async () => {
+      repository.listForProject.mockResolvedValueOnce([]);
+      const service = new AuditEventsService(
+        repository as never,
+        capabilityResolver as never,
+      );
+
+      await service.listProjectEvents({
+        projectId: 'repo-1',
+        deliveryProjectId: 'dp-1',
+        before: '2026-06-14T00:00:00.000000Z',
+      });
+
+      expect(repository.listForProject).toHaveBeenCalledWith({
+        projectId: 'repo-1',
+        deliveryProjectId: 'dp-1',
+        limit: 51,
+        before: '2026-06-14T00:00:00.000000Z',
+      });
+    });
+
+    it('clamps the limit to 100', async () => {
+      repository.listForProject.mockResolvedValueOnce([]);
+      const service = new AuditEventsService(
+        repository as never,
+        capabilityResolver as never,
+      );
+
+      await service.listProjectEvents({ projectId: 'repo-1', limit: 5000 });
+
+      expect(repository.listForProject).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 101, deliveryProjectId: null }),
+      );
+    });
+
+    it('returns a next cursor only when more rows exist', async () => {
+      const service = new AuditEventsService(
+        repository as never,
+        capabilityResolver as never,
+      );
+
+      repository.listForProject.mockResolvedValueOnce([row(3), row(2), row(1)]);
+      await expect(
+        service.listProjectEvents({ projectId: 'repo-1', limit: 2 }),
+      ).resolves.toEqual({
+        enabled: true,
+        items: [row(3), row(2)],
+        next: row(2).createdAt,
+      });
+
+      repository.listForProject.mockResolvedValueOnce([row(3), row(2)]);
+      await expect(
+        service.listProjectEvents({ projectId: 'repo-1', limit: 2 }),
+      ).resolves.toMatchObject({ next: null });
+    });
   });
 });

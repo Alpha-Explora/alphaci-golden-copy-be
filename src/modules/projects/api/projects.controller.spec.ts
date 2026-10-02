@@ -1,4 +1,8 @@
-import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import type { Request } from 'express';
@@ -601,11 +605,43 @@ describe('ProjectsController', () => {
     expect(service.listProjectAuditEvents).toHaveBeenCalledWith(
       'project-1',
       'user-1',
+      {},
     );
     expect(result).toMatchObject({
       enabled: true,
       items: [],
     });
+  });
+
+  it('passes the audit paging query through, clamping limit to 100', async () => {
+    await controller.listProjectAuditEvents(
+      makeRequest(fakeUser),
+      'project-1',
+      '500',
+      '2026-10-01T10:00:00.123456Z',
+    );
+
+    expect(service.listProjectAuditEvents).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      { limit: 100, before: '2026-10-01T10:00:00.123456Z' },
+    );
+  });
+
+  it.each([
+    ['a non-numeric limit', 'abc', undefined],
+    ['a zero limit', '0', undefined],
+    ['a malformed cursor', undefined, 'yesterday'],
+    ['an out-of-range cursor', undefined, '2026-13-45T99:00:00Z'],
+  ])('rejects %s with 400', async (_label, limit, before) => {
+    await expect(
+      controller.listProjectAuditEvents(
+        makeRequest(fakeUser),
+        'project-1',
+        limit,
+        before,
+      ),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('throws when creating a project without a GitHub login in session', async () => {

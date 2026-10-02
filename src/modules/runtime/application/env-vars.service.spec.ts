@@ -78,10 +78,10 @@ describe('EnvVarsService', () => {
     };
     // app_role is the authority for assertHttpAccess (the HTTP-facing gate,
     // called by EnvVarsController — see persona-access.rules.ts's
-    // canManageEnvVars). Defaults to 'lead' so tests unrelated to the gate
+    // canManageEnvVars). Defaults to 'member' so tests unrelated to the gate
     // do not each need to set it.
     const appRoleLookup = {
-      findAppRole: jest.fn().mockResolvedValue('lead'),
+      findAppRole: jest.fn().mockResolvedValue('member'),
       ...overrides.appRoleLookup,
     };
     const module = await Test.createTestingModule({
@@ -427,7 +427,7 @@ describe('EnvVarsService', () => {
       expect(appRoleLookup.findAppRole).not.toHaveBeenCalled();
     });
 
-    it.each(['qa', 'member'] as const)(
+    it.each(['qa', 'lead'] as const)(
       'is a 403 for a visible project when the caller persona is %s',
       async (appRole) => {
         const { service } = await createService({
@@ -445,7 +445,17 @@ describe('EnvVarsService', () => {
       },
     );
 
-    it.each(['admin', 'lead'] as const)(
+    it('fails closed when the role cannot be resolved', async () => {
+      const { service } = await createService({
+        appRoleLookup: { findAppRole: jest.fn().mockResolvedValue(undefined) },
+      });
+
+      await expect(
+        service.assertHttpAccess('project-1', 'user-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it.each(['admin', 'member'] as const)(
       'allows a visible project for an %s persona',
       async (appRole) => {
         const { service } = await createService({

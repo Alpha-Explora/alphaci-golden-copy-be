@@ -173,7 +173,9 @@ describe('DeploymentTargetsService', () => {
     // persona-access.rules.ts's canManageProjectLifecycle); default to a
     // persona allowed to reinstall so tests unrelated to the role gate do
     // not each need to set it.
-    appRoleLookup.findAppRole.mockResolvedValue('lead');
+    // 'admin' passes both the hosting gate (admin | member) and the
+    // lifecycle gate (admin | lead).
+    appRoleLookup.findAppRole.mockResolvedValue('admin');
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
         ownershipMode: 'byo',
@@ -608,7 +610,7 @@ describe('DeploymentTargetsService', () => {
     );
   });
 
-  describe('lifecycle role gate (create / patch / sync / detach)', () => {
+  describe('hosting role gate (create / patch / sync / detach)', () => {
     const calls: Array<[string, () => Promise<unknown>]> = [
       [
         'create',
@@ -649,7 +651,7 @@ describe('DeploymentTargetsService', () => {
       calls.flatMap(
         (c) =>
           [
-            ['member', ...c],
+            ['lead', ...c],
             ['qa', ...c],
           ] as const,
       ),
@@ -1054,8 +1056,8 @@ describe('DeploymentTargetsService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it.each(['qa', 'member'] as const)(
-      'is limited to lead/admin and stops a %s persona before any secret is written',
+    it.each(['qa', 'lead', undefined] as const)(
+      'is limited to Developers/admins and stops a %s persona before any secret is written',
       async (appRole) => {
         const installer = {
           supports: jest.fn().mockReturnValue(true),
@@ -1082,6 +1084,36 @@ describe('DeploymentTargetsService', () => {
         });
         expect(appRoleLookup.findAppRole).toHaveBeenCalledWith('user-1');
         expect(installer.installForTarget).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['admin', 'member'] as const)(
+      'lets a %s persona reinstall',
+      async (appRole) => {
+        const installer = {
+          supports: jest.fn().mockReturnValue(true),
+          installForTarget: jest
+            .fn()
+            .mockResolvedValue({ githubSecrets: { token: 'T' } }),
+        };
+        ciSecretsInstallers.get.mockReturnValue(installer);
+        deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+          target,
+        );
+        deploymentTargetsRepository.updateProviderMetadata.mockResolvedValueOnce(
+          { ...target },
+        );
+        appRoleLookup.findAppRole.mockResolvedValueOnce(appRole);
+
+        await expect(
+          service.reinstallDeploymentSecrets(
+            'project-1',
+            'target-1',
+            'user-1',
+            'github-token',
+          ),
+        ).resolves.toMatchObject({ reinstalled: true });
+        expect(installer.installForTarget).toHaveBeenCalled();
       },
     );
 

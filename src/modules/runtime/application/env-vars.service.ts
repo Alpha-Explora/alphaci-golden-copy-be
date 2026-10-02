@@ -129,13 +129,13 @@ export class EnvVarsService {
       throw new NotFoundException('Project not found');
     }
 
-    const role = (await this.appRoleLookup?.findAppRole(userId)) ?? 'member';
+    const role = await this.appRoleLookup?.findAppRole(userId);
     if (!canManageEnvVars(role)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',
         code: 'ENV_VARS_LEAD_ONLY',
-        message: 'Only a lead or admin may manage environment variables.',
+        message: 'Only Developers and admins can change environment variables.',
       });
     }
   }
