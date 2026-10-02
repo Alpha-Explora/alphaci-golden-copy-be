@@ -28,6 +28,7 @@ async function createApp() {
   const requirements = {
     listForProject: jest.fn().mockResolvedValue({ requirements: [] }),
     create: jest.fn().mockResolvedValue({ id: 'req-1' }),
+    createBatch: jest.fn().mockResolvedValue({ requirements: [] }),
     getById: jest.fn().mockResolvedValue({ id: 'req-1' }),
     update: jest.fn().mockResolvedValue({ id: 'req-1' }),
     archive: jest.fn().mockResolvedValue({ id: 'req-1' }),
@@ -139,6 +140,72 @@ describe('requirements and Project run controllers', () => {
         items: [{ title: 'y', acceptanceCriteria: 'z'.repeat(4001) }],
       })
       .expect(400);
+  });
+
+  it('creates a batch (201) with the validated nested body; unknown fields are refused', async () => {
+    await http()
+      .post(`/delivery-projects/${ID}/requirements/batch`)
+      .send({
+        kind: 'functional',
+        requirements: [
+          {
+            name: 'Checkout',
+            description: 'Pay',
+            items: [{ title: 'Pay', verificationType: 'playwright' }],
+          },
+          { name: 'Search' },
+        ],
+      })
+      .expect(201)
+      .expect({ requirements: [] });
+    expect(fixture.requirements.createBatch).toHaveBeenCalledWith(
+      ID,
+      'user-1',
+      expect.objectContaining({
+        kind: 'functional',
+        requirements: [
+          expect.objectContaining({ name: 'Checkout' }),
+          expect.objectContaining({ name: 'Search' }),
+        ],
+      }),
+    );
+
+    const post = (body: unknown) =>
+      http()
+        .post(`/delivery-projects/${ID}/requirements/batch`)
+        .send(body as object);
+    // Top-level and nested unknown fields (including a per-entry kind).
+    await post({
+      kind: 'system',
+      requirements: [{ name: 'x' }],
+      sneaky: 1,
+    }).expect(400);
+    await post({
+      kind: 'system',
+      requirements: [{ name: 'x', kind: 'system' }],
+    }).expect(400);
+    await post({
+      kind: 'system',
+      requirements: [{ name: 'x', items: [{ title: 'y', sneaky: true }] }],
+    }).expect(400);
+    // Per-field limits are the single create's.
+    await post({ kind: 'system', requirements: [{ name: '' }] }).expect(400);
+    await post({
+      kind: 'system',
+      requirements: [{ name: 'n'.repeat(201) }],
+    }).expect(400);
+    await post({
+      kind: 'system',
+      requirements: [
+        {
+          name: 'x',
+          items: [{ title: 'y', acceptanceCriteria: 'z'.repeat(4001) }],
+        },
+      ],
+    }).expect(400);
+    await post({ kind: 'system' }).expect(400);
+    await post({ kind: 'system', requirements: 'nope' }).expect(400);
+    expect(fixture.requirements.createBatch).toHaveBeenCalledTimes(1);
   });
 
   it('passes the list filters through', async () => {

@@ -7,6 +7,10 @@ import {
   type WorkspaceProjectSummary,
 } from '#kernel/ports/project-lookup.port';
 import {
+  PROJECT_REQUIREMENTS_READINESS,
+  type ProjectRequirementsReadinessPort,
+} from '#kernel/ports/project-requirements-readiness.port';
+import {
   canCreateProjectFolder,
   canCreateRepository,
 } from '#kernel/rules/persona-access.rules';
@@ -38,6 +42,12 @@ export interface ProjectFolder {
   systemId: string;
   name: string;
   createdAt: string;
+  /**
+   * Active Features (functional requirements) in this Project. A Developer can
+   * create a repository here only when this is at least 1. Always 0 when the
+   * QA capability is off (the rule is skipped then, so 0 does not block).
+   */
+  featureCount: number;
   repositories: ProjectFolderRepository[];
 }
 
@@ -79,6 +89,8 @@ export class ProjectFoldersService {
     private readonly accessService: HierarchyAccessService,
     @Inject(PROJECT_LOOKUP)
     private readonly projectLookup: ProjectLookupPort,
+    @Inject(PROJECT_REQUIREMENTS_READINESS)
+    private readonly requirementsReadiness: ProjectRequirementsReadinessPort,
   ) {}
 
   async listProjectFolders(
@@ -94,12 +106,21 @@ export class ProjectFoldersService {
       this.projectLookup.listWorkspaceProjects(groupId),
     ]);
 
+    const folders = groupFolders(rows, new Map(projects.map((p) => [p.id, p])));
+    // One batched read for every folder (no N+1).
+    const featureCounts = await this.requirementsReadiness.countActiveFeatures(
+      folders.map((folder) => folder.deliveryProjectId),
+    );
+    for (const folder of folders) {
+      folder.featureCount = featureCounts.get(folder.deliveryProjectId) ?? 0;
+    }
+
     return {
       groupId,
       canManage,
       canCreateProject: canCreateProjectFolder(role),
       canCreateRepository: canCreateRepository(role),
-      folders: groupFolders(rows, new Map(projects.map((p) => [p.id, p]))),
+      folders,
       unfiled: projects
         .filter((project) => !linkedProjectIds.has(project.id))
         .map((project) => ({
@@ -149,6 +170,7 @@ export function groupFolders(
         systemId: row.system_id,
         name: row.name,
         createdAt: row.created_at,
+        featureCount: 0,
         repositories: [],
       };
       folders.set(row.delivery_project_id, folder);

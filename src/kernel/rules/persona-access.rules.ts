@@ -173,6 +173,21 @@ export function repositoryCreateRequiresProject(
   return canCreateRepository(role) && role !== 'admin';
 }
 
+const REPOSITORY_FEATURE_GATED_ROLES: readonly PlatformAppRole[] = ['member'];
+
+/**
+ * Whether a repository create by `role` must wait for the Project to have at
+ * least one active Feature (a functional requirement). Allow-list, Developers
+ * ('member') only: Product owners write the Features first and developers
+ * build against them. Admins are exempt; lead and qa are already refused
+ * upstream (canCreateRepository), and an unresolved role matches nothing.
+ */
+export function repositoryCreateRequiresFeature(
+  role: PlatformAppRole,
+): boolean {
+  return REPOSITORY_FEATURE_GATED_ROLES.includes(role);
+}
+
 /** Whether `role` may create or edit a Project's QA checklists (requirements). */
 export function canManageRequirements(role: PlatformAppRole): boolean {
   return PROJECT_CREATOR_ROLES.includes(role);

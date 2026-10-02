@@ -15,6 +15,17 @@ import type {
 /** Postgres SQLSTATE for a unique-constraint violation (the active-name index). */
 export const QA_UNIQUE_VIOLATION = '23505';
 
+/** A batch insert hit a unique violation at `index` (0-based); `cause` is the pg error. */
+export class QaChecklistBatchInsertError extends Error {
+  constructor(
+    readonly index: number,
+    override readonly cause: unknown,
+  ) {
+    super(`qa_checklists batch insert failed at index ${index}`);
+    this.name = 'QaChecklistBatchInsertError';
+  }
+}
+
 export interface QaChecklistRow {
   id: string;
   workspace_id: string;
@@ -74,35 +85,76 @@ export class QaChecklistsRepository {
   async createWithItems(
     input: CreateQaChecklistInput,
   ): Promise<{ checklist: QaChecklistRow; items: QaChecklistItemRow[] }> {
-    return this.databaseService.withTransaction(async (client) => {
-      const result = await client.query<QaChecklistRow>(
-        `
-          INSERT INTO projects.qa_checklists
-            (workspace_id, name, description, created_by, kind, delivery_project_id)
-          VALUES ($1, $2, $3, $4, $5, $6)
-          RETURNING *;
-        `,
-        [
-          input.workspaceId,
-          input.name,
-          input.description,
-          input.createdBy,
-          input.kind ?? 'system',
-          input.deliveryProjectId ?? null,
-        ],
-      );
-      const checklist = result.rows[0];
-      if (!checklist) {
-        throw new Error('projects.qa_checklists INSERT returned no row');
-      }
+    return this.databaseService.withTransaction((client) =>
+      this.insertChecklistWithClient(client, input),
+    );
+  }
 
-      const items = await this.insertItemsWithClient(
-        client,
-        checklist.id,
-        input.items,
-      );
-      return { checklist, items };
+  /**
+   * Creates several checklists (with their items) in ONE transaction, in input
+   * order: all of them or none. A unique violation (an active name collision
+   * with a concurrent create) is rethrown as QaChecklistBatchInsertError
+   * carrying the 0-based index of the offending entry.
+   */
+  async createManyWithItems(
+    inputs: CreateQaChecklistInput[],
+  ): Promise<
+    Array<{ checklist: QaChecklistRow; items: QaChecklistItemRow[] }>
+  > {
+    return this.databaseService.withTransaction(async (client) => {
+      const created: Array<{
+        checklist: QaChecklistRow;
+        items: QaChecklistItemRow[];
+      }> = [];
+      for (const [index, input] of inputs.entries()) {
+        try {
+          created.push(await this.insertChecklistWithClient(client, input));
+        } catch (error) {
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            (error as { code?: unknown }).code === QA_UNIQUE_VIOLATION
+          ) {
+            throw new QaChecklistBatchInsertError(index, error);
+          }
+          throw error;
+        }
+      }
+      return created;
     });
+  }
+
+  private async insertChecklistWithClient(
+    client: Pick<PoolClient, 'query'>,
+    input: CreateQaChecklistInput,
+  ): Promise<{ checklist: QaChecklistRow; items: QaChecklistItemRow[] }> {
+    const result = await client.query<QaChecklistRow>(
+      `
+        INSERT INTO projects.qa_checklists
+          (workspace_id, name, description, created_by, kind, delivery_project_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *;
+      `,
+      [
+        input.workspaceId,
+        input.name,
+        input.description,
+        input.createdBy,
+        input.kind ?? 'system',
+        input.deliveryProjectId ?? null,
+      ],
+    );
+    const checklist = result.rows[0];
+    if (!checklist) {
+      throw new Error('projects.qa_checklists INSERT returned no row');
+    }
+
+    const items = await this.insertItemsWithClient(
+      client,
+      checklist.id,
+      input.items,
+    );
+    return { checklist, items };
   }
 
   async findById(id: string): Promise<QaChecklistRow | null> {
@@ -127,6 +179,37 @@ export class QaChecklistsRepository {
       [workspaceId, includeArchived],
     );
     return result.rows;
+  }
+
+  /**
+   * Active Features (kind='functional', not archived) per Project, one query.
+   * Projects with none are absent from the map.
+   */
+  async countActiveFeaturesByDeliveryProject(
+    deliveryProjectIds: readonly string[],
+  ): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    if (deliveryProjectIds.length === 0) {
+      return counts;
+    }
+    const result = await this.databaseService.query<{
+      delivery_project_id: string;
+      count: string;
+    }>(
+      `
+        SELECT delivery_project_id, count(*)::text AS count
+        FROM projects.qa_checklists
+        WHERE delivery_project_id = ANY($1::uuid[])
+          AND kind = 'functional'
+          AND archived_at IS NULL
+        GROUP BY delivery_project_id;
+      `,
+      [deliveryProjectIds],
+    );
+    for (const row of result.rows) {
+      counts.set(row.delivery_project_id, Number(row.count));
+    }
+    return counts;
   }
 
   /** The Project's requirements (functional first, then system, oldest first). */

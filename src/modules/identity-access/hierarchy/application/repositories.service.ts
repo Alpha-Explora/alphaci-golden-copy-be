@@ -15,6 +15,11 @@ import {
   PROJECT_LOOKUP,
   type ProjectLookupPort,
 } from '#kernel/ports/project-lookup.port';
+import {
+  PROJECT_REQUIREMENTS_READINESS,
+  type ProjectRequirementsReadinessPort,
+} from '#kernel/ports/project-requirements-readiness.port';
+import { assertProjectHasFeatureForRepositoryCreate } from '#kernel/rules/project-features.gate';
 import { DeliveryProjectsRepository } from '../infrastructure/delivery-projects.repository';
 import { HierarchyAccessService } from './hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../domain/hierarchy.types';
@@ -45,6 +50,8 @@ export class RepositoriesService {
     @Inject(PROJECT_LOOKUP)
     private readonly projectLookup: ProjectLookupPort,
     private readonly auditEventsService: AuditEventPublisher,
+    @Inject(PROJECT_REQUIREMENTS_READINESS)
+    private readonly requirementsReadiness: ProjectRequirementsReadinessPort,
   ) {}
 
   /**
@@ -64,6 +71,15 @@ export class RepositoriesService {
         deliveryProjectId,
         userId,
       );
+    // A Developer files a repository only once a Product owner wrote a Feature
+    // in the Project. Before any GitHub call. Platform admins are exempt.
+    if (!(await this.accessService.isPlatformAdmin(userId))) {
+      await assertProjectHasFeatureForRepositoryCreate(
+        this.requirementsReadiness,
+        await this.accessService.getAppRole(userId),
+        deliveryProjectId,
+      );
+    }
     if (!githubAccessToken) {
       throw new BadRequestException(
         'GitHub access token not found. Re-authenticate via GitHub OAuth.',

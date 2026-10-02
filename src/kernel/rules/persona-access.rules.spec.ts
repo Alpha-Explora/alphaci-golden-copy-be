@@ -6,6 +6,7 @@ import {
   canCreateRepository,
   canManageRequirements,
   repositoryCreateRequiresProject,
+  repositoryCreateRequiresFeature,
   canManageEnvVars,
   canManageProjectLifecycle,
   canMergeViaWorkspace,
@@ -220,6 +221,24 @@ describe('Project / repository create rules', () => {
     ['qa', false],
   ] as const)('repositoryCreateRequiresProject(%s) is %s', (role, expected) => {
     expect(repositoryCreateRequiresProject(role)).toBe(expected);
+  });
+
+  it.each([
+    ['admin', false],
+    ['lead', false],
+    ['member', true],
+    ['qa', false],
+  ] as const)('repositoryCreateRequiresFeature(%s) is %s', (role, expected) => {
+    expect(repositoryCreateRequiresFeature(role)).toBe(expected);
+  });
+
+  it('repositoryCreateRequiresFeature fails closed for an unresolved role', () => {
+    expect(repositoryCreateRequiresFeature('viewer' as PlatformAppRole)).toBe(
+      false,
+    );
+    expect(
+      repositoryCreateRequiresFeature(undefined as unknown as PlatformAppRole),
+    ).toBe(false);
   });
 
   it('fails closed for an unknown role', () => {

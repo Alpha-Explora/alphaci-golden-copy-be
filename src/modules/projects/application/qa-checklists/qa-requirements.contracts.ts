@@ -26,6 +26,8 @@ export const QA_PROGRESS_VALUES: readonly QaProgress[] = [
 
 /** Max items per requirement, enforced at the DTO layer and defensively in the service. */
 export const QA_REQUIREMENT_MAX_ITEMS = 200;
+/** Most requirements one batch create accepts. */
+export const QA_REQUIREMENT_BATCH_MAX = 20;
 
 /** Run items per Verification status. */
 export interface QaVerificationStatusCounts {

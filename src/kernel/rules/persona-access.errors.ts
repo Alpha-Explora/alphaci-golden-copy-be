@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 
 /**
  * Error shapes for the repository / Project create rules in
@@ -30,5 +34,18 @@ export function projectRequired(): BadRequestException {
     error: 'Bad Request',
     code: 'PROJECT_REQUIRED',
     message: 'Choose the Project this repository belongs to.',
+  });
+}
+
+export function projectFeaturesRequired(
+  deliveryProjectId: string,
+): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: 'PROJECT_FEATURES_REQUIRED',
+    message:
+      'Your Product owner adds a Feature to this Project before repositories can be created in it.',
+    deliveryProjectId,
   });
 }

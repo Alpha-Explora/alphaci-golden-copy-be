@@ -20,6 +20,7 @@ import {
 } from '#kernel/composition/index.js';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { CreateRequirementDto } from '../application/qa-checklists/dto/create-requirement.dto';
+import { CreateRequirementsBatchDto } from '../application/qa-checklists/dto/create-requirements-batch.dto';
 import { ReorderRequirementItemsDto } from '../application/qa-checklists/dto/reorder-requirement-items.dto';
 import { RequirementItemDto } from '../application/qa-checklists/dto/requirement-item.dto';
 import { SetProgressDto } from '../application/qa-checklists/dto/set-progress.dto';
@@ -61,6 +62,20 @@ export class DeliveryProjectRequirementsController {
     @Body() body: CreateRequirementDto,
   ) {
     return this.requirementsService.create(
+      deliveryProjectId,
+      requireUserId(req),
+      body,
+    );
+  }
+
+  /** Up to 20 requirements of one kind, all or nothing (201 `{ requirements }`, request order). */
+  @Post('batch')
+  createBatch(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+    @Body() body: CreateRequirementsBatchDto,
+  ) {
+    return this.requirementsService.createBatch(
       deliveryProjectId,
       requireUserId(req),
       body,

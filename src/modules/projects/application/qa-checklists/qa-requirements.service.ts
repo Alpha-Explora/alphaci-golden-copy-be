@@ -15,6 +15,7 @@ import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import { canSetProgress } from '../../domain/qa-run-access.rules';
 import {
   QA_UNIQUE_VIOLATION,
+  QaChecklistBatchInsertError,
   QaChecklistsRepository,
   type QaChecklistItemRow,
   type QaChecklistRow,
@@ -26,6 +27,7 @@ import type { QaVerificationStatusCounts } from '../qa-runs/qa-runs.contracts';
 import { QaAccessService } from './qa-access.service';
 import { QaProjectContextService } from './qa-project-context.service';
 import type { CreateRequirementDto } from './dto/create-requirement.dto';
+import type { CreateRequirementsBatchDto } from './dto/create-requirements-batch.dto';
 import type { ReorderRequirementItemsDto } from './dto/reorder-requirement-items.dto';
 import type { RequirementItemDto } from './dto/requirement-item.dto';
 import type { SetProgressDto } from './dto/set-progress.dto';
@@ -33,6 +35,8 @@ import type { UpdateRequirementDto } from './dto/update-requirement.dto';
 import type { UpdateRequirementItemDto } from './dto/update-requirement-item.dto';
 import {
   progressForbidden,
+  requirementBatchDuplicateName,
+  requirementBatchInvalid,
   requirementArchived,
   requirementItemStale,
   requirementKindInvalid,
@@ -42,6 +46,7 @@ import {
   requirementStale,
 } from './qa-errors';
 import {
+  QA_REQUIREMENT_BATCH_MAX,
   QA_REQUIREMENT_KINDS,
   QA_REQUIREMENT_MAX_ITEMS,
   type QaProgress,
@@ -294,6 +299,114 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       }
       throw error;
     }
+  }
+
+  /**
+   * Creates 1..QA_REQUIREMENT_BATCH_MAX requirements of one kind, all or
+   * nothing in one transaction. Same permission, visibility and per-field
+   * rules as `create`; every failure names the offending entry by its 0-based
+   * `index` where one applies. Audit once per created requirement.
+   */
+  async createBatch(
+    deliveryProjectId: string,
+    userId: string,
+    dto: CreateRequirementsBatchDto,
+  ): Promise<{ requirements: Requirement[] }> {
+    const project = await this.projectContext.requireProject(
+      deliveryProjectId,
+      userId,
+    );
+    await this.assertManage(userId);
+
+    const kind = this.parseKind(dto.kind);
+    const drafts = dto.requirements;
+    if (drafts.length < 1 || drafts.length > QA_REQUIREMENT_BATCH_MAX) {
+      throw requirementBatchInvalid(QA_REQUIREMENT_BATCH_MAX);
+    }
+
+    const prepared = drafts.map((draft) => {
+      const items = draft.items ?? [];
+      this.assertItemCount(items.length);
+      return {
+        name: this.requireNonBlank(draft.name, 'name'),
+        description: draft.description ?? null,
+        items: items.map((item) => ({
+          title: this.requireNonBlank(item.title, 'title'),
+          acceptanceCriteria: item.acceptanceCriteria ?? null,
+          targetPersona: 'all' as const,
+          verificationType: item.verificationType ?? 'manual',
+          testIdentifier: item.testIdentifier ?? null,
+        })),
+      };
+    });
+
+    // The partial unique index is case-insensitive over active names, so the
+    // in-batch check is too. Reports the SECOND occurrence.
+    const seen = new Set<string>();
+    for (const [index, entry] of prepared.entries()) {
+      const key = entry.name.toLowerCase();
+      if (seen.has(key)) {
+        throw requirementBatchDuplicateName(entry.name, index);
+      }
+      seen.add(key);
+    }
+
+    // Up-front check against existing active requirements, so the common
+    // collision answers without opening the write transaction.
+    const scope = { deliveryProjectId, kind };
+    for (const [index, entry] of prepared.entries()) {
+      if (
+        await this.checklists.hasActiveNameConflict(
+          project.groupId,
+          entry.name,
+          undefined,
+          scope,
+        )
+      ) {
+        throw requirementNameTaken(entry.name, index);
+      }
+    }
+
+    let created: Awaited<
+      ReturnType<QaChecklistsRepository['createManyWithItems']>
+    >;
+    try {
+      created = await this.checklists.createManyWithItems(
+        prepared.map((entry) => ({
+          workspaceId: project.groupId,
+          name: entry.name,
+          description: entry.description,
+          createdBy: userId,
+          kind,
+          deliveryProjectId,
+          items: entry.items,
+        })),
+      );
+    } catch (error) {
+      // A concurrent create won the name between the check and the insert.
+      if (error instanceof QaChecklistBatchInsertError) {
+        throw requirementNameTaken(
+          prepared[error.index]?.name ?? '',
+          error.index,
+        );
+      }
+      throw error;
+    }
+
+    for (const { checklist, items } of created) {
+      await this.recordEvent(REQUIREMENT_EVENTS.created, checklist, userId, {
+        name: checklist.name,
+        kind,
+        itemCount: items.length,
+        batch: true,
+      });
+    }
+    const role = await this.access.findAppRole(userId);
+    return {
+      requirements: created.map(({ checklist, items }) =>
+        this.toRequirement(checklist, items, role),
+      ),
+    };
   }
 
   async update(

@@ -143,6 +143,7 @@ POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/reopen
 POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/signoff
 POST /api/v1/delivery-projects/{deliveryProjectId}/repositories
 POST /api/v1/delivery-projects/{deliveryProjectId}/requirements
+POST /api/v1/delivery-projects/{deliveryProjectId}/requirements/batch
 POST /api/v1/existing-repos/discover
 POST /api/v1/existing-repos/setup-pr
 POST /api/v1/feedback

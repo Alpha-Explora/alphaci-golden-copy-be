@@ -251,6 +251,7 @@ export async function persistMultiRepoStandaloneRow(input: {
         userId,
         dto.workspaceId,
         dto.deliveryProjectId,
+        { requireFeatures: false },
       ),
       repoFullName,
       templateId,

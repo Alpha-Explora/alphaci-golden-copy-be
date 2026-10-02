@@ -97,7 +97,16 @@ function makeService(
   hierarchyProjectLinkService: ProjectLinkPort,
   notificationEventPublisher?: { record: jest.Mock },
   appRole = 'admin',
+  { featureCount = 1, ruleEnabled = true } = {},
 ) {
+  const readiness = {
+    isFeatureRuleEnabled: jest.fn().mockReturnValue(ruleEnabled),
+    countActiveFeatures: jest
+      .fn()
+      .mockImplementation((ids: string[]) =>
+        Promise.resolve(new Map(ids.map((id) => [id, featureCount]))),
+      ),
+  };
   const githubService = makeGithubService();
   const projectsRepository = makeProjectsRepository(appRole);
   const ciService = makeCiService();
@@ -117,6 +126,8 @@ function makeService(
     hierarchyProjectLinkService,
     undefined,
     createDefaultWorkflowFragmentRegistry(),
+    undefined,
+    readiness as never,
   );
 
   // Bypass the workflow-file generation internals (irrelevant to ordering) —
@@ -147,7 +158,7 @@ function makeService(
     .spyOn(support, 'pushWorkflowFile')
     .mockResolvedValue({ commitSha: 'sha', commitUrl: null });
 
-  return { service, githubService, projectsRepository };
+  return { service, githubService, projectsRepository, readiness };
 }
 
 /**
@@ -627,6 +638,71 @@ describe('ProjectProvisioningApplicationService - persona gate on repository cre
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(githubService.createRepo).not.toHaveBeenCalled();
+  });
+
+  it('a member into a Project with no Feature is refused 409 PROJECT_FEATURES_REQUIRED on create and setup, before GitHub', async () => {
+    const { service, githubService, readiness } = makeService(
+      link(),
+      undefined,
+      'member',
+      { featureCount: 0 },
+    );
+    const attempts = [
+      () =>
+        service.createProject('user-1', 'octocat', 'gh-token', {
+          ...baseDto,
+          deliveryProjectId: 'dp-1',
+        }),
+      () =>
+        service.setupProject('user-1', 'gh-token', {
+          ...setupDto,
+          deliveryProjectId: 'dp-1',
+        }),
+    ];
+    for (const attempt of attempts) {
+      const error = await attempt().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'PROJECT_FEATURES_REQUIRED',
+        deliveryProjectId: 'dp-1',
+      });
+    }
+    expect(readiness.countActiveFeatures).toHaveBeenCalledWith(['dp-1']);
+    expect(githubService.createRepo).not.toHaveBeenCalled();
+  });
+
+  it('a member into a Project with a Feature, or with the QA capability off, is not blocked', async () => {
+    for (const options of [
+      { featureCount: 1 },
+      { featureCount: 0, ruleEnabled: false },
+    ]) {
+      const { service, githubService } = makeService(
+        link(),
+        undefined,
+        'member',
+        options,
+      );
+      await expect(
+        service.createProject('user-1', 'octocat', 'gh-token', {
+          ...baseDto,
+          deliveryProjectId: 'dp-1',
+        }),
+      ).resolves.toMatchObject({ id: 'project-1' });
+      expect(githubService.createRepo).toHaveBeenCalled();
+    }
+  });
+
+  it('an admin is exempt from the Feature rule', async () => {
+    const { service, readiness } = makeService(link(), undefined, 'admin', {
+      featureCount: 0,
+    });
+    await expect(
+      service.createProject('user-1', 'octocat', 'gh-token', {
+        ...baseDto,
+        deliveryProjectId: 'dp-1',
+      }),
+    ).resolves.toMatchObject({ id: 'project-1' });
+    expect(readiness.countActiveFeatures).not.toHaveBeenCalled();
   });
 
   it('an admin is unchanged: create works without a Project', async () => {

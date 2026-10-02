@@ -46,6 +46,10 @@ import type {
   CreateProjectResponse,
   SetupProjectResponse,
 } from './projects.service.types';
+import {
+  PROJECT_REQUIREMENTS_READINESS,
+  type ProjectRequirementsReadinessPort,
+} from '#kernel/ports/project-requirements-readiness.port';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 
@@ -100,6 +104,12 @@ export class ProjectProvisioningApplicationService {
     @Optional()
     @Inject(DEPLOYMENT_PROVISIONING_DEFAULTS)
     deploymentProvisioningDefaults?: DeploymentProvisioningDefaultsPort,
+    // Last, like every positional collaborator: ProjectsService and the specs
+    // construct this class by hand. Without @Inject an @Optional dep is
+    // undefined; the gate then fails closed for a Developer.
+    @Optional()
+    @Inject(PROJECT_REQUIREMENTS_READINESS)
+    requirementsReadiness?: ProjectRequirementsReadinessPort,
   ) {
     this.support = new ProjectProvisioningSupport({
       catalogService,
@@ -117,6 +127,7 @@ export class ProjectProvisioningApplicationService {
       hierarchyProjectLinkService,
       workflowFilePusher,
       workflowFragmentRegistry,
+      requirementsReadiness,
     });
     this.singleRepository = new SingleRepositoryProjectProvisioner(
       this.support,

@@ -8,6 +8,7 @@ import {
 import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import type { GithubProjectPort } from '#kernel/ports/github.port';
 import type { ProjectLookupPort } from '#kernel/ports/project-lookup.port';
+import type { ProjectRequirementsReadinessPort } from '#kernel/ports/project-requirements-readiness.port';
 import type {
   DeliveryProjectRecord,
   DeliveryProjectsRepository,
@@ -51,9 +52,10 @@ const target: DeliveryProjectRecord = {
   repositoryCount: 1,
 };
 
-function setup() {
+function setup({ featureCount = 1, ruleEnabled = true } = {}) {
   const repositoriesRepository = {
     findById: jest.fn().mockResolvedValue(repository),
+    create: jest.fn().mockResolvedValue(repository),
     moveToDeliveryProject: jest
       .fn()
       .mockResolvedValue({ ...repository, deliveryProjectId: target.id }),
@@ -66,15 +68,39 @@ function setup() {
     assertRepositoryManagerOrPlatformAdmin: jest
       .fn()
       .mockResolvedValue({ groupId: 'group-1', viaPlatformAdmin: false }),
+    assertCanCreateUnderDeliveryProject: jest
+      .fn()
+      .mockResolvedValue({ groupId: 'group-1' }),
+    isPlatformAdmin: jest.fn().mockResolvedValue(false),
+    getAppRole: jest.fn().mockResolvedValue('member'),
   };
   const auditEventsService = { recordProjectEvent: jest.fn() };
+  const githubService = {
+    createRepo: jest.fn().mockResolvedValue({
+      repoUrl: 'https://github.com/org/new',
+      ownerLogin: 'org',
+      repoName: 'new',
+    }),
+  };
+  const projectLookup = {
+    createHierarchyManagedProject: jest.fn().mockResolvedValue({ id: 'p-new' }),
+  };
+  const readiness = {
+    isFeatureRuleEnabled: jest.fn().mockReturnValue(ruleEnabled),
+    countActiveFeatures: jest
+      .fn()
+      .mockImplementation((ids: string[]) =>
+        Promise.resolve(new Map(ids.map((id) => [id, featureCount]))),
+      ),
+  };
   const service = new RepositoriesService(
     repositoriesRepository as unknown as RepositoriesRepository,
     deliveryProjectsRepository as unknown as DeliveryProjectsRepository,
     accessService as unknown as HierarchyAccessService,
-    {} as GithubProjectPort,
-    {} as ProjectLookupPort,
+    githubService as unknown as GithubProjectPort,
+    projectLookup as unknown as ProjectLookupPort,
     auditEventsService as unknown as AuditEventPublisher,
+    readiness as unknown as ProjectRequirementsReadinessPort,
   );
   return {
     service,
@@ -82,6 +108,9 @@ function setup() {
     deliveryProjectsRepository,
     accessService,
     auditEventsService,
+    githubService,
+    projectLookup,
+    readiness,
   };
 }
 
@@ -244,5 +273,60 @@ describe('RepositoriesService.moveRepository', () => {
       service.moveRepository('repo-be', 'lead-1', 'dp-target'),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(auditEventsService.recordProjectEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('RepositoriesService.createRepository Feature gate', () => {
+  const dto = { name: 'new-repo', visibility: 'private' } as const;
+
+  it('a member into a Project with no Feature gets 409 before any GitHub call', async () => {
+    const { service, githubService, projectLookup } = setup({
+      featureCount: 0,
+    });
+    await expect(
+      service.createRepository('dp-1', 'dev-1', 'token', dto),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'PROJECT_FEATURES_REQUIRED',
+        deliveryProjectId: 'dp-1',
+      },
+    });
+    expect(githubService.createRepo).not.toHaveBeenCalled();
+    expect(projectLookup.createHierarchyManagedProject).not.toHaveBeenCalled();
+  });
+
+  it('a member into a Project with a Feature creates the repository', async () => {
+    const { service, githubService, readiness } = setup({ featureCount: 2 });
+    await service.createRepository('dp-1', 'dev-1', 'token', dto);
+    expect(readiness.countActiveFeatures).toHaveBeenCalledWith(['dp-1']);
+    expect(githubService.createRepo).toHaveBeenCalledTimes(1);
+  });
+
+  it('a platform admin is exempt', async () => {
+    const { service, accessService, githubService, readiness } = setup({
+      featureCount: 0,
+    });
+    accessService.isPlatformAdmin.mockResolvedValue(true);
+    await service.createRepository('dp-1', 'admin-1', 'token', dto);
+    expect(readiness.countActiveFeatures).not.toHaveBeenCalled();
+    expect(githubService.createRepo).toHaveBeenCalledTimes(1);
+  });
+
+  it('a global admin app_role is exempt', async () => {
+    const { service, accessService, githubService } = setup({
+      featureCount: 0,
+    });
+    accessService.getAppRole.mockResolvedValue('admin');
+    await service.createRepository('dp-1', 'admin-2', 'token', dto);
+    expect(githubService.createRepo).toHaveBeenCalledTimes(1);
+  });
+
+  it('is skipped when the QA capability is off', async () => {
+    const { service, githubService } = setup({
+      featureCount: 0,
+      ruleEnabled: false,
+    });
+    await service.createRepository('dp-1', 'dev-1', 'token', dto);
+    expect(githubService.createRepo).toHaveBeenCalledTimes(1);
   });
 });

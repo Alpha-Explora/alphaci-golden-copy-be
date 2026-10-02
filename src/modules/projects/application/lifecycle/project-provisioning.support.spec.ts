@@ -37,6 +37,7 @@ describe('ProjectProvisioningSupport, deploy jobs with no target', () => {
       hierarchyProjectLinkService: undefined,
       workflowFilePusher: undefined,
       workflowFragmentRegistry: undefined,
+      requirementsReadiness: undefined,
     });
 
   const invoke = (support: ProjectProvisioningSupport) =>
@@ -152,6 +153,7 @@ describe('ProjectProvisioningSupport.notifyProjectCreated', () => {
       hierarchyProjectLinkService: undefined,
       workflowFilePusher: undefined,
       workflowFragmentRegistry: undefined,
+      requirementsReadiness: undefined,
     });
     return { support, record, listWorkspaceLeadAndDeveloperIds };
   };

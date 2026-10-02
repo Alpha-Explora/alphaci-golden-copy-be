@@ -1,11 +1,11 @@
 {
-  "routeCount": 202,
+  "routeCount": 203,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "dff2762cba76c40bdf2eadc51626aa2dc00f74360a6b8ff037f19d86eeaea225",
+  "referenceSha256": "bbbd53674d09d2a4195a52ac0c34dc96a758b440a7b91a62a25b510dae9e0311",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "dff2762cba76c40bdf2eadc51626aa2dc00f74360a6b8ff037f19d86eeaea225",
+  "baselineSha256": "bbbd53674d09d2a4195a52ac0c34dc96a758b440a7b91a62a25b510dae9e0311",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -130,6 +130,7 @@
         "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/reopen",
         "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/signoff",
         "POST /api/v1/delivery-projects/{deliveryProjectId}/requirements",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/requirements/batch",
         "POST /api/v1/requirements/{id}/archive",
         "POST /api/v1/requirements/{id}/items",
         "PUT /api/v1/requirements/{id}/items/order"
