@@ -55,7 +55,9 @@ const makeGithubService = () =>
       repoName: 'orders-api',
     }),
     createBranch: jest.fn().mockResolvedValue(undefined),
-    applyBranchProtection: jest.fn().mockResolvedValue(undefined),
+    ensurePullRequestProtection: jest
+      .fn()
+      .mockResolvedValue({ status: 'applied' }),
   }) as unknown as GithubService;
 
 describe('GithubController', () => {
@@ -244,21 +246,17 @@ describe('GithubController', () => {
         'uat',
         'main',
       );
-      expect(service.applyBranchProtection).toHaveBeenCalledTimes(2);
-      expect(service.applyBranchProtection).toHaveBeenNthCalledWith(
-        1,
-        'gh-token',
-        'tone',
-        'orders-api',
-        'uat',
-      );
-      expect(service.applyBranchProtection).toHaveBeenNthCalledWith(
-        2,
-        'gh-token',
-        'tone',
-        'orders-api',
-        'main',
-      );
+      expect(service.ensurePullRequestProtection).toHaveBeenCalledTimes(3);
+      for (const [index, branch] of ['dev', 'uat', 'main'].entries()) {
+        expect(service.ensurePullRequestProtection).toHaveBeenNthCalledWith(
+          index + 1,
+          'gh-token',
+          'tone',
+          'orders-api',
+          branch,
+          { seedStatusChecks: ['env-guard'] },
+        );
+      }
     });
   });
 

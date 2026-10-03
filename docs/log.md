@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-02
+
+- **Creation**: Recorded GitHub activity ingest and pull-request-only branches (ADR-0015). `dev` is no longer left unprotected: every pipeline branch requires a pull request (zero approvals), the rule merges into existing protection, provisioning applies it last and best effort, and admins retrofit existing repositories. Repository GitHub activity is polled from the Events API into the Audit trail (migration `20261002020000_audit_github_activity.sql`), because webhooks do not reach the backend.
+
 ## 2026-10-01
 
 - **Creation**: Recorded Project requirements (ADR-0014). Requirements move from the workspace-and-repository checklist model to the Project: a Product owner defines Features with User stories and System requirements, developers report Progress, QA verifies once per Project against the `uat` head of every repository, and the merge-to-main gate is per Project with strict staleness. The migration is additive and idempotent and is applied before the backend deploys; `PROJECT_LINK_PORT` gained the reverse Project lookup and a `DELIVERY_PROJECT_DATA_CLEANUP` port removes a deleted Project's requirements, so the schema-ownership gate gains only the one-time backfill pairs.

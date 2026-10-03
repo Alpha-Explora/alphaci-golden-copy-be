@@ -141,33 +141,38 @@ describe('ProjectDriftService', () => {
         );
     }
 
-    it('reports nothing when dev is pushable and uat/main are protected', async () => {
-      protection({ dev: unprotected, uat: compliant, main: compliant });
+    it('reports nothing when dev, uat and main all require pull requests', async () => {
+      protection({ dev: compliant, uat: compliant, main: compliant });
 
       await expect(branchCodes()).resolves.toEqual([]);
     });
 
-    it('flags a dev branch that requires pull requests', async () => {
-      protection({ dev: compliant, uat: compliant, main: compliant });
+    it('flags a dev branch that accepts direct pushes', async () => {
+      protection({ dev: unprotected, uat: compliant, main: compliant });
 
       await expect(branchCodes()).resolves.toEqual([
-        'branch_dev_protected:dev',
+        'branch_protection_missing:dev',
+        'branch_force_push_allowed:dev',
+        'branch_deletion_allowed:dev',
       ]);
     });
 
     it('flags uat and main that are unprotected', async () => {
-      protection({ dev: unprotected, uat: unprotected, main: compliant });
+      protection({ dev: compliant, uat: unprotected, main: unprotected });
 
       await expect(branchCodes()).resolves.toEqual([
         'branch_protection_missing:uat',
         'branch_force_push_allowed:uat',
         'branch_deletion_allowed:uat',
+        'branch_protection_missing:main',
+        'branch_force_push_allowed:main',
+        'branch_deletion_allowed:main',
       ]);
     });
 
     it('flags force push and deletion allowed on an otherwise protected branch', async () => {
       protection({
-        dev: unprotected,
+        dev: compliant,
         uat: compliant,
         main: { ...compliant, allowForcePushes: true, allowDeletions: true },
       });
@@ -185,14 +190,14 @@ describe('ProjectDriftService', () => {
     });
 
     it('skips the live probe without a token, and never writes protection', async () => {
-      protection({ dev: compliant, uat: unprotected, main: unprotected });
+      protection({ dev: unprotected, uat: unprotected, main: unprotected });
 
       await expect(branchCodes(null)).resolves.toEqual([]);
       expect(github.getBranchProtectionSummary).not.toHaveBeenCalled();
     });
 
     it('marks these findings as live GitHub reads', async () => {
-      protection({ dev: unprotected, uat: unprotected, main: compliant });
+      protection({ dev: compliant, uat: unprotected, main: compliant });
       const response = await serviceWithGithub().runDetection(
         projectReference,
         { githubAccessToken: 'gh-token' },

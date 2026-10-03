@@ -81,7 +81,9 @@ const makeGithubService = () =>
       defaultBranch: 'main',
       private: false,
     }),
-    applyBranchProtection: jest.fn().mockResolvedValue(undefined),
+    ensurePullRequestProtection: jest
+      .fn()
+      .mockResolvedValue({ status: 'applied' }),
     setActionsSecret: jest.fn().mockResolvedValue(undefined),
     setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
     deleteRepo: jest.fn().mockResolvedValue(true),
@@ -381,7 +383,7 @@ describe('ProjectsService', () => {
     getOrganizationProvisioningContextByLogin: jest.Mock;
     createRepo: jest.Mock;
     createBranch: jest.Mock;
-    applyBranchProtection: jest.Mock;
+    ensurePullRequestProtection: jest.Mock;
     setActionsSecretStrict: jest.Mock;
     setActionsSecret: jest.Mock;
     getRepo: jest.Mock;
@@ -414,7 +416,7 @@ jobs:
       getOrganizationProvisioningContextByLogin: jest.Mock;
       createRepo: jest.Mock;
       createBranch: jest.Mock;
-      applyBranchProtection: jest.Mock;
+      ensurePullRequestProtection: jest.Mock;
       setActionsSecretStrict: jest.Mock;
       setActionsSecret: jest.Mock;
       getRepo: jest.Mock;
@@ -1395,17 +1397,29 @@ jobs:
       'test',
       'main',
     );
-    expect(githubServiceMock.applyBranchProtection.mock.calls).toEqual(
-      expect.arrayContaining([
-        ['oauth-token', 'tone', 'orders-api', 'uat'],
-        ['oauth-token', 'tone', 'orders-api', 'main'],
-      ]),
-    );
-    expect(
-      githubServiceMock.applyBranchProtection.mock.calls.some(
-        (call) => call[3] === 'dev' || call[3] === 'test',
-      ),
-    ).toBe(false);
+    expect(githubServiceMock.ensurePullRequestProtection.mock.calls).toEqual([
+      [
+        'oauth-token',
+        'tone',
+        'orders-api',
+        'dev',
+        { seedStatusChecks: ['env-guard'] },
+      ],
+      [
+        'oauth-token',
+        'tone',
+        'orders-api',
+        'uat',
+        { seedStatusChecks: ['env-guard'] },
+      ],
+      [
+        'oauth-token',
+        'tone',
+        'orders-api',
+        'main',
+        { seedStatusChecks: ['env-guard'] },
+      ],
+    ]);
   });
 
   it('forces BYO provisioning requests onto centralized hosting and drops connection ids', async () => {

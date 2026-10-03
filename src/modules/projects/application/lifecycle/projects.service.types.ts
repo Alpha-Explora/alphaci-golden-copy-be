@@ -202,7 +202,23 @@ export interface ProjectAuditEventItem {
   metadata: Record<string, unknown>;
   createdAt: string;
   /** 'project' = a Project-level event shown on every repository of the Project. */
-  scope: 'repository' | 'project';
+  scope: 'repository' | 'project' | 'github';
+}
+
+/**
+ * How fresh the GitHub activity in an Audit page is.
+ *
+ *   ok      synced within the last minute (or just now)
+ *   stale   GitHub was too slow for this request (> 3 s); the sync keeps
+ *           running in the background and the stored events were returned
+ *   failed  GitHub could not be read (no token, revoked sign-in, outage);
+ *           the stored events were returned
+ *
+ * `syncedAt` is the last SUCCESSFUL sync of this repository, or null.
+ */
+export interface ProjectGithubSyncStatus {
+  status: 'ok' | 'stale' | 'failed';
+  syncedAt: string | null;
 }
 
 export interface ProjectAuditEventsResponse {
@@ -210,6 +226,8 @@ export interface ProjectAuditEventsResponse {
   items: ProjectAuditEventItem[];
   /** Pass as `?before=` to fetch the next (older) page; null on the last page. */
   next: string | null;
+  /** Present on the first page while audit recording is on. */
+  githubSync?: ProjectGithubSyncStatus;
 }
 
 export interface ProjectAuditEventsOptions {

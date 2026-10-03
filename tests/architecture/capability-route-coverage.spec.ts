@@ -267,6 +267,15 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'setupPullRequest', method: 'POST' },
       ],
     },
+    'src/modules/projects/api/project-activity.controller.ts': {
+      reason: 'repository GitHub activity and branch protection surface',
+      routes: [
+        { handler: 'listCommits', method: 'GET' },
+        { handler: 'syncAudit', method: 'POST' },
+        { handler: 'applyBranchProtection', method: 'POST' },
+        { handler: 'applyBranchProtectionToAll', method: 'POST' },
+      ],
+    },
     'src/modules/projects/api/project-folder.controller.ts': {
       reason: 'project folder (repository switcher) surface',
       routes: [{ handler: 'getProjectFolder', method: 'GET' }],

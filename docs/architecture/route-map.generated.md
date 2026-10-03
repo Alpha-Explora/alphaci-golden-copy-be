@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 203 current API routes."
+description: "Generated inventory of the 207 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **203 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **207 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -85,6 +85,7 @@ The current compiled API exposes **203 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{id}/audit`
 - `GET /api/v1/projects/{id}/ci-runs`
 - `GET /api/v1/projects/{id}/ci-runs/{runId}`
+- `GET /api/v1/projects/{id}/commits`
 - `GET /api/v1/projects/{id}/deployments`
 - `GET /api/v1/projects/{id}/drift`
 - `GET /api/v1/projects/{id}/overview`
@@ -147,6 +148,7 @@ The current compiled API exposes **203 routes** under the global `/api/v1` prefi
 - `PATCH /api/v1/requirements/{id}/items/{itemId}`
 - `PATCH /api/v1/requirements/{id}/items/{itemId}/progress`
 - `PATCH /api/v1/systems/{systemId}`
+- `POST /api/v1/admin/branch-protection/apply`
 - `POST /api/v1/admin/users/{id}/app-role/reset`
 - `POST /api/v1/admin/users/{id}/role`
 - `POST /api/v1/auth/account/restore`
@@ -182,6 +184,8 @@ The current compiled API exposes **203 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects`
 - `POST /api/v1/projects/setup`
 - `POST /api/v1/projects/sync`
+- `POST /api/v1/projects/{id}/audit/sync`
+- `POST /api/v1/projects/{id}/branch-protection`
 - `POST /api/v1/projects/{id}/ci-runs/{runId}/rerun`
 - `POST /api/v1/projects/{id}/drift/run`
 - `POST /api/v1/projects/{id}/drift/{findingId}/repair`

@@ -24,15 +24,23 @@ import {
   type GitHubOpenPullRequestResult,
   type GithubOrganizationMember,
   type GithubOrganizationPort,
+  type GitHubCommitListQuery,
+  type GitHubCommitPage,
+  type GithubBranchProtectionOutcome,
   type GithubBranchProtectionSummary,
+  type GithubPullRequestProtectionOptions,
+  type GitHubPullRequestHeadline,
+  type GitHubPushCommits,
+  type GitHubRepositoryEventsResult,
   type GithubProjectPort,
   type GithubRepositoryDeletedEvent,
   type GithubTeamMembershipChangedEvent,
 } from '#kernel/ports/github.port';
 export { GithubRepoDeleteError } from '#kernel/ports/github.port';
 export type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
-import { ENV_GUARD_CHECK_CONTEXT } from '../application/github-policy.constants';
 import type { CreateRepoDto } from '../api/dto/create-repo.dto';
+import { GithubActivityClient } from './github-activity.client';
+import { ensurePullRequestProtection } from './github-branch-protection';
 import { GithubHttp } from './github-http';
 import { GithubInstallationLinker } from './github-installation-linker';
 import {
@@ -178,6 +186,7 @@ export class GithubService
   private readonly appPrivateKey: string;
   private readonly appWebhookSecret: string;
   private readonly http: GithubHttp;
+  private readonly activity: GithubActivityClient;
   private readonly installationLinker: GithubInstallationLinker;
   private readonly webhookProcessor: GithubWebhookProcessor;
 
@@ -211,6 +220,7 @@ export class GithubService
     );
 
     this.http = new GithubHttp(this.logger);
+    this.activity = new GithubActivityClient(this.http);
     this.installationLinker = new GithubInstallationLinker({
       logger: this.logger,
       http: this.http,
@@ -2447,50 +2457,75 @@ export class GithubService
   }
 
   /**
-   * Every protected branch requires the env-guard check by default so a pull
-   * request that adds a `.env`-style file can never be merged; the guard
-   * workflow runs on all pushes and pull requests, so the context is always
-   * present on PR head commits of provisioned repos.
+   * Pull-request-only protection that keeps what the branch already has; see
+   * github-branch-protection.ts for the rule and the merge. Provisioning seeds
+   * the env-guard check (the guard workflow runs on every push and pull
+   * request to a pipeline branch, so the context is always present on PR head
+   * commits of provisioned repos).
    */
-  async applyBranchProtection(
+  ensurePullRequestProtection(
     accessToken: string,
     owner: string,
     repo: string,
     branch: string,
-    requiredStatusChecks: string[] = [ENV_GUARD_CHECK_CONTEXT],
-  ): Promise<void> {
-    const res = await this.http.fetchWithRetry(
-      `https://api.github.com/repos/${owner}/${repo}/branches/${branch}/protection`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          required_status_checks:
-            requiredStatusChecks.length > 0
-              ? { strict: false, contexts: requiredStatusChecks }
-              : null,
-          enforce_admins: false,
-          required_pull_request_reviews: {
-            dismiss_stale_reviews: true,
-            require_code_owner_reviews: false,
-            required_approving_review_count: 1,
-          },
-          restrictions: null,
-          allow_force_pushes: false,
-          allow_deletions: false,
-        }),
-      },
+    options?: GithubPullRequestProtectionOptions,
+  ): Promise<GithubBranchProtectionOutcome> {
+    return ensurePullRequestProtection(
+      this.http,
+      accessToken,
+      owner,
+      repo,
+      branch,
+      options,
     );
-    if (!res.ok) {
-      this.logger.warn(
-        `Branch protection on ${branch} failed (${String(res.status)}); continuing`,
-      );
-    }
+  }
+
+  listCommits(
+    accessToken: string,
+    repoFullName: string,
+    query: GitHubCommitListQuery,
+  ): Promise<GitHubCommitPage> {
+    return this.activity.listCommits(accessToken, repoFullName, query);
+  }
+
+  listRepositoryEvents(
+    accessToken: string,
+    repoFullName: string,
+    options?: { etag?: string | null },
+  ): Promise<GitHubRepositoryEventsResult> {
+    return this.activity.listRepositoryEvents(
+      accessToken,
+      repoFullName,
+      options,
+    );
+  }
+
+  compareCommits(
+    accessToken: string,
+    repoFullName: string,
+    base: string,
+    head: string,
+    limit?: number,
+  ): Promise<GitHubPushCommits | null> {
+    return this.activity.compareCommits(
+      accessToken,
+      repoFullName,
+      base,
+      head,
+      limit,
+    );
+  }
+
+  getPullRequestHeadline(
+    accessToken: string,
+    repoFullName: string,
+    pullNumber: number,
+  ): Promise<GitHubPullRequestHeadline | null> {
+    return this.activity.getPullRequestHeadline(
+      accessToken,
+      repoFullName,
+      pullNumber,
+    );
   }
 
   private fetchInstallationRepositories(

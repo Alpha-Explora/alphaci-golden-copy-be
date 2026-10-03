@@ -78,12 +78,10 @@ describe('pipeline branch model', () => {
     }
   });
 
-  it('protects every tier above the one developers push to', () => {
-    // dev is deliberately unprotected: requiring a pull request there would
-    // make the promotion flow start one step too late.
-    expect(PROTECTED_BRANCHES).not.toContain(PIPELINE_BRANCHES[0]);
+  it('requires a pull request on every tier, dev included', () => {
+    // Nobody pushes to dev, uat or main: work arrives by pull request.
     expect([...PROTECTED_BRANCHES].sort()).toEqual(
-      PIPELINE_BRANCHES.slice(1).sort(),
+      [...PIPELINE_BRANCHES].sort(),
     );
   });
 

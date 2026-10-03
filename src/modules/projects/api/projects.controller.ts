@@ -474,7 +474,14 @@ export class ProjectsController {
         id,
         userId,
         options,
-      ) ?? this.projectsService.listProjectAuditEvents(id, userId, options)
+        req.session.githubAccessToken ?? null,
+      ) ??
+      this.projectsService.listProjectAuditEvents(
+        id,
+        userId,
+        options,
+        req.session.githubAccessToken ?? null,
+      )
     );
   }
 

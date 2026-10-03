@@ -37,6 +37,7 @@ import {
   PROJECT_LINK_PORT,
   type ProjectLinkPort,
 } from '#kernel/ports/project-link.port';
+import { ProjectGithubActivityService } from '../github-activity/project-github-activity.service';
 import { ProjectDashboardSnapshotsRepository } from '../../infrastructure/project-dashboard-snapshots.repository';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import type {
@@ -98,6 +99,8 @@ export class ProjectDashboardService {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    private readonly githubActivity?: ProjectGithubActivityService,
   ) {}
 
   listProjects(
@@ -273,11 +276,17 @@ export class ProjectDashboardService {
    * module that owns the predicate: anyone who can see the repository (admin,
    * owner, team member, assignee) sees its events, not only its creator. A
    * caller who cannot see it gets 404, like every other project route.
+   *
+   * The first page (no `before`) first brings the repository's GitHub activity
+   * up to date when the last sync is older than a minute, waiting at most 3 s
+   * for GitHub; `githubSync` says how that went and the stored events are
+   * returned either way.
    */
   async listProjectAuditEvents(
     projectId: string,
     userId: string,
     options: ProjectAuditEventsOptions = {},
+    oauthToken: string | null = null,
   ): Promise<ProjectAuditEventsResponse> {
     const project = await this.projectsRepository.findByIdAndUser(
       projectId,
@@ -294,6 +303,11 @@ export class ProjectDashboardService {
         next: null,
       };
     }
+
+    const sync =
+      options.before === undefined && this.githubActivity
+        ? await this.githubActivity.syncIfDue(project, userId, oauthToken)
+        : null;
 
     const page = await this.auditQueryPort.listProjectEvents({
       projectId,
@@ -314,6 +328,9 @@ export class ProjectDashboardService {
         scope: event.scope,
       })),
       next: page.next,
+      ...(sync
+        ? { githubSync: { status: sync.status, syncedAt: sync.syncedAt } }
+        : {}),
     };
   }
 

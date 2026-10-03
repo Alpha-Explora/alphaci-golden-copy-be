@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Inject,
+  Logger,
   Post,
   Req,
   UseGuards,
@@ -30,10 +31,13 @@ import {
   DEFAULT_BRANCH,
   PROTECTED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
+import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
 
 @Controller('github')
 @UseGuards(SessionAuthGuard)
 export class GithubController {
+  private readonly logger = new Logger(GithubController.name);
+
   constructor(
     private readonly githubService: GithubService,
     // Required (not @Optional): the creator gate must never silently vanish.
@@ -168,9 +172,9 @@ export class GithubController {
     const { repoUrl, cloneUrl, ownerLogin, repoName } =
       await this.githubService.createRepo(accessToken, body);
 
-    // dev is where developers push and is intentionally unprotected; uat and
-    // main are reached by promotion. Both lists come from the branch model so
-    // they cannot drift from the triggers the generated workflows carry.
+    // Every tier requires a pull request; nobody pushes to dev, uat or main.
+    // Both lists come from the branch model so they cannot drift from the
+    // triggers the generated workflows carry.
     const branchesCreated: string[] = [DEFAULT_BRANCH];
     for (const branch of BRANCHES_CREATED_ON_PROVISION) {
       await this.githubService.createBranch(
@@ -184,12 +188,18 @@ export class GithubController {
     }
 
     for (const branch of PROTECTED_BRANCHES) {
-      await this.githubService.applyBranchProtection(
+      const outcome = await this.githubService.ensurePullRequestProtection(
         accessToken,
         ownerLogin,
         repoName,
         branch,
+        { seedStatusChecks: [ENV_GUARD_CHECK_CONTEXT] },
       );
+      if (outcome.status === 'failed') {
+        this.logger.warn(
+          `Branch protection on ${ownerLogin}/${repoName}:${branch} failed; continuing: ${outcome.error ?? 'unknown'}`,
+        );
+      }
     }
 
     return {

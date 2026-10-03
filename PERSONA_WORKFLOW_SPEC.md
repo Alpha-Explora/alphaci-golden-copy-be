@@ -256,7 +256,12 @@ Based on comprehensive inspection of the current codebase, the following 7 enhan
 
 ### 7. Branch Protection Verification Probe (`project-provisioning.support.ts`)
 - **Current State**: Branch protection rules are configured during provisioning.
-- **Improvement**: Add a drift probe verifying that `dev` remains pushable while `uat` and `main` remain protected against direct pushes and deletions.
+- **Improvement**: Add a drift probe verifying that `dev`, `uat` and `main` all remain protected against direct pushes and deletions.
+
+### Branch protection rule (2026-10-02, ADR-0015)
+- Nobody pushes to `dev`, `uat` or `main`. Developers open pull requests `feature/*` into `dev` and `dev` into `uat`; `main` is reached only through QA Studio's Merge to main.
+- GitHub rule on all three branches: pull request required with **zero** approvals (so ALPHACI-driven merges keep working), force pushes and deletion blocked, `enforce_admins` off so an organisation admin keeps an escape hatch. Existing required status checks and stricter settings are kept, never overwritten.
+- Applied at the end of provisioning (best effort) and to existing repositories by the admin-only `POST /projects/:id/branch-protection` and `POST /admin/branch-protection/apply`. The GitHub App needs Administration: write.
 
 ---
 

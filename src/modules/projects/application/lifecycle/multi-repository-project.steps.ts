@@ -23,7 +23,6 @@ import {
 } from './project-provisioning.support';
 import {
   BRANCHES_CREATED_ON_PROVISION,
-  PROTECTED_BRANCHES,
   PROVISIONED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
 
@@ -320,9 +319,9 @@ export async function createAndProtectDefaultBranches(input: {
   provisioningToken: string;
   ownerLogin: string;
   repoName: string;
+  userId: string;
+  project: { id: string; workspace_id?: string | null };
 }): Promise<void> {
-  // dev is unprotected: it is where developers push. uat and main are
-  // protected and reached by promotion.
   for (const branch of BRANCHES_CREATED_ON_PROVISION) {
     await input.support.githubService.createBranch(
       input.provisioningToken,
@@ -333,14 +332,15 @@ export async function createAndProtectDefaultBranches(input: {
     );
   }
 
-  for (const branch of PROTECTED_BRANCHES) {
-    await input.support.githubService.applyBranchProtection(
-      input.provisioningToken,
-      input.ownerLogin,
-      input.repoName,
-      branch,
-    );
-  }
+  // Pull request required on dev, uat and main; best effort, never throws.
+  await input.support.protectPipelineBranches({
+    token: input.provisioningToken,
+    owner: input.ownerLogin,
+    repo: input.repoName,
+    userId: input.userId,
+    projectId: input.project.id,
+    workspaceId: input.project.workspace_id ?? null,
+  });
 }
 
 export async function compensateMultiRepoProvision(input: {
@@ -438,6 +438,8 @@ export async function provisionMultiRepoBackend(input: {
       provisioningToken,
       ownerLogin: repo.ownerLogin,
       repoName: repo.repoName,
+      userId,
+      project: backendRow,
     });
 
     backendProvisioningComplete = true;
@@ -593,6 +595,8 @@ export async function provisionMultiRepoFrontend(input: {
       provisioningToken,
       ownerLogin: repo.ownerLogin,
       repoName: repo.repoName,
+      userId,
+      project: feRow,
     });
 
     feProvisioningComplete = true;

@@ -476,8 +476,14 @@ export class ProjectsService {
     projectId: string,
     userId: string,
     options: ProjectAuditEventsOptions = {},
+    oauthToken: string | null = null,
   ): Promise<ProjectAuditEventsResponse> {
-    return this.dashboard.listProjectAuditEvents(projectId, userId, options);
+    return this.dashboard.listProjectAuditEvents(
+      projectId,
+      userId,
+      options,
+      oauthToken,
+    );
   }
 
   /** Delegates to ProjectWorkflowsService (owns workflow settings behavior). */

@@ -46,7 +46,9 @@ const makeGithubService = () =>
       repoName: 'repo',
     }),
     createBranch: jest.fn().mockResolvedValue(undefined),
-    applyBranchProtection: jest.fn().mockResolvedValue(undefined),
+    ensurePullRequestProtection: jest
+      .fn()
+      .mockResolvedValue({ status: 'applied' }),
     setActionsSecret: jest.fn().mockResolvedValue(undefined),
     setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
     deleteRepo: jest.fn().mockResolvedValue(true),

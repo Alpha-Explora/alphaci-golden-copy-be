@@ -25,8 +25,10 @@ export interface ProjectAuditEventItem extends AuditEventRecord {
    * 'repository' = recorded against this repository; 'project' = recorded
    * against the delivery Project the repository is filed under (requirement
    * and checklist events), so it appears on every repository of that Project.
+   * 'github' = ingested from the repository's GitHub activity (pushes, pull
+   * requests, branches), not recorded by ALPHACI itself.
    */
-  scope: 'repository' | 'project';
+  scope: 'repository' | 'project' | 'github';
 }
 
 /**
@@ -59,5 +61,58 @@ export interface AuditSecurityPort {
   recordAlwaysOn(input: AuditEventInput): Promise<void>;
 }
 
+/** One GitHub event, already mapped to an audit row by the projects module. */
+export interface ExternalAuditEvent {
+  /** Dedupe key, `github:<event id>`; unique across audit.audit_events. */
+  externalId: string;
+  eventCode: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  /** The GitHub login that acted; resolved to an ALPHACI user when it maps to one. */
+  actorLogin: string | null;
+  /** When it happened on GitHub (event.created_at), not when it was ingested. */
+  occurredAt: string;
+}
+
+export interface ExternalAuditBatch {
+  projectId: string;
+  workspaceId: string | null;
+  events: ExternalAuditEvent[];
+}
+
+/**
+ * Last SUCCESSFUL GitHub activity sync of one repository, keyed by its
+ * lower-case full name. Failed attempts are not stored: the previous ETag and
+ * time stay, so the next attempt resumes from the last good state.
+ */
+export interface GithubActivitySyncState {
+  etag: string | null;
+  syncedAt: string;
+}
+
+/**
+ * Ingest capability for activity that happened outside ALPHACI. The projects
+ * module knows which repository is which project and talks to GitHub; the
+ * audit module owns the table and the sync bookkeeping.
+ */
+export interface AuditExternalIngestPort {
+  /** False when AUDIT_EVENTS_ENABLED is off: nothing is recorded or read. */
+  isRecording(): boolean;
+  /** The subset of `externalIds` that are not stored yet. */
+  findUnrecordedExternalIds(externalIds: string[]): Promise<Set<string>>;
+  /** Insert ON CONFLICT DO NOTHING; returns how many rows were new. */
+  ingestExternalEvents(
+    batch: ExternalAuditBatch,
+  ): Promise<{ inserted: number }>;
+  getGithubSyncState(
+    repoFullName: string,
+  ): Promise<GithubActivitySyncState | null>;
+  saveGithubSyncState(
+    repoFullName: string,
+    state: GithubActivitySyncState,
+  ): Promise<void>;
+}
+
 export const AUDIT_QUERY_PORT = Symbol('AuditQueryPort');
+export const AUDIT_EXTERNAL_INGEST_PORT = Symbol('AuditExternalIngestPort');
 export const AUDIT_SECURITY_PORT = Symbol('AuditSecurityPort');

@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ForbiddenException,
   Inject,
@@ -203,9 +204,9 @@ export class ProjectDriftRepairService {
   }
 
   /**
-   * Re-applies protection to one uat/main branch. Only ever runs on explicit
-   * request, and only for lead/admin (allow-list on the global app_role).
-   * It cannot un-protect `dev`, so branch_dev_protected is not repairable.
+   * Re-applies pull-request protection to one of dev, uat or main. Only ever
+   * runs on explicit request, and only for lead/admin (allow-list on the
+   * global app_role).
    */
   private async repairBranchProtection(
     ctx: DriftRepairContext,
@@ -237,12 +238,20 @@ export class ProjectDriftRepairService {
         'A GitHub session is required to repair branch protection',
       );
     }
-    await this.githubService.applyBranchProtection(
+    const outcome = await this.githubService.ensurePullRequestProtection(
       ctx.githubAccessToken,
       owner,
       repo,
       branch,
     );
+    if (outcome.status === 'failed' || outcome.status === 'missing') {
+      // Marking the finding resolved after GitHub refused would hide the drift.
+      throw new BadGatewayException(
+        outcome.status === 'missing'
+          ? `Branch ${branch} does not exist, so protection was not applied.`
+          : `Branch protection could not be applied to ${branch}: ${outcome.error ?? 'GitHub refused the rule'}`,
+      );
+    }
     await this.findingsRepository.markStatus(ctx.findingId, 'resolved');
     await this.recordRepairEvent({
       userId: ctx.userId,

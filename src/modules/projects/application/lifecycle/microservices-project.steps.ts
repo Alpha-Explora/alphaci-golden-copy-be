@@ -17,7 +17,6 @@ import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 import {
   BRANCHES_CREATED_ON_PROVISION,
-  PROTECTED_BRANCHES,
   PROVISIONED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
 
@@ -367,6 +366,9 @@ export async function createAndProtectPackedBranches(input: {
   provisioningToken: string;
   ownerLogin: string;
   repoName: string;
+  userId: string;
+  /** The packed repo's backend row; the protection audit event hangs off it. */
+  project: { id: string; workspace_id?: string | null };
 }): Promise<void> {
   for (const branch of BRANCHES_CREATED_ON_PROVISION) {
     await input.support.githubService.createBranch(
@@ -378,14 +380,15 @@ export async function createAndProtectPackedBranches(input: {
     );
   }
 
-  for (const branch of PROTECTED_BRANCHES) {
-    await input.support.githubService.applyBranchProtection(
-      input.provisioningToken,
-      input.ownerLogin,
-      input.repoName,
-      branch,
-    );
-  }
+  // Pull request required on dev, uat and main; best effort, never throws.
+  await input.support.protectPipelineBranches({
+    token: input.provisioningToken,
+    owner: input.ownerLogin,
+    repo: input.repoName,
+    userId: input.userId,
+    projectId: input.project.id,
+    workspaceId: input.project.workspace_id ?? null,
+  });
 }
 
 export async function persistPackedFrontendRowIfPushed(input: {

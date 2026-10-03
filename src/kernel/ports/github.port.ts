@@ -394,13 +394,53 @@ export interface GithubProjectPort {
     variableName: string,
     variableValue: string,
   ): Promise<void>;
-  applyBranchProtection(
+  /**
+   * Require a pull request on `branch` (zero approvals), block force pushes
+   * and deletion, and KEEP whatever required status checks, restrictions and
+   * stricter settings the branch already has. Never throws for a GitHub
+   * refusal: the outcome says what happened so callers can report per branch.
+   */
+  ensurePullRequestProtection(
     accessToken: string,
     owner: string,
     repo: string,
     branch: string,
-    requiredStatusChecks?: string[],
-  ): Promise<void>;
+    options?: GithubPullRequestProtectionOptions,
+  ): Promise<GithubBranchProtectionOutcome>;
+  /**
+   * One page of a branch's commits, newest first. A 401 from GitHub is a
+   * revoked or replaced sign-in and throws UnauthorizedException with the
+   * "sign in again" sentence; 404 (unknown branch or repository) returns an
+   * empty page.
+   */
+  listCommits(
+    accessToken: string,
+    repoFullName: string,
+    query: GitHubCommitListQuery,
+  ): Promise<GitHubCommitPage>;
+  /**
+   * The repository Events API, conditional on `etag` when given. Pages 2-3
+   * (GitHub keeps 300 events / 90 days) are only fetched when page 1 changed.
+   */
+  listRepositoryEvents(
+    accessToken: string,
+    repoFullName: string,
+    options?: { etag?: string | null },
+  ): Promise<GitHubRepositoryEventsResult>;
+  /** Commits a push added: `before...head`, newest data GitHub still has. */
+  compareCommits(
+    accessToken: string,
+    repoFullName: string,
+    base: string,
+    head: string,
+    limit?: number,
+  ): Promise<GitHubPushCommits | null>;
+  /** Title and merge facts of one pull request; null when it is not visible. */
+  getPullRequestHeadline(
+    accessToken: string,
+    repoFullName: string,
+    pullNumber: number,
+  ): Promise<GitHubPullRequestHeadline | null>;
   listBranches(
     accessToken: string,
     repoFullName: string,
@@ -587,6 +627,91 @@ export interface GithubBranchProtectionSummary {
   pullRequestRequired: boolean;
   allowForcePushes: boolean;
   allowDeletions: boolean;
+}
+
+export interface GithubPullRequestProtectionOptions {
+  /**
+   * Status check contexts to add when the branch has no required checks of
+   * its own. Existing required checks are always kept; this only seeds them.
+   * Provisioning passes the env-guard context; retrofitting an older
+   * repository passes nothing, because that repository may not have the
+   * env-guard workflow and a required check that never reports blocks every
+   * merge.
+   */
+  seedStatusChecks?: readonly string[];
+}
+
+/**
+ * What happened to one branch.
+ *
+ *   applied    protection was created or tightened
+ *   unchanged  it already required a pull request and blocked force/deletion
+ *   missing    the branch does not exist in the repository
+ *   failed     GitHub refused or could not be reached; `error` says why
+ *              (403/404 usually means the token lacks Administration: write)
+ */
+export type GithubBranchProtectionStatus =
+  | 'applied'
+  | 'unchanged'
+  | 'missing'
+  | 'failed';
+
+export interface GithubBranchProtectionOutcome {
+  status: GithubBranchProtectionStatus;
+  error?: string;
+}
+
+export interface GitHubCommitListQuery {
+  branch: string;
+  perPage: number;
+  /** 1-based GitHub page. */
+  page: number;
+}
+
+export interface GitHubCommitSummary {
+  sha: string;
+  /** Full commit message; callers take the first line. */
+  message: string;
+  authorLogin: string | null;
+  authorName: string;
+  authoredAt: string;
+  url: string;
+}
+
+export interface GitHubCommitPage {
+  items: GitHubCommitSummary[];
+  hasNextPage: boolean;
+}
+
+/** One event of the repository Events API, as GitHub returns it. */
+export interface GitHubRepositoryEvent {
+  id: string;
+  type: string;
+  actor: { login: string } | null;
+  createdAt: string;
+  payload: Record<string, unknown>;
+}
+
+export type GitHubRepositoryEventsResult =
+  | { status: 'not_modified' }
+  | {
+      status: 'modified';
+      events: GitHubRepositoryEvent[];
+      etag: string | null;
+    };
+
+export interface GitHubPushCommits {
+  /** GitHub's own word for how head relates to base: ahead, behind, diverged, identical. */
+  status: string;
+  totalCommits: number;
+  commits: Array<{ sha: string; message: string; authorName: string }>;
+}
+
+export interface GitHubPullRequestHeadline {
+  title: string;
+  merged: boolean;
+  mergedByLogin: string | null;
+  htmlUrl: string;
 }
 
 export const GITHUB_PROJECT_PORT = Symbol('GithubProjectPort');

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '#kernel/db/database.module';
 import {
+  AUDIT_EXTERNAL_INGEST_PORT,
   AUDIT_QUERY_PORT,
   AUDIT_SECURITY_PORT,
 } from '#kernel/ports/audit.port';
@@ -15,7 +16,13 @@ import { AuditEventsService } from './application/audit-events.service';
     AuditEventsService,
     { provide: AUDIT_QUERY_PORT, useExisting: AuditEventsService },
     { provide: AUDIT_SECURITY_PORT, useExisting: AuditEventsService },
+    { provide: AUDIT_EXTERNAL_INGEST_PORT, useExisting: AuditEventsService },
   ],
-  exports: [AuditEventsService, AUDIT_QUERY_PORT, AUDIT_SECURITY_PORT],
+  exports: [
+    AuditEventsService,
+    AUDIT_QUERY_PORT,
+    AUDIT_SECURITY_PORT,
+    AUDIT_EXTERNAL_INGEST_PORT,
+  ],
 })
 export class AuditModule {}

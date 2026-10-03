@@ -606,6 +606,7 @@ describe('ProjectsController', () => {
       'project-1',
       'user-1',
       {},
+      null,
     );
     expect(result).toMatchObject({
       enabled: true,
@@ -625,6 +626,7 @@ describe('ProjectsController', () => {
       'project-1',
       'user-1',
       { limit: 100, before: '2026-10-01T10:00:00.123456Z' },
+      null,
     );
   });
 

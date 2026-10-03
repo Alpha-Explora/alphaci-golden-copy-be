@@ -23,7 +23,6 @@ import {
 } from './project-provisioning.support';
 import {
   BRANCHES_CREATED_ON_PROVISION,
-  PROTECTED_BRANCHES,
   PROVISIONED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
 
@@ -198,8 +197,7 @@ export class SingleRepositoryProjectProvisioner {
         commitUrl,
       );
 
-      // 6. Create the non-default tiers from main. dev is intentionally
-      // unprotected and has no CI trigger; uat is the integration/test branch.
+      // 6. Create the non-default tiers (dev, uat) from main.
       for (const branch of BRANCHES_CREATED_ON_PROVISION) {
         await this.support.githubService.createBranch(
           provisioningToken,
@@ -210,15 +208,16 @@ export class SingleRepositoryProjectProvisioner {
         );
       }
 
-      // 7. Only uat and main are protected long-lived branches.
-      for (const branch of PROTECTED_BRANCHES) {
-        await this.support.githubService.applyBranchProtection(
-          provisioningToken,
-          ownerLogin,
-          repoName,
-          branch,
-        );
-      }
+      // 7. Require a pull request on dev, uat and main. Runs after every
+      // initial commit above, and is best effort: the repo is already usable.
+      await this.support.protectPipelineBranches({
+        token: provisioningToken,
+        owner: ownerLogin,
+        repo: repoName,
+        userId,
+        projectId: row.id,
+        workspaceId: row.workspace_id ?? null,
+      });
 
       // Repo is now fully usable; failures past this point must not delete it.
       provisioningComplete = true;
@@ -455,6 +454,17 @@ export class SingleRepositoryProjectProvisioner {
       );
       throw error;
     }
+
+    // The workflow commit above is the last direct write ALPHACI makes to the
+    // repository; from here on every change goes through a pull request.
+    await this.support.protectPipelineBranches({
+      token: accessToken,
+      owner,
+      repo,
+      userId,
+      projectId: row.id,
+      workspaceId: row.workspace_id ?? null,
+    });
 
     const deploymentProvisioning =
       await this.support.provisionDeploymentTargets({

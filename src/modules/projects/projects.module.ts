@@ -18,9 +18,14 @@ import { ExistingReposModule } from './application/existing-repos/existing-repos
 import { CatalogModule } from './application/catalog/catalog.module';
 import { QaChecklistsModule } from './application/qa-checklists/qa-checklists.module';
 import { QaRunsModule } from './application/qa-runs/qa-runs.module';
+import { ProjectActivityController } from './api/project-activity.controller';
 import { ProjectFolderController } from './api/project-folder.controller';
 import { ProjectsController } from './api/projects.controller';
+import { ProjectBranchProtectionService } from './application/branch-protection/project-branch-protection.service';
 import { ProjectFolderService } from './application/folder/project-folder.service';
+import { ProjectCommitsService } from './application/github-activity/project-commits.service';
+import { ProjectGithubActivityService } from './application/github-activity/project-github-activity.service';
+import { ProjectGithubTokenResolver } from './application/github-activity/project-github-token.resolver';
 import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './infrastructure/project-dashboard-snapshots.repository';
 import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service';
@@ -74,6 +79,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectsController,
     ProjectWorkspaceController,
     ProjectFolderController,
+    ProjectActivityController,
   ],
   providers: [
     ProjectsService,
@@ -92,6 +98,10 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectReconciliationService,
     ProjectProvisioningApplicationService,
     ProjectWorkspaceService,
+    ProjectGithubTokenResolver,
+    ProjectGithubActivityService,
+    ProjectCommitsService,
+    ProjectBranchProtectionService,
     ProjectFolderService,
     ProjectCiRunsService,
     ProjectPreviewsService,
