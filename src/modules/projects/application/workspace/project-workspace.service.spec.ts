@@ -60,7 +60,7 @@ function build(
     listWorkflowRuns: jest.fn(() => Promise.resolve([])),
     getWorkflowRunJobs: jest.fn(() => Promise.resolve([])),
     getJobLogs: jest.fn(() =>
-      Promise.resolve({ content: 'x', truncated: false }),
+      Promise.resolve({ status: 'ok', content: 'x', truncated: false }),
     ),
     listPullRequests: jest.fn(() => Promise.resolve([])),
     getPullRequestFiles: jest.fn(() => Promise.resolve([])),
@@ -338,21 +338,47 @@ describe('ProjectWorkspaceService', () => {
     it('reports an expired log as unavailable rather than throwing', async () => {
       const { service } = build({
         github: {
-          getJobLogs: jest.fn(() => Promise.resolve(null)),
+          getJobLogs: jest.fn(() => Promise.resolve({ status: 'expired' })),
         },
       });
       await expect(service.getJobLog('p1', 'u1', null, 5)).resolves.toEqual({
         available: false,
         content: '',
         truncated: false,
+        reason: 'log-expired',
       });
+    });
+
+    it('says the token cannot read the log, rather than that it expired', async () => {
+      const { service } = build({
+        github: {
+          getJobLogs: jest.fn(() => Promise.resolve({ status: 'no-access' })),
+        },
+      });
+      await expect(service.getJobLog('p1', 'u1', null, 5)).resolves.toEqual({
+        available: false,
+        content: '',
+        truncated: false,
+        reason: 'log-no-access',
+      });
+    });
+
+    it('does not add a reason to a log that was read', async () => {
+      const { service } = build();
+      const result = await service.getJobLog('p1', 'u1', null, 5);
+      expect(result).toEqual({
+        available: true,
+        content: 'x',
+        truncated: false,
+      });
+      expect(result).not.toHaveProperty('reason');
     });
 
     it('passes the truncation flag through so the UI can say the log was cut', async () => {
       const { service } = build({
         github: {
           getJobLogs: jest.fn(() =>
-            Promise.resolve({ content: 'tail', truncated: true }),
+            Promise.resolve({ status: 'ok', content: 'tail', truncated: true }),
           ),
         },
       });
@@ -361,6 +387,245 @@ describe('ProjectWorkspaceService', () => {
         content: 'tail',
         truncated: true,
       });
+    });
+  });
+
+  describe('run failure log', () => {
+    const job = (
+      id: number,
+      name: string,
+      overrides: Record<string, unknown> = {},
+    ) => ({
+      id,
+      name,
+      status: 'completed',
+      conclusion: 'failure',
+      startedAt: null,
+      completedAt: new Date().toISOString(),
+      htmlUrl: `https://github.com/o/r/actions/runs/1/job/${String(id)}`,
+      steps: [],
+      ...overrides,
+    });
+
+    const READ_ORG =
+      "GraphQL: Your token has not been granted the required scopes to execute this query. The 'login' field requires one of the following scopes: ['read:org'].";
+
+    const logOf = (...lines: string[]) => ({
+      status: 'ok' as const,
+      content: [...lines, '##[error]Process completed with exit code 1.'].join(
+        '\n',
+      ),
+      truncated: false,
+    });
+
+    it('explains every failed job, including ones outside the report', async () => {
+      const { service, github } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() =>
+            Promise.resolve([
+              job(1, 'quality / Lint', {
+                steps: [
+                  {
+                    name: 'Run eslint',
+                    status: 'completed',
+                    conclusion: 'failure',
+                    number: 3,
+                    startedAt: null,
+                    completedAt: null,
+                  },
+                ],
+              }),
+              job(2, 'build / Compile', { conclusion: 'success' }),
+              job(3, 'promote-to-uat / Create Promotion PR'),
+              job(4, 'production-gate', { conclusion: 'timed_out' }),
+            ]),
+          ),
+          getJobLogs: jest.fn((_t: string, _r: string, jobId: number) =>
+            Promise.resolve(
+              jobId === 3
+                ? logOf(READ_ORG)
+                : logOf(`failure of job ${String(jobId)}`),
+            ),
+          ),
+        },
+      });
+
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+
+      expect(github.getJobLogs).toHaveBeenCalledTimes(3);
+      expect(result.failures.map((f) => f.jobId)).toEqual([1, 3, 4]);
+      const promotion = result.failures[1]!;
+      expect(promotion.jobName).toBe('promote-to-uat / Create Promotion PR');
+      expect(promotion.lines.join('\n')).toContain("'read:org'");
+      expect(promotion.hint).toMatch(/missing the read:org scope/);
+      expect(promotion.foundErrorMarker).toBe(true);
+      // A failure with no recognisable signature carries no hint at all.
+      expect(result.failures[2]).not.toHaveProperty('hint');
+      expect(result.failures[0]!.stepName).toBe('Run eslint');
+    });
+
+    it('keeps the top-level fields populated from the first failure', async () => {
+      const { service } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() =>
+            Promise.resolve([job(3, 'promote'), job(4, 'gate')]),
+          ),
+          getJobLogs: jest.fn(() => Promise.resolve(logOf(READ_ORG))),
+        },
+      });
+
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+
+      expect(result).toMatchObject({
+        available: true,
+        jobId: 3,
+        jobName: 'promote',
+        jobUrl: 'https://github.com/o/r/actions/runs/1/job/3',
+        truncated: false,
+        foundErrorMarker: true,
+      });
+      expect(result.hint).toContain('read:org');
+      expect(result.lines).toEqual(result.failures[0]!.lines);
+      expect(result).not.toHaveProperty('reason');
+      expect(result).not.toHaveProperty('omittedFailures');
+    });
+
+    it('answers no-failed-job with an empty failures list', async () => {
+      const { service, github } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() =>
+            Promise.resolve([job(1, 'ok', { conclusion: 'success' })]),
+          ),
+        },
+      });
+      await expect(
+        service.getRunFailureLog('p1', 'u1', null, 9),
+      ).resolves.toEqual({
+        available: false,
+        reason: 'no-failed-job',
+        failures: [],
+      });
+      expect(github.getJobLogs).not.toHaveBeenCalled();
+    });
+
+    it('ignores cancelled jobs, which are a consequence and not a cause', async () => {
+      const { service } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() =>
+            Promise.resolve([
+              job(1, 'was cancelled', { conclusion: 'cancelled' }),
+            ]),
+          ),
+        },
+      });
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+      expect(result.reason).toBe('no-failed-job');
+    });
+
+    it('reports a 410 log as expired', async () => {
+      const { service } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() => Promise.resolve([job(1, 'a')])),
+          getJobLogs: jest.fn(() => Promise.resolve({ status: 'expired' })),
+        },
+      });
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+      expect(result).toMatchObject({
+        available: false,
+        reason: 'log-expired',
+      });
+      expect(result.failures[0]).toMatchObject({
+        reason: 'log-expired',
+        lines: [],
+      });
+    });
+
+    it('reports a 403/404 on a recent job as no access, not as expired', async () => {
+      const { service } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() => Promise.resolve([job(1, 'a')])),
+          getJobLogs: jest.fn(() => Promise.resolve({ status: 'no-access' })),
+        },
+      });
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+      expect(result).toMatchObject({
+        available: false,
+        reason: 'log-no-access',
+      });
+      expect(result.failures[0]!.reason).toBe('log-no-access');
+    });
+
+    it('treats a 404 on a job past the retention window as expired', async () => {
+      const old = new Date(
+        Date.now() - 100 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      const { service } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() =>
+            Promise.resolve([job(1, 'a', { completedAt: old })]),
+          ),
+          getJobLogs: jest.fn(() => Promise.resolve({ status: 'no-access' })),
+        },
+      });
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+      expect(result.failures[0]!.reason).toBe('log-expired');
+    });
+
+    it('keeps explaining the other jobs when one log is unreadable', async () => {
+      const { service } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() =>
+            Promise.resolve([job(1, 'a'), job(2, 'b')]),
+          ),
+          getJobLogs: jest.fn((_t: string, _r: string, jobId: number) =>
+            Promise.resolve(
+              jobId === 1 ? { status: 'expired' } : logOf('real error'),
+            ),
+          ),
+        },
+      });
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+      expect(result.failures[0]!.reason).toBe('log-expired');
+      expect(result.failures[1]!.lines.join('\n')).toContain('real error');
+      expect(result.failures[1]).not.toHaveProperty('reason');
+    });
+
+    it('caps the jobs explained at ten and says how many were left out', async () => {
+      const jobs = Array.from({ length: 13 }, (_, i) =>
+        job(i + 1, `job ${String(i)}`),
+      );
+      const { service, github } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() => Promise.resolve(jobs)),
+          getJobLogs: jest.fn(() => Promise.resolve(logOf('boom'))),
+        },
+      });
+      const result = await service.getRunFailureLog('p1', 'u1', null, 9);
+      expect(result.failures).toHaveLength(10);
+      expect(result.omittedFailures).toBe(3);
+      expect(github.getJobLogs).toHaveBeenCalledTimes(10);
+    });
+
+    it('never downloads more than three logs at once', async () => {
+      let inFlight = 0;
+      let peak = 0;
+      const jobs = Array.from({ length: 8 }, (_, i) =>
+        job(i + 1, `job ${String(i)}`),
+      );
+      const { service } = build({
+        github: {
+          getWorkflowRunJobs: jest.fn(() => Promise.resolve(jobs)),
+          getJobLogs: jest.fn(async () => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            inFlight -= 1;
+            return logOf('boom');
+          }),
+        },
+      });
+      await service.getRunFailureLog('p1', 'u1', null, 9);
+      expect(peak).toBe(3);
     });
   });
 

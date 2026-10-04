@@ -8,7 +8,9 @@ import type {
 } from './github-workspace.types';
 import type {
   GitHubBranchComparison,
+  GitHubCheckAnnotation,
   GitHubComparisonCommit,
+  GitHubPullRequestCheck,
 } from '#kernel/ports/github.port';
 
 /** Max bytes of a blob we will decode and send to a browser. */
@@ -324,4 +326,182 @@ export function userWriteRefusal(
     return `Your GitHub account does not have write access to ${repoFullName}. Ask a repository admin to grant it.`;
   }
   return null;
+}
+
+// --- Pull request checks ---------------------------------------------------
+
+/** Longest `output.summary` we forward; GitHub allows tens of kilobytes. */
+const CHECK_SUMMARY_MAX_CHARS = 500;
+/** App slug GitHub gives the check runs that are Actions jobs. */
+export const ACTIONS_APP_SLUG = 'github-actions';
+/** Annotations kept per failed check, and failed checks we look them up for. */
+export const MAX_ANNOTATIONS_PER_CHECK = 10;
+export const MAX_ANNOTATED_CHECKS = 10;
+
+export interface GitHubCheckRunRow {
+  id?: number;
+  name?: string;
+  status?: string;
+  conclusion?: string | null;
+  details_url?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  app?: { slug?: string } | null;
+  check_suite?: { id?: number } | null;
+  output?: { title?: string | null; summary?: string | null } | null;
+}
+
+export interface GitHubCommitStatusRow {
+  context?: string;
+  state?: string;
+  description?: string | null;
+  target_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface GitHubAnnotationRow {
+  path?: string;
+  start_line?: number | null;
+  annotation_level?: string;
+  title?: string | null;
+  message?: string;
+}
+
+export interface GitHubCheckSuiteRunRow {
+  name?: string | null;
+  event?: string | null;
+  check_suite_id?: number | null;
+}
+
+/** The workflow a check suite belongs to, from `GET /actions/runs`. */
+export interface CheckWorkflowInfo {
+  workflowName: string | null;
+  event: string | null;
+}
+
+/** Index workflow runs by check suite, which is what a check run points at. */
+export function indexWorkflowRunsByCheckSuite(
+  runs: readonly GitHubCheckSuiteRunRow[],
+): Map<number, CheckWorkflowInfo> {
+  const bySuite = new Map<number, CheckWorkflowInfo>();
+  for (const run of runs) {
+    if (run.check_suite_id == null || bySuite.has(run.check_suite_id)) continue;
+    bySuite.set(run.check_suite_id, {
+      workflowName: run.name ?? null,
+      event: run.event ?? null,
+    });
+  }
+  return bySuite;
+}
+
+function truncateSummary(text: string | null | undefined): string | null {
+  const trimmed = text?.trim();
+  if (!trimmed) return null;
+  return trimmed.length > CHECK_SUMMARY_MAX_CHARS
+    ? `${trimmed.slice(0, CHECK_SUMMARY_MAX_CHARS)}...`
+    : trimmed;
+}
+
+/**
+ * A check run as the product shows it.
+ *
+ * The check-run id of a GitHub Actions check IS the Actions job id, which is
+ * what lets the product open that job's own log. Only the Actions app earns
+ * that claim; another app's check run id means nothing to the jobs API.
+ */
+export function toCheckRunCheck(
+  row: GitHubCheckRunRow,
+  workflows: ReadonlyMap<number, CheckWorkflowInfo>,
+): GitHubPullRequestCheck {
+  const fromActions = row.app?.slug === ACTIONS_APP_SLUG;
+  const suiteId = row.check_suite?.id;
+  const workflow =
+    fromActions && suiteId != null ? workflows.get(suiteId) : undefined;
+
+  return {
+    name: row.name ?? 'check',
+    status: row.status ?? 'unknown',
+    conclusion: row.conclusion ?? null,
+    detailsUrl: row.details_url ?? null,
+    startedAt: row.started_at ?? null,
+    completedAt: row.completed_at ?? null,
+    id: row.id ?? null,
+    kind: 'check-run',
+    workflowName: workflow?.workflowName ?? null,
+    event: workflow?.event ?? null,
+    jobId: fromActions && row.id != null ? row.id : null,
+    title: row.output?.title?.trim() || null,
+    summary: truncateSummary(row.output?.summary),
+    description: null,
+  };
+}
+
+/** A legacy commit status, mapped onto the check shape. */
+export function toStatusCheck(
+  row: GitHubCommitStatusRow,
+): GitHubPullRequestCheck {
+  // A commit status has no separate status/conclusion: `state` is both.
+  const state = row.state ?? 'unknown';
+  return {
+    name: row.context ?? 'status',
+    status: state === 'pending' ? 'in_progress' : 'completed',
+    conclusion: state === 'pending' ? null : state,
+    detailsUrl: row.target_url ?? null,
+    startedAt: row.created_at ?? null,
+    completedAt: row.updated_at ?? null,
+    id: null,
+    kind: 'status',
+    workflowName: null,
+    event: null,
+    jobId: null,
+    title: null,
+    summary: null,
+    description: row.description?.trim() || null,
+  };
+}
+
+/** A failed check run: the only kind with errors worth a lookup. */
+export function isFailedCheck(check: GitHubPullRequestCheck): boolean {
+  return (
+    check.kind === 'check-run' &&
+    check.id != null &&
+    (check.conclusion === 'failure' || check.conclusion === 'timed_out')
+  );
+}
+
+/**
+ * The annotations that point at CODE.
+ *
+ * Same rule the generated report job applies: a path under `.github` is the
+ * workflow file complaining about itself, and "Process completed with exit
+ * code N" is the runner restating that a step failed. Neither says what is
+ * wrong, and both would crowd out the lines that do.
+ */
+export function toCodeAnnotations(
+  rows: readonly GitHubAnnotationRow[],
+): GitHubCheckAnnotation[] {
+  const seen = new Set<string>();
+  const kept: GitHubCheckAnnotation[] = [];
+
+  for (const row of rows) {
+    if (!row.path || !row.message) continue;
+    if (row.path.startsWith('.github')) continue;
+    if (row.message.includes('Process completed with exit code')) continue;
+
+    const key = `${row.path}:${String(row.start_line ?? '')}:${row.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    kept.push({
+      path: row.path,
+      line: row.start_line ?? null,
+      level: row.annotation_level ?? 'failure',
+      title: row.title ?? null,
+      message: row.message,
+    });
+    if (kept.length >= MAX_ANNOTATIONS_PER_CHECK) break;
+  }
+
+  return kept;
 }

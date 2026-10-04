@@ -1831,6 +1831,418 @@ describe('GithubService', () => {
     });
   });
 
+  describe('getJobLogs', () => {
+    const reply = (status: number, body = '', headers: HeadersInit = {}) => ({
+      status,
+      ok: status >= 200 && status < 300,
+      text: () => Promise.resolve(body),
+      headers: new Headers(headers),
+    });
+
+    it('returns the log text when GitHub has it', async () => {
+      fetchMock.mockResolvedValueOnce(reply(200, 'line one'));
+      await expect(service.getJobLogs('t', 'o/r', 5)).resolves.toEqual({
+        status: 'ok',
+        content: 'line one',
+        truncated: false,
+      });
+    });
+
+    it('keeps the tail of an oversized log', async () => {
+      fetchMock.mockResolvedValueOnce(reply(200, 'abcdef'));
+      await expect(service.getJobLogs('t', 'o/r', 5, 3)).resolves.toEqual({
+        status: 'ok',
+        content: 'def',
+        truncated: true,
+      });
+    });
+
+    it('reports 410 Gone as an expired log', async () => {
+      fetchMock.mockResolvedValueOnce(reply(410));
+      await expect(service.getJobLogs('t', 'o/r', 5)).resolves.toEqual({
+        status: 'expired',
+      });
+    });
+
+    it('reports a 404 as no access, never as expired', async () => {
+      // A private repository answers a token that may not read Actions logs
+      // with a 404, which used to be mislabelled "log expired".
+      fetchMock.mockResolvedValueOnce(reply(404));
+      await expect(service.getJobLogs('t', 'o/r', 5)).resolves.toEqual({
+        status: 'no-access',
+      });
+    });
+
+    it('reports a permission 403 as no access instead of a 502', async () => {
+      fetchMock.mockResolvedValueOnce(
+        reply(403, 'Resource not accessible by integration', {
+          'x-ratelimit-remaining': '4999',
+        }),
+      );
+      await expect(service.getJobLogs('t', 'o/r', 5)).resolves.toEqual({
+        status: 'no-access',
+      });
+    });
+
+    it('still throws for a rate-limit 403 that outlasted the retries', async () => {
+      // Waiting longer than the inline cap returns the 403 to the caller.
+      fetchMock.mockResolvedValueOnce(
+        reply(403, 'rate limited', {
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+        }),
+      );
+      await expect(service.getJobLogs('t', 'o/r', 5)).rejects.toThrow(
+        'GitHub job log read failed (403)',
+      );
+    });
+
+    it('still throws for a genuine server error', async () => {
+      fetchMock.mockResolvedValueOnce(reply(500, 'boom'));
+      await expect(service.getJobLogs('t', 'o/r', 5)).rejects.toThrow(
+        'GitHub job log read failed (500): boom',
+      );
+    });
+  });
+
+  describe('getPullRequestChecks', () => {
+    const json = (body: unknown) => ({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(body),
+      headers: new Headers(),
+    });
+    const failing = (status: number) => ({
+      ok: false,
+      status,
+      text: () => Promise.resolve('nope'),
+      headers: new Headers(),
+    });
+
+    /** Routes each GitHub URL to a canned reply; unknown URLs are a 404. */
+    function route(routes: Record<string, () => unknown>) {
+      fetchMock.mockImplementation((url: string) => {
+        const key = Object.keys(routes).find((k) => String(url).includes(k));
+        return Promise.resolve(
+          key
+            ? routes[key]!()
+            : { ok: false, status: 404, headers: new Headers() },
+        );
+      });
+    }
+
+    const actionsRun = (over: Record<string, unknown> = {}) => ({
+      id: 9001,
+      name: 'quality / Lint',
+      status: 'completed',
+      conclusion: 'success',
+      details_url: 'https://github.com/o/r/actions/runs/1/job/9001',
+      started_at: '2026-10-01T10:00:00Z',
+      completed_at: '2026-10-01T10:05:00Z',
+      app: { slug: 'github-actions' },
+      check_suite: { id: 77 },
+      output: { title: 'Lint ok', summary: 'No problems found.' },
+      ...over,
+    });
+
+    it('asks for the largest page of check runs', async () => {
+      route({
+        '/check-runs?': () => json({ check_runs: [] }),
+        '/status': () => json({ statuses: [] }),
+      });
+      await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('per_page=100');
+    });
+
+    it('gives an Actions check its job id, workflow name and event', async () => {
+      route({
+        '/check-runs?': () => json({ check_runs: [actionsRun()] }),
+        '/actions/runs?head_sha=abc': () =>
+          json({
+            workflow_runs: [
+              { name: 'Quality', event: 'pull_request', check_suite_id: 77 },
+              { name: 'Other', event: 'push', check_suite_id: 78 },
+            ],
+          }),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const [check] = await service.getPullRequestChecks('t', 'o/r', 'abc');
+
+      expect(check).toEqual({
+        name: 'quality / Lint',
+        status: 'completed',
+        conclusion: 'success',
+        detailsUrl: 'https://github.com/o/r/actions/runs/1/job/9001',
+        startedAt: '2026-10-01T10:00:00Z',
+        completedAt: '2026-10-01T10:05:00Z',
+        id: 9001,
+        kind: 'check-run',
+        workflowName: 'Quality',
+        event: 'pull_request',
+        jobId: 9001,
+        title: 'Lint ok',
+        summary: 'No problems found.',
+        description: null,
+      });
+    });
+
+    it('distinguishes the same job name coming from two workflows', async () => {
+      route({
+        '/check-runs?': () =>
+          json({
+            check_runs: [
+              actionsRun({ id: 1, check_suite: { id: 77 } }),
+              actionsRun({ id: 2, check_suite: { id: 78 } }),
+            ],
+          }),
+        '/actions/runs?head_sha=abc': () =>
+          json({
+            workflow_runs: [
+              { name: 'Quality', event: 'pull_request', check_suite_id: 77 },
+              { name: 'Quality', event: 'push', check_suite_id: 78 },
+            ],
+          }),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const checks = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(checks.map((c) => [c.jobId, c.event])).toEqual([
+        [1, 'pull_request'],
+        [2, 'push'],
+      ]);
+    });
+
+    it('does not claim a job id for a check run from another app', async () => {
+      route({
+        '/check-runs?': () =>
+          json({
+            check_runs: [actionsRun({ app: { slug: 'sonarcloud' } })],
+          }),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const [check] = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(check).toMatchObject({
+        jobId: null,
+        workflowName: null,
+        event: null,
+        kind: 'check-run',
+      });
+      // No Actions check, so the workflow lookup is not even spent.
+      expect(
+        fetchMock.mock.calls.some((c) =>
+          String(c[0]).includes('/actions/runs'),
+        ),
+      ).toBe(false);
+    });
+
+    it('truncates a long check summary to about 500 characters', async () => {
+      route({
+        '/check-runs?': () =>
+          json({
+            check_runs: [
+              actionsRun({
+                output: { title: null, summary: 'x'.repeat(2000) },
+              }),
+            ],
+          }),
+        '/actions/runs?head_sha=abc': () => json({ workflow_runs: [] }),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const [check] = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(check!.summary).toHaveLength(503);
+      expect(check!.summary!.endsWith('...')).toBe(true);
+      expect(check!.title).toBeNull();
+    });
+
+    it('keeps the description of a commit status', async () => {
+      route({
+        '/check-runs?': () => json({ check_runs: [] }),
+        '/status': () =>
+          json({
+            statuses: [
+              {
+                context: 'ci/legacy',
+                state: 'failure',
+                description: 'Build broke on step 3',
+                target_url: 'https://ci.example/1',
+                created_at: 'a',
+                updated_at: 'b',
+              },
+            ],
+          }),
+      });
+
+      const [check] = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(check).toEqual({
+        name: 'ci/legacy',
+        status: 'completed',
+        conclusion: 'failure',
+        detailsUrl: 'https://ci.example/1',
+        startedAt: 'a',
+        completedAt: 'b',
+        id: null,
+        kind: 'status',
+        workflowName: null,
+        event: null,
+        jobId: null,
+        title: null,
+        summary: null,
+        description: 'Build broke on step 3',
+      });
+    });
+
+    it('attaches code annotations to failed check runs only', async () => {
+      route({
+        '/check-runs?': () =>
+          json({
+            check_runs: [
+              actionsRun({ id: 1, conclusion: 'failure' }),
+              actionsRun({ id: 2, conclusion: 'success' }),
+            ],
+          }),
+        '/actions/runs?head_sha=abc': () => json({ workflow_runs: [] }),
+        '/check-runs/1/annotations': () =>
+          json([
+            {
+              path: 'src/a.ts',
+              start_line: 12,
+              annotation_level: 'failure',
+              title: 'no-unused-vars',
+              message: "'x' is defined but never used",
+            },
+            {
+              path: '.github',
+              start_line: 1,
+              annotation_level: 'failure',
+              message: 'workflow noise',
+            },
+            {
+              path: 'src/a.ts',
+              start_line: 1,
+              annotation_level: 'failure',
+              message: 'Process completed with exit code 1.',
+            },
+          ]),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const [failed, passed] = await service.getPullRequestChecks(
+        't',
+        'o/r',
+        'abc',
+      );
+
+      expect(failed!.annotations).toEqual([
+        {
+          path: 'src/a.ts',
+          line: 12,
+          level: 'failure',
+          title: 'no-unused-vars',
+          message: "'x' is defined but never used",
+        },
+      ]);
+      expect(passed).not.toHaveProperty('annotations');
+      expect(
+        fetchMock.mock.calls.filter((c) =>
+          String(c[0]).includes('/annotations'),
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('looks up annotations for at most ten failed checks', async () => {
+      route({
+        '/check-runs?': () =>
+          json({
+            check_runs: Array.from({ length: 14 }, (_, i) =>
+              actionsRun({ id: i + 1, conclusion: 'failure' }),
+            ),
+          }),
+        '/actions/runs?head_sha=abc': () => json({ workflow_runs: [] }),
+        '/annotations': () => json([]),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const checks = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(
+        fetchMock.mock.calls.filter((c) =>
+          String(c[0]).includes('/annotations'),
+        ),
+      ).toHaveLength(10);
+      expect(checks.filter((c) => c.annotations !== undefined)).toHaveLength(
+        10,
+      );
+    });
+
+    it('caps annotations at ten per check', async () => {
+      route({
+        '/check-runs?': () =>
+          json({ check_runs: [actionsRun({ id: 1, conclusion: 'failure' })] }),
+        '/actions/runs?head_sha=abc': () => json({ workflow_runs: [] }),
+        '/annotations': () =>
+          json(
+            Array.from({ length: 30 }, (_, i) => ({
+              path: 'src/a.ts',
+              start_line: i + 1,
+              annotation_level: 'failure',
+              message: `problem ${String(i)}`,
+            })),
+          ),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const [check] = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(check!.annotations).toHaveLength(10);
+    });
+
+    it('still returns the checks when the workflow lookup fails', async () => {
+      route({
+        '/check-runs?': () => json({ check_runs: [actionsRun()] }),
+        '/actions/runs?head_sha=abc': () => failing(500),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const [check] = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(check).toMatchObject({
+        name: 'quality / Lint',
+        workflowName: null,
+        event: null,
+        // The job id needs no extra call, so it survives the failure.
+        jobId: 9001,
+      });
+    });
+
+    it('still returns the checks when an annotation lookup fails', async () => {
+      route({
+        '/check-runs?': () =>
+          json({
+            check_runs: [
+              actionsRun({ id: 1, conclusion: 'failure' }),
+              actionsRun({ id: 2, conclusion: 'failure' }),
+            ],
+          }),
+        '/actions/runs?head_sha=abc': () => json({ workflow_runs: [] }),
+        '/check-runs/1/annotations': () => failing(403),
+        '/check-runs/2/annotations': () =>
+          json([
+            {
+              path: 'src/b.ts',
+              start_line: 2,
+              annotation_level: 'failure',
+              message: 'bad',
+            },
+          ]),
+        '/status': () => json({ statuses: [] }),
+      });
+
+      const [one, two] = await service.getPullRequestChecks('t', 'o/r', 'abc');
+      expect(one).not.toHaveProperty('annotations');
+      expect(two!.annotations).toHaveLength(1);
+    });
+  });
+
   describe('secrets and branch protection', () => {
     it('skips setting a secret when token is missing by default', async () => {
       await expect(

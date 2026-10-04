@@ -32,7 +32,46 @@ import {
   visibleBranchesFor,
 } from '#kernel/rules/persona-access.rules';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
+import { classifyFailureHint } from './classify-failure-hint';
 import { extractFailureExcerpt } from './extract-failure-excerpt';
+
+/**
+ * Why a log cannot be shown.
+ *
+ * `log-expired` is GitHub's retention window passing (a 410, or a job old
+ * enough that 404 can only mean that). `log-no-access` is the token being
+ * unable to read Actions logs at all, which a person can fix and an expiry
+ * cannot, so the two must not share a word.
+ */
+export type ProjectLogUnavailableReason = 'log-expired' | 'log-no-access';
+
+/** GitHub keeps Actions logs for at most 90 days (its default maximum). */
+const GITHUB_LOG_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+/** Failed jobs explained per request: each one is a log download. */
+const MAX_FAILURES_EXPLAINED = 10;
+/** Logs downloaded at once, so one request cannot flood GitHub. */
+const LOG_FETCH_CONCURRENCY = 3;
+
+/** `Promise.all` over `items`, never running more than `limit` at once. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await work(items[index] as T);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => lane()),
+  );
+  return results;
+}
 
 export interface ProjectBranchesResponse {
   defaultBranch: string;
@@ -55,6 +94,8 @@ export interface ProjectJobLogResponse {
   available: boolean;
   content: string;
   truncated: boolean;
+  /** Present only when `available` is false: why there is no log to show. */
+  reason?: ProjectLogUnavailableReason;
 }
 
 /**
@@ -81,14 +122,39 @@ export interface ProjectJobLogResponse {
  * itself that was rejected.
  */
 export interface ProjectRunFailureLogResponse {
+  /**
+   * The FIRST failed job's fields, kept as they always were so a client that
+   * predates `failures` keeps working. New clients should read `failures`.
+   */
   available: boolean;
-  reason?: 'no-failed-job' | 'log-expired';
+  reason?: 'no-failed-job' | ProjectLogUnavailableReason;
+  jobId?: number;
   jobName?: string;
   stepName?: string;
   jobUrl?: string;
   lines?: string[];
   truncated?: boolean;
   foundErrorMarker?: boolean;
+  /** A plain-English reading of the first failure, when it is recognisable. */
+  hint?: string;
+  /** EVERY failed job (up to a cap), in the run's job order. Empty when none failed. */
+  failures: ProjectRunFailureEntry[];
+  /** Failed jobs beyond the cap that were not explained. Absent when none. */
+  omittedFailures?: number;
+}
+
+/** One failed job and its error output, or why there is none. */
+export interface ProjectRunFailureEntry {
+  jobId: number;
+  jobName: string;
+  stepName?: string;
+  jobUrl?: string;
+  /** Empty when `reason` is set. */
+  lines: string[];
+  truncated: boolean;
+  foundErrorMarker: boolean;
+  reason?: ProjectLogUnavailableReason;
+  hint?: string;
 }
 
 /**
@@ -270,14 +336,14 @@ export class ProjectWorkspaceService {
   }
 
   /**
-   * The error output of whichever job failed in a run.
+   * The error output of every job that failed in a run.
    *
    * This exists so the product can show the failure instead of telling someone
    * to go and read it on GitHub. A hint that says "open the workflow logs" is
    * an admission that the system knows a stage failed and will not say why.
    *
-   * Three calls happen server-side — jobs, then that job's log, then the
-   * excerpt — because doing it in the browser would mean shipping a GitHub
+   * Calls happen server-side — the job list, then each failed job's log (a few
+   * at a time), then an excerpt and hint per log — because doing it in the browser would mean shipping a GitHub
    * token to it. Never polled: it is reached only when someone asks to see the
    * error, in keeping with the workspace read contract at the top of the
    * controller.
@@ -300,49 +366,118 @@ export class ProjectWorkspaceService {
       runId,
     );
 
-    const failed = jobs.find(
+    // EVERY job that failed, not the first. A pipeline's stage report only
+    // waits on some jobs: the promotion-PR job and the production gate run
+    // outside it, so their failures reach the stored report as a check frozen
+    // at "running" and the only place their error exists is the run's own job
+    // list. Explaining one job hid the rest.
+    //
+    // Cancelled jobs are deliberately NOT included. A job is cancelled by a
+    // person, by fail-fast, or by a concurrency group; in every case the
+    // cancellation is a consequence, its log holds no error of its own, and
+    // the job that caused it is already in this list as a failure. Listing it
+    // would add rows that say nothing and bury the ones that do.
+    const failedJobs = jobs.filter(
       (job) => job.conclusion === 'failure' || job.conclusion === 'timed_out',
     );
 
-    if (!failed) {
-      return { available: false, reason: 'no-failed-job' };
+    if (failedJobs.length === 0) {
+      return { available: false, reason: 'no-failed-job', failures: [] };
     }
 
+    const explained = failedJobs.slice(0, MAX_FAILURES_EXPLAINED);
+    const failures = await mapWithConcurrency(
+      explained,
+      LOG_FETCH_CONCURRENCY,
+      (job) => this.explainFailedJob(token, repoFullName, job),
+    );
+
+    const first = failures[0] as ProjectRunFailureEntry;
+    const omitted = failedJobs.length - explained.length;
+
+    return {
+      available: first.reason === undefined,
+      ...(first.reason && { reason: first.reason }),
+      jobId: first.jobId,
+      jobName: first.jobName,
+      ...(first.stepName && { stepName: first.stepName }),
+      ...(first.jobUrl && { jobUrl: first.jobUrl }),
+      ...(first.reason === undefined && {
+        lines: first.lines,
+        truncated: first.truncated,
+        foundErrorMarker: first.foundErrorMarker,
+      }),
+      ...(first.hint && { hint: first.hint }),
+      failures,
+      ...(omitted > 0 && { omittedFailures: omitted }),
+    };
+  }
+
+  /** One failed job's error excerpt, or the honest reason it has none. */
+  private async explainFailedJob(
+    token: string,
+    repoFullName: string,
+    job: GitHubRunJob,
+  ): Promise<ProjectRunFailureEntry> {
     // The step is named separately because the job name alone is often a
     // reusable-workflow path like "sonar / SonarCloud .NET Analysis", which
     // says which check ran but not which part of it gave up.
-    const failedStep = failed.steps.find(
+    const failedStep = job.steps.find(
       (step) =>
         step.conclusion === 'failure' || step.conclusion === 'timed_out',
     );
+    const identity = {
+      jobId: job.id,
+      jobName: job.name,
+      ...(failedStep && { stepName: failedStep.name }),
+      ...(job.htmlUrl && { jobUrl: job.htmlUrl }),
+    };
 
     const log = await this.githubService.getJobLogs(
       token,
       repoFullName,
-      failed.id,
+      job.id,
     );
 
-    if (!log) {
+    if (log.status !== 'ok') {
       return {
-        available: false,
-        reason: 'log-expired',
-        jobName: failed.name,
-        ...(failedStep && { stepName: failedStep.name }),
-        ...(failed.htmlUrl && { jobUrl: failed.htmlUrl }),
+        ...identity,
+        lines: [],
+        truncated: false,
+        foundErrorMarker: false,
+        reason: this.logUnavailableReason(log.status, job),
       };
     }
 
     const excerpt = extractFailureExcerpt(log.content);
+    const hint = classifyFailureHint(excerpt.lines);
 
     return {
-      available: true,
-      jobName: failed.name,
-      ...(failedStep && { stepName: failedStep.name }),
-      ...(failed.htmlUrl && { jobUrl: failed.htmlUrl }),
+      ...identity,
       lines: excerpt.lines,
       truncated: excerpt.truncated || log.truncated,
       foundErrorMarker: excerpt.foundErrorMarker,
+      ...(hint && { hint }),
     };
+  }
+
+  /**
+   * GitHub answers an unreadable log with a 404 as readily as a 403, so a
+   * "no access" answer for a job that finished past the retention window is
+   * far more likely to be expiry than a permission fault, and is reported as
+   * expiry. Anything newer is reported as what it is: the token cannot read it.
+   */
+  private logUnavailableReason(
+    status: 'expired' | 'no-access',
+    job: GitHubRunJob,
+  ): ProjectLogUnavailableReason {
+    if (status === 'expired') return 'log-expired';
+
+    const finishedAt = job.completedAt ? Date.parse(job.completedAt) : NaN;
+    return Number.isFinite(finishedAt) &&
+      Date.now() - finishedAt > GITHUB_LOG_RETENTION_MS
+      ? 'log-expired'
+      : 'log-no-access';
   }
 
   /**
@@ -366,8 +501,15 @@ export class ProjectWorkspaceService {
 
     const log = await this.githubService.getJobLogs(token, repoFullName, jobId);
 
-    if (!log) {
-      return { available: false, content: '', truncated: false };
+    if (log.status !== 'ok') {
+      // No job record is loaded on this path, so a 404 cannot be aged: it is
+      // reported as "no access" rather than guessed to be expiry.
+      return {
+        available: false,
+        content: '',
+        truncated: false,
+        reason: log.status === 'expired' ? 'log-expired' : 'log-no-access',
+      };
     }
 
     return { available: true, content: log.content, truncated: log.truncated };
