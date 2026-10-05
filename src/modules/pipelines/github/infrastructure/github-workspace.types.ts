@@ -120,15 +120,15 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestSummary {
   body: string | null;
 }
 
-/** One check GitHub ran against a pull request's head commit. */
-export interface GitHubPullRequestCheck {
-  name: string;
-  status: string;
-  conclusion: string | null;
-  detailsUrl: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-}
+/**
+ * One check GitHub ran against a pull request's head commit. Defined once, on
+ * the kernel port, because the application layer reads it through the port and
+ * two copies of a growing shape drift.
+ */
+export type {
+  GitHubCheckAnnotation,
+  GitHubPullRequestCheck,
+} from '#kernel/ports/github.port';
 
 /** The outcome of asking GitHub to merge. */
 export interface GitHubMergeResult {

@@ -22,7 +22,7 @@ import {
 } from './resolve-stage-status';
 import type { CiReportBodyDto } from '../api/dto/ci-report-body.dto';
 import type { CiRunStatus } from '../infrastructure/ci-run-reports.repository';
-import type { FriendlyMessage } from './translate-results';
+import type { CiResults, FriendlyMessage } from './translate-results';
 
 // ─── Response shapes ──────────────────────────────────────────────────────────
 
@@ -51,7 +51,22 @@ export interface StageReport {
    * reporting existed. Empty means "not known", never "no tools ran".
    */
   checks: StageCheck[];
+  /**
+   * The figures the stage reported, as stored: test counts and failures,
+   * coverage against its threshold, lint, security counts and items, findings
+   * and the Sonar gate with its measures.
+   *
+   * `friendlyMessages` renders these into sentences, which is right for a
+   * failure and wrong for a pass: a passing stage's whole value is its
+   * numbers ("412 tests, 87% coverage"), and a client cannot rebuild numbers
+   * from prose. Absent when the stage stored none (never reported, or an older
+   * pipeline) and the per-key shape matches what ingest accepted.
+   */
+  results?: StageResults;
 }
+
+/** What ingest stores under `results`, minus the per-tool list `checks` carries. */
+export type StageResults = Omit<CiResults, 'checks'>;
 
 /** One tool's outcome inside a stage. */
 export interface StageCheck {
@@ -121,6 +136,60 @@ function readChecks(results: Record<string, unknown>): StageCheck[] {
       },
     ];
   });
+}
+
+/** The structured result keys returned to clients, in storage order. */
+const RESULT_KEYS = [
+  'tests',
+  'coverage',
+  'lint',
+  'security',
+  'findings',
+  'sonar',
+] as const;
+
+/** Defensive ceiling on any list inside a stored result. Ingest already caps. */
+const RESULT_LIST_CAP = 50;
+
+function capLists(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.slice(0, RESULT_LIST_CAP).map(capLists);
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, capLists(entry)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * The structured results back out of the stored blob, or undefined for none.
+ *
+ * Same distrust as `readChecks`: the column is jsonb, so a key is returned
+ * only when it is an object, and the lists inside are capped again in case a
+ * row predates the limits ingest enforces today.
+ */
+function readResults(results: unknown): StageResults | undefined {
+  if (typeof results !== 'object' || results === null) {
+    return undefined;
+  }
+
+  const stored = results as Record<string, unknown>;
+  const picked: Record<string, unknown> = {};
+  for (const key of RESULT_KEYS) {
+    const value = stored[key];
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      picked[key] = capLists(value);
+    }
+  }
+
+  return Object.keys(picked).length > 0 ? (picked as StageResults) : undefined;
+}
+
+function optionalResults(results: unknown): { results?: StageResults } {
+  const read = readResults(results);
+  return read ? { results: read } : {};
 }
 
 @Injectable()
@@ -414,6 +483,7 @@ export class CiReportsService {
           updatedAt: row.updated_at,
           rawLogs: row.raw_logs,
           checks: readChecks(row.results),
+          ...optionalResults(row.results),
         });
       }
     }

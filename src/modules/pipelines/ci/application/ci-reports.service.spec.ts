@@ -538,3 +538,109 @@ describe('CiReportsService.getRuns, visibility + workspace scoping', () => {
     );
   });
 });
+
+describe('CiReportsService.getRuns structured results', () => {
+  let runReportsRepository: CiRunReportsRepository;
+  let service: CiReportsService;
+
+  beforeEach(() => {
+    runReportsRepository = makeRunReportsRepository();
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      makeProjectVisibility(),
+    );
+  });
+
+  const stageOf = async (
+    stored: Partial<CiRunReportRow>,
+    stage = 'quality',
+  ) => {
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [row({ stage: stage as CiRunReportRow['stage'], ...stored })],
+    );
+    const { runs } = await service.getRuns('user-1');
+    return runs[0]!.stages.find((s) => s.stage === stage)!;
+  };
+
+  it('returns the stored figures so a passing stage can show its numbers', async () => {
+    const stage = await stageOf({
+      results: {
+        tests: { total: 412, passed: 412, failed: 0 },
+        coverage: { pct: 87.5, threshold: 80 },
+        lint: { errors: 0, warnings: 3 },
+        security: { high: 0, critical: 0 },
+        findings: { secrets: 0, sbomComponents: 118 },
+        sonar: { gate: 'OK', measures: { bugs: '0' } },
+        checks: [{ name: 'lint', conclusion: 'success' }],
+      },
+    });
+
+    expect(stage.results).toEqual({
+      tests: { total: 412, passed: 412, failed: 0 },
+      coverage: { pct: 87.5, threshold: 80 },
+      lint: { errors: 0, warnings: 3 },
+      security: { high: 0, critical: 0 },
+      findings: { secrets: 0, sbomComponents: 118 },
+      sonar: { gate: 'OK', measures: { bugs: '0' } },
+    });
+    // The per-tool list keeps its own field and is not duplicated in results.
+    expect(stage.results).not.toHaveProperty('checks');
+    expect(stage.checks).toHaveLength(1);
+  });
+
+  it('returns test failures with their messages', async () => {
+    const stage = await stageOf({
+      status: 'failure',
+      results: {
+        tests: {
+          total: 3,
+          passed: 2,
+          failed: 1,
+          failures: [{ name: 'adds', message: 'expected 2 got 3' }],
+        },
+      },
+    });
+    expect(stage.results?.tests?.failures).toEqual([
+      { name: 'adds', message: 'expected 2 got 3' },
+    ]);
+  });
+
+  it('leaves results out for a stage that stored none', async () => {
+    const stage = await stageOf({ results: {} });
+    expect(stage).not.toHaveProperty('results');
+  });
+
+  it('leaves results out for a stage that never reported', async () => {
+    // Only access reported; quality is inferred, so it has no figures.
+    const stage = await stageOf(
+      { results: { tests: { total: 1, passed: 1, failed: 0 } } },
+      'quality',
+    ).then(async () => {
+      (
+        runReportsRepository.findRecentByRepos as jest.Mock
+      ).mockResolvedValueOnce([row({ stage: 'access' })]);
+      const { runs } = await service.getRuns('user-1');
+      return runs[0]!.stages.find((s) => s.stage === 'quality')!;
+    });
+    expect(stage).not.toHaveProperty('results');
+  });
+
+  it('drops keys that are not objects and caps oversized lists', async () => {
+    const stage = await stageOf({
+      results: {
+        tests: 'not an object',
+        coverage: [1, 2],
+        security: {
+          high: 1,
+          critical: 0,
+          items: Array.from({ length: 200 }, (_, i) => ({ id: String(i) })),
+        },
+      },
+    });
+
+    expect(stage.results).not.toHaveProperty('tests');
+    expect(stage.results).not.toHaveProperty('coverage');
+    expect(stage.results?.security?.items).toHaveLength(50);
+  });
+});

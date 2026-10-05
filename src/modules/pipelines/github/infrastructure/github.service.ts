@@ -19,6 +19,7 @@ import {
   GithubRepoDeleteError,
   type GitHubBranchComparison,
   type GitHubCommitAuthor,
+  type GitHubJobLogResult,
   type GitHubDispatchWorkflowResult,
   type GitHubOpenPullRequestInput,
   type GitHubOpenPullRequestResult,
@@ -57,12 +58,24 @@ import {
   encodeRef,
   mapContentEntries,
   toBranchComparison,
+  ACTIONS_APP_SLUG,
+  indexWorkflowRunsByCheckSuite,
+  isFailedCheck,
+  MAX_ANNOTATED_CHECKS,
+  toCheckRunCheck,
+  toCodeAnnotations,
+  toStatusCheck,
   toFileListing,
   toPullRequestDetail,
   toPullRequestFile,
   toPullRequestSummary,
   type GitHubCompareRow,
   type GitHubContentsRow,
+  type GitHubAnnotationRow,
+  type GitHubCheckRunRow,
+  type GitHubCommitStatusRow,
+  type GitHubCheckSuiteRunRow,
+  type CheckWorkflowInfo,
   type GitHubPullRequestFileRow,
   type GitHubPullRequestRow,
   userWriteRefusal,
@@ -1701,7 +1714,7 @@ export class GithubService
     repoFullName: string,
     jobId: number,
     maxChars = 200_000,
-  ): Promise<{ content: string; truncated: boolean } | null> {
+  ): Promise<GitHubJobLogResult> {
     const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${repoFullName}/actions/jobs/${String(jobId)}/logs`,
       { headers: this.http.workspaceHeaders(accessToken), redirect: 'follow' },
@@ -1709,8 +1722,22 @@ export class GithubService
 
     // 410 Gone is normal, not an error: GitHub expires logs after its
     // retention window, and an old run legitimately has none.
-    if (response.status === 404 || response.status === 410) {
-      return null;
+    if (response.status === 410) {
+      return { status: 'expired' };
+    }
+
+    // 403 and 404 are NOT expiry. A token without Actions-read permission gets
+    // a 404 on a private repository's logs (GitHub will not confirm they
+    // exist) or a 403. Reporting that as "expired" told people the log was
+    // gone when it was only unreadable to us. A 403 that is really a rate
+    // limit is excluded: it outlasted the retries, is a transport failure, and
+    // is handled below.
+    const rateLimited =
+      response.status === 403 &&
+      (response.headers?.get('retry-after') != null ||
+        response.headers?.get('x-ratelimit-remaining') === '0');
+    if (response.status === 404 || (response.status === 403 && !rateLimited)) {
+      return { status: 'no-access' };
     }
 
     if (!response.ok) {
@@ -1722,10 +1749,14 @@ export class GithubService
 
     const text = await response.text();
     if (text.length <= maxChars) {
-      return { content: text, truncated: false };
+      return { status: 'ok', content: text, truncated: false };
     }
 
-    return { content: text.slice(text.length - maxChars), truncated: true };
+    return {
+      status: 'ok',
+      content: text.slice(text.length - maxChars),
+      truncated: true,
+    };
   }
 
   async listPullRequests(
@@ -1921,39 +1952,27 @@ export class GithubService
     headSha: string,
   ): Promise<GitHubPullRequestCheck[]> {
     const runs = await this.http.workspaceGet<{
-      check_runs?: {
-        name?: string;
-        status?: string;
-        conclusion?: string | null;
-        details_url?: string | null;
-        started_at?: string | null;
-        completed_at?: string | null;
-      }[];
+      check_runs?: GitHubCheckRunRow[];
     }>(
-      `https://api.github.com/repos/${repoFullName}/commits/${headSha}/check-runs?per_page=50`,
+      `https://api.github.com/repos/${repoFullName}/commits/${headSha}/check-runs?per_page=100`,
       accessToken,
       'pull request check runs',
     );
 
-    const checks: GitHubPullRequestCheck[] = (runs?.check_runs ?? []).map(
-      (run) => ({
-        name: run.name ?? 'check',
-        status: run.status ?? 'unknown',
-        conclusion: run.conclusion ?? null,
-        detailsUrl: run.details_url ?? null,
-        startedAt: run.started_at ?? null,
-        completedAt: run.completed_at ?? null,
-      }),
+    const checkRunRows = runs?.check_runs ?? [];
+    // The workflow lookup is only worth a call when an Actions check exists.
+    const workflows = checkRunRows.some(
+      (row) => row.app?.slug === ACTIONS_APP_SLUG,
+    )
+      ? await this.workflowsByCheckSuite(accessToken, repoFullName, headSha)
+      : new Map<number, CheckWorkflowInfo>();
+
+    const checks: GitHubPullRequestCheck[] = checkRunRows.map((row) =>
+      toCheckRunCheck(row, workflows),
     );
 
     const combined = await this.http.workspaceGet<{
-      statuses?: {
-        context?: string;
-        state?: string;
-        target_url?: string | null;
-        created_at?: string | null;
-        updated_at?: string | null;
-      }[];
+      statuses?: GitHubCommitStatusRow[];
     }>(
       `https://api.github.com/repos/${repoFullName}/commits/${headSha}/status`,
       accessToken,
@@ -1961,20 +1980,76 @@ export class GithubService
     );
 
     for (const status of combined?.statuses ?? []) {
-      // A commit status has no separate status/conclusion: `state` is both.
-      // Mapped onto the same shape so the UI has one list to render.
-      const state = status.state ?? 'unknown';
-      checks.push({
-        name: status.context ?? 'status',
-        status: state === 'pending' ? 'in_progress' : 'completed',
-        conclusion: state === 'pending' ? null : state,
-        detailsUrl: status.target_url ?? null,
-        startedAt: status.created_at ?? null,
-        completedAt: status.updated_at ?? null,
-      });
+      checks.push(toStatusCheck(status));
     }
 
+    await this.attachAnnotations(accessToken, repoFullName, checks);
+
     return checks;
+  }
+
+  /**
+   * Which workflow each check suite of a commit belongs to.
+   *
+   * Fail-soft by design: this only adds a label to checks that are already in
+   * hand, so a failed lookup must never take the pull request detail down with
+   * it. An empty map leaves `workflowName` and `event` null.
+   */
+  private async workflowsByCheckSuite(
+    accessToken: string,
+    repoFullName: string,
+    headSha: string,
+  ): Promise<Map<number, CheckWorkflowInfo>> {
+    try {
+      const payload = await this.http.workspaceGet<{
+        workflow_runs?: GitHubCheckSuiteRunRow[];
+      }>(
+        `https://api.github.com/repos/${repoFullName}/actions/runs?head_sha=${headSha}&per_page=100`,
+        accessToken,
+        'workflow runs for a commit',
+      );
+      return indexWorkflowRunsByCheckSuite(payload?.workflow_runs ?? []);
+    } catch (error) {
+      this.logger.warn(
+        `Could not map checks to workflows for ${repoFullName}@${headSha}: ${String(error)}`,
+      );
+      return new Map();
+    }
+  }
+
+  /**
+   * Attach the errors GitHub recorded to the failed check runs, in place.
+   *
+   * Only failed runs, and only the first few: each is a request, and a
+   * passing check has nothing to explain. Fail-soft per check: a token
+   * without `checks: read` makes every lookup fail, and the pull request must
+   * still render, just without the extra detail.
+   */
+  private async attachAnnotations(
+    accessToken: string,
+    repoFullName: string,
+    checks: GitHubPullRequestCheck[],
+  ): Promise<void> {
+    const failed = checks.filter(isFailedCheck).slice(0, MAX_ANNOTATED_CHECKS);
+
+    await Promise.all(
+      failed.map(async (check) => {
+        try {
+          const rows = await this.http.workspaceGet<GitHubAnnotationRow[]>(
+            `https://api.github.com/repos/${repoFullName}/check-runs/${String(check.id)}/annotations?per_page=50`,
+            accessToken,
+            'check run annotations',
+          );
+          if (rows) {
+            check.annotations = toCodeAnnotations(rows);
+          }
+        } catch (error) {
+          this.logger.warn(
+            `Could not read annotations for check ${String(check.id)} in ${repoFullName}: ${String(error)}`,
+          );
+        }
+      }),
+    );
   }
 
   /**
