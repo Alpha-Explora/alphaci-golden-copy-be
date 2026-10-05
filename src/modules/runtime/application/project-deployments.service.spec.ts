@@ -271,6 +271,45 @@ describe('ProjectDeploymentsService', () => {
       expect(provider.listDeployments).not.toHaveBeenCalled();
     });
 
+    it('shares one provider deploy-history call between viewers inside the short TTL', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-10-05T12:00:00.000Z'));
+      try {
+        deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([
+          {
+            id: 'target-render',
+            provider: 'render',
+            slot: 'backend',
+            ownershipMode: 'flowci_managed',
+            providerProjectId: 'srv-1',
+            providerProjectName: 'orders-api-test',
+            branchName: 'test',
+            renderEnvironmentName: 'test',
+            providerMetadata: {},
+          },
+        ]);
+        configService.getOrThrow.mockReturnValue({
+          deploymentHistory: { enabled: true, liveProvidersEnabled: true },
+          envProvisioning: { flowciManaged: { renderToken: 'rnd_secret' } },
+        });
+        renderClient.getDeployHistory.mockResolvedValue([]);
+        const service = createLiveService();
+
+        await Promise.all([
+          service.listDeployments(projectReference),
+          service.listDeployments(projectReference),
+        ]);
+        jest.setSystemTime(new Date('2026-10-05T12:00:05.000Z'));
+        await service.listDeployments(projectReference);
+        expect(renderClient.getDeployHistory).toHaveBeenCalledTimes(1);
+
+        jest.setSystemTime(new Date('2026-10-05T12:00:13.000Z'));
+        await service.listDeployments(projectReference);
+        expect(renderClient.getDeployHistory).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('prefers the per-deployment lane, branch, and URL a Vercel preview reports over the target defaults', async () => {
       const vercelClient = { getDeployHistory: jest.fn() };
       clientRegistry.getClient.mockReturnValue(vercelClient);

@@ -8,6 +8,7 @@ import {
 
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
 import { DeploymentTargetsService } from './deployment-targets.service';
+import { ProviderRateLimitedError } from '../core/provider-rate-limited.error';
 import { RenderCostPolicyService } from '../infrastructure/providers/render/render-cost-policy.service';
 import { RenderDeploymentPolicy } from '../infrastructure/providers/render/render-deployment.policy';
 import { VercelDeploymentPolicy } from '../infrastructure/providers/vercel/vercel-deployment.policy';
@@ -1537,6 +1538,116 @@ describe('DeploymentTargetsService', () => {
         next: null,
         filters: ['level', 'type', 'text', 'instance'],
       });
+    });
+
+    it('reports a provider 429 as unavailable with our own sentence, never the raw provider body', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        },
+      );
+      clientRegistry.getClient.mockReturnValue({
+        queryLogs: jest
+          .fn()
+          .mockRejectedValue(new ProviderRateLimitedError('Render', 30_000)),
+      });
+
+      const result = await service.getDeploymentTargetLogs(
+        'project-1',
+        'target-1',
+        'user-1',
+      );
+
+      expect(result).toEqual({
+        source: 'unavailable',
+        reason: 'Render rate limit exceeded; retry in 30s',
+        logs: [],
+        hasMore: false,
+        next: null,
+        filters: ['level', 'type', 'text', 'instance'],
+      });
+    });
+
+    it('lets the hub see a 429 (the reader rethrows it instead of reporting unavailable)', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        },
+      );
+      clientRegistry.getClient.mockReturnValue({
+        queryLogs: jest
+          .fn()
+          .mockRejectedValue(new ProviderRateLimitedError('Render', 5_000)),
+      });
+
+      const reader = await service.openLogsReader(
+        'project-1',
+        'target-1',
+        'user-1',
+      );
+
+      await expect(reader.read({})).rejects.toBeInstanceOf(
+        ProviderRateLimitedError,
+      );
+    });
+
+    it('names the rate-limit bucket by connection (or the managed credential), never the token', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser
+        .mockResolvedValueOnce({
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'byo',
+          providerConnectionId: 'conn-9',
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        })
+        .mockResolvedValueOnce({
+          id: 'target-2',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-2',
+          providerMetadata: {},
+        });
+
+      const byo = await service.openLogsReader('project-1', 'target-1', 'u');
+      const managed = await service.openLogsReader(
+        'project-1',
+        'target-2',
+        'u',
+      );
+
+      expect(byo.bucketKey).toBe('render:connection:conn-9');
+      expect(byo.targetKey).toBe('render:connection:conn-9:target:target-1');
+      expect(managed.bucketKey).toBe('render:managed');
+    });
+
+    it('refuses to open a reader for a target outside the project', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'other-project',
+          provider: 'render',
+        },
+      );
+
+      await expect(
+        service.openLogsReader('project-1', 'target-1', 'user-1'),
+      ).rejects.toThrow('Deployment target not found');
     });
 
     it('reports unavailable when the provider client does not support live logs', async () => {

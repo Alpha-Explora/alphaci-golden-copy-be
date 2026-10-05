@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
-import { fetchWithRetry } from '../core/fetch-with-retry';
+import { throwIfRateLimited } from '../core/fetch-with-retry';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
@@ -635,11 +635,13 @@ export class VercelEnvClient implements DeploymentProvider {
       `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&limit=1`,
       input,
     );
-    const depResponse = await fetchWithRetry(
-      deploymentsUrl,
-      { headers: this.headers(input.token) },
-      'Vercel',
-    );
+    // Plain fetch + typed 429, not fetchWithRetry: log reads are polled (via
+    // the shared poller), and retrying inside a tick multiplies requests while
+    // the token is already rate limited. The shared cooldown is the retry.
+    const depResponse = await fetch(deploymentsUrl, {
+      headers: this.headers(input.token),
+    });
+    throwIfRateLimited(depResponse, 'Vercel');
     await this.assertOk(depResponse, 'Vercel deployments could not be loaded');
     const depData = (await depResponse.json()) as {
       deployments?: Array<{ uid?: string }>;
@@ -710,11 +712,10 @@ export class VercelEnvClient implements DeploymentProvider {
       )}/deployments/${encodeURIComponent(deploymentId)}/runtime-logs?limit=100`,
       input,
     );
-    const logsResponse = await fetchWithRetry(
-      logsUrl,
-      { headers: this.headers(input.token) },
-      'Vercel',
-    );
+    const logsResponse = await fetch(logsUrl, {
+      headers: this.headers(input.token),
+    });
+    throwIfRateLimited(logsResponse, 'Vercel');
     await this.assertOk(
       logsResponse,
       'Vercel runtime logs could not be loaded',
@@ -735,11 +736,10 @@ export class VercelEnvClient implements DeploymentProvider {
       `${VERCEL_API_URL}/v2/deployments/${encodeURIComponent(deploymentId)}/events?limit=100`,
       input,
     );
-    const response = await fetchWithRetry(
-      eventsUrl,
-      { headers: this.headers(input.token) },
-      'Vercel',
-    );
+    const response = await fetch(eventsUrl, {
+      headers: this.headers(input.token),
+    });
+    throwIfRateLimited(response, 'Vercel');
     await this.assertOk(response, 'Vercel build logs could not be loaded');
     const events = (await response.json()) as VercelBuildEventEntry[];
 
