@@ -25,6 +25,16 @@ import { LocalDeploymentHistoryProvider } from './local-deployment-history.provi
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
+import type { ProviderDeployEvent } from './ports/runtime-env-provider.client';
+import { ShortTtlCoalescer } from './short-ttl-coalescer';
+
+/**
+ * Deploy history is read on every Overview load / preview card / QA lookup,
+ * i.e. once per viewer request, but a provider rate-limits per credential. A
+ * result this young is shared between viewers instead of refetched; short
+ * enough that a deploy's status still looks live.
+ */
+const DEPLOY_HISTORY_SHARE_TTL_MS = 12_000;
 
 /** One target's contribution to the live fetch. */
 interface TargetFetchOutcome {
@@ -38,6 +48,9 @@ interface TargetFetchOutcome {
 @Injectable()
 export class ProjectDeploymentsService implements DeploymentHistoryQuery {
   private readonly logger = new Logger(ProjectDeploymentsService.name);
+  private readonly deployHistoryReads = new ShortTtlCoalescer<
+    ProviderDeployEvent[]
+  >();
 
   constructor(
     private readonly deploymentTargetsRepository: DeploymentTargetsRepository,
@@ -265,11 +278,21 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
       // of the request, so a missing one is a skip rather than a failure.
       const token = await this.resolveProviderToken(target, userId);
       if (!token) return skipped;
-      const events = await client.getDeployHistory({
-        token,
-        targetId: target.providerProjectId,
-        ...this.providerOperationInput(target),
-      });
+      const getDeployHistory = client.getDeployHistory.bind(client);
+      const providerProjectId = target.providerProjectId;
+      // Keyed by target AND credential, and only reached once THIS user's
+      // token resolved, so sharing never hands history to someone who could
+      // not have fetched it.
+      const events = await this.deployHistoryReads.run(
+        `${target.id}|${target.providerConnectionId ?? target.ownershipMode ?? 'default'}`,
+        DEPLOY_HISTORY_SHARE_TTL_MS,
+        () =>
+          getDeployHistory({
+            token,
+            targetId: providerProjectId,
+            ...this.providerOperationInput(target),
+          }),
+      );
       const items = events.map((event) => ({
         id: event.id,
         targetId: target.id,

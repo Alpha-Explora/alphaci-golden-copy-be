@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 
+import { ProviderRateLimitedError } from '../../../core/provider-rate-limited.error';
 import { VercelEnvClient } from './vercel-env.client';
 
 const makeConfigService = (
@@ -1599,6 +1600,24 @@ describe('VercelEnvClient', () => {
   });
 
   describe('queryLogs', () => {
+    it('throws a typed rate-limit error on 429 without retrying inside the read', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        headers: { get: () => null },
+        text: () => Promise.resolve('too many'),
+      });
+
+      const error = await new VercelEnvClient()
+        .queryLogs({ token: 'vercel', targetId: 'prj_1' })
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(ProviderRateLimitedError);
+      // No Retry-After header: the 30s default applies.
+      expect((error as ProviderRateLimitedError).retryAfterMs).toBe(30_000);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
     it('returns an empty page rather than erroring when there is no deployment yet', async () => {
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,

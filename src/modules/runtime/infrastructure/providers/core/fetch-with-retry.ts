@@ -1,5 +1,10 @@
 import { Logger } from '@nestjs/common';
 
+import {
+  ProviderRateLimitedError,
+  parseRetryAfterMs,
+} from '../../../core/provider-rate-limited.error';
+
 const logger = new Logger('ProviderFetchWithRetry');
 
 /**
@@ -7,11 +12,12 @@ const logger = new Logger('ProviderFetchWithRetry');
  * Vercel). Retries only on 429, honoring Retry-After when present, and caps
  * the wait so a request can never hang past the platform's request timeout.
  *
- * Scoped to the log-fetching paths that get polled repeatedly (live console,
- * future live-tail) — those are the calls most likely to trip a provider's
- * rate limit under normal use. One-shot, user-triggered actions elsewhere in
- * these clients (create/delete target, upsert env vars) aren't wrapped: they
- * happen once per click, not in a loop, so the risk profile is different.
+ * No longer used by the log reads: those are polled (shared poller, every open
+ * console), and retrying a 429 inside a poll tick only adds requests while the
+ * key is already limited, so they use {@link throwIfRateLimited} and let the
+ * shared cooldown decide when to ask again. This stays for any one-shot read
+ * that wants a bounded in-place retry; create/delete target and env-var writes
+ * are not wrapped either - they happen once per click, not in a loop.
  */
 export async function fetchWithRetry(
   input: Parameters<typeof fetch>[0],
@@ -54,4 +60,23 @@ function resolveRetryDelayMs(
 
   // Exponential backoff fallback: 1s, 2s, 4s.
   return 2 ** (attempt - 1) * 1000;
+}
+
+/**
+ * Turns a 429 into a ProviderRateLimitedError (Retry-After honoured, a default
+ * applied when absent); every other status passes through for the caller's own
+ * assertOk. Used by the polled log reads INSTEAD of fetchWithRetry: retrying a
+ * 429 inside a poll tick only adds requests while the key is already limited -
+ * the next tick (gated by the shared cooldown) is the retry.
+ */
+export function throwIfRateLimited(
+  response: Awaited<ReturnType<typeof fetch>>,
+  label: string,
+): void {
+  if (response.status === 429) {
+    throw new ProviderRateLimitedError(
+      label,
+      parseRetryAfterMs(response.headers?.get('retry-after')),
+    );
+  }
 }

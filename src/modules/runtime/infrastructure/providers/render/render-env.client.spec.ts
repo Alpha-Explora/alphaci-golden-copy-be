@@ -1,3 +1,4 @@
+import { ProviderRateLimitedError } from '../../../core/provider-rate-limited.error';
 import { RenderEnvClient } from './render-env.client';
 
 function jsonResponse(json: unknown) {
@@ -835,6 +836,26 @@ describe('RenderEnvClient', () => {
   });
 
   describe('queryLogs', () => {
+    it('throws a typed rate-limit error on 429 after ONE request, honouring Retry-After and hiding the body', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        headers: {
+          get: (name: string) => (name === 'retry-after' ? '45' : null),
+        },
+        text: () => Promise.resolve('{"message": "rate limit exceeded"}'),
+      });
+
+      const error = await new RenderEnvClient()
+        .queryLogs({ token: 'rnd', targetId: 'srv-1', renderOwnerId: 'own-1' })
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(ProviderRateLimitedError);
+      expect((error as ProviderRateLimitedError).retryAfterMs).toBe(45_000);
+      expect((error as Error).message).not.toContain('{');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
     it('throws when no Render owner ID is linked, rather than returning an empty page', async () => {
       global.fetch = jest.fn();
 
