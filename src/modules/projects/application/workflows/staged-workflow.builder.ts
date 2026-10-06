@@ -21,6 +21,7 @@ import {
   HOSTED_BRANCHES,
   PIPELINE_BRANCHES,
 } from '#kernel/config/pipeline-branches';
+import { BROWSER_TEST_DEPENDENCIES } from './browser-test-dependencies';
 import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
@@ -129,6 +130,15 @@ export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
  * repository must not carry a hardcoded address of someone else's platform.
  */
 export const ALPHACI_API_URL = PLATFORM_BASE_URL;
+
+/**
+ * The browser-test packages playwright-e2e.yml makes sure resolve before it
+ * runs (`ensure-test-deps`). Defined once in browser-test-dependencies.ts,
+ * which the starter-pack scaffold also reads, so the versions the verify run
+ * installs and the versions a new repository declares can never drift.
+ * Re-exported here for callers that import it from the builder.
+ */
+export { BROWSER_TEST_DEPENDENCIES };
 
 /**
  * Branch promotion model enforced by the generated pipelines:
@@ -773,6 +783,28 @@ function buildVerifyWorkflowFile(
        */
       'run-only-on-branch': '*',
       'upload-artifacts': true,
+      /*
+       * ALPHACI-stored visual baselines (opt-in input on playwright-e2e.yml).
+       *
+       * With this on, the reusable workflow fetches the branch's approved
+       * baseline screenshots from this platform before the run, compares
+       * against them, and reports the outcome back (`/ci/visual-summary`,
+       * `/ci/visual-results/file`). Baselines therefore never live in the
+       * customer repository: a person approves a changed screenshot in
+       * ALPHACI and the next run compares against it, with no commit.
+       *
+       * `alphaci-api-url` is the platform base, the same value release.yml
+       * receives, and is a literal because a `with:` block cannot read
+       * `secrets.*` (the whole file is rejected at parse time). It is a
+       * public address, not a credential. The branch is passed explicitly for
+       * the reason `run-only-on-branch` is: the reusable workflow sees the
+       * DEFAULT branch in `github.ref_name` under `workflow_run`, and
+       * baselines are per branch (main falls back to uat's approved set).
+       */
+      'ensure-test-deps': BROWSER_TEST_DEPENDENCIES,
+      'visual-baselines': true,
+      'alphaci-api-url': ALPHACI_API_URL,
+      'visual-branch': branch,
     },
     /*
      * A browser suite's target is always the Vercel-deployed frontend slot -
@@ -791,6 +823,12 @@ function buildVerifyWorkflowFile(
      */
     secrets: {
       VERCEL_AUTOMATION_BYPASS_SECRET: `\${{ secrets.${vercelAutomationBypassSecretName('frontend')} }}`,
+      /*
+       * The bearer for the visual-baseline calls: the same per-repository
+       * token the report job authenticates with. A `secrets:` entry, never
+       * inside `with:`, for the parse-time reason above.
+       */
+      ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
     },
   });
 
@@ -1933,6 +1971,15 @@ function reportingJob(
       `\${{ needs.${jobId}.outputs.tests-failed }}`;
     stepEnv[`E2E_FAILURES_${slot}`] =
       `\${{ needs.${jobId}.outputs.tests-failures }}`;
+    /*
+     * The names of the tests that PASSED, as a one-line JSON array. Passed
+     * through env like the other outputs and never interpolated into the
+     * script body, so a long list cannot push the generated run block towards
+     * GitHub's 21,000-character expression limit: the expression is this one
+     * short reference, and the value is read as a shell variable.
+     */
+    stepEnv[`E2E_PASSES_${slot}`] =
+      `\${{ needs.${jobId}.outputs.tests-passes }}`;
   });
 
   const scriptLines = [
@@ -2092,12 +2139,26 @@ function reportingJob(
           '  eval "e2e_passed=\\${E2E_PASSED_${slot}:-0}"',
           '  eval "e2e_failed=\\${E2E_FAILED_${slot}:-0}"',
           '  eval "e2e_failures=\\${E2E_FAILURES_${slot}:-[]}"',
+          '  eval "e2e_passes=\\${E2E_PASSES_${slot}:-}"',
+          '  # The passing names are optional and fail-soft: an older central',
+          '  # workflow publishes none, and a malformed value must not cost the',
+          '  # whole report. Anything that is not a JSON array of strings is',
+          '  # dropped, and the list is capped to what ingest accepts (500 names',
+          '  # of at most 500 characters). An empty array is kept - it means',
+          '  # "ran, nothing passed" - while a missing one is left out, so ALPHACI',
+          '  # knows to fall back to inference for that run.',
+          '  if [ -n "$e2e_passes" ] && printf \'%s\' "$e2e_passes" | jq -e \'type == "array" and all(.[]; type == "string")\' >/dev/null 2>&1; then',
+          "    e2e_passes=$(printf '%s' \"$e2e_passes\" | jq -c '[.[:500][] | .[0:500]]')",
+          '  else',
+          '    e2e_passes=',
+          '  fi',
           '  E2E_TESTS=$(jq -n \\',
           '    --argjson total "$e2e_total" \\',
           '    --argjson passed "${e2e_passed:-0}" \\',
           '    --argjson failed "${e2e_failed:-0}" \\',
           '    --argjson failures "${e2e_failures:-[]}" \\',
-          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures}')",
+          '    --argjson passes "${e2e_passes:-null}" \\',
+          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures} + (if $passes == null then {} else {passes:$passes} end)')",
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson tests "$E2E_TESTS" \'. + {tests:$tests}\')',
           '  break',
           'done',

@@ -49,6 +49,8 @@ import { ProjectWorkflowUpdateRequestsRepository } from './infrastructure/projec
 import { ProjectsRepository } from './infrastructure/projects.repository';
 import { ProjectWorkspaceController } from './api/project-workspace.controller';
 import { BrowserTestsService } from './application/workspace/browser-tests.service';
+import { ProjectVisualController } from './api/project-visual.controller';
+import { ProjectVisualService } from './application/visual/project-visual.service';
 import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
 import { ProjectsService } from './application/lifecycle/projects.service';
 import { SonarCloudSetupService } from './application/lifecycle/sonar-cloud-setup.service';
@@ -79,6 +81,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
   controllers: [
     ProjectsController,
     ProjectWorkspaceController,
+    ProjectVisualController,
     ProjectFolderController,
     ProjectActivityController,
   ],
@@ -100,6 +103,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectProvisioningApplicationService,
     ProjectWorkspaceService,
     BrowserTestsService,
+    ProjectVisualService,
     ProjectGithubTokenResolver,
     ProjectGithubActivityService,
     ProjectCommitsService,

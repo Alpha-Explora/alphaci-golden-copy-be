@@ -1,11 +1,11 @@
 {
-  "routeCount": 209,
+  "routeCount": 216,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "b1f16030243ef3121269c982dab74fbc9f41f215c664b2b41398954a9f968183",
+  "referenceSha256": "15adc60f2364815f95c44389b12d62a7e28bb1311e64c3e841ffd1e3977b08b6",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "b1f16030243ef3121269c982dab74fbc9f41f215c664b2b41398954a9f968183",
+  "baselineSha256": "15adc60f2364815f95c44389b12d62a7e28bb1311e64c3e841ffd1e3977b08b6",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -143,6 +143,18 @@
         "POST /api/v1/admin/branch-protection/apply",
         "POST /api/v1/projects/{id}/audit/sync",
         "POST /api/v1/projects/{id}/branch-protection"
+      ]
+    },
+    {
+      "reason": "Visual testing: token-authenticated visual baseline reads and result ingestion for the generated Playwright job, and the Visual tab (latest run, images, approve) under the project workspace.",
+      "routes": [
+        "GET /api/v1/ci/visual-baselines",
+        "GET /api/v1/ci/visual-baselines/file",
+        "GET /api/v1/projects/{projectId}/workspace/visual",
+        "GET /api/v1/projects/{projectId}/workspace/visual/image",
+        "POST /api/v1/ci/visual-results/file",
+        "POST /api/v1/ci/visual-summary",
+        "POST /api/v1/projects/{projectId}/workspace/visual/approve"
       ]
     },
     {

@@ -77,6 +77,12 @@ export interface QaAutomationTestResults {
   failures: QaAutomationFailure[];
   /** True when `failed` exceeds `failures.length` — the list is a prefix, not the whole set. */
   failuresTruncated: boolean;
+  /**
+   * Titles of the tests that passed (see CiStageTestResults.passes). Absent
+   * when the pipeline did not report them; the matcher then infers and marks
+   * its results `inferred`.
+   */
+  passes?: string[];
 }
 
 /** One CI stage's latest report for the run's (branch, commitSha), read at request time. */
@@ -121,6 +127,13 @@ export interface QaAutomatedResult {
   runId: number | null;
   runUrl: string | null;
   reportedAt: string | null;
+  /**
+   * True when a Playwright 'passed' was INFERRED from the spec's absence in
+   * the failure list because the pipeline did not report which tests passed
+   * (an older generated workflow). Absent otherwise: a pass backed by a named
+   * passing test, or a stage-level verdict, is not inferred.
+   */
+  inferred?: boolean;
 }
 
 export interface QaRunItem {

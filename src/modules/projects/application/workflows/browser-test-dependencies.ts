@@ -14,9 +14,8 @@
  * and the verify workflow runs with `--update-snapshots=missing`, which needs
  * 1.50 or newer. `@axe-core/playwright` backs the accessibility check.
  *
- * TODO(unify): a parallel change exports an identical
- * `BROWSER_TEST_DEPENDENCIES` from staged-workflow.builder.ts. Once both are
- * merged, delete one and import the other - the two strings must never drift.
+ * The single source: staged-workflow.builder.ts imports it for the verify
+ * stage's `ensure-test-deps`, the scaffold for new repositories' package.json.
  */
 export const BROWSER_TEST_DEPENDENCIES =
   '@playwright/test@^1.55.0 @axe-core/playwright@^4.10.0';
