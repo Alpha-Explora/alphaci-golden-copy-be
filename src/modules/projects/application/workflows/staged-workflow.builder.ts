@@ -21,6 +21,7 @@ import {
   HOSTED_BRANCHES,
   PIPELINE_BRANCHES,
 } from '#kernel/config/pipeline-branches';
+import { BROWSER_TEST_DEPENDENCIES } from './browser-test-dependencies';
 import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
@@ -132,14 +133,12 @@ export const ALPHACI_API_URL = PLATFORM_BASE_URL;
 
 /**
  * The browser-test packages playwright-e2e.yml makes sure resolve before it
- * runs (`ensure-test-deps`). After its install step the workflow runs
- * `npm install --no-save` for any it cannot already resolve, so a repository
- * with a lockfile gets the starter browser-test pack without its package.json
- * being edited (an edit would put the lockfile out of sync and fail `npm ci`).
- * One constant so the starter-pack scaffold imports the same versions.
+ * runs (`ensure-test-deps`). Defined once in browser-test-dependencies.ts,
+ * which the starter-pack scaffold also reads, so the versions the verify run
+ * installs and the versions a new repository declares can never drift.
+ * Re-exported here for callers that import it from the builder.
  */
-export const BROWSER_TEST_DEPENDENCIES =
-  '@playwright/test@^1.55.0 @axe-core/playwright@^4.10.0';
+export { BROWSER_TEST_DEPENDENCIES };
 
 /**
  * Branch promotion model enforced by the generated pipelines:

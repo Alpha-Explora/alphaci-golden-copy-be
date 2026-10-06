@@ -325,6 +325,52 @@ export type GitHubOpenPullRequestResult =
   | { created: true; pullRequest: GitHubPullRequestSummary }
   | { created: false; message: string };
 
+/**
+ * What reading a handful of paths at one ref found.
+ *
+ * `content` is null for a file that exists but could not be decoded as text
+ * (a directory, a binary, an empty file) - `exists` is the question callers
+ * mostly ask.
+ */
+export interface GitHubRepoFileProbe {
+  exists: boolean;
+  content: string | null;
+}
+
+/**
+ * `unauthorized` is GitHub no longer accepting the token (401). Every other
+ * refusal on a read is a transport failure and throws.
+ */
+export type GitHubRepoFilesResult =
+  | { read: true; files: Record<string, GitHubRepoFileProbe> }
+  | { read: false; reason: 'unauthorized'; message: string };
+
+export interface GitHubCommitFilesInput {
+  /** Existing branch the new one starts from. */
+  fromBranch: string;
+  /** Branch to create. Created LAST, so a failure leaves nothing behind. */
+  newBranch: string;
+  message: string;
+  /** Full file contents (UTF-8) to add or replace in the one commit. */
+  files: { path: string; content: string }[];
+}
+
+/**
+ * The outcome of committing files to a new branch on a person's behalf.
+ *
+ *   unauthorized  401 - the sign-in was revoked or replaced.
+ *   forbidden     403/404 - the person lacks write access.
+ *   branch_exists 422 on the ref - `newBranch` was taken (a lost race).
+ *   base_missing  `fromBranch` does not exist.
+ */
+export type GitHubCommitFilesResult =
+  | { committed: true; commitSha: string }
+  | {
+      committed: false;
+      reason: 'unauthorized' | 'forbidden' | 'branch_exists' | 'base_missing';
+      message: string;
+    };
+
 export interface GithubProjectPort {
   getEnforcedOrg(): string;
   /**
@@ -597,6 +643,26 @@ export interface GithubProjectPort {
     repoFullName: string,
     input: GitHubOpenPullRequestInput,
   ): Promise<GitHubOpenPullRequestResult>;
+  /**
+   * Read several paths at `ref`, in parallel. Used by the browser-test
+   * status/PR flow to learn which starter files, lockfiles and package.json a
+   * repository already has.
+   */
+  readRepoFiles(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+    paths: readonly string[],
+  ): Promise<GitHubRepoFilesResult>;
+  /**
+   * Commit `files` to a NEW branch in one commit through the Git Data API
+   * (blobs, tree, commit, then the ref), attributed to the token's owner.
+   */
+  commitFilesToNewBranch(
+    accessToken: string,
+    repoFullName: string,
+    input: GitHubCommitFilesInput,
+  ): Promise<GitHubCommitFilesResult>;
   /**
    * Dispatch a `workflow_dispatch` run on a person's behalf — first caller:
    * QA automation's "Run Playwright" (re-dispatches the generated verify

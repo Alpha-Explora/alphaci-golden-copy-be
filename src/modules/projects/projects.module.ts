@@ -48,6 +48,7 @@ import { ProjectWorkflowSettingsRepository } from './infrastructure/project-work
 import { ProjectWorkflowUpdateRequestsRepository } from './infrastructure/project-workflow-update-requests.repository';
 import { ProjectsRepository } from './infrastructure/projects.repository';
 import { ProjectWorkspaceController } from './api/project-workspace.controller';
+import { BrowserTestsService } from './application/workspace/browser-tests.service';
 import { ProjectVisualController } from './api/project-visual.controller';
 import { ProjectVisualService } from './application/visual/project-visual.service';
 import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
@@ -101,6 +102,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectReconciliationService,
     ProjectProvisioningApplicationService,
     ProjectWorkspaceService,
+    BrowserTestsService,
     ProjectVisualService,
     ProjectGithubTokenResolver,
     ProjectGithubActivityService,

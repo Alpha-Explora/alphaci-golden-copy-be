@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 214 current API routes."
+description: "Generated inventory of the 216 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **214 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **216 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -109,6 +109,7 @@ The current compiled API exposes **214 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/qa-runs/{runId}/report`
 - `GET /api/v1/projects/{projectId}/qa/promotion`
 - `GET /api/v1/projects/{projectId}/workspace/branches`
+- `GET /api/v1/projects/{projectId}/workspace/browser-tests`
 - `GET /api/v1/projects/{projectId}/workspace/compare`
 - `GET /api/v1/projects/{projectId}/workspace/files`
 - `GET /api/v1/projects/{projectId}/workspace/jobs/{jobId}/logs`
@@ -211,6 +212,7 @@ The current compiled API exposes **214 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen`
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/signoff`
 - `POST /api/v1/projects/{projectId}/qa/promotion/merge`
+- `POST /api/v1/projects/{projectId}/workspace/browser-tests`
 - `POST /api/v1/projects/{projectId}/workspace/pull-requests`
 - `POST /api/v1/projects/{projectId}/workspace/pull-requests/{number}/merge`
 - `POST /api/v1/projects/{projectId}/workspace/visual/approve`
