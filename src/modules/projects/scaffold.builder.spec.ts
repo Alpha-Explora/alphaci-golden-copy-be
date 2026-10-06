@@ -4,6 +4,10 @@ import {
   normalizeProjectStack,
   normalizeRepoShape,
 } from './scaffold.builder';
+import {
+  BROWSER_TEST_REQUIRED_PATHS,
+  SNAPSHOT_PATH_TEMPLATE,
+} from './scaffolds/browser-test-starter';
 
 describe('normalizeRepoShape', () => {
   it('maps catalog IDs to canonical shapes', () => {
@@ -86,7 +90,10 @@ describe('buildProjectScaffold', () => {
       const paths = files.map((file) => file.path);
 
       expect(paths).toContain('playwright.config.ts');
-      expect(paths).toContain('tests/e2e/home.e2e-spec.ts');
+      for (const spec of BROWSER_TEST_REQUIRED_PATHS) {
+        expect(paths).toContain(spec);
+      }
+      expect(paths).not.toContain('tests/e2e/home.e2e-spec.ts');
 
       const pkg = JSON.parse(
         files.find((file) => file.path === 'package.json')!.content,
@@ -95,7 +102,8 @@ describe('buildProjectScaffold', () => {
         devDependencies: Record<string, string>;
       };
       expect(pkg.scripts['test:e2e']).toBe('playwright test');
-      expect(pkg.devDependencies['@playwright/test']).toBeDefined();
+      expect(pkg.devDependencies['@playwright/test']).toBe('^1.55.0');
+      expect(pkg.devDependencies['@axe-core/playwright']).toBe('^4.10.0');
 
       // The two runners must not collect each other's files: jest ignores the
       // browser directory, and Playwright only matches the e2e suffix.
@@ -149,6 +157,76 @@ describe('buildProjectScaffold', () => {
     expect(config).toContain('VERCEL_AUTOMATION_BYPASS_SECRET');
     expect(config).toContain('x-vercel-protection-bypass');
     expect(config).toContain('x-vercel-set-bypass-cookie');
+  });
+
+  /*
+   * playwright-e2e.yml downloads approved baselines into
+   * tests/e2e/__visual__/<name>.png, flat. A config with any other template
+   * would store (and look for) screenshots somewhere the workflow never
+   * places them, so every visual check would re-record instead of compare.
+   */
+  it('stores screenshots flat, where the verify workflow puts baselines', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'nextjs',
+      repoShape: 'standalone',
+    });
+    const config = files.find(
+      (file) => file.path === 'playwright.config.ts',
+    )!.content;
+
+    expect(SNAPSHOT_PATH_TEMPLATE).toBe('{testDir}/__visual__/{arg}{ext}');
+    expect(config).toContain(
+      "snapshotPathTemplate: '{testDir}/__visual__/{arg}{ext}'",
+    );
+    expect(config).toContain('maxDiffPixelRatio: 0.001');
+    expect(config).toContain("name: 'chromium'");
+  });
+
+  it('ships the four checks, sharing PAGES instead of repeating it', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'react',
+      repoShape: 'standalone',
+    });
+    const content = (path: string): string =>
+      files.find((file) => file.path === path)!.content;
+
+    expect(content('tests/e2e/support.ts')).toContain(
+      "export const PAGES: string[] = ['/'];",
+    );
+    expect(content('tests/e2e/pages.e2e-spec.ts')).toContain(
+      "import { PAGES, collectPageProblems } from './support';",
+    );
+    expect(content('tests/e2e/support.ts')).toContain("'pageerror'");
+    expect(content('tests/e2e/support.ts')).toContain('favicon');
+    expect(content('tests/e2e/links.e2e-spec.ts')).toContain('MAX_LINKS = 25');
+    expect(content('tests/e2e/links.e2e-spec.ts')).toContain(
+      'mailto|tel|javascript',
+    );
+    expect(content('tests/e2e/a11y.e2e-spec.ts')).toContain(
+      "from '@axe-core/playwright'",
+    );
+    expect(content('tests/e2e/a11y.e2e-spec.ts')).toContain(
+      "['critical', 'serious']",
+    );
+    const visual = content('tests/e2e/visual.e2e-spec.ts');
+    expect(visual).toContain('width: 1280, height: 800');
+    expect(visual).toContain('width: 390, height: 844');
+    expect(visual).toContain("'home-' + name + '.png'");
+    expect(visual).toContain('fullPage: true');
+    expect(visual).toContain("animations: 'disabled'");
+  });
+
+  it('keeps non-frontend stacks free of the browser pack', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'nestjs',
+      repoShape: 'standalone',
+    });
+    expect(files.map((file) => file.path)).not.toContain(
+      'tests/e2e/pages.e2e-spec.ts',
+    );
   });
 
   it("renders the monorepo workspace scaffold for the catalog ID 'mono'", () => {

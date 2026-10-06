@@ -125,6 +125,24 @@ export function canCreatePullRequest(
   return isAllowedPullRequestRoute(role, head, base);
 }
 
+const BROWSER_TEST_ROLES: readonly PlatformAppRole[] = [
+  'admin',
+  'lead',
+  'member',
+];
+
+/**
+ * Whether `role` may open the "Add browser tests" pull request into the
+ * working branch. Allow-list: admin, lead and member (Developer). QA verifies
+ * what is deployed and does not change the repository, so it is never in it,
+ * and a role added later gets no write access until it is named here.
+ */
+export function canAddBrowserTests(
+  role: PlatformAppRole | null | undefined,
+): boolean {
+  return role != null && BROWSER_TEST_ROLES.includes(role);
+}
+
 const HOSTING_CONFIG_ROLES: readonly PlatformAppRole[] = ['admin', 'member'];
 
 /** Whether `role` may list, provision, validate, or delete a project's environment variables. */

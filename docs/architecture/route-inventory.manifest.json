@@ -1,11 +1,11 @@
 {
-  "routeCount": 207,
+  "routeCount": 209,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "5b3a8106ec72e483ba4a0877e0dac04b3bd82386ff704f889128e23f88678c3c",
+  "referenceSha256": "b1f16030243ef3121269c982dab74fbc9f41f215c664b2b41398954a9f968183",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "5b3a8106ec72e483ba4a0877e0dac04b3bd82386ff704f889128e23f88678c3c",
+  "baselineSha256": "b1f16030243ef3121269c982dab74fbc9f41f215c664b2b41398954a9f968183",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -143,6 +143,13 @@
         "POST /api/v1/admin/branch-protection/apply",
         "POST /api/v1/projects/{id}/audit/sync",
         "POST /api/v1/projects/{id}/branch-protection"
+      ]
+    },
+    {
+      "reason": "Add browser tests: report whether the starter browser tests are on a project's dev branch, and open a pull request into dev adding them as the signed-in person.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/workspace/browser-tests",
+        "POST /api/v1/projects/{projectId}/workspace/browser-tests"
       ]
     }
   ]

@@ -21,6 +21,9 @@ import {
   type GitHubCommitAuthor,
   type GitHubJobLogResult,
   type GitHubDispatchWorkflowResult,
+  type GitHubCommitFilesInput,
+  type GitHubCommitFilesResult,
+  type GitHubRepoFilesResult,
   type GitHubOpenPullRequestInput,
   type GitHubOpenPullRequestResult,
   type GithubOrganizationMember,
@@ -41,6 +44,7 @@ export { GithubRepoDeleteError } from '#kernel/ports/github.port';
 export type { GithubRepoDeleteErrorCode } from '#kernel/ports/github.port';
 import type { CreateRepoDto } from '../api/dto/create-repo.dto';
 import { GithubActivityClient } from './github-activity.client';
+import { GithubRepoFilesClient } from './github-repo-files.client';
 import { ensurePullRequestProtection } from './github-branch-protection';
 import { GithubHttp } from './github-http';
 import { GithubInstallationLinker } from './github-installation-linker';
@@ -200,6 +204,7 @@ export class GithubService
   private readonly appWebhookSecret: string;
   private readonly http: GithubHttp;
   private readonly activity: GithubActivityClient;
+  private readonly repoFiles: GithubRepoFilesClient;
   private readonly installationLinker: GithubInstallationLinker;
   private readonly webhookProcessor: GithubWebhookProcessor;
 
@@ -234,6 +239,7 @@ export class GithubService
 
     this.http = new GithubHttp(this.logger);
     this.activity = new GithubActivityClient(this.http);
+    this.repoFiles = new GithubRepoFilesClient(this.http);
     this.installationLinker = new GithubInstallationLinker({
       logger: this.logger,
       http: this.http,
@@ -2275,6 +2281,27 @@ export class GithubService
         JSON.parse(text) as GitHubPullRequestRow,
       ),
     };
+  }
+
+  readRepoFiles(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+    paths: readonly string[],
+  ): Promise<GitHubRepoFilesResult> {
+    return this.repoFiles.readRepoFiles(accessToken, repoFullName, ref, paths);
+  }
+
+  commitFilesToNewBranch(
+    accessToken: string,
+    repoFullName: string,
+    input: GitHubCommitFilesInput,
+  ): Promise<GitHubCommitFilesResult> {
+    return this.repoFiles.commitFilesToNewBranch(
+      accessToken,
+      repoFullName,
+      input,
+    );
   }
 
   /**
