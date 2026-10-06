@@ -45,6 +45,12 @@ export interface BrowserTestsStatusResponse {
   presentFiles: string[];
   hasLockfile: boolean;
   playwrightVersion: string | null;
+  /**
+   * Whether package.json has a Next.js or React dependency. Explicit so the
+   * screen never infers it from `reason`'s wording, which also reports the
+   * role or a missing dev branch first.
+   */
+  frontend: boolean;
   canAdd: boolean;
   reason: string | null;
 }
@@ -149,6 +155,7 @@ export class BrowserTestsService {
       presentFiles: found.presentFiles,
       hasLockfile: found.hasLockfile,
       playwrightVersion: readPlaywrightVersion(found.packageJson),
+      frontend,
       canAdd: reason === null,
       reason,
     };

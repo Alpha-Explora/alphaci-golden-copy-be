@@ -96,6 +96,7 @@ describe('BrowserTestsService.getStatus', () => {
       branch: 'dev',
       missingFiles: [],
       hasLockfile: true,
+      frontend: true,
       canAdd: true,
       reason: null,
     });
@@ -131,7 +132,20 @@ describe('BrowserTestsService.getStatus', () => {
     });
     const status = await service.getStatus('p', 'u', 'gho');
     expect(status.canAdd).toBe(false);
+    expect(status.frontend).toBe(false);
     expect(status.reason).toMatch(/frontend/);
+  });
+
+  it('flags a non-frontend repository even when the role reason is the one reported', async () => {
+    // The screen hides the card on `frontend: false`; `reason` reports the
+    // role first, so it cannot be used to tell a backend repository apart.
+    const { service } = build({
+      role: 'qa',
+      files: { 'package.json': '{"dependencies":{"@nestjs/core":"11"}}' },
+    });
+    const status = await service.getStatus('p', 'u', 'gho');
+    expect(status.frontend).toBe(false);
+    expect(status.reason).toMatch(/role/);
   });
 
   it('cannot add when there is no dev branch', async () => {
