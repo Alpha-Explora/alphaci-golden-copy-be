@@ -1434,6 +1434,8 @@ describe('the verify stage', () => {
       expect(verify.jobs[jobId]?.secrets).toEqual({
         VERCEL_AUTOMATION_BYPASS_SECRET:
           '${{ secrets.VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET }}',
+        // Bearer for the visual-baseline calls (reusable-call secret, not with:).
+        ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
       });
     }
   });

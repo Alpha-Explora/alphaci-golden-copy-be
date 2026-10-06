@@ -1,10 +1,13 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsInt,
   IsNumber,
   IsObject,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -79,6 +82,25 @@ export class CiReportTestResultsDto {
   @ValidateNested({ each: true })
   @Type(() => CiReportTestFailureDto)
   failures?: CiReportTestFailureDto[];
+
+  /**
+   * Full titles of the tests that PASSED, " > "-joined:
+   * "<spec file> > <describe...> > <test>" (the same shape as a failure's
+   * `name`).
+   *
+   * Optional because a pipeline generated before it existed does not send it,
+   * and `forbidNonWhitelisted` would otherwise turn the new field into a 400
+   * for every report. ABSENT means "this pipeline does not say which tests
+   * passed" - QA matching then falls back to inference and marks it so - while
+   * an empty array is a real answer: "ran, nothing passed". Capped at 500
+   * names of at most 500 characters (the workflow trims to the same limits).
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(500, { each: true })
+  passes?: string[];
 }
 
 export class CiReportCoverageDto {
