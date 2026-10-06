@@ -43,6 +43,19 @@ export interface CiRunReportRow {
 }
 
 /**
+ * `results.tests.passes`, or undefined when absent or malformed. A list with
+ * ANY non-string entry is treated as absent rather than filtered: a partly
+ * understood list would let the matcher read a missing name as "did not pass".
+ */
+function readPasses(tests: Record<string, unknown>): string[] | undefined {
+  const raw = tests['passes'];
+  if (!Array.isArray(raw) || !raw.every((entry) => typeof entry === 'string')) {
+    return undefined;
+  }
+  return raw;
+}
+
+/**
  * Pull `results.tests` back out of the stored jsonb blob, the same
  * defensive shape as ci-reports.service.ts's readChecks: nothing the
  * database hands back is trusted, since `results` predates per-tool/test
@@ -76,12 +89,15 @@ function readTestResults(
       })
     : [];
 
+  const passes = readPasses(raw as Record<string, unknown>);
+
   return {
     total,
     passed,
     failed,
     failures: failureList,
     failuresTruncated: failed > failureList.length,
+    ...(passes !== undefined && { passes }),
   };
 }
 

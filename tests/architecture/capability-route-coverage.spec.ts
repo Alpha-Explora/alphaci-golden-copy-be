@@ -217,6 +217,15 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'getRuns', method: 'GET' },
       ],
     },
+    'src/modules/pipelines/ci/api/ci-visual.controller.ts': {
+      reason: 'CI integration surface (token-authenticated visual baselines)',
+      routes: [
+        { handler: 'listBaselines', method: 'GET' },
+        { handler: 'getBaselineFile', method: 'GET' },
+        { handler: 'ingestSummary', method: 'POST' },
+        { handler: 'ingestFile', method: 'POST' },
+      ],
+    },
     'src/modules/runtime/api/releases.controller.ts': {
       // Same surface, same credential: a generated pipeline calling with the
       // project's ALPHACI_TOKEN. It is not a capability-gated product feature
@@ -295,6 +304,14 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'mergePullRequest', method: 'POST' },
         { handler: 'compareBranches', method: 'GET' },
         { handler: 'createPullRequest', method: 'POST' },
+      ],
+    },
+    'src/modules/projects/api/project-visual.controller.ts': {
+      reason: 'project workspace surface (visual baselines)',
+      routes: [
+        { handler: 'getVisual', method: 'GET' },
+        { handler: 'getImage', method: 'GET' },
+        { handler: 'approve', method: 'POST' },
       ],
     },
     'src/modules/projects/api/projects.controller.ts': {

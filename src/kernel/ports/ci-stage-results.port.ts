@@ -28,6 +28,14 @@ export interface CiStageTestResults {
   failures: CiStageTestFailure[];
   /** True when `failed` exceeds `failures.length` — the list is a prefix, not the whole set. */
   failuresTruncated: boolean;
+  /**
+   * Full titles (" > "-joined, spec file first) of the tests that PASSED, when
+   * the reporting pipeline says so. ABSENT means an older pipeline that did
+   * not report them - consumers must then infer, and say they did. An empty
+   * array is a real answer ("ran, nothing passed"). Capped by the pipeline at
+   * 500 names, so `passes.length < passed` means the list is a prefix.
+   */
+  passes?: string[];
 }
 
 export interface CiStageResult {

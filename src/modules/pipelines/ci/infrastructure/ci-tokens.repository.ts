@@ -100,6 +100,26 @@ export class CiTokensRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * Whether this hash belongs to ANY active project token. Not an
+   * authorization (that needs the repository too: see findValidationContext);
+   * it exists so an upload route can turn away anonymous callers before the
+   * request body is buffered.
+   */
+  async hasActiveToken(tokenHash: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `
+        SELECT 1
+        FROM ci.project_ci_tokens
+        WHERE token_hash = $1
+          AND status = 'active'
+        LIMIT 1;
+      `,
+      [tokenHash],
+    );
+    return result.rows.length > 0;
+  }
+
   async revokeProjectTokens(projectId: string): Promise<void> {
     await this.databaseService.query(
       `
