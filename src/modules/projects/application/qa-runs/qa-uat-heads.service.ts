@@ -23,6 +23,14 @@ export interface ReadHeadOptions {
   maxAgeMs?: number;
 }
 
+/** Which credential a QA-flow GitHub write was made with. */
+export type QaWriteVia = 'github_app' | 'user_token';
+
+export interface QaWriteCredential {
+  token: string;
+  via: QaWriteVia;
+}
+
 /** What reading one repository's uat head came to. */
 export type QaUatHeadReading =
   | { kind: 'ok'; repository: QaProjectRepository; sha: string }
@@ -120,21 +128,59 @@ export class QaUatHeadsService {
     userId: string,
     oauthToken: string | null,
   ): Promise<string | null> {
+    return (
+      (await this.resolveInstallationToken(repoFullName, userId)) ?? oauthToken
+    );
+  }
+
+  /**
+   * The GitHub App installation token for `repoFullName` (enforced-org
+   * installation, then the caller's per-user-repo installation), or null.
+   */
+  async resolveInstallationToken(
+    repoFullName: string,
+    userId: string,
+  ): Promise<string | null> {
     const enforcedToken = await this.enforcedOrgToken(repoFullName);
     if (enforcedToken) {
       return enforcedToken;
     }
 
-    const installationToken =
-      await this.githubService.getInstallationAccessTokenForUserRepo(
+    try {
+      return await this.githubService.getInstallationAccessTokenForUserRepo(
         userId,
         repoFullName,
       );
-    if (installationToken) {
-      return installationToken;
+    } catch (error) {
+      this.logger.debug(
+        `No installation token for ${repoFullName}: ${(error as Error).message}`,
+      );
+      return null;
     }
+  }
 
-    return oauthToken;
+  /**
+   * The credential for a QA-flow GitHub WRITE (Run Playwright, Merge to
+   * main). Callers run ALPHACI's own role / visibility / gate checks first;
+   * the write then goes out as the ALPHACI GitHub App because the default
+   * repository permission is read, so a person's own OAuth token cannot
+   * dispatch or merge. The person's token is only the fallback when no
+   * installation resolves. `via` is recorded in the audit event; the person
+   * stays named by actorUserId.
+   */
+  async resolveWriteCredential(
+    repoFullName: string,
+    userId: string,
+    oauthToken: string | null,
+  ): Promise<QaWriteCredential | null> {
+    const installation = await this.resolveInstallationToken(
+      repoFullName,
+      userId,
+    );
+    if (installation) {
+      return { token: installation, via: 'github_app' };
+    }
+    return oauthToken ? { token: oauthToken, via: 'user_token' } : null;
   }
 
   private async enforcedOrgToken(repoFullName: string): Promise<string | null> {

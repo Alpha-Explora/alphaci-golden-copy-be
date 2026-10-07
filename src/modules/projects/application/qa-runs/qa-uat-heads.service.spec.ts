@@ -74,6 +74,31 @@ describe('QaUatHeadsService', () => {
     expect(await service.resolveReadToken('acme/api', 'u1', null)).toBeNull();
   });
 
+  it('resolves the write credential as the App first, the caller token only as fallback, null with neither', async () => {
+    const { service, github } = setup({});
+    github.getEnforcedOrg.mockReturnValue('acme');
+    github.getOrganizationProvisioningContextByLogin.mockResolvedValue({
+      accessToken: 'org-token',
+    } as never);
+    expect(
+      await service.resolveWriteCredential('acme/api', 'u1', 'oauth'),
+    ).toEqual({ token: 'org-token', via: 'github_app' });
+    expect(
+      await service.resolveWriteCredential('acme/api', 'u1', null),
+    ).toEqual({ token: 'org-token', via: 'github_app' });
+
+    github.getEnforcedOrg.mockReturnValue(null as never);
+    github.getInstallationAccessTokenForUserRepo.mockRejectedValue(
+      new Error('no installation'),
+    );
+    expect(
+      await service.resolveWriteCredential('acme/api', 'u1', 'oauth'),
+    ).toEqual({ token: 'oauth', via: 'user_token' });
+    expect(
+      await service.resolveWriteCredential('acme/api', 'u1', null),
+    ).toBeNull();
+  });
+
   it('no token at all is unreadable, not an error', async () => {
     const { service, github } = setup({});
 

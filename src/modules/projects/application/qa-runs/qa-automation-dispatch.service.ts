@@ -18,6 +18,7 @@ import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.re
 import type { QaRunRepositoryRow } from '../../infrastructure/qa-runs.repository';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
 import { QaProjectContextService } from '../qa-checklists/qa-project-context.service';
+import { QaUatHeadsService, type QaWriteVia } from './qa-uat-heads.service';
 import type { DispatchProjectRunDto } from './dto/dispatch-project-run.dto';
 import type { QaRunActorContext } from './qa-runs.contracts';
 import { resolveVerifyWorkflowFile } from './resolve-verify-workflow-file';
@@ -47,9 +48,9 @@ export interface QaProjectDispatchResult {
 
 /**
  * "Run Playwright": re-dispatches the generated verify workflow of a Project
- * QA run's repositories, attributed to the signed-in user's own GitHub token -
- * see github.service.ts's dispatchWorkflow, the first caller of GitHub's
- * workflow_dispatch endpoint in this codebase.
+ * QA run's repositories, performed by the ALPHACI GitHub App after ALPHACI's own role, visibility
+ * and sign-off checks (the signed-in user's token is only the fallback), and
+ * the audit event names the person plus `via`.
  *
  * By default it dispatches in EVERY repository the run covers (a Project run
  * spans several); `projectId` narrows it to one. A repository that cannot be
@@ -70,6 +71,9 @@ export class QaAutomationDispatchService {
     private readonly projectRuns: QaProjectRunsRepository,
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService: GithubProjectPort,
+    // Concrete class token: a missing provider fails boot, and
+    // tests/architecture/http-boot.spec.ts reads it back to prove it resolved.
+    private readonly heads: QaUatHeadsService,
     @Optional()
     @Inject(AuditEventPublisher)
     private readonly auditEventsService?: AuditEventPublisher,
@@ -103,13 +107,6 @@ export class QaAutomationDispatchService {
       );
     }
 
-    if (!actor.oauthToken) {
-      throw new ConflictException({
-        code: 'GITHUB_REAUTH',
-        message: 'Sign in to GitHub again, then retry.',
-      });
-    }
-
     const coverage =
       (await this.projectRuns.listCoverageByRunIds([run.id])).get(run.id) ?? [];
     const targets = dto.projectId
@@ -125,12 +122,16 @@ export class QaAutomationDispatchService {
 
     const dispatched: QaAutomationDispatchResult[] = [];
     const failed: QaAutomationDispatchFailure[] = [];
+    const viaByRepo = new Map<string, QaWriteVia>();
     for (const target of targets) {
       const outcome = await this.dispatchOne(target, actor);
-      if ('code' in outcome) {
-        failed.push(outcome);
+      if ('code' in outcome.result) {
+        failed.push(outcome.result);
       } else {
-        dispatched.push(outcome);
+        dispatched.push(outcome.result);
+        if (outcome.via) {
+          viaByRepo.set(target.repo_full_name, outcome.via);
+        }
       }
     }
 
@@ -163,10 +164,17 @@ export class QaAutomationDispatchService {
         runId,
         deliveryProjectId,
         branch: QA_BRANCH,
+        // The person is actorUserId; `via` is the credential GitHub saw.
+        via: dispatched.every(
+          (entry) => viaByRepo.get(entry.repoFullName) === 'github_app',
+        )
+          ? 'github_app'
+          : 'user_token',
         dispatched: dispatched.map((entry) => ({
           repoFullName: entry.repoFullName,
           workflowFile: entry.workflowFile,
           targetsRunCommit: entry.targetsRunCommit,
+          via: viaByRepo.get(entry.repoFullName),
         })),
         failed: failed.map((entry) => entry.repoFullName),
       },
@@ -178,12 +186,21 @@ export class QaAutomationDispatchService {
   private async dispatchOne(
     target: QaRunRepositoryRow,
     actor: QaRunActorContext,
-  ): Promise<QaAutomationDispatchResult | QaAutomationDispatchFailure> {
-    const token = actor.oauthToken as string;
+  ): Promise<{
+    result: QaAutomationDispatchResult | QaAutomationDispatchFailure;
+    via?: QaWriteVia;
+  }> {
     const base = {
       projectId: target.project_id,
       repoFullName: target.repo_full_name,
     };
+    const refused = (message: string) => ({
+      result: {
+        ...base,
+        code: 'DISPATCH_REFUSED' as const,
+        message: `GitHub refused to start the verify workflow in ${target.repo_full_name}: ${message}`,
+      },
+    });
 
     const repository = await this.access.findVisibleProject(
       target.project_id,
@@ -191,9 +208,11 @@ export class QaAutomationDispatchService {
     );
     if (!repository) {
       return {
-        ...base,
-        code: 'DISPATCH_REFUSED',
-        message: 'This repository is no longer available to you.',
+        result: {
+          ...base,
+          code: 'DISPATCH_REFUSED',
+          message: 'This repository is no longer available to you.',
+        },
       };
     }
 
@@ -201,18 +220,35 @@ export class QaAutomationDispatchService {
     const ref = QA_BRANCH;
 
     try {
-      // Read with the same user token the dispatch itself uses below - a
-      // token too stale to read branches is too stale to dispatch, so either
-      // call surfaces the same GITHUB_REAUTH outcome.
+      // ALPHACI has already checked the role, visibility and sign-off rules;
+      // the write itself goes out as the GitHub App (the org's default
+      // repository permission is read, so the person's own token cannot
+      // dispatch). The person's token is only the fallback.
+      const credential = await this.heads.resolveWriteCredential(
+        target.repo_full_name,
+        actor.userId,
+        actor.oauthToken,
+      );
+      if (!credential) {
+        return {
+          result: {
+            ...base,
+            code: 'GITHUB_REAUTH',
+            message: 'Sign in to GitHub again, then retry.',
+          },
+        };
+      }
+
+      // Read with the token the dispatch itself uses below.
       const branches = await this.githubService.listBranches(
-        token,
+        credential.token,
         target.repo_full_name,
       );
       const head = branches.find((candidate) => candidate.name === ref);
       const headSha = head?.commitSha ?? target.head_sha;
 
       const result = await this.githubService.dispatchWorkflow(
-        token,
+        credential.token,
         target.repo_full_name,
         workflowFile,
         ref,
@@ -220,35 +256,38 @@ export class QaAutomationDispatchService {
       if (!result.dispatched) {
         if (result.reason === 'unauthorized') {
           return {
-            ...base,
-            code: 'GITHUB_REAUTH',
-            message:
-              'GitHub no longer accepts your sign-in. Sign in again, then retry.',
+            result: {
+              ...base,
+              code: 'GITHUB_REAUTH',
+              message:
+                'GitHub no longer accepts your sign-in. Sign in again, then retry.',
+            },
           };
         }
         if (result.reason === 'not_found') {
           return {
-            ...base,
-            code: 'VERIFY_WORKFLOW_MISSING',
-            message: "This repository's pipeline has no verify workflow yet.",
+            result: {
+              ...base,
+              code: 'VERIFY_WORKFLOW_MISSING',
+              message: `${target.repo_full_name} has no verify workflow yet.`,
+            },
           };
         }
-        return { ...base, code: 'DISPATCH_REFUSED', message: result.message };
+        return refused(result.message);
       }
 
       return {
-        ...base,
-        workflowFile,
-        ref,
-        headSha,
-        targetsRunCommit: headSha === target.head_sha,
+        via: credential.via,
+        result: {
+          ...base,
+          workflowFile,
+          ref,
+          headSha,
+          targetsRunCommit: headSha === target.head_sha,
+        },
       };
     } catch (error) {
-      return {
-        ...base,
-        code: 'DISPATCH_REFUSED',
-        message: (error as Error).message,
-      };
+      return refused((error as Error).message);
     }
   }
 }
