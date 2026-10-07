@@ -14,6 +14,7 @@ import type {
 } from '../../infrastructure/qa-runs.repository';
 import type { QaAccessService } from '../qa-checklists/qa-access.service';
 import type { QaProjectContextService } from '../qa-checklists/qa-project-context.service';
+import type { QaUatHeadsService } from './qa-uat-heads.service';
 import { QaAutomationDispatchService } from './qa-automation-dispatch.service';
 
 const DP = 'dp-1';
@@ -49,10 +50,13 @@ function setup({
   dispatchResult = { dispatched: true } as
     | { dispatched: true }
     | { dispatched: false; reason: string; message: string },
+  installationToken = 'app-token' as string | null,
 }: {
   role?: PlatformAppRole;
   run?: QaProjectRunRow | null;
   branchHeads?: Record<string, string>;
+  /** The GitHub App installation token; null = no installation resolves. */
+  installationToken?: string | null;
   dispatchResult?:
     | { dispatched: true }
     | { dispatched: false; reason: string; message: string };
@@ -92,25 +96,40 @@ function setup({
   const audit = {
     recordProjectEvent: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<AuditEventPublisher>;
+  const heads = {
+    resolveWriteCredential: jest
+      .fn()
+      .mockImplementation(
+        (_repo: string, _userId: string, oauthToken: string | null) =>
+          Promise.resolve(
+            installationToken
+              ? { token: installationToken, via: 'github_app' }
+              : oauthToken
+                ? { token: oauthToken, via: 'user_token' }
+                : null,
+          ),
+      ),
+  } as unknown as jest.Mocked<QaUatHeadsService>;
   const service = new QaAutomationDispatchService(
     access,
     projectContext,
     projectRuns,
     github,
+    heads,
     audit,
   );
-  return { service, access, projectRuns, github, audit };
+  return { service, access, projectRuns, github, audit, heads };
 }
 
 describe('QaAutomationDispatchService (Project runs)', () => {
-  it('dispatches the verify workflow in every repository the run covers, with the caller token', async () => {
+  it('dispatches the verify workflow in every repository the run covers, with the App installation token', async () => {
     const { service, github, audit } = setup();
 
     const result = await service.dispatch(DP, actor, RUN_ID, {});
 
     expect(github.dispatchWorkflow).toHaveBeenCalledTimes(2);
     expect(github.dispatchWorkflow).toHaveBeenCalledWith(
-      'gho_token',
+      'app-token',
       'acme/api',
       '30-alphaci-verify.yml',
       'uat',
@@ -128,7 +147,65 @@ describe('QaAutomationDispatchService (Project runs)', () => {
         eventCode: 'qa.automation.dispatched',
         projectId: 'p-web',
         workspaceId: 'group-1',
+        actorUserId: 'user-1',
+        metadata: expect.objectContaining({ via: 'github_app' }) as Record<
+          string,
+          unknown
+        >,
       }),
+    );
+  });
+
+  it('dispatches with the App for a caller who has no session token', async () => {
+    const { service, github } = setup();
+
+    const result = await service.dispatch(
+      DP,
+      { ...actor, oauthToken: null },
+      RUN_ID,
+      {},
+    );
+
+    expect(result.dispatched).toHaveLength(2);
+    expect(github.listBranches).toHaveBeenCalledWith('app-token', 'acme/api');
+  });
+
+  it('falls back to the caller token when no installation resolves, and audits via user_token', async () => {
+    const { service, github, audit } = setup({ installationToken: null });
+
+    await service.dispatch(DP, actor, RUN_ID, {});
+
+    expect(github.listBranches).toHaveBeenCalledWith('gho_token', 'acme/api');
+    expect(github.dispatchWorkflow).toHaveBeenCalledWith(
+      'gho_token',
+      'acme/api',
+      '30-alphaci-verify.yml',
+      'uat',
+    );
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ via: 'user_token' }) as Record<
+          string,
+          unknown
+        >,
+      }),
+    );
+  });
+
+  it("names the repository and GitHub's reason when GitHub refuses", async () => {
+    const { service } = setup({
+      dispatchResult: {
+        dispatched: false,
+        reason: 'forbidden',
+        message: 'Resource not accessible by integration',
+      },
+    });
+
+    await expect(service.dispatch(DP, actor, RUN_ID, {})).rejects.toMatchObject(
+      {
+        message:
+          'GitHub refused to start the verify workflow in acme/api: Resource not accessible by integration',
+      },
     );
   });
 
@@ -181,8 +258,8 @@ describe('QaAutomationDispatchService (Project runs)', () => {
     ).rejects.toThrow(ConflictException);
   });
 
-  it('409 GITHUB_REAUTH without a session token, before touching GitHub', async () => {
-    const { service, github } = setup();
+  it('409 GITHUB_REAUTH only when neither an installation nor a session token exists, before touching GitHub', async () => {
+    const { service, github } = setup({ installationToken: null });
 
     await expect(
       service.dispatch(DP, { ...actor, oauthToken: null }, RUN_ID, {}),

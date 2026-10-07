@@ -1,8 +1,4 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import type { GithubProjectPort } from '#kernel/ports/github.port';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
@@ -42,6 +38,7 @@ function setup({
   role = 'lead',
   filed = true,
   heads = { 'acme/api': SHA_API, 'acme/web': SHA_WEB },
+  installationToken = 'app-token' as string | null,
   requirementCount = 2,
   verdict = 'APPROVED',
   covered = [
@@ -53,6 +50,8 @@ function setup({
   role?: PlatformAppRole;
   filed?: boolean;
   heads?: HeadMap;
+  /** The GitHub App installation token; null = no installation resolves. */
+  installationToken?: string | null;
   requirementCount?: number;
   verdict?: 'APPROVED' | 'REJECTED' | 'CONDITIONAL' | null;
   covered?: Array<{ project_id: string; head_sha: string }>;
@@ -111,6 +110,18 @@ function setup({
         Promise.resolve(readOne(repo)),
       ),
     resolveReadToken: jest.fn().mockResolvedValue('read-token'),
+    resolveWriteCredential: jest
+      .fn()
+      .mockImplementation(
+        (_repo: string, _userId: string, oauthToken: string | null) =>
+          Promise.resolve(
+            installationToken
+              ? { token: installationToken, via: 'github_app' }
+              : oauthToken
+                ? { token: oauthToken, via: 'user_token' }
+                : null,
+          ),
+      ),
   } as unknown as jest.Mocked<QaUatHeadsService>;
   const github = {
     findOpenPullRequest: jest
@@ -312,8 +323,14 @@ describe('QaPromotionService.merge', () => {
       .body;
     expect(body).toContain('Project run run-1 covered:');
     expect(body).toContain('`acme/web` @ bbbbbbb');
+    // The App installation token, never the lead's own (read-only) token.
+    expect(github.openPullRequest).toHaveBeenCalledWith(
+      'app-token',
+      'acme/api',
+      expect.any(Object),
+    );
     expect(github.mergePullRequest).toHaveBeenCalledWith(
-      'gho_token',
+      'app-token',
       'acme/api',
       7,
       { method: 'merge', sha: SHA_API },
@@ -321,9 +338,11 @@ describe('QaPromotionService.merge', () => {
     expect(audit.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventCode: 'qa.promotion.merged',
+        actorUserId: 'lead-1',
         metadata: expect.objectContaining({
           deliveryProjectId: 'dp-1',
           runId: 'run-1',
+          via: 'github_app',
         }) as Record<string, unknown>,
       }),
     );
@@ -343,12 +362,61 @@ describe('QaPromotionService.merge', () => {
     });
   });
 
-  it('409 GITHUB_REAUTH without a session token', async () => {
-    const { service } = setup();
+  it('409 GITHUB_REAUTH only when neither an installation nor a session token exists', async () => {
+    const { service, github } = setup({ installationToken: null });
 
     await expect(
       service.merge('p-api', { ...actor, oauthToken: null }),
-    ).rejects.toThrow(ConflictException);
+    ).rejects.toMatchObject({ response: { code: 'GITHUB_REAUTH' } });
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('merges with the App for a caller with no session token', async () => {
+    const { service, github } = setup();
+
+    const result = await service.merge('p-api', { ...actor, oauthToken: null });
+
+    expect(result.merged).toBe(true);
+    expect(github.mergePullRequest).toHaveBeenCalledWith(
+      'app-token',
+      'acme/api',
+      7,
+      expect.any(Object),
+    );
+  });
+
+  it('falls back to the caller token when no installation resolves, and audits via user_token', async () => {
+    const { service, github, audit } = setup({ installationToken: null });
+
+    await service.merge('p-api', actor);
+
+    expect(github.mergePullRequest).toHaveBeenCalledWith(
+      'gho_token',
+      'acme/api',
+      7,
+      expect.any(Object),
+    );
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ via: 'user_token' }) as Record<
+          string,
+          unknown
+        >,
+      }),
+    );
+  });
+
+  it('keeps the gate when the latest run is not Approved: no GitHub write', async () => {
+    const { service, github, headsService } = setup({
+      heads: { 'acme/api': SHA_API, 'acme/web': MOVED },
+    });
+
+    await expect(service.merge('p-api', actor)).rejects.toMatchObject({
+      response: { code: 'QA_PROMOTION_BLOCKED' },
+    });
+    expect(headsService.resolveWriteCredential).not.toHaveBeenCalled();
+    expect(github.openPullRequest).not.toHaveBeenCalled();
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
   });
 
   it('returns merged:false with GitHub text when GitHub refuses', async () => {
