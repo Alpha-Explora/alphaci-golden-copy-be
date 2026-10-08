@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 216 current API routes."
+description: "Generated inventory of the 218 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **216 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **218 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -113,6 +113,7 @@ The current compiled API exposes **216 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/workspace/compare`
 - `GET /api/v1/projects/{projectId}/workspace/files`
 - `GET /api/v1/projects/{projectId}/workspace/jobs/{jobId}/logs`
+- `GET /api/v1/projects/{projectId}/workspace/playwright-live`
 - `GET /api/v1/projects/{projectId}/workspace/pull-requests`
 - `GET /api/v1/projects/{projectId}/workspace/pull-requests/{number}`
 - `GET /api/v1/projects/{projectId}/workspace/pull-requests/{number}/files`
@@ -161,6 +162,7 @@ The current compiled API exposes **216 routes** under the global `/api/v1` prefi
 - `POST /api/v1/auth/dev/quick-login`
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/auth/onboarding/complete`
+- `POST /api/v1/ci/playwright-progress`
 - `POST /api/v1/ci/releases`
 - `POST /api/v1/ci/report`
 - `POST /api/v1/ci/validate`

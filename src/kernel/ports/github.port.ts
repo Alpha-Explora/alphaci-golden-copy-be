@@ -578,6 +578,17 @@ export interface GithubProjectPort {
     branch?: string | null,
     limit?: number,
   ): Promise<GitHubWorkflowRunSummary[]>;
+  /**
+   * The newest run of ONE workflow file on a branch (GET
+   * /actions/workflows/{file}/runs?branch=&per_page=1), or null when it has
+   * none. Throws on API failure; callers degrade.
+   */
+  getLatestWorkflowFileRun(
+    accessToken: string,
+    repoFullName: string,
+    workflowFile: string,
+    branch: string,
+  ): Promise<GitHubWorkflowRunSummary | null>;
   getWorkflowRunJobs(
     accessToken: string,
     repoFullName: string,
