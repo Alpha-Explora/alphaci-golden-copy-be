@@ -28,13 +28,13 @@ This snapshot is generated from the current source tree. It is descriptive evide
 | Context | Source files | Test files | Cross-context imports | Directional pairs | Contract imports | Application imports |
 |---|---:|---:|---:|---:|---:|---:|
 | `billing` | 21 | 5 | 0 | 0 | 0 | 0 |
-| `identity-access` | 140 | 30 | 9 | 5 | 0 | 0 |
+| `identity-access` | 147 | 33 | 9 | 5 | 0 | 0 |
 | `pipelines` | 74 | 26 | 1 | 1 | 0 | 0 |
 | `platform-ops` | 31 | 6 | 0 | 0 | 0 | 0 |
-| `projects` | 241 | 83 | 20 | 5 | 0 | 0 |
+| `projects` | 243 | 84 | 20 | 5 | 0 | 0 |
 | `runtime` | 160 | 59 | 8 | 4 | 0 | 0 |
 
-| Total | 667 | 209 | 38 | 15 | 0 | 0 |
+| Total | 676 | 213 | 38 | 15 | 0 | 0 |
 
 Dead in-process adapters measured by the source report: **0**.
 
