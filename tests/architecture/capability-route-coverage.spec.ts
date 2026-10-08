@@ -145,6 +145,10 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
           { handler: 'deleteDeliveryProject', method: 'DELETE' },
           { handler: 'createRepository', method: 'POST' },
           { handler: 'listRepositories', method: 'GET' },
+          { handler: 'listMembers', method: 'GET' },
+          { handler: 'addMember', method: 'POST' },
+          { handler: 'resyncMembers', method: 'POST' },
+          { handler: 'removeMember', method: 'DELETE' },
         ],
       },
     'src/modules/identity-access/hierarchy/api/groups.controller.ts': {

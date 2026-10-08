@@ -96,7 +96,7 @@ export class SystemsService {
         },
       );
 
-    const repository = await this.repositoriesService.createRepository(
+    const repository = await this.repositoriesService.createBareRepository(
       deliveryProject.id,
       userId,
       githubAccessToken,

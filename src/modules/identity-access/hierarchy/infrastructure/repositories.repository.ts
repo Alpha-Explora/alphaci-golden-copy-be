@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type { RepositoryStatus } from '../domain/hierarchy.types';
@@ -54,9 +55,9 @@ export class RepositoriesRepository {
     const result = await this.databaseService.query<RepositoryRow>(
       `
         INSERT INTO hierarchy.repositories (
-          delivery_project_id, group_id, name, repo_full_name, created_by, status, provisioned_project_id
+          delivery_project_id, group_id, name, repo_full_name, created_by, status, provisioned_project_id, origin
         )
-        VALUES ($1, $2, $3, $4, $5, 'active', $6)
+        VALUES ($1, $2, $3, $4, $5, 'active', $6, 'created')
         RETURNING id, delivery_project_id, group_id, name, repo_full_name, github_repo_id, visibility,
           created_by, status, archived_at, provisioned_project_id, created_at, updated_at;
       `,
@@ -127,6 +128,37 @@ export class RepositoriesRepository {
     );
   }
 
+  /**
+   * Repositories of a Project that can take an AUTOMATIC GitHub grant: active,
+   * with a real GitHub repository behind them, and created by ALPHACI.
+   * Attached (pre-existing) repositories are excluded: access to those comes
+   * only from an explicit per-repository assignment by a lead or admin.
+   */
+  async listActiveForGrantWithClient(
+    client: Pick<PoolClient, 'query'>,
+    deliveryProjectId: string,
+  ): Promise<Array<{ id: string; createdBy: string | null }>> {
+    const result = await client.query<{
+      id: string;
+      created_by: string | null;
+    }>(
+      `
+        SELECT id, created_by
+        FROM hierarchy.repositories
+        WHERE delivery_project_id = $1
+          AND status = 'active'
+          AND repo_full_name IS NOT NULL
+          AND origin = 'created'
+        ORDER BY created_at ASC;
+      `,
+      [deliveryProjectId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      createdBy: row.created_by,
+    }));
+  }
+
   async findById(repositoryId: string): Promise<RepositoryRecord | null> {
     const result = await this.databaseService.query<RepositoryRow>(
       `
@@ -136,6 +168,35 @@ export class RepositoriesRepository {
         WHERE id = $1;
       `,
       [repositoryId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const counts = await this.getAssignmentCounts([row.id]);
+    return this.toRecord(row, counts.get(row.id) ?? 0);
+  }
+
+  /** True when ALPHACI created the repository (so automatic grants are allowed). */
+  async isCreatedByAlphaci(repositoryId: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `SELECT 1 FROM hierarchy.repositories WHERE id = $1 AND origin = 'created';`,
+      [repositoryId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /** The hierarchy row linked to an AlphaCI project, when the link was written. */
+  async findByProvisionedProjectId(
+    provisionedProjectId: string,
+  ): Promise<RepositoryRecord | null> {
+    const result = await this.databaseService.query<RepositoryRow>(
+      `
+        SELECT id, delivery_project_id, group_id, name, repo_full_name, github_repo_id, visibility,
+          created_by, status, archived_at, provisioned_project_id, created_at, updated_at
+        FROM hierarchy.repositories
+        WHERE provisioned_project_id = $1
+        LIMIT 1;
+      `,
+      [provisionedProjectId],
     );
     const row = result.rows[0];
     if (!row) return null;

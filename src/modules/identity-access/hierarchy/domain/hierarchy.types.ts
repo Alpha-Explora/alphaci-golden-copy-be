@@ -45,6 +45,11 @@ export type MemberStatus = 'invited' | 'active' | 'removed';
 
 export type RepositoryStatus = 'pending' | 'active' | 'archived';
 
+/** Who a lead/admin can add to a Project: Developers (GitHub write) or QA (ALPHACI only). */
+export type DeliveryProjectMemberKind = 'developer' | 'qa';
+
+export type DeliveryProjectMemberStatus = 'active' | 'removed';
+
 export type DesiredState = 'assigned' | 'unassigned';
 
 export type EffectiveState =
@@ -109,6 +114,8 @@ export const HIERARCHY_EVENT_CODES = {
   deliveryProjectUpdated: 'hierarchy.delivery_project.updated',
   deliveryProjectArchived: 'hierarchy.delivery_project.archived',
   deliveryProjectDeleted: 'hierarchy.delivery_project.deleted',
+  deliveryProjectMemberAdded: 'hierarchy.delivery_project.member_added',
+  deliveryProjectMemberRemoved: 'hierarchy.delivery_project.member_removed',
   repositoryCreated: 'hierarchy.repository.created',
   repositoryArchived: 'hierarchy.repository.archived',
   repositoryMoved: 'hierarchy.repository.moved',

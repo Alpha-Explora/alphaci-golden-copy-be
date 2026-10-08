@@ -10,6 +10,7 @@ import {
   OutboxDispatcher,
   type OutboxTopicHandler,
 } from '#kernel/events/outbox-dispatcher';
+import { OUTBOX_TOPICS } from '#kernel/events/outbox-topics';
 import {
   decodePlatformEvent,
   PLATFORM_EVENT_TOPICS,
@@ -66,6 +67,32 @@ export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
       (event) => this.handle(event),
       limit,
       this.topics,
+      this.processingOptions(),
+    );
+  }
+
+  /**
+   * Deliver hierarchy grant/revoke jobs, and nothing else.
+   *
+   * These handlers add and remove people from GitHub teams, so the timer only
+   * calls this when HIERARCHY_GITHUB_SYNC_MODE=live (see OutboxRelayWorker).
+   * The claim uses the same lease + SKIP LOCKED as every other pass, so this
+   * and the `alphaci-outbox-relay` cron can run together without delivering a
+   * job twice. Only topics whose handler is registered are claimed.
+   */
+  async processHierarchyEventsOnce(limit = 50): Promise<number> {
+    const registered = new Set(this.dispatcher.topics());
+    const topics = [
+      OUTBOX_TOPICS.hierarchyAssignmentGrant,
+      OUTBOX_TOPICS.hierarchyAssignmentRevoke,
+    ].filter((topic) => registered.has(topic));
+    if (topics.length === 0) {
+      return 0;
+    }
+    return this.outboxRepository.processPending(
+      (event) => this.dispatcher.dispatch(event),
+      limit,
+      topics,
       this.processingOptions(),
     );
   }

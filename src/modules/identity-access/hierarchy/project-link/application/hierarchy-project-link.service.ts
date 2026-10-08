@@ -7,6 +7,7 @@ import type {
 } from '#kernel/ports/project-link.port';
 import { ProjectNameTakenException } from '../../domain/project-name';
 import { DeliveryProjectsRepository } from '../../infrastructure/delivery-projects.repository';
+import { DeliveryProjectMembersService } from '../../application/delivery-project-members.service';
 import { HierarchyAccessService } from '../../application/hierarchy-access.service';
 import { HierarchyProjectLinkRepository } from '../infrastructure/hierarchy-project-link.repository';
 
@@ -25,6 +26,8 @@ export interface EnsureProjectLinkInput {
   projectStatus: string;
   /** Link into this existing delivery project instead of creating a new chain. */
   deliveryProjectId?: string;
+  /** See ProjectLinkPort EnsureProjectLinkInput.accessGrant. Default 'none'. */
+  accessGrant?: 'new-repository' | 'none';
 }
 
 /**
@@ -52,6 +55,7 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
     private readonly repository: HierarchyProjectLinkRepository,
     private readonly accessService: HierarchyAccessService,
     private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
+    private readonly projectMembers: DeliveryProjectMembersService,
   ) {}
 
   /**
@@ -121,7 +125,7 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
       const name = input.name.trim() || input.repoFullName.split('/').at(-1);
       if (!name) return null;
 
-      return await this.repository.link({
+      const linked = await this.repository.link({
         projectId: input.projectId,
         workspaceId: input.workspaceId,
         name,
@@ -134,7 +138,21 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         ...(input.deliveryProjectId !== undefined && {
           deliveryProjectId: input.deliveryProjectId,
         }),
+        origin: input.accessGrant === 'new-repository' ? 'created' : 'attached',
       });
+
+      // ALPHACI just created this repository inside a Project: queue GitHub
+      // Write for its creator (when a Developer) and every Developer member.
+      // Never for an attached, pre-existing repository. Best-effort.
+      if (linked && input.accessGrant === 'new-repository') {
+        await this.projectMembers.grantForNewRepositoryBestEffort({
+          repositoryId: linked.repositoryId,
+          deliveryProjectId: linked.deliveryProjectId,
+          creatorUserId: input.createdBy,
+          assignedBy: input.createdBy,
+        });
+      }
+      return linked;
     } catch (error) {
       // The one loud failure: a Project-name race lost after provisioning
       // started. The caller removes its row and (create paths) the repository.

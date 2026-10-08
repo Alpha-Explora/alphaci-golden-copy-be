@@ -32,6 +32,12 @@ The active table is `platform.outbox_events`. It has one application relay entry
 
 Rows outside the registered topic and handler set must not be acknowledged by the relay. The topic registry and dispatcher fail closed for unregistered topics.
 
+## In-process delivery
+
+The API process also runs `OutboxRelayWorker` on a timer (`OUTBOX_RELAY_INTERVAL_MS`, default 15 seconds, `0` turns it off). It always delivers the two `platform.*` topics. It additionally delivers the two `hierarchy.repository_assignment.*` topics only when the API process itself has `HIERARCHY_GITHUB_SYNC_MODE=live`, because those handlers add and remove people from GitHub teams. With the mode `stub` or unset, hierarchy jobs are left to the Render cron and the manual command.
+
+The worker and the cron may run at the same time: every pass claims rows through the same lease with `FOR UPDATE SKIP LOCKED`, so a job is never delivered by two runners at once. The cron stays as the fallback for the case where the API process is down or the worker is switched off.
+
 ## Delivery semantics
 
 - Critical hierarchy state changes use `publishInTransaction` so the state mutation and queue row commit or roll back together.

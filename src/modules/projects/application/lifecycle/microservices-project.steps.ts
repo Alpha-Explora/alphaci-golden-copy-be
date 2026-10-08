@@ -266,6 +266,7 @@ export async function persistPackedBackendRow(input: {
       ...(deliveryProjectId !== undefined && { deliveryProjectId }),
       ...(chainName !== undefined && { chainName }),
       ...(enforceUniqueChainName && { enforceUniqueChainName }),
+      accessGrant: 'new-repository',
     },
   );
 }
@@ -448,9 +449,14 @@ export async function persistPackedFrontendRowIfPushed(input: {
           ),
         },
       },
-      input.pairDeliveryProjectId
-        ? { deliveryProjectId: input.pairDeliveryProjectId }
-        : { chainName: input.dto.projectName?.trim() || input.dto.repoName },
+      {
+        ...(input.pairDeliveryProjectId
+          ? { deliveryProjectId: input.pairDeliveryProjectId }
+          : {
+              chainName: input.dto.projectName?.trim() || input.dto.repoName,
+            }),
+        accessGrant: 'new-repository',
+      },
     );
   } catch (err) {
     input.logger.warn(

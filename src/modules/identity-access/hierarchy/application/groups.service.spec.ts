@@ -68,6 +68,9 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
   let databaseService: jest.Mocked<DatabaseService>;
   let directory: jest.Mocked<MemberDirectoryService>;
   let workspaceDataCleanup: { purgeWorkspace: jest.Mock };
+  let projectMembersRepository: {
+    markRemovedForUserInGroupWithClient: jest.Mock;
+  };
   let service: GroupsService;
 
   beforeEach(() => {
@@ -127,6 +130,9 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
     workspaceDataCleanup = {
       purgeWorkspace: jest.fn().mockResolvedValue({ removed: 0 }),
     };
+    projectMembersRepository = {
+      markRemovedForUserInGroupWithClient: jest.fn().mockResolvedValue(0),
+    };
 
     service = new GroupsService(
       groupsRepository,
@@ -137,6 +143,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       auditEventsService,
       databaseService,
       workspaceDataCleanup,
+      projectMembersRepository as never,
     );
   });
 

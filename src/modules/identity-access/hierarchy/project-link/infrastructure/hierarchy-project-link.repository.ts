@@ -28,6 +28,8 @@ export interface LinkProjectInput {
   projectStatus: string;
   /** Link into this existing delivery project instead of creating a new chain. */
   deliveryProjectId?: string;
+  /** 'created' only when ALPHACI just created the GitHub repository; default 'attached'. */
+  origin?: 'created' | 'attached';
 }
 
 export interface LinkResult {
@@ -248,9 +250,9 @@ export class HierarchyProjectLinkRepository {
       `
         INSERT INTO hierarchy.repositories (
           delivery_project_id, group_id, name, repo_full_name,
-          visibility, created_by, status, provisioned_project_id
+          visibility, created_by, status, provisioned_project_id, origin
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (provisioned_project_id) DO NOTHING
         RETURNING id;
       `,
@@ -263,6 +265,7 @@ export class HierarchyProjectLinkRepository {
         input.createdBy,
         input.projectStatus === 'provisioned' ? 'active' : 'pending',
         input.projectId,
+        input.origin ?? 'attached',
       ],
     );
 
@@ -340,9 +343,9 @@ export class HierarchyProjectLinkRepository {
           `
             INSERT INTO hierarchy.repositories (
               delivery_project_id, group_id, name, repo_full_name,
-              visibility, created_by, status, provisioned_project_id
+              visibility, created_by, status, provisioned_project_id, origin
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (provisioned_project_id) DO NOTHING
             RETURNING id;
           `,
@@ -355,6 +358,7 @@ export class HierarchyProjectLinkRepository {
             input.createdBy,
             input.projectStatus === 'provisioned' ? 'active' : 'pending',
             input.projectId,
+            input.origin ?? 'attached',
           ],
         );
 

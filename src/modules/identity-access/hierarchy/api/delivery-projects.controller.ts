@@ -14,10 +14,12 @@ import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
-import { CreateRepositoryDto } from './dto/create-repository.dto';
+import { AddDeliveryProjectMemberDto } from './dto/add-delivery-project-member.dto';
+import { CreateDeliveryProjectRepositoryDto } from './dto/create-delivery-project-repository.dto';
 import { DeleteDeliveryProjectDto } from './dto/delete-delivery-project.dto';
 import { UpdateDeliveryProjectDto } from './dto/update-delivery-project.dto';
 import { RepositoriesService } from '../application/repositories.service';
+import { DeliveryProjectMembersService } from '../application/delivery-project-members.service';
 import { DeliveryProjectsService } from '../application/delivery-projects.service';
 
 @Controller('delivery-projects')
@@ -26,6 +28,7 @@ export class DeliveryProjectsController {
   constructor(
     private readonly deliveryProjectsService: DeliveryProjectsService,
     private readonly repositoriesService: RepositoriesService,
+    private readonly membersService: DeliveryProjectMembersService,
   ) {}
 
   @Get(':deliveryProjectId')
@@ -87,13 +90,71 @@ export class DeliveryProjectsController {
   createRepository(
     @Req() req: Request,
     @Param('deliveryProjectId') deliveryProjectId: string,
-    @Body() body: CreateRepositoryDto,
+    @Body() body: CreateDeliveryProjectRepositoryDto,
   ) {
     return this.repositoriesService.createRepository(
       deliveryProjectId,
       this.requireUserId(req),
-      req.session.githubAccessToken,
+      {
+        githubAccessToken: req.session.githubAccessToken ?? null,
+        login: req.session.user?.login,
+      },
       body,
+    );
+  }
+
+  /** Active members (Developers and QA Team) of the Project. Lead/admin only. */
+  @Get(':deliveryProjectId/members')
+  listMembers(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+  ) {
+    return this.membersService.listMembers(
+      deliveryProjectId,
+      this.requireUserId(req),
+    );
+  }
+
+  /**
+   * Adds a team member to the Project. A Developer gets GitHub Write on every
+   * repository of the Project (and on ones added later); QA only joins inside
+   * ALPHACI. Lead/admin only.
+   */
+  @Post(':deliveryProjectId/members')
+  addMember(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+    @Body() body: AddDeliveryProjectMemberDto,
+  ) {
+    return this.membersService.addMember(
+      deliveryProjectId,
+      this.requireUserId(req),
+      body,
+    );
+  }
+
+  /** Re-runs the Developers' grant fan-out (backfill after live sync is enabled). */
+  @Post(':deliveryProjectId/members/sync')
+  resyncMembers(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+  ) {
+    return this.membersService.resyncDevelopers(
+      deliveryProjectId,
+      this.requireUserId(req),
+    );
+  }
+
+  @Delete(':deliveryProjectId/members/:memberUserId')
+  removeMember(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+    @Param('memberUserId') memberUserId: string,
+  ) {
+    return this.membersService.removeMember(
+      deliveryProjectId,
+      this.requireUserId(req),
+      memberUserId,
     );
   }
 

@@ -272,6 +272,7 @@ export async function persistMultiRepoStandaloneRow(input: {
       ...(deliveryProjectId !== undefined && { deliveryProjectId }),
       ...(chainName !== undefined && { chainName }),
       ...(enforceUniqueChainName && { enforceUniqueChainName }),
+      accessGrant: 'new-repository',
     },
   );
 }

@@ -48,12 +48,18 @@ function build(overrides: Partial<HierarchyProjectLinkRepository> = {}) {
     ),
   } as unknown as jest.Mocked<DeliveryProjectsRepository>;
 
+  const projectMembers = {
+    grantForNewRepositoryBestEffort: jest.fn(() => Promise.resolve()),
+  };
+
   return {
     service: new HierarchyProjectLinkService(
       repository,
       accessService,
       deliveryProjectsRepository,
+      projectMembers as never,
     ),
+    projectMembers,
     repository,
     accessService,
     deliveryProjectsRepository,
@@ -123,6 +129,61 @@ describe('HierarchyProjectLinkService', () => {
       // No deliveryProjectId given — a brand new chain is created, so the
       // link call must not carry one either.
       expect(link.mock.calls[0]?.[0]).not.toHaveProperty('deliveryProjectId');
+    });
+
+    it('queues the creator and Project members access once a new repository is linked', async () => {
+      const { service, projectMembers } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'new-repository' });
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).toHaveBeenCalledWith({
+        repositoryId: 'repo-1',
+        deliveryProjectId: 'dp-1',
+        creatorUserId: 'u1',
+        assignedBy: 'u1',
+      });
+    });
+
+    it('records origin created for a repository ALPHACI created', async () => {
+      const { service, link } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'new-repository' });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ origin: 'created' }),
+      );
+    });
+
+    it('ATTACHING an existing repository (no accessGrant) grants nobody and records origin attached', async () => {
+      const { service, link, projectMembers } = build();
+      await service.ensureLink(BASE);
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ origin: 'attached' }),
+      );
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('accessGrant none is the same as omitting it', async () => {
+      const { service, projectMembers } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'none' });
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not re-queue access for an already-linked project', async () => {
+      const { service, projectMembers } = build({
+        findLinkedRepositoryAndDeliveryProject: jest.fn(() =>
+          Promise.resolve({
+            repositoryId: 'existing',
+            deliveryProjectId: 'dp-9',
+          }),
+        ),
+      });
+      await service.ensureLink(BASE);
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
     });
 
     it('records public visibility rather than forcing private', async () => {
