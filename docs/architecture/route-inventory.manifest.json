@@ -1,11 +1,11 @@
 {
-  "routeCount": 220,
+  "routeCount": 218,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "e043bd242f212da7246c77d8de048dd368ad7000b45429d9230a76c53d95f194",
+  "referenceSha256": "8d522034ef0ec459841be30a71cbad605cfb495573a9d41a18a01a59d3a35101",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "e043bd242f212da7246c77d8de048dd368ad7000b45429d9230a76c53d95f194",
+  "baselineSha256": "8d522034ef0ec459841be30a71cbad605cfb495573a9d41a18a01a59d3a35101",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -165,12 +165,10 @@
       ]
     },
     {
-      "reason": "Project members: a team lead or admin lists, adds and removes the Developers and QA Team people of a Project (Developers get GitHub Write on every repository of it), and re-runs the Developers' grant fan-out after live GitHub sync is enabled.",
+      "reason": "Live Playwright progress: the generated verify workflow posts test-by-test events with its CI token while Playwright runs, and the studio Playwright tab reads the current stage, finished tests and what is running now.",
       "routes": [
-        "GET /api/v1/delivery-projects/{deliveryProjectId}/members",
-        "POST /api/v1/delivery-projects/{deliveryProjectId}/members",
-        "POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync",
-        "DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}"
+        "GET /api/v1/projects/{projectId}/workspace/playwright-live",
+        "POST /api/v1/ci/playwright-progress"
       ]
     }
   ]

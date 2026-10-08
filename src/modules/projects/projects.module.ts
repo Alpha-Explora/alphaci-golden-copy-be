@@ -52,6 +52,8 @@ import { ProjectWorkspaceController } from './api/project-workspace.controller';
 import { BrowserTestsService } from './application/workspace/browser-tests.service';
 import { ProjectVisualController } from './api/project-visual.controller';
 import { ProjectVisualService } from './application/visual/project-visual.service';
+import { ProjectPlaywrightLiveController } from './api/project-playwright-live.controller';
+import { ProjectPlaywrightLiveService } from './application/playwright-live/project-playwright-live.service';
 import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
 import { ProjectsService } from './application/lifecycle/projects.service';
 import { SonarCloudSetupService } from './application/lifecycle/sonar-cloud-setup.service';
@@ -83,6 +85,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectsController,
     ProjectWorkspaceController,
     ProjectVisualController,
+    ProjectPlaywrightLiveController,
     ProjectFolderController,
     ProjectActivityController,
   ],
@@ -106,6 +109,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectWorkspaceService,
     BrowserTestsService,
     ProjectVisualService,
+    ProjectPlaywrightLiveService,
     ProjectGithubTokenResolver,
     ProjectGithubActivityService,
     ProjectCommitsService,

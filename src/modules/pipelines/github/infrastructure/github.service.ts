@@ -1676,6 +1676,46 @@ export class GithubService
     }));
   }
 
+  /**
+   * The newest run of one workflow file on a branch, or null. Used by the live
+   * Playwright progress read, which names the verify workflow file directly so
+   * it never mistakes another workflow's run for the Playwright one.
+   */
+  async getLatestWorkflowFileRun(
+    accessToken: string,
+    repoFullName: string,
+    workflowFile: string,
+    branch: string,
+  ): Promise<GitHubWorkflowRunSummary | null> {
+    const params = new URLSearchParams({ branch, per_page: '1' });
+    const payload = await this.http.workspaceGet<{
+      workflow_runs?: GitHubWorkflowRunRow[];
+    }>(
+      `https://api.github.com/repos/${repoFullName}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?${params.toString()}`,
+      accessToken,
+      'workflow file run',
+    );
+    const run = payload?.workflow_runs?.[0];
+    if (!run) return null;
+    return {
+      id: run.id,
+      name: run.name ?? 'Workflow',
+      displayTitle:
+        run.display_title ?? run.head_commit?.message?.split('\n')[0] ?? '',
+      headBranch: run.head_branch ?? '',
+      headSha: run.head_sha ?? '',
+      event: run.event ?? '',
+      status: run.status ?? 'unknown',
+      conclusion: run.conclusion ?? null,
+      runNumber: run.run_number ?? 0,
+      runAttempt: run.run_attempt ?? 1,
+      htmlUrl: run.html_url ?? '',
+      actor: run.actor?.login ?? null,
+      createdAt: run.created_at ?? '',
+      updatedAt: run.updated_at ?? '',
+    };
+  }
+
   /** One run's jobs and their steps. Loaded on open — never inside a poll. */
   async getWorkflowRunJobs(
     accessToken: string,
