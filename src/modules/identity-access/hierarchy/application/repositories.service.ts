@@ -414,14 +414,6 @@ export class RepositoriesService {
       );
     }
 
-    // The target Project's Developers get Write on the repository that just
-    // joined it. Existing assignments are kept (see DeliveryProjectMembersService).
-    await this.membersService.grantForNewRepositoryBestEffort({
-      repositoryId,
-      deliveryProjectId: target.id,
-      assignedBy: userId,
-    });
-
     const remaining =
       await this.repositoriesRepository.countActiveInDeliveryProject(
         sourceDeliveryProjectId,

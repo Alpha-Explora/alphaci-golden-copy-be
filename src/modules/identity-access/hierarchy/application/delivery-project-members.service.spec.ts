@@ -73,6 +73,7 @@ function setup({
   };
   const repositoriesRepository = {
     listActiveForGrantWithClient: jest.fn().mockResolvedValue(repos),
+    isCreatedByAlphaci: jest.fn().mockResolvedValue(true),
   };
   const assignmentsRepository = {
     listLiveRepositoryIdsForUserWithClient: jest
@@ -488,6 +489,28 @@ describe('DeliveryProjectMembersService.grantForRepository (a repository joined 
     expect(
       githubSyncService.createAssignmentAndRequestGrantWithClient,
     ).toHaveBeenCalledTimes(1);
+  });
+
+  it('grants nobody on an ATTACHED repository, even for its creator and the Project Developers', async () => {
+    const {
+      service,
+      githubSyncService,
+      repositoriesRepository,
+      databaseService,
+    } = setup();
+    repositoriesRepository.isCreatedByAlphaci.mockResolvedValue(false);
+    await expect(
+      service.grantForRepository({
+        repositoryId: 'repo-attached',
+        deliveryProjectId: 'dp-1',
+        creatorUserId: 'creator-1',
+        assignedBy: 'creator-1',
+      }),
+    ).resolves.toBe(0);
+    expect(databaseService.withTransaction).not.toHaveBeenCalled();
+    expect(
+      githubSyncService.createAssignmentAndRequestGrantWithClient,
+    ).not.toHaveBeenCalled();
   });
 
   it('does nothing while sync mode is stub', async () => {

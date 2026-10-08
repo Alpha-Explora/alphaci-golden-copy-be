@@ -7,4 +7,5 @@
 -- developers' assignments first if the access must go with the memberships.
 BEGIN;
 DROP TABLE IF EXISTS hierarchy.delivery_project_members;
+ALTER TABLE hierarchy.repositories DROP COLUMN IF EXISTS origin;
 COMMIT;

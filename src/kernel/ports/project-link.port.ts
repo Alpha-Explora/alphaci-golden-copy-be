@@ -30,6 +30,14 @@ export interface EnsureProjectLinkInput {
    * failure) rather than the user-facing 400/404/403 the up-front gate gives.
    */
   deliveryProjectId?: string;
+  /**
+   * Whether ALPHACI just CREATED the GitHub repository for this project.
+   * 'new-repository' queues the automatic GitHub grants (the creator when a
+   * Developer, plus the Project's Developers). 'none' (the default, safe) makes
+   * no grant: used when an EXISTING repository is attached through Setup, so
+   * attaching can never hand anyone Write on it.
+   */
+  accessGrant?: 'new-repository' | 'none';
 }
 
 export interface EnsureLinkResult {

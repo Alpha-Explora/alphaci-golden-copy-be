@@ -26,6 +26,8 @@ export interface EnsureProjectLinkInput {
   projectStatus: string;
   /** Link into this existing delivery project instead of creating a new chain. */
   deliveryProjectId?: string;
+  /** See ProjectLinkPort EnsureProjectLinkInput.accessGrant. Default 'none'. */
+  accessGrant?: 'new-repository' | 'none';
 }
 
 /**
@@ -136,12 +138,13 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         ...(input.deliveryProjectId !== undefined && {
           deliveryProjectId: input.deliveryProjectId,
         }),
+        origin: input.accessGrant === 'new-repository' ? 'created' : 'attached',
       });
 
-      // A repository just landed in a Project: queue GitHub Write for its
-      // creator (when a Developer) and every Developer member of the Project.
-      // Best-effort and never throws, like the link itself.
-      if (linked) {
+      // ALPHACI just created this repository inside a Project: queue GitHub
+      // Write for its creator (when a Developer) and every Developer member.
+      // Never for an attached, pre-existing repository. Best-effort.
+      if (linked && input.accessGrant === 'new-repository') {
         await this.projectMembers.grantForNewRepositoryBestEffort({
           repositoryId: linked.repositoryId,
           deliveryProjectId: linked.deliveryProjectId,

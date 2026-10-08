@@ -55,9 +55,9 @@ export class RepositoriesRepository {
     const result = await this.databaseService.query<RepositoryRow>(
       `
         INSERT INTO hierarchy.repositories (
-          delivery_project_id, group_id, name, repo_full_name, created_by, status, provisioned_project_id
+          delivery_project_id, group_id, name, repo_full_name, created_by, status, provisioned_project_id, origin
         )
-        VALUES ($1, $2, $3, $4, $5, 'active', $6)
+        VALUES ($1, $2, $3, $4, $5, 'active', $6, 'created')
         RETURNING id, delivery_project_id, group_id, name, repo_full_name, github_repo_id, visibility,
           created_by, status, archived_at, provisioned_project_id, created_at, updated_at;
       `,
@@ -129,8 +129,10 @@ export class RepositoriesRepository {
   }
 
   /**
-   * Repositories of a Project that can take a GitHub grant: active, with a
-   * real GitHub repository behind them.
+   * Repositories of a Project that can take an AUTOMATIC GitHub grant: active,
+   * with a real GitHub repository behind them, and created by ALPHACI.
+   * Attached (pre-existing) repositories are excluded: access to those comes
+   * only from an explicit per-repository assignment by a lead or admin.
    */
   async listActiveForGrantWithClient(
     client: Pick<PoolClient, 'query'>,
@@ -146,6 +148,7 @@ export class RepositoriesRepository {
         WHERE delivery_project_id = $1
           AND status = 'active'
           AND repo_full_name IS NOT NULL
+          AND origin = 'created'
         ORDER BY created_at ASC;
       `,
       [deliveryProjectId],
@@ -170,6 +173,15 @@ export class RepositoriesRepository {
     if (!row) return null;
     const counts = await this.getAssignmentCounts([row.id]);
     return this.toRecord(row, counts.get(row.id) ?? 0);
+  }
+
+  /** True when ALPHACI created the repository (so automatic grants are allowed). */
+  async isCreatedByAlphaci(repositoryId: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `SELECT 1 FROM hierarchy.repositories WHERE id = $1 AND origin = 'created';`,
+      [repositoryId],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   /** The hierarchy row linked to an AlphaCI project, when the link was written. */

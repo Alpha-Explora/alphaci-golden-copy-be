@@ -48,5 +48,16 @@ CREATE INDEX IF NOT EXISTS idx_delivery_project_members_user_active
 ALTER TABLE hierarchy.delivery_project_members ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON hierarchy.delivery_project_members FROM anon, authenticated;
 
+-- hierarchy.repositories.origin: whether ALPHACI itself created the GitHub
+-- repository ('created') or an existing org repository was attached to a
+-- Project through Setup ('attached'). Automatic GitHub grants (creator and
+-- Project Developers) are made ONLY on 'created' repositories: attaching an
+-- existing repository must never hand the attacher or the Project's
+-- Developers Write on it. Existing rows default to 'attached' (safe: no
+-- discriminator exists for history); a lead grants those per repository.
+ALTER TABLE hierarchy.repositories
+  ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'attached'
+  CHECK (origin IN ('created', 'attached'));
+
 COMMENT ON TABLE hierarchy.delivery_project_members
   IS 'People a lead/admin added to a Project (delivery project): developer (GitHub write on every repository of the Project via repository_assignments) or qa (ALPHACI-only, no GitHub grant). RLS deny-by-default.';

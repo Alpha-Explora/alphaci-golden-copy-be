@@ -253,7 +253,8 @@ export class DeliveryProjectMembersService {
   }
 
   /**
-   * Re-runs the grant fan-out for every active Developer of the Project.
+   * Re-runs the grant fan-out for every active Developer of the Project, on
+   * the repositories ALPHACI created (attached ones are skipped).
    * Idempotent: live assignments are skipped, failed or revoked ones are
    * reset. The way to backfill access after live sync is switched on.
    */
@@ -303,6 +304,9 @@ export class DeliveryProjectMembersService {
    * A repository just landed in a Project (created, linked, or moved in):
    * grant its creator (when a Developer) and every active Developer member.
    *
+   * Only for repositories ALPHACI created (hierarchy.repositories.origin =
+   * 'created'); attached repositories and moves grant nothing.
+   *
    * A system action: no manager check, because the caller already passed the
    * create/move gate. canBeAssignedRepository and team membership are still
    * enforced per person. Does nothing unless live sync is on (stub mode makes
@@ -317,6 +321,15 @@ export class DeliveryProjectMembersService {
     assignedBy: string;
   }): Promise<number> {
     if (!this.isLive()) return 0;
+    // Automatic grants only for a repository ALPHACI created. An attached
+    // (pre-existing) repository never gets one, whatever calls this.
+    if (
+      !(await this.repositoriesRepository.isCreatedByAlphaci(
+        input.repositoryId,
+      ))
+    ) {
+      return 0;
+    }
     const groupId =
       await this.deliveryProjectsRepository.findGroupIdForDeliveryProject(
         input.deliveryProjectId,

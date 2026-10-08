@@ -110,6 +110,12 @@ export interface NewProjectLinkOptions {
   chainName?: string;
   /** `chainName` is a caller-chosen Project name that must be unique in the team. */
   enforceUniqueChainName?: boolean;
+  /**
+   * 'new-repository' ONLY where ALPHACI just created the GitHub repository.
+   * Omitted (Setup, which attaches an existing repository) means no automatic
+   * GitHub grants at all.
+   */
+  accessGrant?: 'new-repository' | 'none';
 }
 
 /**
@@ -615,6 +621,7 @@ export class ProjectProvisioningSupport {
         ...(linkOptions?.deliveryProjectId !== undefined && {
           deliveryProjectId: linkOptions.deliveryProjectId,
         }),
+        accessGrant: linkOptions?.accessGrant ?? 'none',
       });
     } catch (error) {
       // Lost the Project-name race after the repo may already exist: drop the

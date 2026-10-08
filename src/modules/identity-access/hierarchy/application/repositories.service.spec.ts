@@ -584,16 +584,12 @@ describe('RepositoriesService.createBareRepository (legacy system flow)', () => 
 });
 
 describe('RepositoriesService.moveRepository access', () => {
-  it('queues the target Project members on the moved repository, without a creator grant', async () => {
+  it('grants NOBODY on a move: the repository may have been attached, so access comes only from an explicit lead/admin action', async () => {
     const { service, membersService } = setup();
     await service.moveRepository('repo-be', 'lead-1', 'dp-target');
-    expect(membersService.grantForNewRepositoryBestEffort).toHaveBeenCalledWith(
-      {
-        repositoryId: 'repo-be',
-        deliveryProjectId: 'dp-target',
-        assignedBy: 'lead-1',
-      },
-    );
+    expect(
+      membersService.grantForNewRepositoryBestEffort,
+    ).not.toHaveBeenCalled();
   });
 
   it('does nothing for a no-op move', async () => {

@@ -133,7 +133,7 @@ describe('HierarchyProjectLinkService', () => {
 
     it('queues the creator and Project members access once a new repository is linked', async () => {
       const { service, projectMembers } = build();
-      await service.ensureLink(BASE);
+      await service.ensureLink({ ...BASE, accessGrant: 'new-repository' });
       expect(
         projectMembers.grantForNewRepositoryBestEffort,
       ).toHaveBeenCalledWith({
@@ -142,6 +142,33 @@ describe('HierarchyProjectLinkService', () => {
         creatorUserId: 'u1',
         assignedBy: 'u1',
       });
+    });
+
+    it('records origin created for a repository ALPHACI created', async () => {
+      const { service, link } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'new-repository' });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ origin: 'created' }),
+      );
+    });
+
+    it('ATTACHING an existing repository (no accessGrant) grants nobody and records origin attached', async () => {
+      const { service, link, projectMembers } = build();
+      await service.ensureLink(BASE);
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ origin: 'attached' }),
+      );
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('accessGrant none is the same as omitting it', async () => {
+      const { service, projectMembers } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'none' });
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
     });
 
     it('does not re-queue access for an already-linked project', async () => {
