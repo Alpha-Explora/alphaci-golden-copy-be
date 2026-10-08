@@ -49,6 +49,13 @@ export abstract class GithubTeamAccessProvider {
      * team (the org base permission stays `read`, so "none" is never expected).
      */
     intent?: 'grant' | 'revoke';
+    /**
+     * True only when ALPHACI created this repository AND this person is the
+     * recorded creator. GitHub gives such a creator a direct admin
+     * collaborator grant automatically; that one grant (for that repository
+     * and person only) is expected, not drift.
+     */
+    isRepositoryCreator?: boolean;
     actingUserId: string;
   }): Promise<VerifyPermissionResult>;
 }

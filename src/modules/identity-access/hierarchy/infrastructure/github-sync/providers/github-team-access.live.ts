@@ -187,6 +187,7 @@ export class GithubTeamAccessLiveProvider extends GithubTeamAccessProvider {
     expectedPermission: 'write';
     expectedTeamSlug?: string;
     intent?: 'grant' | 'revoke';
+    isRepositoryCreator?: boolean;
     actingUserId: string;
   }): Promise<VerifyPermissionResult> {
     const token = await this.requireToken(
@@ -219,9 +220,12 @@ export class GithubTeamAccessLiveProvider extends GithubTeamAccessProvider {
     if (!atLeastWrite) {
       return { hasAccess: false, permission: role };
     }
-    if (ABOVE_WRITE.has(role)) {
-      // Already above Write through a route the team grant does not control
-      // (repository creator, org owner). Not a verification failure.
+    const elevated = ABOVE_WRITE.has(role);
+    // Org owners hold admin everywhere by ownership; nothing to report.
+    if (
+      elevated &&
+      (await this.isOrgOwner(input.repoFullName, input.githubLogin, token))
+    ) {
       return { hasAccess: true, permission: role, hasUnapprovedGrant: false };
     }
     const grants = await this.findUnapprovedGrants({
@@ -232,11 +236,39 @@ export class GithubTeamAccessLiveProvider extends GithubTeamAccessProvider {
       }),
       token,
     });
+    // Elevated access is NOT exempt from drift detection. The one expected
+    // elevated grant is the direct admin collaborator entry GitHub adds for
+    // the creator of a repository ALPHACI created, for that repo and person.
+    const expectedCreatorGrant = elevated && input.isRepositoryCreator === true;
+    const unexplainedElevation =
+      elevated && !expectedCreatorGrant && !grants.direct && !grants.otherTeam;
     return {
       hasAccess: true,
       permission: role,
-      hasUnapprovedGrant: grants.direct || grants.otherTeam,
+      hasUnapprovedGrant:
+        grants.otherTeam ||
+        (grants.direct && !expectedCreatorGrant) ||
+        unexplainedElevation,
     };
+  }
+
+  private async isOrgOwner(
+    repoFullName: string,
+    githubLogin: string,
+    token: string,
+  ): Promise<boolean> {
+    const [orgLogin] = repoFullName.split('/');
+    const res = await fetch(
+      `${GITHUB_API}/orgs/${orgLogin ?? ''}/memberships/${githubLogin}`,
+      { headers: this.headers(token) },
+    );
+    if (res.status === 404) return false;
+    if (!res.ok) {
+      throw new BadGatewayException(
+        `GitHub org membership verification failed (${String(res.status)}): ${await res.text()}`,
+      );
+    }
+    return ((await res.json()) as { role?: string }).role === 'admin';
   }
 
   private async verifyRevoked(
@@ -293,12 +325,13 @@ export class GithubTeamAccessLiveProvider extends GithubTeamAccessProvider {
       );
     }
     const direct = (await directRes.json()) as Array<{ login: string }>;
+    let isDirect = false;
     if (
       direct.some(
         (user) => user.login.toLowerCase() === input.githubLogin.toLowerCase(),
       )
     ) {
-      return { direct: true, otherTeam: false };
+      isDirect = true;
     }
 
     const teamsRes = await fetch(
@@ -318,14 +351,14 @@ export class GithubTeamAccessLiveProvider extends GithubTeamAccessProvider {
         `${GITHUB_API}/orgs/${orgLogin ?? ''}/teams/${team.slug}/memberships/${input.githubLogin}`,
         { headers: this.headers(input.token) },
       );
-      if (membershipRes.ok) return { direct: false, otherTeam: true };
+      if (membershipRes.ok) return { direct: isDirect, otherTeam: true };
       if (membershipRes.status !== 404) {
         throw new BadGatewayException(
           `GitHub inherited team verification failed (${String(membershipRes.status)}): ${await membershipRes.text()}`,
         );
       }
     }
-    return { direct: false, otherTeam: false };
+    return { direct: isDirect, otherTeam: false };
   }
 
   private async fetchExistingTeam(

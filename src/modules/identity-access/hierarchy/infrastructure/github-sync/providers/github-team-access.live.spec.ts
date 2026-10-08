@@ -171,21 +171,127 @@ describe('GithubTeamAccessLiveProvider grant verification', () => {
     });
   });
 
-  it.each(['admin', 'maintain'])(
-    'accepts %s (already above write: org owner / repository creator) without failing the grant',
-    async (role) => {
-      const { provider } = setup();
-      // A creator is also a direct collaborator; that must not flag them.
-      mockFetch(permission(role), (url) =>
-        url.includes('/collaborators?affiliation=direct')
-          ? json([{ login: 'dev-one' }])
-          : undefined,
-      );
-      await expect(
-        provider.verifyEffectivePermission(verifyInput()),
-      ).resolves.toMatchObject({ hasAccess: true, hasUnapprovedGrant: false });
-    },
-  );
+  /*
+   * Elevated access is NOT exempt from drift detection: an out-of-band
+   * admin/maintain grant must still be reported. The only exemptions are org
+   * owners, and the direct admin entry GitHub adds for the ALPHACI-recorded
+   * creator of a repository ALPHACI created (that repo and person only).
+   */
+  const orgMembership = (role: 'admin' | 'member' | null) => (url: string) =>
+    url.endsWith('/orgs/Alphaexplora-Sandbox/memberships/dev-one')
+      ? role === null
+        ? notFound()
+        : json({ state: 'active', role })
+      : undefined;
+  const directIsDev = (url: string) =>
+    url.includes('/collaborators?affiliation=direct')
+      ? json([{ login: 'dev-one' }])
+      : undefined;
+  const alsoInPlatformTeam = [
+    (url: string) =>
+      url.endsWith('/teams?per_page=100')
+        ? json([{ slug: TEAM }, { slug: 'platform-all' }])
+        : undefined,
+    (url: string) =>
+      url.includes('/teams/platform-all/memberships/dev-one')
+        ? json({ state: 'active' })
+        : undefined,
+  ];
+
+  it('org owner is exempt: admin by ownership is not drift, even with a direct entry', async () => {
+    const { provider } = setup();
+    mockFetch(permission('admin'), orgMembership('admin'), directIsDev);
+    await expect(
+      provider.verifyEffectivePermission(verifyInput()),
+    ).resolves.toMatchObject({ hasAccess: true, hasUnapprovedGrant: false });
+  });
+
+  it('the recorded creator of an ALPHACI-created repo is exempt for its own direct admin grant', async () => {
+    const { provider } = setup();
+    mockFetch(
+      permission('admin'),
+      orgMembership('member'),
+      directIsDev,
+      onlyOwnTeam,
+    );
+    await expect(
+      provider.verifyEffectivePermission({
+        ...verifyInput(),
+        isRepositoryCreator: true,
+      }),
+    ).resolves.toMatchObject({ hasAccess: true, hasUnapprovedGrant: false });
+  });
+
+  it('a creator is NOT exempt when they also hold access through another team', async () => {
+    const { provider } = setup();
+    mockFetch(
+      permission('admin'),
+      orgMembership('member'),
+      directIsDev,
+      ...alsoInPlatformTeam,
+    );
+    await expect(
+      provider.verifyEffectivePermission({
+        ...verifyInput(),
+        isRepositoryCreator: true,
+      }),
+    ).resolves.toMatchObject({ hasUnapprovedGrant: true });
+  });
+
+  it('a non-owner admin via a direct collaborator grant is flagged', async () => {
+    const { provider } = setup();
+    mockFetch(
+      permission('admin'),
+      orgMembership('member'),
+      directIsDev,
+      onlyOwnTeam,
+    );
+    await expect(
+      provider.verifyEffectivePermission(verifyInput()),
+    ).resolves.toMatchObject({ hasAccess: true, hasUnapprovedGrant: true });
+  });
+
+  it('maintain via another team is flagged', async () => {
+    const { provider } = setup();
+    mockFetch(
+      permission('maintain'),
+      orgMembership(null),
+      noDirect,
+      ...alsoInPlatformTeam,
+    );
+    await expect(
+      provider.verifyEffectivePermission(verifyInput()),
+    ).resolves.toMatchObject({ hasUnapprovedGrant: true });
+  });
+
+  it('elevated access with no visible source and no exemption is flagged', async () => {
+    const { provider } = setup();
+    mockFetch(
+      permission('maintain'),
+      orgMembership(null),
+      noDirect,
+      onlyOwnTeam,
+    );
+    await expect(
+      provider.verifyEffectivePermission(verifyInput()),
+    ).resolves.toMatchObject({ hasUnapprovedGrant: true });
+  });
+
+  it('the creator exemption does not apply to someone else on the same repo', async () => {
+    const { provider } = setup();
+    mockFetch(
+      permission('admin'),
+      orgMembership('member'),
+      directIsDev,
+      onlyOwnTeam,
+    );
+    await expect(
+      provider.verifyEffectivePermission({
+        ...verifyInput(),
+        isRepositoryCreator: false,
+      }),
+    ).resolves.toMatchObject({ hasUnapprovedGrant: true });
+  });
 
   it('does not verify when the org base read is all the person has', async () => {
     const { provider } = setup();
@@ -197,10 +303,13 @@ describe('GithubTeamAccessLiveProvider grant verification', () => {
 
   it('flags a direct collaborator at Write as an unapproved grant', async () => {
     const { provider } = setup();
-    mockFetch(permission('write'), (url) =>
-      url.includes('/collaborators?affiliation=direct')
-        ? json([{ login: 'Dev-One' }])
-        : undefined,
+    mockFetch(
+      permission('write'),
+      (url) =>
+        url.includes('/collaborators?affiliation=direct')
+          ? json([{ login: 'Dev-One' }])
+          : undefined,
+      onlyOwnTeam,
     );
     await expect(
       provider.verifyEffectivePermission(verifyInput()),
@@ -269,10 +378,14 @@ describe('GithubTeamAccessLiveProvider revoke verification (org base permission 
 
   it('is NOT verified while the person is still a direct collaborator', async () => {
     const { provider } = setup();
-    mockFetch(permission('write'), memberOfTeam(false), (url) =>
-      url.includes('/collaborators?affiliation=direct')
-        ? json([{ login: 'dev-one' }])
-        : undefined,
+    mockFetch(
+      permission('write'),
+      memberOfTeam(false),
+      (url) =>
+        url.includes('/collaborators?affiliation=direct')
+          ? json([{ login: 'dev-one' }])
+          : undefined,
+      onlyOwnTeam,
     );
     await expect(
       provider.verifyEffectivePermission(verifyInput('revoke')),

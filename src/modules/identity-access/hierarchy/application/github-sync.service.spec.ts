@@ -87,6 +87,7 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
     } as unknown as jest.Mocked<GithubAccessSyncRepository>;
     repositoriesRepository = {
       findById: jest.fn().mockResolvedValue(baseRepository),
+      isCreatedByAlphaci: jest.fn().mockResolvedValue(false),
     } as unknown as jest.Mocked<RepositoriesRepository>;
     sessionUserLookup = {
       findSessionUser: jest.fn().mockResolvedValue(baseUser),
@@ -203,6 +204,44 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
     expect(assignmentsRepository.markGrantFailed).not.toHaveBeenCalled();
     expect(syncRepository.markVerified).toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      'the recorded creator of a repository ALPHACI created',
+      'dev-1',
+      true,
+      true,
+    ],
+    ['the creator of an ATTACHED repository', 'dev-1', false, false],
+    ['a person who is not the creator', 'dev-2', true, false],
+  ])(
+    'passes isRepositoryCreator to the provider for %s',
+    async (_label, creator, created, expected) => {
+      assignmentsRepository.findById.mockResolvedValue(baseAssignment());
+      repositoriesRepository.findById.mockResolvedValue({
+        ...baseRepository,
+        createdBy: creator,
+      } as never);
+      repositoriesRepository.isCreatedByAlphaci.mockResolvedValue(created);
+      provider.ensureTeam.mockResolvedValue({
+        githubTeamId: 'team-1',
+        githubTeamSlug: 'payments-api-developers',
+      });
+      provider.verifyEffectivePermission.mockResolvedValue({
+        hasAccess: true,
+        permission: 'write',
+      });
+
+      await service.processJob(HIERARCHY_OUTBOX_TOPICS.grant, {
+        assignmentId: 'assignment-1',
+        actingUserId: 'pm-1',
+      });
+
+      expect(provider.verifyEffectivePermission).toHaveBeenCalledWith(
+        expect.objectContaining({ isRepositoryCreator: expected }),
+      );
+    },
+  );
 
   it('transition #2b: a grant that fails verification is marked failed, not active, and is requeued for retry', async () => {
     assignmentsRepository.findById.mockResolvedValue(baseAssignment());

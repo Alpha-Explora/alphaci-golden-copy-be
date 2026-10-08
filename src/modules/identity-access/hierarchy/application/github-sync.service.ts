@@ -256,6 +256,9 @@ export class GithubSyncService {
         githubLogin: user.login,
         expectedPermission: 'write',
         expectedTeamSlug: team.githubTeamSlug,
+        isRepositoryCreator:
+          repository.createdBy === assignment.userId &&
+          (await this.repositoriesRepository.isCreatedByAlphaci(repository.id)),
         actingUserId,
       });
 
