@@ -53,7 +53,12 @@ export class GithubTeamAccessStubProvider extends GithubTeamAccessProvider {
     return Promise.resolve();
   }
 
-  verifyEffectivePermission(): Promise<VerifyPermissionResult> {
+  verifyEffectivePermission(input?: {
+    intent?: 'grant' | 'revoke';
+  }): Promise<VerifyPermissionResult> {
+    if (input?.intent === 'revoke') {
+      return Promise.resolve({ hasAccess: false, permission: 'read' });
+    }
     return Promise.resolve({
       hasAccess: true,
       permission: 'write',

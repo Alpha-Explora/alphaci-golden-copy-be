@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 216 current API routes."
+description: "Generated inventory of the 220 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,13 +15,14 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **216 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **220 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
 - `DELETE /api/v1/admin/users/{id}/role`
 - `DELETE /api/v1/auth/account`
 - `DELETE /api/v1/delivery-projects/{deliveryProjectId}`
+- `DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}`
 - `DELETE /api/v1/groups/{groupId}`
 - `DELETE /api/v1/groups/{groupId}/members/{memberId}`
 - `DELETE /api/v1/projects/{id}`
@@ -55,6 +56,7 @@ The current compiled API exposes **216 routes** under the global `/api/v1` prefi
 - `GET /api/v1/ci/visual-baselines`
 - `GET /api/v1/ci/visual-baselines/file`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}`
+- `GET /api/v1/delivery-projects/{deliveryProjectId}/members`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/current`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}`
@@ -167,6 +169,8 @@ The current compiled API exposes **216 routes** under the global `/api/v1` prefi
 - `POST /api/v1/ci/visual-results/file`
 - `POST /api/v1/ci/visual-summary`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/archive`
+- `POST /api/v1/delivery-projects/{deliveryProjectId}/members`
+- `POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/automation/dispatch`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/reopen`

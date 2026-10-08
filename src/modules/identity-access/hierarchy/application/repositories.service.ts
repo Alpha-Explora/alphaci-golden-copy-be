@@ -8,6 +8,10 @@ import {
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
+  DELIVERY_PROJECT_REPOSITORY_PROVISIONING,
+  type DeliveryProjectRepositoryProvisioningPort,
+} from '#kernel/ports/delivery-project-repository-provisioning.port';
+import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
@@ -21,6 +25,7 @@ import {
 } from '#kernel/ports/project-requirements-readiness.port';
 import { assertProjectHasFeatureForRepositoryCreate } from '#kernel/rules/project-features.gate';
 import { DeliveryProjectsRepository } from '../infrastructure/delivery-projects.repository';
+import { DeliveryProjectMembersService } from './delivery-project-members.service';
 import { HierarchyAccessService } from './hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../domain/hierarchy.types';
 import {
@@ -28,6 +33,11 @@ import {
   type RepositoryRecord,
 } from '../infrastructure/repositories.repository';
 import type { CreateRepositoryDto } from '../api/dto/create-repository.dto';
+import {
+  summarizeHosting,
+  type CreateDeliveryProjectRepositoryDto,
+  type RepositoryHostingSummary,
+} from '../api/dto/create-delivery-project-repository.dto';
 import type { UpdateRepositoryDto } from '../api/dto/update-repository.dto';
 
 export interface MoveRepositoryResult {
@@ -37,6 +47,29 @@ export interface MoveRepositoryResult {
   sourceDeliveryProjectId: string;
   /** True when the move left the source project with no active repositories. */
   sourceDeliveryProjectEmpty: boolean;
+}
+
+/** What "Add repository" returns: the hierarchy row plus the setup outcome. */
+export type CreatedRepositoryResult = RepositoryRecord & {
+  provisioning: {
+    projectId: string;
+    repoFullName: string;
+    repoUrl: string;
+    workflowPath: string;
+    branchesCreated: string[];
+    hosting: RepositoryHostingSummary;
+    /** The raw per-target hosting result, same shape as POST /projects. */
+    deploymentProvisioning: Awaited<
+      ReturnType<
+        DeliveryProjectRepositoryProvisioningPort['provisionRepository']
+      >
+    >['deploymentProvisioning'];
+  };
+};
+
+export interface RepositoryCreateSession {
+  githubAccessToken: string | null;
+  login: string | undefined;
 }
 
 @Injectable()
@@ -52,15 +85,23 @@ export class RepositoriesService {
     private readonly auditEventsService: AuditEventPublisher,
     @Inject(PROJECT_REQUIREMENTS_READINESS)
     private readonly requirementsReadiness: ProjectRequirementsReadinessPort,
+    @Inject(DELIVERY_PROJECT_REPOSITORY_PROVISIONING)
+    private readonly repositoryProvisioning: DeliveryProjectRepositoryProvisioningPort,
+    private readonly membersService: DeliveryProjectMembersService,
   ) {}
 
   /**
+   * BARE create: the GitHub repository, the hierarchy row and an AlphaCI
+   * project row, with no workflows and no hosting. Kept only for the legacy
+   * "create system" flow, which names a repository after its system and has no
+   * stack to set up. The Add repository route uses createRepository.
+   *
    * Creates the GitHub repository (reuses GithubService.createRepo — does
    * not reimplement GitHub repo creation, the hierarchy record,
    * and a projects.provisioned_projects row wired to it so the repository
    * immediately gets dashboard/CI/deployment functionality for free.
    */
-  async createRepository(
+  async createBareRepository(
     deliveryProjectId: string,
     userId: string,
     githubAccessToken: string | undefined,
@@ -124,7 +165,128 @@ export class RepositoriesService {
       metadata: { groupId, deliveryProjectId, repositoryId: repository.id },
     });
 
+    await this.membersService.grantForNewRepositoryBestEffort({
+      repositoryId: repository.id,
+      deliveryProjectId,
+      creatorUserId: userId,
+      assignedBy: userId,
+    });
+
     return repository;
+  }
+
+  /**
+   * "Add repository" inside a Project: the same full setup the create wizard
+   * runs for one repository (GitHub repository, starter files, branches and
+   * protection, pipeline workflows, Actions secrets, and managed hosting),
+   * filed under this Project. Projects owns every step; this method only
+   * gates, delegates and reports.
+   *
+   * Hosting never aborts the create: the repository is already usable, so a
+   * failed Vercel/Render step comes back in `provisioning.hosting` with its
+   * reasons instead of an error.
+   */
+  async createRepository(
+    deliveryProjectId: string,
+    userId: string,
+    session: RepositoryCreateSession,
+    dto: CreateDeliveryProjectRepositoryDto,
+  ): Promise<CreatedRepositoryResult> {
+    const { groupId } =
+      await this.accessService.assertCanCreateUnderDeliveryProject(
+        deliveryProjectId,
+        userId,
+      );
+    if (!(await this.accessService.isPlatformAdmin(userId))) {
+      await assertProjectHasFeatureForRepositoryCreate(
+        this.requirementsReadiness,
+        await this.accessService.getAppRole(userId),
+        deliveryProjectId,
+      );
+    }
+    if (!session.login) {
+      throw new BadRequestException(
+        'GitHub login not found in session. Re-authenticate via GitHub OAuth.',
+      );
+    }
+
+    const provisioned = await this.repositoryProvisioning.provisionRepository({
+      userId,
+      userLogin: session.login,
+      githubAccessToken: session.githubAccessToken,
+      workspaceId: groupId,
+      deliveryProjectId,
+      repoName: dto.name,
+      visibility: dto.visibility ?? 'private',
+      projectTypeId: dto.projectTypeId,
+      serviceName: dto.serviceName ?? dto.name,
+      repoShape:
+        dto.repoShape === undefined || dto.repoShape === 'standalone'
+          ? 'standalone'
+          : 'monorepo',
+      ...(dto.workflowRecipeId !== undefined && {
+        workflowRecipeId: dto.workflowRecipeId,
+      }),
+      ...(dto.servicePath !== undefined && { servicePath: dto.servicePath }),
+      ...(dto.nodeVersion !== undefined && { nodeVersion: dto.nodeVersion }),
+      ...(dto.coverageThreshold !== undefined && {
+        coverageThreshold: dto.coverageThreshold,
+      }),
+      ...(dto.tests !== undefined && { tests: dto.tests }),
+      ...(dto.outputFileName !== undefined && {
+        outputFileName: dto.outputFileName,
+      }),
+      ...(dto.deploymentProvisioning !== undefined && {
+        deploymentProvisioning: dto.deploymentProvisioning,
+      }),
+    });
+
+    // Provisioning links the new project into this Project (and queues the
+    // creator's and the members' GitHub access) through the hierarchy link
+    // adapter. That link is best-effort by design, so if it did not land the
+    // row is written here: a repository must never exist without one.
+    let repository =
+      await this.repositoriesRepository.findByProvisionedProjectId(
+        provisioned.provisionedProjectId,
+      );
+    if (!repository) {
+      repository = await this.repositoriesRepository.create({
+        deliveryProjectId,
+        groupId,
+        name: dto.serviceName ?? dto.name,
+        repoFullName: provisioned.repoFullName,
+        createdBy: userId,
+        provisionedProjectId: provisioned.provisionedProjectId,
+      });
+      await this.membersService.grantForNewRepositoryBestEffort({
+        repositoryId: repository.id,
+        deliveryProjectId,
+        creatorUserId: userId,
+        assignedBy: userId,
+      });
+    }
+
+    await this.auditEventsService.recordProjectEvent({
+      workspaceId: groupId,
+      actorUserId: userId,
+      eventCode: HIERARCHY_EVENT_CODES.repositoryCreated,
+      message: `Repository "${repository.name}" created`,
+      projectId: provisioned.provisionedProjectId,
+      metadata: { groupId, deliveryProjectId, repositoryId: repository.id },
+    });
+
+    return {
+      ...repository,
+      provisioning: {
+        projectId: provisioned.provisionedProjectId,
+        repoFullName: provisioned.repoFullName,
+        repoUrl: provisioned.repoUrl,
+        workflowPath: provisioned.workflowPath,
+        branchesCreated: provisioned.branchesCreated,
+        hosting: summarizeHosting(provisioned.deploymentProvisioning),
+        deploymentProvisioning: provisioned.deploymentProvisioning,
+      },
+    };
   }
 
   async listRepositories(
@@ -251,6 +413,14 @@ export class RepositoriesService {
         'This repository was moved by someone else. Refresh and try again.',
       );
     }
+
+    // The target Project's Developers get Write on the repository that just
+    // joined it. Existing assignments are kept (see DeliveryProjectMembersService).
+    await this.membersService.grantForNewRepositoryBestEffort({
+      repositoryId,
+      deliveryProjectId: target.id,
+      assignedBy: userId,
+    });
 
     const remaining =
       await this.repositoriesRepository.countActiveInDeliveryProject(

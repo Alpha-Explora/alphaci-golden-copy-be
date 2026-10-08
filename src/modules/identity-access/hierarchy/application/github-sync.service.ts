@@ -65,16 +65,34 @@ export class GithubSyncService {
       );
     }
 
-    return this.databaseService.withTransaction(async (client) => {
-      const assignment =
-        await this.assignmentsRepository.createOrResetWithClient(client, input);
-      await this.syncRepository.upsertPendingWithClient(client, assignment.id);
-      await this.outboxRepository.publishInTransaction(
-        client,
-        this.grantEvent(assignment.id, input.assignedBy),
-      );
-      return assignment;
-    });
+    return this.databaseService.withTransaction((client) =>
+      this.createAssignmentAndRequestGrantWithClient(client, input),
+    );
+  }
+
+  /**
+   * Transition #1 against a caller-owned transaction. Project membership fans
+   * out one assignment per repository inside a single commit, so a failure
+   * leaves no half-granted Project.
+   */
+  async createAssignmentAndRequestGrantWithClient(
+    client: Pick<PoolClient, 'query'>,
+    input: {
+      repositoryId: string;
+      userId: string;
+      assignedBy: string;
+    },
+  ): Promise<Awaited<ReturnType<AssignmentsRepository['createOrReset']>>> {
+    const assignment = await this.assignmentsRepository.createOrResetWithClient(
+      client,
+      input,
+    );
+    await this.syncRepository.upsertPendingWithClient(client, assignment.id);
+    await this.outboxRepository.publishInTransaction(
+      client,
+      this.grantEvent(assignment.id, input.assignedBy),
+    );
+    return assignment;
   }
 
   /** Transition #1: PM assigns developer -> pending + enqueue grant job. */
@@ -331,6 +349,7 @@ export class GithubSyncService {
         githubLogin: user.login,
         expectedPermission: 'write',
         expectedTeamSlug: teamSlug,
+        intent: 'revoke',
         actingUserId,
       });
 

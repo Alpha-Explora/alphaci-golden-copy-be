@@ -43,6 +43,12 @@ export abstract class GithubTeamAccessProvider {
     githubLogin: string;
     expectedPermission: 'write';
     expectedTeamSlug?: string;
+    /**
+     * `grant` (default): the person must hold Write or more.
+     * `revoke`: the person must no longer hold access through the repository
+     * team (the org base permission stays `read`, so "none" is never expected).
+     */
+    intent?: 'grant' | 'revoke';
     actingUserId: string;
   }): Promise<VerifyPermissionResult>;
 }

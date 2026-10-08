@@ -1,6 +1,7 @@
 DELETE /api/v1/admin/users/{id}/role
 DELETE /api/v1/auth/account
 DELETE /api/v1/delivery-projects/{deliveryProjectId}
+DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}
 DELETE /api/v1/groups/{groupId}
 DELETE /api/v1/groups/{groupId}/members/{memberId}
 DELETE /api/v1/projects/{id}
@@ -34,6 +35,7 @@ GET /api/v1/ci/runs
 GET /api/v1/ci/visual-baselines
 GET /api/v1/ci/visual-baselines/file
 GET /api/v1/delivery-projects/{deliveryProjectId}
+GET /api/v1/delivery-projects/{deliveryProjectId}/members
 GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs
 GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/current
 GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}
@@ -146,6 +148,8 @@ POST /api/v1/ci/validate
 POST /api/v1/ci/visual-results/file
 POST /api/v1/ci/visual-summary
 POST /api/v1/delivery-projects/{deliveryProjectId}/archive
+POST /api/v1/delivery-projects/{deliveryProjectId}/members
+POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync
 POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs
 POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/automation/dispatch
 POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/reopen

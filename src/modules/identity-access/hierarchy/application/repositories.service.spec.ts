@@ -55,6 +55,7 @@ const target: DeliveryProjectRecord = {
 function setup({ featureCount = 1, ruleEnabled = true } = {}) {
   const repositoriesRepository = {
     findById: jest.fn().mockResolvedValue(repository),
+    findByProvisionedProjectId: jest.fn().mockResolvedValue(repository),
     create: jest.fn().mockResolvedValue(repository),
     moveToDeliveryProject: jest
       .fn()
@@ -85,6 +86,19 @@ function setup({ featureCount = 1, ruleEnabled = true } = {}) {
   const projectLookup = {
     createHierarchyManagedProject: jest.fn().mockResolvedValue({ id: 'p-new' }),
   };
+  const provisioning = {
+    provisionRepository: jest.fn().mockResolvedValue({
+      provisionedProjectId: 'p-new',
+      repoFullName: 'org/new',
+      repoUrl: 'https://github.com/org/new',
+      workflowPath: '.github/workflows/ci.yml',
+      branchesCreated: ['dev', 'uat'],
+      deploymentProvisioning: { status: 'completed', targets: [] },
+    }),
+  };
+  const membersService = {
+    grantForNewRepositoryBestEffort: jest.fn().mockResolvedValue(undefined),
+  };
   const readiness = {
     isFeatureRuleEnabled: jest.fn().mockReturnValue(ruleEnabled),
     countActiveFeatures: jest
@@ -101,8 +115,12 @@ function setup({ featureCount = 1, ruleEnabled = true } = {}) {
     projectLookup as unknown as ProjectLookupPort,
     auditEventsService as unknown as AuditEventPublisher,
     readiness as unknown as ProjectRequirementsReadinessPort,
+    provisioning as never,
+    membersService as never,
   );
   return {
+    provisioning,
+    membersService,
     service,
     repositoriesRepository,
     deliveryProjectsRepository,
@@ -276,74 +294,317 @@ describe('RepositoriesService.moveRepository', () => {
   });
 });
 
-describe('RepositoriesService.createRepository Feature gate', () => {
-  const dto = { name: 'new-repo', visibility: 'private' } as const;
+const session = { githubAccessToken: 'token', login: 'dev-login' };
+const dto = {
+  name: 'new-repo',
+  visibility: 'private',
+  projectTypeId: 'nextjs-web',
+} as never;
 
-  it('a member into a Project with no Feature gets 409 before any GitHub call', async () => {
-    const { service, githubService, projectLookup } = setup({
-      featureCount: 0,
-    });
+describe('RepositoriesService.createRepository Feature gate', () => {
+  it('a member into a Project with no Feature gets 409 before any provisioning', async () => {
+    const { service, provisioning } = setup({ featureCount: 0 });
     await expect(
-      service.createRepository('dp-1', 'dev-1', 'token', dto),
+      service.createRepository('dp-1', 'dev-1', session, dto),
     ).rejects.toMatchObject({
       response: {
         code: 'PROJECT_FEATURES_REQUIRED',
         deliveryProjectId: 'dp-1',
       },
     });
-    expect(githubService.createRepo).not.toHaveBeenCalled();
-    expect(projectLookup.createHierarchyManagedProject).not.toHaveBeenCalled();
+    expect(provisioning.provisionRepository).not.toHaveBeenCalled();
   });
 
   it.each([0, 2])(
     'a member naming a Project they cannot access gets the access error whatever its Feature count (%s)',
     async (featureCount) => {
-      const { service, accessService, githubService, readiness } = setup({
+      const { service, accessService, provisioning, readiness } = setup({
         featureCount,
       });
       accessService.assertCanCreateUnderDeliveryProject.mockRejectedValue(
         new NotFoundException('Group not found'),
       );
       await expect(
-        service.createRepository('dp-other', 'dev-1', 'token', dto),
+        service.createRepository('dp-other', 'dev-1', session, dto),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(readiness.countActiveFeatures).not.toHaveBeenCalled();
-      expect(githubService.createRepo).not.toHaveBeenCalled();
+      expect(provisioning.provisionRepository).not.toHaveBeenCalled();
     },
   );
 
   it('a member into a Project with a Feature creates the repository', async () => {
-    const { service, githubService, readiness } = setup({ featureCount: 2 });
-    await service.createRepository('dp-1', 'dev-1', 'token', dto);
+    const { service, provisioning, readiness } = setup({ featureCount: 2 });
+    await service.createRepository('dp-1', 'dev-1', session, dto);
     expect(readiness.countActiveFeatures).toHaveBeenCalledWith(['dp-1']);
-    expect(githubService.createRepo).toHaveBeenCalledTimes(1);
+    expect(provisioning.provisionRepository).toHaveBeenCalledTimes(1);
   });
 
   it('a platform admin is exempt', async () => {
-    const { service, accessService, githubService, readiness } = setup({
+    const { service, accessService, provisioning, readiness } = setup({
       featureCount: 0,
     });
     accessService.isPlatformAdmin.mockResolvedValue(true);
-    await service.createRepository('dp-1', 'admin-1', 'token', dto);
+    await service.createRepository('dp-1', 'admin-1', session, dto);
     expect(readiness.countActiveFeatures).not.toHaveBeenCalled();
-    expect(githubService.createRepo).toHaveBeenCalledTimes(1);
+    expect(provisioning.provisionRepository).toHaveBeenCalledTimes(1);
   });
 
   it('a global admin app_role is exempt', async () => {
-    const { service, accessService, githubService } = setup({
+    const { service, accessService, provisioning } = setup({
       featureCount: 0,
     });
     accessService.getAppRole.mockResolvedValue('admin');
-    await service.createRepository('dp-1', 'admin-2', 'token', dto);
-    expect(githubService.createRepo).toHaveBeenCalledTimes(1);
+    await service.createRepository('dp-1', 'admin-2', session, dto);
+    expect(provisioning.provisionRepository).toHaveBeenCalledTimes(1);
   });
 
   it('is skipped when the QA capability is off', async () => {
-    const { service, githubService } = setup({
+    const { service, provisioning } = setup({
       featureCount: 0,
       ruleEnabled: false,
     });
-    await service.createRepository('dp-1', 'dev-1', 'token', dto);
+    await service.createRepository('dp-1', 'dev-1', session, dto);
+    expect(provisioning.provisionRepository).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RepositoriesService.createRepository (full setup)', () => {
+  it('delegates to the wizard provisioning with the Project and team, defaulting the service name', async () => {
+    const { service, provisioning } = setup();
+    await service.createRepository('dp-1', 'dev-1', session, {
+      ...(dto as object),
+      deploymentProvisioning: { enabled: true, targets: [] },
+    } as never);
+
+    expect(provisioning.provisionRepository).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'dev-1',
+        userLogin: 'dev-login',
+        githubAccessToken: 'token',
+        workspaceId: 'group-1',
+        deliveryProjectId: 'dp-1',
+        repoName: 'new-repo',
+        serviceName: 'new-repo',
+        visibility: 'private',
+        projectTypeId: 'nextjs-web',
+        repoShape: 'standalone',
+        deploymentProvisioning: { enabled: true, targets: [] },
+      }),
+    );
+  });
+
+  it('omits deploymentProvisioning when none is sent so the managed defaults apply', async () => {
+    const { service, provisioning } = setup();
+    await service.createRepository('dp-1', 'dev-1', session, dto);
+    const input = provisioning.provisionRepository.mock.calls[0]?.[0] as object;
+    expect(input).not.toHaveProperty('deploymentProvisioning');
+  });
+
+  it('returns the hierarchy row with the workflow and hosting outcome', async () => {
+    const { service, provisioning } = setup();
+    provisioning.provisionRepository.mockResolvedValue({
+      provisionedProjectId: 'project-be',
+      repoFullName: 'org/new',
+      repoUrl: 'https://github.com/org/new',
+      workflowPath: '.github/workflows/ci.yml',
+      branchesCreated: ['dev', 'uat'],
+      deploymentProvisioning: { status: 'completed', targets: [] },
+    });
+    const result = await service.createRepository(
+      'dp-1',
+      'dev-1',
+      session,
+      dto,
+    );
+
+    expect(result).toMatchObject({
+      id: 'repo-be',
+      provisioning: {
+        projectId: 'project-be',
+        workflowPath: '.github/workflows/ci.yml',
+        branchesCreated: ['dev', 'uat'],
+        hosting: { outcome: 'provisioned', failures: [] },
+      },
+    });
+  });
+
+  it('reports a failed hosting target with its reason instead of failing the create', async () => {
+    const { service, provisioning } = setup();
+    provisioning.provisionRepository.mockResolvedValue({
+      provisionedProjectId: 'project-be',
+      repoFullName: 'org/new',
+      repoUrl: 'https://github.com/org/new',
+      workflowPath: '.github/workflows/ci.yml',
+      branchesCreated: ['dev', 'uat'],
+      deploymentProvisioning: {
+        status: 'partial',
+        targets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            status: 'failed',
+            errorSummary: 'Vercel team quota reached',
+            env: [],
+          },
+          {
+            slot: 'backend',
+            provider: 'render',
+            status: 'created',
+            errorSummary: null,
+            env: [
+              {
+                lane: 'production',
+                gitBranch: null,
+                provisioned: [],
+                failed: [
+                  {
+                    key: 'API_KEY',
+                    status: 'failed',
+                    errorSummary: 'rejected',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const result = await service.createRepository(
+      'dp-1',
+      'dev-1',
+      session,
+      dto,
+    );
+
+    expect(result.provisioning.hosting).toEqual({
+      outcome: 'partial',
+      failures: [
+        {
+          slot: 'frontend',
+          provider: 'vercel',
+          reason: 'Vercel team quota reached',
+        },
+        { slot: 'backend', provider: 'render', reason: 'API_KEY: rejected' },
+      ],
+    });
+  });
+
+  it('reports skipped hosting as skipped', async () => {
+    const { service, provisioning } = setup();
+    provisioning.provisionRepository.mockResolvedValue({
+      provisionedProjectId: 'project-be',
+      repoFullName: 'org/new',
+      repoUrl: 'u',
+      workflowPath: 'w',
+      branchesCreated: [],
+      deploymentProvisioning: { status: 'skipped', targets: [] },
+    });
+    const result = await service.createRepository(
+      'dp-1',
+      'dev-1',
+      session,
+      dto,
+    );
+    expect(result.provisioning.hosting).toEqual({
+      outcome: 'skipped',
+      failures: [],
+    });
+  });
+
+  it('does not write or grant again when the provisioning link already created the row', async () => {
+    const { service, repositoriesRepository, membersService } = setup();
+    await service.createRepository('dp-1', 'dev-1', session, dto);
+    expect(repositoriesRepository.create).not.toHaveBeenCalled();
+    expect(
+      membersService.grantForNewRepositoryBestEffort,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('writes the hierarchy row and queues access itself when the best-effort link did not land', async () => {
+    const { service, repositoriesRepository, membersService } = setup();
+    repositoriesRepository.findByProvisionedProjectId.mockResolvedValue(null);
+    await service.createRepository('dp-1', 'dev-1', session, dto);
+
+    expect(repositoriesRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryProjectId: 'dp-1',
+        groupId: 'group-1',
+        repoFullName: 'org/new',
+        createdBy: 'dev-1',
+        provisionedProjectId: 'p-new',
+      }),
+    );
+    expect(membersService.grantForNewRepositoryBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryId: 'repo-be',
+        deliveryProjectId: 'dp-1',
+        creatorUserId: 'dev-1',
+      }),
+    );
+  });
+
+  it('needs a GitHub login on the session', async () => {
+    const { service, provisioning } = setup();
+    await expect(
+      service.createRepository(
+        'dp-1',
+        'dev-1',
+        { githubAccessToken: 'token', login: undefined },
+        dto,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(provisioning.provisionRepository).not.toHaveBeenCalled();
+  });
+
+  it('propagates a provisioning failure without writing a hierarchy row', async () => {
+    const { service, provisioning, repositoriesRepository } = setup();
+    provisioning.provisionRepository.mockRejectedValue(new Error('boom'));
+    await expect(
+      service.createRepository('dp-1', 'dev-1', session, dto),
+    ).rejects.toThrow('boom');
+    expect(repositoriesRepository.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('RepositoriesService.createBareRepository (legacy system flow)', () => {
+  it('creates the repository and queues the creator and member access', async () => {
+    const { service, githubService, membersService } = setup();
+    await service.createBareRepository('dp-1', 'dev-1', 'token', {
+      name: 'new-repo',
+      visibility: 'private',
+    });
     expect(githubService.createRepo).toHaveBeenCalledTimes(1);
+    expect(membersService.grantForNewRepositoryBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryProjectId: 'dp-1',
+        creatorUserId: 'dev-1',
+      }),
+    );
+  });
+});
+
+describe('RepositoriesService.moveRepository access', () => {
+  it('queues the target Project members on the moved repository, without a creator grant', async () => {
+    const { service, membersService } = setup();
+    await service.moveRepository('repo-be', 'lead-1', 'dp-target');
+    expect(membersService.grantForNewRepositoryBestEffort).toHaveBeenCalledWith(
+      {
+        repositoryId: 'repo-be',
+        deliveryProjectId: 'dp-target',
+        assignedBy: 'lead-1',
+      },
+    );
+  });
+
+  it('does nothing for a no-op move', async () => {
+    const { service, membersService, repositoriesRepository } = setup();
+    repositoriesRepository.findById.mockResolvedValue({
+      ...repository,
+      deliveryProjectId: 'dp-target',
+    });
+    await service.moveRepository('repo-be', 'lead-1', 'dp-target');
+    expect(
+      membersService.grantForNewRepositoryBestEffort,
+    ).not.toHaveBeenCalled();
   });
 });

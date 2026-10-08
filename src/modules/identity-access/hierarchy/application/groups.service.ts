@@ -19,6 +19,7 @@ import {
   type DirectoryEntry,
 } from '#modules/identity-access/directory/index.js';
 import { AssignmentsRepository } from '../infrastructure/assignments.repository';
+import { DeliveryProjectMembersRepository } from '../infrastructure/delivery-project-members.repository';
 import { GithubSyncService } from './github-sync.service';
 import { HierarchyAccessService } from './hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../domain/hierarchy.types';
@@ -44,6 +45,7 @@ export class GroupsService {
     private readonly databaseService: DatabaseService,
     @Inject(WORKSPACE_DATA_CLEANUP)
     private readonly workspaceDataCleanup: WorkspaceDataCleanupPort,
+    private readonly projectMembersRepository: DeliveryProjectMembersRepository,
   ) {}
 
   async createGroup(
@@ -442,6 +444,13 @@ export class GroupsService {
           userId,
         );
       }
+      // Leaving the team also ends every Project membership, so a later
+      // re-add to the team does not silently restore Project access.
+      await this.projectMembersRepository.markRemovedForUserInGroupWithClient(
+        client,
+        groupId,
+        target.userId,
+      );
 
       return { ...removal, assignments: cascade };
     });

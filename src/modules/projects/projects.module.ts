@@ -43,6 +43,7 @@ import { ProjectPreviewsApplicationService } from './application/dashboard/proje
 import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 import { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
 import { ProjectReconciliationService } from './application/lifecycle/project-reconciliation.service';
+import { DeliveryProjectRepositoryProvisioningAdapter } from './application/lifecycle/delivery-project-repository-provisioning.adapter';
 import { ProjectProvisioningApplicationService } from './application/lifecycle/project-provisioning-application.service';
 import { ProjectWorkflowSettingsRepository } from './infrastructure/project-workflow-settings.repository';
 import { ProjectWorkflowUpdateRequestsRepository } from './infrastructure/project-workflow-update-requests.repository';
@@ -93,6 +94,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     },
     ProjectLifecycleService,
     ProjectLifecyclePortAdapter,
+    DeliveryProjectRepositoryProvisioningAdapter,
     SonarCloudSetupService,
     ProjectDashboardService,
     ProjectWorkflowsService,
@@ -125,6 +127,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectProvisioningService,
     ProjectReconciliationService,
     ProjectLifecyclePortAdapter,
+    DeliveryProjectRepositoryProvisioningAdapter,
   ],
 })
 export class ProjectsModule {}

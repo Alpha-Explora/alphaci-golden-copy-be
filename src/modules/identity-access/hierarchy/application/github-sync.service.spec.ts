@@ -348,6 +348,74 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
     );
   });
 
+  it('verifies a revoke with the revoke intent (the org base read means "none" is never expected)', async () => {
+    assignmentsRepository.findById.mockResolvedValue(
+      baseAssignment({
+        desiredState: 'unassigned',
+        effectiveState: 'revoking',
+      }),
+    );
+    syncRepository.findByAssignmentId.mockResolvedValue({
+      id: 'sync-1',
+      assignmentId: 'assignment-1',
+      githubTeamId: 'team-1',
+      githubTeamSlug: 'payments-api-developers',
+      syncState: 'syncing',
+      verificationResult: null,
+      lastSyncedAt: null,
+      lastError: null,
+      retryCount: 0,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    });
+    provider.verifyEffectivePermission.mockResolvedValue({
+      hasAccess: false,
+      permission: 'read',
+    });
+
+    await service.processJob(HIERARCHY_OUTBOX_TOPICS.revoke, {
+      assignmentId: 'assignment-1',
+      actingUserId: 'pm-1',
+    });
+
+    expect(provider.verifyEffectivePermission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: 'revoke',
+        expectedTeamSlug: 'payments-api-developers',
+      }),
+    );
+    expect(assignmentsRepository.markRevokeVerified).toHaveBeenCalledWith(
+      'assignment-1',
+    );
+  });
+
+  it('createAssignmentAndRequestGrantWithClient uses the caller transaction and opens none', async () => {
+    const client = { query: jest.fn() };
+    const assignment = baseAssignment();
+    assignmentsRepository.createOrResetWithClient.mockResolvedValue(assignment);
+    syncRepository.upsertPendingWithClient.mockResolvedValue({} as never);
+
+    await service.createAssignmentAndRequestGrantWithClient(client as never, {
+      repositoryId: 'repo-1',
+      userId: 'dev-1',
+      assignedBy: 'pm-1',
+    });
+
+    expect(databaseService.withTransaction).not.toHaveBeenCalled();
+    expect(assignmentsRepository.createOrResetWithClient).toHaveBeenCalledWith(
+      client,
+      { repositoryId: 'repo-1', userId: 'dev-1', assignedBy: 'pm-1' },
+    );
+    expect(syncRepository.upsertPendingWithClient).toHaveBeenCalledWith(
+      client,
+      assignment.id,
+    );
+    expect(outboxRepository.publishInTransaction).toHaveBeenCalledWith(
+      client,
+      expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
+    );
+  });
+
   it('requeues a revoke when the repository or user cannot be resolved', async () => {
     assignmentsRepository.findById.mockResolvedValue(
       baseAssignment({
