@@ -8,6 +8,9 @@ import { IdentityAccessModule } from '../../src/modules/identity-access/identity
 import { BillingModule } from '../../src/modules/billing/billing.module';
 import { PipelinesModule } from '../../src/modules/pipelines/pipelines.module';
 import { ProjectsModule } from '../../src/modules/projects/projects.module';
+import { PLAYWRIGHT_LIVE_PORT } from '#kernel/ports/playwright-live.port';
+import { PlaywrightLiveService } from '../../src/modules/pipelines/ci/application/playwright-live.service';
+import { ProjectPlaywrightLiveService } from '../../src/modules/projects/application/playwright-live/project-playwright-live.service';
 import { RuntimeModule } from '../../src/modules/runtime/runtime.module';
 import { PlatformOpsModule } from '../../src/modules/platform-ops/platform-ops.module';
 
@@ -75,6 +78,15 @@ describe('AppModule boot smoke', () => {
       'vercel',
     );
     expect(providerPacks.get('gcp').client).toBeUndefined();
+    // Live Playwright progress: the Pipelines-owned port resolves to its real
+    // service and Projects' read service constructs against it (an undecorated
+    // or mis-wired provider would fail the app context above).
+    expect(app.get(PLAYWRIGHT_LIVE_PORT, { strict: false })).toBeInstanceOf(
+      PlaywrightLiveService,
+    );
+    expect(
+      app.get(ProjectPlaywrightLiveService, { strict: false }),
+    ).toBeInstanceOf(ProjectPlaywrightLiveService);
     await app.close();
   }, 30_000);
 });

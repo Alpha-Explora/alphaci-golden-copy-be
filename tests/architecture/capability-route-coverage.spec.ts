@@ -217,6 +217,11 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'getRuns', method: 'GET' },
       ],
     },
+    'src/modules/pipelines/ci/api/ci-playwright-progress.controller.ts': {
+      reason:
+        'CI integration surface (token-authenticated live Playwright progress)',
+      routes: [{ handler: 'ingest', method: 'POST' }],
+    },
     'src/modules/pipelines/ci/api/ci-visual.controller.ts': {
       reason: 'CI integration surface (token-authenticated visual baselines)',
       routes: [
@@ -307,6 +312,10 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'getBrowserTestsStatus', method: 'GET' },
         { handler: 'addBrowserTests', method: 'POST' },
       ],
+    },
+    'src/modules/projects/api/project-playwright-live.controller.ts': {
+      reason: 'project workspace surface (live Playwright progress)',
+      routes: [{ handler: 'getLive', method: 'GET' }],
     },
     'src/modules/projects/api/project-visual.controller.ts': {
       reason: 'project workspace surface (visual baselines)',

@@ -1,11 +1,11 @@
 {
-  "routeCount": 216,
+  "routeCount": 218,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "15adc60f2364815f95c44389b12d62a7e28bb1311e64c3e841ffd1e3977b08b6",
+  "referenceSha256": "8d522034ef0ec459841be30a71cbad605cfb495573a9d41a18a01a59d3a35101",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "15adc60f2364815f95c44389b12d62a7e28bb1311e64c3e841ffd1e3977b08b6",
+  "baselineSha256": "8d522034ef0ec459841be30a71cbad605cfb495573a9d41a18a01a59d3a35101",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -162,6 +162,13 @@
       "routes": [
         "GET /api/v1/projects/{projectId}/workspace/browser-tests",
         "POST /api/v1/projects/{projectId}/workspace/browser-tests"
+      ]
+    },
+    {
+      "reason": "Live Playwright progress: the generated verify workflow posts test-by-test events with its CI token while Playwright runs, and the studio Playwright tab reads the current stage, finished tests and what is running now.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/workspace/playwright-live",
+        "POST /api/v1/ci/playwright-progress"
       ]
     }
   ]

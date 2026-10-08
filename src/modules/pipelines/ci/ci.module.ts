@@ -4,10 +4,14 @@ import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { DatabaseModule } from '#kernel/db/database.module';
 import { CiController } from './api/ci.controller';
 import { CiVisualController } from './api/ci-visual.controller';
+import { CiPlaywrightProgressController } from './api/ci-playwright-progress.controller';
 import { CiActiveTokenGuard } from './api/ci-bearer';
 import { VisualRegressionService } from './application/visual-regression.service';
 import { VisualRegressionRepository } from './infrastructure/visual-regression.repository';
 import { VISUAL_REGRESSION_PORT } from '#kernel/ports/visual-regression.port';
+import { PLAYWRIGHT_LIVE_PORT } from '#kernel/ports/playwright-live.port';
+import { PlaywrightLiveService } from './application/playwright-live.service';
+import { PlaywrightLiveRepository } from './infrastructure/playwright-live.repository';
 import { CiReportsService } from './application/ci-reports.service';
 import { CiRunReportsRepository } from './infrastructure/ci-run-reports.repository';
 import { CiService } from './application/ci.service';
@@ -21,7 +25,11 @@ import { CiTokensRepository } from './infrastructure/ci-tokens.repository';
 
 @Module({
   imports: [DatabaseModule],
-  controllers: [CiController, CiVisualController],
+  controllers: [
+    CiController,
+    CiVisualController,
+    CiPlaywrightProgressController,
+  ],
   providers: [
     CiService,
     { provide: CI_PROJECT_PORT, useExisting: CiService },
@@ -45,6 +53,12 @@ import { CiTokensRepository } from './infrastructure/ci-tokens.repository';
       provide: VISUAL_REGRESSION_PORT,
       useExisting: VisualRegressionService,
     },
+    PlaywrightLiveRepository,
+    PlaywrightLiveService,
+    {
+      provide: PLAYWRIGHT_LIVE_PORT,
+      useExisting: PlaywrightLiveService,
+    },
   ],
   exports: [
     CiService,
@@ -54,6 +68,7 @@ import { CiTokensRepository } from './infrastructure/ci-tokens.repository';
     CI_TOKEN_STATUS_LOOKUP,
     CI_STAGE_RESULTS_LOOKUP,
     VISUAL_REGRESSION_PORT,
+    PLAYWRIGHT_LIVE_PORT,
   ],
 })
 export class CiModule {}
