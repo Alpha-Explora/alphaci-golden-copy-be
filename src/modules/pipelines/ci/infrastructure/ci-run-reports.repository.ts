@@ -247,6 +247,46 @@ export class CiRunReportsRepository implements CiStageResultsLookup {
   }
 
   /**
+   * Every stage report of one pipeline execution: a repository, a branch and a
+   * commit. The branch is part of the key because a promoted commit keeps its
+   * SHA and is built again on each branch, each with its own results.
+   * Most-recent attempt first within a stage, so the first row per stage is
+   * the one to show.
+   */
+  async findByRepoBranchSha(
+    repoFullName: string,
+    branch: string,
+    commitSha: string,
+  ): Promise<CiRunReportRow[]> {
+    const result = await this.databaseService.query<CiRunReportRow>(
+      `
+        SELECT
+          id,
+          user_id,
+          repo_full_name,
+          branch,
+          commit_sha,
+          run_id::text AS run_id,
+          stage,
+          status,
+          results,
+          friendly_messages,
+          raw_logs,
+          created_at,
+          updated_at
+        FROM workflow.ci_run_reports
+        WHERE repo_full_name = $1
+          AND branch = $2
+          AND commit_sha = $3
+        ORDER BY run_id DESC, stage ASC;
+      `,
+      [repoFullName, branch, commitSha],
+    );
+
+    return result.rows;
+  }
+
+  /**
    * Fetch run-stage rows for a set of repositories, most-recent run first.
    * Used when GET /ci/runs is called without a repoFullName filter. The caller
    * resolves the repo set through PROJECT_VISIBILITY_LOOKUP (projects the user

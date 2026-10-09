@@ -219,6 +219,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'validate', method: 'POST' },
         { handler: 'ingestReport', method: 'POST' },
         { handler: 'getRuns', method: 'GET' },
+        { handler: 'getRunReport', method: 'GET' },
       ],
     },
     'src/modules/pipelines/ci/api/ci-playwright-progress.controller.ts': {

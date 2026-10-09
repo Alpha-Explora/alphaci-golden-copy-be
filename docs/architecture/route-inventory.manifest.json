@@ -1,11 +1,11 @@
 {
-  "routeCount": 222,
+  "routeCount": 223,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "a328e3cc3aba432014b379dfd172d70f04f3fda79083ce89d39853d851d17664",
+  "referenceSha256": "fd0a3ebea9f233125885373276610517b1241ae08f4122109a3fd5a5f54ea8ed",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "a328e3cc3aba432014b379dfd172d70f04f3fda79083ce89d39853d851d17664",
+  "baselineSha256": "fd0a3ebea9f233125885373276610517b1241ae08f4122109a3fd5a5f54ea8ed",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -178,6 +178,12 @@
         "POST /api/v1/delivery-projects/{deliveryProjectId}/members",
         "POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync",
         "DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}"
+      ]
+    },
+    {
+      "reason": "CI run report export: one pipeline execution (repository, branch, commit) as a downloadable failures-first report in JSON or Markdown, for the developer who has to fix it. Same session auth and project visibility as GET /ci/runs.",
+      "routes": [
+        "GET /api/v1/ci/runs/report"
       ]
     }
   ]
