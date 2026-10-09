@@ -295,3 +295,60 @@ describe('buildCiRunReportFilename', () => {
     expect(name).toMatch(/^[A-Za-z0-9._-]+$/);
   });
 });
+
+describe('real driver shapes', () => {
+  // pg returns timestamptz columns as Date objects although StageReport types
+  // them as strings; the first real run crashed the Markdown renderer.
+  const asDate = (iso: string) => new Date(iso) as unknown as string;
+
+  it('turns Date timestamps into ISO strings and still renders Markdown', () => {
+    const report = buildCiRunReport({
+      generatedAt: GENERATED_AT,
+      run: run(
+        [
+          stage({
+            stage: 'access',
+            updatedAt: asDate('2026-10-09T08:00:00.000Z'),
+          }),
+          stage({ stage: 'verify', status: 'pending', updatedAt: '' }),
+        ],
+        { startedAt: asDate('2026-10-09T07:55:00.000Z') },
+      ),
+    });
+
+    expect(report.stages[0]?.reportedAt).toBe('2026-10-09T08:00:00.000Z');
+    expect(report.stages[1]?.reportedAt).toBeNull();
+    expect(report.startedAt).toBe('2026-10-09T07:55:00.000Z');
+    const markdown = renderCiRunReportMarkdown(report);
+    expect(markdown).toContain(
+      '| Access | Passed | 2026-10-09T08:00:00.000Z |',
+    );
+    expect(markdown).toContain('Started 2026-10-09T07:55:00.000Z');
+  });
+
+  it('renders a stored value that is not a string instead of failing the download', () => {
+    const report = buildCiRunReport({
+      generatedAt: GENERATED_AT,
+      run: run([
+        stage({
+          stage: 'quality',
+          status: 'failure',
+          friendlyMessages: [
+            {
+              severity: 'error',
+              title: 'Tests failed',
+              detail: 'd',
+              hint: 'h',
+              items: [{ label: 42 as unknown as string }],
+            },
+          ],
+          checks: [{ name: 'Unit', conclusion: null as unknown as string }],
+        }),
+      ]),
+    });
+
+    const markdown = renderCiRunReportMarkdown(report);
+    expect(markdown).toContain('- 42');
+    expect(markdown).toContain('| Unit | — |');
+  });
+});

@@ -108,12 +108,27 @@ function failuresOf(stage: StageReport): CiRunReportFailure[] {
   }));
 }
 
+/**
+ * A timestamp as an ISO string, or null when there is none.
+ *
+ * Typed as a string on `StageReport`, but the pg driver returns `timestamptz`
+ * columns as Date objects and nothing in this app converts them: JSON
+ * serialisation hides it, and the Markdown renderer crashed on the first real
+ * run. Accept both, so the report is the same whichever arrives.
+ */
+function isoOf(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
 function toReportStage(stage: StageReport): CiRunReportStage {
   return {
     stage: stage.stage,
     status: stage.status,
     runId: stage.runId,
-    reportedAt: stage.updatedAt === '' ? null : stage.updatedAt,
+    reportedAt: isoOf(stage.updatedAt),
     messages: stage.friendlyMessages,
     checks: stage.checks,
     results: stage.results ?? null,
@@ -129,7 +144,7 @@ export function buildCiRunReport(input: BuildCiRunReportInput): CiRunReport {
     repoFullName: run.repoFullName,
     branch: run.branch,
     commitSha: run.commitSha,
-    startedAt: run.startedAt,
+    startedAt: isoOf(run.startedAt) ?? '',
     overallStatus: run.overallStatus,
     summary: summarize(run.stages),
     failures: run.stages.flatMap(failuresOf),
@@ -196,12 +211,24 @@ const STAGE_TITLES: Record<StageReport['stage'], string> = {
   verify: 'Verify',
 };
 
-/** A table cell: one line, pipes escaped, EM DASH when empty. */
-function cell(value: string | null | undefined): string {
-  if (value === null || value === undefined) {
-    return EM_DASH;
+/**
+ * A table cell: one line, pipes escaped, EM DASH when empty. Takes `unknown`:
+ * the stored results are jsonb, so a field typed string may arrive as
+ * anything, and one odd value must not fail the whole download.
+ */
+/** Any stored value as text: scalars as written, anything else as nothing. */
+function textOf(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
   }
-  const escaped = value
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return value instanceof Date ? (isoOf(value) ?? '') : '';
+}
+
+function cell(value: unknown): string {
+  const escaped = textOf(value)
     .replace(/\r\n|\r|\n/g, '<br>')
     .replace(/\|/g, '\\|')
     .trim();
@@ -209,8 +236,10 @@ function cell(value: string | null | undefined): string {
 }
 
 /** A line of prose in a list: newlines folded so it stays one bullet. */
-function line(value: string): string {
-  return value.replace(/\s*\r?\n\s*/g, ' ').trim();
+function line(value: unknown): string {
+  return textOf(value)
+    .replace(/\s*\r?\n\s*/g, ' ')
+    .trim();
 }
 
 function failureLines(failure: CiRunReportFailure): string[] {
