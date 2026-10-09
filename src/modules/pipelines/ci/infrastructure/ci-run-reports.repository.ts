@@ -7,6 +7,10 @@ import type {
   CiStageResultsLookup,
   CiStageResultsLookupInput,
   CiStageTestResults,
+  CiTestCase,
+  CiTestCaseNote,
+  CiTestCaseStatus,
+  CiTestCaseStep,
 } from '#kernel/ports/ci-stage-results.port';
 import type { FriendlyMessage } from '../application/translate-results';
 import type { StageId } from '../application/stages';
@@ -55,6 +59,114 @@ function readPasses(tests: Record<string, unknown>): string[] | undefined {
   return raw;
 }
 
+const CASE_STATUSES: readonly CiTestCaseStatus[] = [
+  'passed',
+  'failed',
+  'flaky',
+  'skipped',
+];
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+function optionalCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function readCaseSteps(value: unknown): CiTestCaseStep[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const steps = value.flatMap((entry): CiTestCaseStep[] => {
+    const step = (entry ?? {}) as Record<string, unknown>;
+    const title = optionalText(step['title']);
+    if (!title) {
+      return [];
+    }
+    const durationMs = optionalCount(step['durationMs']);
+    return [
+      {
+        title,
+        ...(durationMs !== undefined && { durationMs }),
+        ...(step['failed'] === true && { failed: true }),
+      },
+    ];
+  });
+  return steps.length > 0 ? steps : undefined;
+}
+
+function readCaseNotes(value: unknown): CiTestCaseNote[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const notes = value.flatMap((entry): CiTestCaseNote[] => {
+    const note = (entry ?? {}) as Record<string, unknown>;
+    const type = optionalText(note['type']);
+    const text = optionalText(note['text']);
+    return type && text ? [{ type, text }] : [];
+  });
+  return notes.length > 0 ? notes : undefined;
+}
+
+function readCaseError(value: unknown): CiTestCase['error'] {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const error = value as Record<string, unknown>;
+  const message = optionalText(error['message']);
+  if (!message) {
+    return undefined;
+  }
+  const location = optionalText(error['location']);
+  return { message, ...(location !== undefined && { location }) };
+}
+
+function readCase(entry: unknown): CiTestCase | null {
+  if (typeof entry !== 'object' || entry === null) {
+    return null;
+  }
+  const raw = entry as Record<string, unknown>;
+  const title = optionalText(raw['title']);
+  const status = CASE_STATUSES.find((known) => known === raw['status']);
+  if (!title || !status) {
+    return null;
+  }
+  // exactOptionalPropertyTypes: absent fields are dropped below, never set to undefined.
+  const optional: Record<string, unknown> = {
+    file: optionalText(raw['file']),
+    line: optionalCount(raw['line']),
+    project: optionalText(raw['project']),
+    durationMs: optionalCount(raw['durationMs']),
+    retries: optionalCount(raw['retries']),
+    description: optionalText(raw['description']),
+    notes: readCaseNotes(raw['notes']),
+    steps: readCaseSteps(raw['steps']),
+    error: readCaseError(raw['error']),
+  };
+  const present = Object.fromEntries(
+    Object.entries(optional).filter(([, value]) => value !== undefined),
+  );
+  return { title, status, ...(present as Partial<CiTestCase>) };
+}
+
+/**
+ * `results.tests.cases`, or undefined when absent. Unlike `passes`, a
+ * malformed entry is dropped rather than voiding the list: the cases are
+ * shown to people, never used to decide whether an item passed.
+ */
+function readCases(tests: Record<string, unknown>): CiTestCase[] | undefined {
+  const raw = tests['cases'];
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw
+    .map(readCase)
+    .filter((entry): entry is CiTestCase => entry !== null);
+}
+
 /**
  * Pull `results.tests` back out of the stored jsonb blob, the same
  * defensive shape as ci-reports.service.ts's readChecks: nothing the
@@ -90,6 +202,7 @@ function readTestResults(
     : [];
 
   const passes = readPasses(raw as Record<string, unknown>);
+  const cases = readCases(raw as Record<string, unknown>);
 
   return {
     total,
@@ -98,6 +211,7 @@ function readTestResults(
     failures: failureList,
     failuresTruncated: failed > failureList.length,
     ...(passes !== undefined && { passes }),
+    ...(cases !== undefined && { cases }),
   };
 }
 

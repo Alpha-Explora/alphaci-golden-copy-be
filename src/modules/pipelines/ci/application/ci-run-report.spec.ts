@@ -236,9 +236,12 @@ describe('renderCiRunReportMarkdown', () => {
     expect(markdown).toContain(
       '- **Findings:** 0 secrets, 1 forbidden licences, 2 undetermined licences',
     );
-    expect(markdown).toContain('- **Quality gate:** ERROR');
-    expect(markdown).toContain('  - new_coverage: actual 60, threshold 80');
-    expect(markdown).toContain('  - new_bugs');
+    expect(markdown).toContain('- **SonarCloud quality gate:** ERROR');
+    // Conditions in words, with the metric's unit.
+    expect(markdown).toContain(
+      '  - Failed: Coverage on new code 60% (needs 80%)',
+    );
+    expect(markdown).toContain('  - Failed: New bugs');
   });
 
   it('draws the per-tool checks as a table', () => {

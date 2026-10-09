@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNumber,
@@ -63,6 +64,107 @@ export class CiReportSecurityItemDto {
   severity?: string;
 }
 
+/** One top-level `test.step` of a browser test. */
+export class CiReportTestCaseStepDto {
+  @IsString()
+  @MaxLength(300)
+  title!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  durationMs?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  failed?: boolean;
+}
+
+/** An annotation a test wrote besides its description, e.g. "12 links checked". */
+export class CiReportTestCaseNoteDto {
+  @IsString()
+  @MaxLength(40)
+  type!: string;
+
+  @IsString()
+  @MaxLength(1000)
+  text!: string;
+}
+
+export class CiReportTestCaseErrorDto {
+  @IsString()
+  @MaxLength(4000)
+  message!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  location?: string;
+}
+
+/**
+ * One browser test as it ran: what it is, what it checks, what it did and how
+ * it ended. Every field but the title and status is optional, and the limits
+ * match what the reporting workflow trims to.
+ */
+export class CiReportTestCaseDto {
+  @IsString()
+  @MaxLength(500)
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  file?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  line?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  project?: string;
+
+  @IsIn(['passed', 'failed', 'flaky', 'skipped'])
+  status!: 'passed' | 'failed' | 'flaky' | 'skipped';
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  durationMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  retries?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => CiReportTestCaseNoteDto)
+  notes?: CiReportTestCaseNoteDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => CiReportTestCaseStepDto)
+  steps?: CiReportTestCaseStepDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CiReportTestCaseErrorDto)
+  error?: CiReportTestCaseErrorDto;
+}
+
 // ─── Top-level result section DTOs ───────────────────────────────────────────
 
 export class CiReportTestResultsDto {
@@ -101,6 +203,19 @@ export class CiReportTestResultsDto {
   @IsString({ each: true })
   @MaxLength(500, { each: true })
   passes?: string[];
+
+  /**
+   * Every test with its detail (see CiReportTestCaseDto), failures first.
+   * Optional for the same reason as `passes`: a pipeline generated before it
+   * existed does not send it, and `forbidNonWhitelisted` would otherwise
+   * reject every such report. Capped at 50, as stored lists are.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => CiReportTestCaseDto)
+  cases?: CiReportTestCaseDto[];
 }
 
 export class CiReportCoverageDto {
@@ -246,6 +361,37 @@ export class CiReportSonarConditionDto {
   threshold?: string;
 }
 
+/** One SonarCloud issue on new code: the rule, where, and what it says. */
+export class CiReportSonarIssueDto {
+  @IsString()
+  @MaxLength(200)
+  rule!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  severity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  type?: string;
+
+  @IsString()
+  @MaxLength(1000)
+  message!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  file?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  line?: number;
+}
+
 /**
  * What SonarCloud reported, rather than only whether it passed.
  *
@@ -283,6 +429,18 @@ export class CiReportSonarDto {
   @IsOptional()
   @IsObject()
   measures?: Record<string, string>;
+
+  /**
+   * The most severe issues on new code, at most 20, so a developer sees the
+   * file and line to fix rather than a count. Optional: older pipelines and
+   * the .NET scan before it was updated do not send them.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => CiReportSonarIssueDto)
+  issues?: CiReportSonarIssueDto[];
 }
 
 export class CiReportResultsDto {

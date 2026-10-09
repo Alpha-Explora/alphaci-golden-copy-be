@@ -5,6 +5,8 @@
  * Nest/pg imports, same rule as qa-checklists.contracts.ts.
  */
 
+import type { CiTestCase } from '#kernel/ports/ci-stage-results.port';
+
 import type {
   QaChecklistTargetPersona,
   QaChecklistVerificationType,
@@ -83,6 +85,8 @@ export interface QaAutomationTestResults {
    * its results `inferred`.
    */
   passes?: string[];
+  /** Every test with what it checks and how it ended (see CiTestCase), when reported. */
+  cases?: CiTestCase[];
 }
 
 /** One CI stage's latest report for the run's (branch, commitSha), read at request time. */

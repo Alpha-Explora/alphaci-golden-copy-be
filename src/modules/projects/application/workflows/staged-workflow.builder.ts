@@ -1947,6 +1947,12 @@ function reportingJob(
     stepEnv['SONAR_CONDITIONS'] =
       '${{ needs.sonar.outputs.failed-conditions }}';
     stepEnv['SONAR_MEASURES'] = '${{ needs.sonar.outputs.measures }}';
+    /*
+     * The most severe issues on new code (rule, file, line, message), so a
+     * developer gets the place to fix and not only a count. Empty from a
+     * central workflow that does not collect them; the guard leaves it out.
+     */
+    stepEnv['SONAR_ISSUES'] = '${{ needs.sonar.outputs.issues }}';
   }
 
   /*
@@ -1980,6 +1986,12 @@ function reportingJob(
      */
     stepEnv[`E2E_PASSES_${slot}`] =
       `\${{ needs.${jobId}.outputs.tests-passes }}`;
+    /*
+     * Every test with what it checks, its steps and its full error, as a
+     * one-line JSON array (failures first, capped by the central workflow).
+     * By reference through env for the same 21,000-character reason.
+     */
+    stepEnv[`E2E_CASES_${slot}`] = `\${{ needs.${jobId}.outputs.tests-cases }}`;
   });
 
   const scriptLines = [
@@ -2140,6 +2152,7 @@ function reportingJob(
           '  eval "e2e_failed=\\${E2E_FAILED_${slot}:-0}"',
           '  eval "e2e_failures=\\${E2E_FAILURES_${slot}:-[]}"',
           '  eval "e2e_passes=\\${E2E_PASSES_${slot}:-}"',
+          '  eval "e2e_cases=\\${E2E_CASES_${slot}:-}"',
           '  # The passing names are optional and fail-soft: an older central',
           '  # workflow publishes none, and a malformed value must not cost the',
           '  # whole report. Anything that is not a JSON array of strings is',
@@ -2152,13 +2165,23 @@ function reportingJob(
           '  else',
           '    e2e_passes=',
           '  fi',
+          '  # The per-test detail is optional and fail-soft like the names: an',
+          '  # older central workflow publishes none, and anything that is not an',
+          '  # array of objects is dropped rather than costing the report. Capped',
+          '  # to what ingest accepts (50).',
+          '  if [ -n "$e2e_cases" ] && printf \'%s\' "$e2e_cases" | jq -e \'type == "array" and all(.[]; type == "object")\' >/dev/null 2>&1; then',
+          "    e2e_cases=$(printf '%s' \"$e2e_cases\" | jq -c '.[:50]')",
+          '  else',
+          '    e2e_cases=',
+          '  fi',
           '  E2E_TESTS=$(jq -n \\',
           '    --argjson total "$e2e_total" \\',
           '    --argjson passed "${e2e_passed:-0}" \\',
           '    --argjson failed "${e2e_failed:-0}" \\',
           '    --argjson failures "${e2e_failures:-[]}" \\',
           '    --argjson passes "${e2e_passes:-null}" \\',
-          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures} + (if $passes == null then {} else {passes:$passes} end)')",
+          '    --argjson cases "${e2e_cases:-null}" \\',
+          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures} + (if $passes == null then {} else {passes:$passes} end) + (if $cases == null then {} else {cases:$cases} end)')",
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson tests "$E2E_TESTS" \'. + {tests:$tests}\')',
           '  break',
           'done',
@@ -2270,6 +2293,9 @@ function reportingJob(
           'fi',
           'if printf \'%s\' "${SONAR_MEASURES:-}" | jq -e \'type == "object" and length > 0\' >/dev/null 2>&1; then',
           '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson m "$SONAR_MEASURES" \'. + {measures:$m}\')',
+          'fi',
+          'if printf \'%s\' "${SONAR_ISSUES:-}" | jq -e \'type == "array" and length > 0 and all(.[]; type == "object")\' >/dev/null 2>&1; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson i "$SONAR_ISSUES" \'. + {issues:$i[:20]}\')',
           'fi',
           'if [ "$SONAR" != "{}" ]; then',
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson sonar "$SONAR" \'. + {sonar:$sonar}\')',
