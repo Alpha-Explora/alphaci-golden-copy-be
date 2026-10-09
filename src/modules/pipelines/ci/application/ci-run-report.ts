@@ -21,6 +21,8 @@ import type {
   StageResults,
 } from './ci-run.types';
 import type { FriendlyMessage } from './translate-results';
+import { sonarDetailLines, testCaseLines } from './ci-run-report-details';
+import { cell, isoOf, line } from './markdown-text';
 
 export const CI_RUN_REPORT_SCHEMA_VERSION = 'ci-run-report/v1' as const;
 
@@ -108,21 +110,6 @@ function failuresOf(stage: StageReport): CiRunReportFailure[] {
   }));
 }
 
-/**
- * A timestamp as an ISO string, or null when there is none.
- *
- * Typed as a string on `StageReport`, but the pg driver returns `timestamptz`
- * columns as Date objects and nothing in this app converts them: JSON
- * serialisation hides it, and the Markdown renderer crashed on the first real
- * run. Accept both, so the report is the same whichever arrives.
- */
-function isoOf(value: unknown): string | null {
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value.toISOString();
-  }
-  return typeof value === 'string' && value !== '' ? value : null;
-}
-
 function toReportStage(stage: StageReport): CiRunReportStage {
   return {
     stage: stage.stage,
@@ -184,8 +171,6 @@ export function buildCiRunReportFilename(
 // Markdown
 // ---------------------------------------------------------------------
 
-const EM_DASH = '—';
-
 const STATUS_LABELS: Record<StageReport['status'], string> = {
   success: 'Passed',
   failure: 'Failed',
@@ -210,37 +195,6 @@ const STAGE_TITLES: Record<StageReport['stage'], string> = {
   package: 'Package',
   verify: 'Verify',
 };
-
-/**
- * A table cell: one line, pipes escaped, EM DASH when empty. Takes `unknown`:
- * the stored results are jsonb, so a field typed string may arrive as
- * anything, and one odd value must not fail the whole download.
- */
-/** Any stored value as text: scalars as written, anything else as nothing. */
-function textOf(value: unknown): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  return value instanceof Date ? (isoOf(value) ?? '') : '';
-}
-
-function cell(value: unknown): string {
-  const escaped = textOf(value)
-    .replace(/\r\n|\r|\n/g, '<br>')
-    .replace(/\|/g, '\\|')
-    .trim();
-  return escaped.length > 0 ? escaped : EM_DASH;
-}
-
-/** A line of prose in a list: newlines folded so it stays one bullet. */
-function line(value: unknown): string {
-  return textOf(value)
-    .replace(/\s*\r?\n\s*/g, ' ')
-    .trim();
-}
 
 function failureLines(failure: CiRunReportFailure): string[] {
   const out = [
@@ -329,30 +283,6 @@ function findingsLines(results: StageResults): string[] {
   return parts.length > 0 ? [`- **Findings:** ${parts.join(', ')}`] : [];
 }
 
-function sonarLines(results: StageResults): string[] {
-  const { sonar } = results;
-  if (!sonar) {
-    return [];
-  }
-  const head = `- **Quality gate:** ${sonar.gate ?? EM_DASH}${
-    sonar.blockedBy ? ` (blocked by ${line(sonar.blockedBy)})` : ''
-  }`;
-  const conditions = (sonar.failedConditions ?? []).map((condition) => {
-    const detail = [
-      condition.actual !== undefined ? `actual ${condition.actual}` : null,
-      condition.threshold !== undefined
-        ? `threshold ${condition.threshold}`
-        : null,
-    ]
-      .filter((part): part is string => part !== null)
-      .join(', ');
-    return detail
-      ? `  - ${line(condition.metric)}: ${detail}`
-      : `  - ${line(condition.metric)}`;
-  });
-  return [head, ...conditions];
-}
-
 function figuresLines(results: StageResults | null): string[] {
   if (!results) {
     return [];
@@ -363,7 +293,7 @@ function figuresLines(results: StageResults | null): string[] {
     ...lintLines(results),
     ...securityLines(results),
     ...findingsLines(results),
-    ...sonarLines(results),
+    ...sonarDetailLines(results.sonar),
   ];
 }
 
@@ -391,6 +321,9 @@ function stageSection(stage: CiRunReportStage): string[] {
     out.push(...figures, '');
   }
   out.push(...checksTable(stage.checks));
+  out.push(
+    ...testCaseLines(stage.results?.tests?.cases, stage.results?.tests?.total),
+  );
   if (figures.length === 0 && stage.checks.length === 0) {
     out.push('No figures were reported for this stage.', '');
   }

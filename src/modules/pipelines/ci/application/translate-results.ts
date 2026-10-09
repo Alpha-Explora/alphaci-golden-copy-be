@@ -1,3 +1,4 @@
+import type { CiTestCase } from '#kernel/ports/ci-stage-results.port';
 import type { StageId } from './stages';
 
 export interface FriendlyMessage {
@@ -14,6 +15,8 @@ export interface CiResults {
     failed: number;
     total: number;
     failures?: { name: string; message?: string }[];
+    /** Every browser test with its detail, when the pipeline reports it. */
+    cases?: CiTestCase[];
   };
   coverage?: { pct: number; threshold: number };
   lint?: {
@@ -69,6 +72,15 @@ export interface CiResults {
       threshold?: string;
     }[];
     measures?: Record<string, string>;
+    /** The most severe issues on new code, at most 20. */
+    issues?: {
+      rule: string;
+      severity?: string;
+      type?: string;
+      message: string;
+      file?: string;
+      line?: number;
+    }[];
   };
   /** Every job in the stage and what it concluded — the per-tool view. */
   checks?: {
