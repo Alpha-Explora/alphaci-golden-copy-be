@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import { CiReportsService } from './ci-reports.service';
 import type { DatabaseService } from '#kernel/db/database.service';
@@ -18,6 +18,7 @@ const makeRunReportsRepository = () =>
     upsert: jest.fn(),
     findRecentByRepo: jest.fn(),
     findRecentByRepos: jest.fn(),
+    findByRepoBranchSha: jest.fn(),
   }) as unknown as CiRunReportsRepository;
 
 /** Defaults to visible so tests that never exercise assertOwnership are unaffected. */
@@ -642,5 +643,82 @@ describe('CiReportsService.getRuns structured results', () => {
     expect(stage.results).not.toHaveProperty('tests');
     expect(stage.results).not.toHaveProperty('coverage');
     expect(stage.results?.security?.items).toHaveLength(50);
+  });
+});
+
+describe('CiReportsService.getRunReport', () => {
+  const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+  let runReportsRepository: CiRunReportsRepository;
+  let isRepoVisibleToUser: jest.Mock;
+  let service: CiReportsService;
+
+  beforeEach(() => {
+    runReportsRepository = makeRunReportsRepository();
+    isRepoVisibleToUser = jest.fn().mockResolvedValue(true);
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      makeProjectVisibility(isRepoVisibleToUser),
+    );
+  });
+
+  it('builds the report of one repository, branch and commit, failures first', async () => {
+    (
+      runReportsRepository.findByRepoBranchSha as jest.Mock
+    ).mockResolvedValueOnce([
+      row({
+        stage: 'quality',
+        run_id: '200',
+        status: 'failure',
+        commit_sha: SHA,
+        friendly_messages: [
+          { severity: 'error', title: 'Tests failed', detail: 'd', hint: 'h' },
+        ],
+      }),
+      row({ stage: 'access', run_id: '100', commit_sha: SHA }),
+    ]);
+
+    const report = await service.getRunReport(
+      'user-1',
+      'acme/orders-api',
+      'uat',
+      SHA,
+    );
+
+    expect(runReportsRepository.findByRepoBranchSha).toHaveBeenCalledWith(
+      'acme/orders-api',
+      'uat',
+      SHA,
+    );
+    expect(report.schemaVersion).toBe('ci-run-report/v1');
+    expect(report.commitSha).toBe(SHA);
+    expect(report.failures.map((failure) => failure.title)).toEqual([
+      'Tests failed',
+    ]);
+    expect(report.stages.map((stage) => stage.stage)).toEqual([
+      'access',
+      'quality',
+      'package',
+      'verify',
+    ]);
+  });
+
+  it('refuses a caller who cannot see the repository, before reading anything', async () => {
+    isRepoVisibleToUser.mockResolvedValueOnce(false);
+
+    await expect(
+      service.getRunReport('user-1', 'acme/orders-api', 'uat', SHA),
+    ).rejects.toThrow(ForbiddenException);
+    expect(runReportsRepository.findByRepoBranchSha).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when nothing was reported for that commit on that branch', async () => {
+    (
+      runReportsRepository.findByRepoBranchSha as jest.Mock
+    ).mockResolvedValueOnce([]);
+
+    await expect(
+      service.getRunReport('user-1', 'acme/orders-api', 'main', SHA),
+    ).rejects.toThrow(NotFoundException);
   });
 });

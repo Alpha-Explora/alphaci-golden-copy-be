@@ -7,6 +7,7 @@ import {
   Post,
   Query,
   Req,
+  StreamableFile,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -15,7 +16,12 @@ import type { Request } from 'express';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { CiService } from '../application/ci.service';
 import { CiReportsService } from '../application/ci-reports.service';
+import {
+  buildCiRunReportFilename,
+  renderCiRunReportMarkdown,
+} from '../application/ci-run-report';
 import { CiReportBodyDto } from './dto/ci-report-body.dto';
+import { GetRunReportQueryDto } from './dto/get-run-report-query.dto';
 import { GetRunsQueryDto } from './dto/get-runs-query.dto';
 import type { ValidateCiRunDto } from './dto/validate-ci-run.dto';
 
@@ -88,6 +94,46 @@ export class CiController {
       query.limit,
       query.offset,
       query.workspaceId,
+    );
+  }
+
+  /**
+   * GET /api/v1/ci/runs/report?repoFullName=&branch=&commitSha=&format=json|md
+   * One pipeline execution as a downloadable report, failures first. Declared
+   * as a literal beside `runs`; same session auth and project visibility.
+   * StreamableFile's `type`/`disposition` set Content-Type and
+   * Content-Disposition verbatim, as the QA report export does.
+   */
+  @Get('runs/report')
+  @UseGuards(SessionAuthGuard)
+  async getRunReport(
+    @Req() req: Request,
+    @Query() query: GetRunReportQueryDto,
+  ): Promise<StreamableFile> {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const report = await this.ciReportsService.getRunReport(
+      userId,
+      query.repoFullName,
+      query.branch,
+      query.commitSha,
+    );
+    const format =
+      query.format === 'md' || query.format === 'markdown' ? 'md' : 'json';
+    const disposition = `attachment; filename="${buildCiRunReportFilename(report, format)}"`;
+
+    if (format === 'md') {
+      return new StreamableFile(
+        Buffer.from(renderCiRunReportMarkdown(report), 'utf8'),
+        { type: 'text/markdown; charset=utf-8', disposition },
+      );
+    }
+    return new StreamableFile(
+      Buffer.from(JSON.stringify(report, null, 2), 'utf8'),
+      { type: 'application/json; charset=utf-8', disposition },
     );
   }
 
