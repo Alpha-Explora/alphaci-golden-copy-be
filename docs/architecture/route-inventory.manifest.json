@@ -1,11 +1,11 @@
 {
-  "routeCount": 218,
+  "routeCount": 222,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "8d522034ef0ec459841be30a71cbad605cfb495573a9d41a18a01a59d3a35101",
+  "referenceSha256": "a328e3cc3aba432014b379dfd172d70f04f3fda79083ce89d39853d851d17664",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "8d522034ef0ec459841be30a71cbad605cfb495573a9d41a18a01a59d3a35101",
+  "baselineSha256": "a328e3cc3aba432014b379dfd172d70f04f3fda79083ce89d39853d851d17664",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -169,6 +169,15 @@
       "routes": [
         "GET /api/v1/projects/{projectId}/workspace/playwright-live",
         "POST /api/v1/ci/playwright-progress"
+      ]
+    },
+    {
+      "reason": "Project members: a team lead or admin lists, adds and removes the Developers and QA Team people of a Project (Developers get GitHub Write on every repository of it), and re-runs the Developers' grant fan-out after live GitHub sync is enabled.",
+      "routes": [
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/members",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/members",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync",
+        "DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}"
       ]
     }
   ]
