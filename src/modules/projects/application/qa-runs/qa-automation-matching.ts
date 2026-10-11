@@ -292,21 +292,26 @@ function matchPlaywright(
     };
   }
 
-  const tests = report.tests;
-  if (!tests || tests.total === 0) {
+  // An item that names no test has nothing to be matched against. The stage
+  // verdict (the green suite beside it) is NOT evidence about this item - a
+  // home-page smoke test says nothing about "consignment registers correctly" -
+  // so it is reported as `unlinked` and left for a person to check. The stage
+  // fields stay on the result so the UI can still show that verdict as context.
+  if (!testIdentifier?.trim()) {
     return {
       ...base,
-      status: stageLevelStatus(report.status),
+      status: 'unlinked',
       scope: 'stage',
       matchedSpec: null,
       failure: null,
     };
   }
 
-  if (!testIdentifier) {
+  const tests = report.tests;
+  if (!tests || tests.total === 0) {
     return {
       ...base,
-      status: tests.failed === 0 ? 'passed' : 'failed',
+      status: stageLevelStatus(report.status),
       scope: 'stage',
       matchedSpec: null,
       failure: null,
