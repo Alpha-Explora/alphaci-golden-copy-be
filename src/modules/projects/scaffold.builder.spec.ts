@@ -204,6 +204,18 @@ describe('buildProjectScaffold', () => {
     expect(content('tests/e2e/links.e2e-spec.ts')).toContain(
       'mailto|tel|javascript',
     );
+    // A page with no same-site links must skip, not pass, and a capped run
+    // must say it was capped.
+    const links = content('tests/e2e/links.e2e-spec.ts');
+    expect(links).toContain('if (targets.length === 0) {');
+    expect(links).toContain(
+      "'No same-site links on the home page, so nothing was checked'",
+    );
+    expect(links).toContain('test.skip(true, reason);');
+    expect(links).toContain(
+      "(targets.length > checked.length ? 'first ' : '')",
+    );
+    expect(links).toContain('(capped at ');
     expect(content('tests/e2e/a11y.e2e-spec.ts')).toContain(
       "from '@axe-core/playwright'",
     );

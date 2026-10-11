@@ -126,6 +126,111 @@ describe('BrowserTestsService.getStatus', () => {
     expect(status.canAdd).toBe(true);
   });
 
+  describe('visual testing flag', () => {
+    const VERIFY = '.github/workflows/30-alphaci-verify.yml';
+    const WIRED = [
+      'jobs:',
+      '  ui-tests-uat:',
+      '    uses: o/r/.github/workflows/playwright-e2e.yml@v1',
+      '    with:',
+      '      visual-baselines: true',
+      '      alphaci-api-url: https://alphaci.example.com',
+      '    secrets:',
+      '      ALPHACI_TOKEN: ${{ secrets.ALPHACI_TOKEN }}',
+      '',
+    ].join('\n');
+    const OLD = [
+      'jobs:',
+      '  ui-tests-uat:',
+      '    uses: o/r/.github/workflows/playwright-e2e.yml@v1',
+      '    with:',
+      '      e2e-tests-directory: tests/e2e',
+      '',
+    ].join('\n');
+
+    const probe = (path: string, content: string | undefined) =>
+      path === 'package.json'
+        ? { exists: true, content: FRONTEND_PKG }
+        : path === VERIFY
+          ? { exists: content !== undefined, content: content ?? null }
+          : { exists: false, content: null };
+
+    /** Serve a different verify workflow per branch; everything else empty. */
+    function perBranch(byBranch: Record<string, string | undefined>) {
+      const made = build();
+      made.github.readRepoFiles.mockImplementation(
+        (_t: string, _r: string, ref: string, paths: string[]) =>
+          Promise.resolve({
+            read: true,
+            files: Object.fromEntries(
+              paths.map((p) => [p, probe(p, byBranch[ref])]),
+            ),
+          }),
+      );
+      return made;
+    }
+
+    it('reports each branch separately: on for dev, off for uat', async () => {
+      const { service } = perBranch({ dev: WIRED, uat: OLD });
+      const status = await service.getStatus('p', 'u', 'gho');
+      expect(status.visual).toEqual({ dev: true, uat: false });
+    });
+
+    it('reports null for a branch with no verify workflow', async () => {
+      const { service } = perBranch({ dev: WIRED });
+      const status = await service.getStatus('p', 'u', 'gho');
+      expect(status.visual).toEqual({ dev: true, uat: null });
+    });
+
+    it('reports null for a workflow that does not parse', async () => {
+      const { service } = perBranch({ dev: 'jobs: [unclosed', uat: ':::' });
+      const status = await service.getStatus('p', 'u', 'gho');
+      expect(status.visual).toEqual({ dev: null, uat: null });
+    });
+
+    it('reads the workflow file named by the project (variant repos)', async () => {
+      const made = build({
+        row: {
+          repo_full_name: REPO,
+          workflow_path: '.github/workflows/00-alphaci-access-frontend.yml',
+        },
+      });
+      await made.service.getStatus('p', 'u', 'gho');
+      const paths = made.github.readRepoFiles.mock.calls.flatMap(
+        (call) => call[3],
+      );
+      expect(paths).toContain(
+        '.github/workflows/30-alphaci-verify-frontend.yml',
+      );
+    });
+
+    it('never fails the status when the workflow read throws or is unauthorized', async () => {
+      const made = build();
+      (made.github.readRepoFiles as jest.Mock).mockImplementation(
+        (_t: string, _r: string, ref: string, paths: string[]) => {
+          if (paths.includes(VERIFY)) {
+            return ref === 'dev'
+              ? Promise.reject(new Error('GitHub 502'))
+              : Promise.resolve({
+                  read: false,
+                  reason: 'unauthorized',
+                  message: 'bad token',
+                });
+          }
+          return Promise.resolve({
+            read: true,
+            files: Object.fromEntries(
+              paths.map((p) => [p, probe(p, undefined)]),
+            ),
+          });
+        },
+      );
+      const status = await made.service.getStatus('p', 'u', 'gho');
+      expect(status.visual).toEqual({ dev: null, uat: null });
+      expect(status.frontend).toBe(true);
+    });
+  });
+
   it('cannot add to a non-frontend repository', async () => {
     const { service } = build({
       files: { 'package.json': '{"dependencies":{"@nestjs/core":"11"}}' },
