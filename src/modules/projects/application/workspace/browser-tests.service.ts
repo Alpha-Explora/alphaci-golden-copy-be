@@ -9,7 +9,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 
-import { WORKING_BRANCH } from '#kernel/config/pipeline-branches';
+import { QA_BRANCH, WORKING_BRANCH } from '#kernel/config/pipeline-branches';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher';
 import {
   GITHUB_PROJECT_PORT,
@@ -24,6 +24,8 @@ import {
   buildBrowserTestStarterFiles,
 } from '../../scaffolds/browser-test-starter';
 import { ProjectGithubTokenResolver } from '../github-activity/project-github-token.resolver';
+import { resolveVerifyWorkflowFile } from '../qa-runs/resolve-verify-workflow-file';
+import { readVisualTestingFlag } from './browser-tests.visual-workflow';
 import {
   isFrontendPackage,
   readPlaywrightVersion,
@@ -53,6 +55,11 @@ export interface BrowserTestsStatusResponse {
   frontend: boolean;
   canAdd: boolean;
   reason: string | null;
+  /**
+   * Whether this repo's verify workflow turns visual testing on, per branch.
+   * null = file missing or unreadable.
+   */
+  visual: { dev: boolean | null; uat: boolean | null };
 }
 
 /** POST workspace/browser-tests */
@@ -119,7 +126,8 @@ export class BrowserTestsService {
     userId: string,
     oauthToken: string | null,
   ): Promise<BrowserTestsStatusResponse> {
-    const repoFullName = await this.requireRepo(projectId, userId);
+    const project = await this.requireProject(projectId, userId);
+    const repoFullName = project.repo_full_name;
     const role = await this.projectsRepository.findAppRole(userId);
 
     const token = await this.tokens.installationFirst(
@@ -134,6 +142,10 @@ export class BrowserTestsService {
     }
 
     const found = await this.inspect(token, repoFullName);
+    // No dev branch means a repository still being set up: nothing to read.
+    const visual = found.devBranchFound
+      ? await this.readVisualFlags(token, repoFullName, project.workflow_path)
+      : { dev: null, uat: null };
     const frontend = isFrontendPackage(found.packageJson);
 
     let reason: string | null = null;
@@ -158,6 +170,7 @@ export class BrowserTestsService {
       frontend,
       canAdd: reason === null,
       reason,
+      visual,
     };
   }
 
@@ -378,6 +391,10 @@ export class BrowserTestsService {
     projectId: string,
     userId: string,
   ): Promise<string> {
+    return (await this.requireProject(projectId, userId)).repo_full_name;
+  }
+
+  private async requireProject(projectId: string, userId: string) {
     const row = await this.projectsRepository.findByIdAndUser(
       projectId,
       userId,
@@ -385,7 +402,43 @@ export class BrowserTestsService {
     if (!row) {
       throw new NotFoundException('Project not found');
     }
-    return row.repo_full_name;
+    return row;
+  }
+
+  /**
+   * Whether the verify workflow on dev and uat turns visual testing on.
+   *
+   * Informational only, so a failed read of one branch (no file, a 401, a
+   * transport error) reports null for that branch and never fails the status.
+   */
+  private async readVisualFlags(
+    token: string,
+    repoFullName: string,
+    workflowPath: string | null | undefined,
+  ): Promise<{ dev: boolean | null; uat: boolean | null }> {
+    const file = `.github/workflows/${resolveVerifyWorkflowFile(workflowPath)}`;
+    const readBranch = async (branch: string): Promise<boolean | null> => {
+      try {
+        const result = await this.github.readRepoFiles(
+          token,
+          repoFullName,
+          branch,
+          [file],
+        );
+        if (!result.read) return null;
+        const probe = result.files[file];
+        return probe?.exists === true
+          ? readVisualTestingFlag(probe.content)
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const [dev, uat] = await Promise.all([
+      readBranch(WORKING_BRANCH),
+      readBranch(QA_BRANCH),
+    ]);
+    return { dev, uat };
   }
 
   /** What the working branch already has, in one parallel read. */
