@@ -97,43 +97,106 @@ describe('matchAutomatedResult — playwright, stage-level branches', () => {
     expect(result).toMatchObject({ status: 'passed', scope: 'stage' });
   });
 
-  it('uses counts (not stage status) when tests are present but the item has no test_identifier', () => {
-    const failingCounts = stage({
-      status: 'success', // stage still reports success overall in this fixture
-      tests: {
-        total: 5,
-        passed: 4,
-        failed: 1,
-        failures: [
-          { name: 'e2e/other.spec.ts > Suite > Case', message: 'boom' },
-        ],
-        failuresTruncated: false,
-      },
-    });
-    const result = matchAutomatedResult(
-      { verificationType: 'playwright', testIdentifier: null },
-      automation({ verify: failingCounts }),
-    );
-    expect(result).toMatchObject({
-      status: 'failed',
-      scope: 'stage',
-      matchedSpec: null,
+  describe('an item with no test identifier', () => {
+    const counts = (failed: number) =>
+      stage({
+        status: failed === 0 ? 'success' : 'failure',
+        tests: {
+          total: 5,
+          passed: 5 - failed,
+          failed,
+          failures:
+            failed === 0
+              ? []
+              : [{ name: 'e2e/other.spec.ts > Suite > Case', message: 'boom' }],
+          failuresTruncated: false,
+        },
+      });
+
+    it.each([
+      ['null', null],
+      ['an empty string', ''],
+      ['whitespace', '   	 '],
+    ])('is unlinked, not passed, when the suite is green (%s)', (_l, id) => {
+      const report = counts(0);
+      const result = matchAutomatedResult(
+        { verificationType: 'playwright', testIdentifier: id },
+        automation({ verify: report }),
+      );
+      expect(result).toEqual({
+        source: 'playwright',
+        stage: 'verify',
+        status: 'unlinked',
+        scope: 'stage',
+        matchedSpec: null,
+        failure: null,
+        runId: report.runId,
+        runUrl: report.runUrl,
+        reportedAt: report.reportedAt,
+      });
     });
 
-    const passingCounts = stage({
-      tests: {
-        total: 5,
-        passed: 5,
-        failed: 0,
-        failures: [],
-        failuresTruncated: false,
-      },
+    it('is unlinked, not failed, when the suite has failures elsewhere', () => {
+      const result = matchAutomatedResult(
+        { verificationType: 'playwright', testIdentifier: null },
+        automation({ verify: counts(1) }),
+      );
+      expect(result).toMatchObject({
+        status: 'unlinked',
+        scope: 'stage',
+        matchedSpec: null,
+        failure: null,
+      });
     });
-    const passingResult = matchAutomatedResult(
-      { verificationType: 'playwright', testIdentifier: null },
-      automation({ verify: passingCounts }),
+
+    it.each([
+      ['tests is null', stage({ tests: null })],
+      [
+        'tests.total is 0',
+        stage({
+          tests: {
+            total: 0,
+            passed: 0,
+            failed: 0,
+            failures: [],
+            failuresTruncated: false,
+          },
+        }),
+      ],
+    ])('is unlinked even when the report has no counts (%s)', (_l, report) => {
+      const result = matchAutomatedResult(
+        { verificationType: 'playwright', testIdentifier: null },
+        automation({ verify: report }),
+      );
+      expect(result).toMatchObject({ status: 'unlinked', scope: 'stage' });
+    });
+
+    it('is still not_run when there is no verify report', () => {
+      const result = matchAutomatedResult(
+        { verificationType: 'playwright', testIdentifier: null },
+        automation(),
+      );
+      expect(result).toMatchObject({ status: 'not_run', scope: 'stage' });
+    });
+
+    it.each(['running', 'cancelled'] as const)(
+      'is still unknown when the verify report is %s',
+      (status) => {
+        const result = matchAutomatedResult(
+          { verificationType: 'playwright', testIdentifier: null },
+          automation({ verify: stage({ status }) }),
+        );
+        expect(result).toMatchObject({ status: 'unknown', scope: 'stage' });
+      },
     );
-    expect(passingResult).toMatchObject({ status: 'passed', scope: 'stage' });
+
+    it('leaves an item that HAS an identifier on the old rules', () => {
+      const result = matchAutomatedResult(
+        { verificationType: 'playwright', testIdentifier: 'e2e/a.spec.ts' },
+        automation({ verify: counts(0) }),
+      );
+      expect(result?.status).toBe('passed');
+    });
   });
 });
 

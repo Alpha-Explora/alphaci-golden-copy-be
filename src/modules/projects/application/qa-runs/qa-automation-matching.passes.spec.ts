@@ -177,12 +177,12 @@ describe('matchAutomatedResult - playwright, confirmed passes', () => {
     expect(result?.status).toBe('unknown');
   });
 
-  it('with no test identifier still answers at stage level', () => {
+  it('with no test identifier is unlinked, whatever the stage did', () => {
     const result = matchAutomatedResult(
       item(null),
       run({ passes: [], passed: 0, failed: 2 }),
     );
-    expect(result).toMatchObject({ status: 'failed', scope: 'stage' });
+    expect(result).toMatchObject({ status: 'unlinked', scope: 'stage' });
   });
 });
 

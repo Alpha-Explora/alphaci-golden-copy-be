@@ -108,11 +108,19 @@ export interface QaRunAutomation {
 
 export type QaAutomationSource = 'playwright' | 'unit_test' | 'bruno';
 
+/**
+ * `unlinked` is a Playwright item with no test identifier: nothing was run FOR
+ * it, so it is neither a pass nor a failure. The stage verdict still travels
+ * with it (stage, runId, runUrl) as context. Display only, like every other
+ * automated status: it never counts as passed or failed and never gates
+ * sign-off.
+ */
 export type QaAutomationItemStatus =
   | 'passed'
   | 'failed'
   | 'unknown'
-  | 'not_run';
+  | 'not_run'
+  | 'unlinked';
 
 export type QaAutomationScope = 'spec' | 'suite' | 'stage';
 
