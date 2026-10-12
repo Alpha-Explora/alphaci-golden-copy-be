@@ -432,3 +432,87 @@ describe('HierarchyProjectLinkService', () => {
     });
   });
 });
+
+describe('HierarchyProjectLinkService.getOverviewFacts', () => {
+  it('answers every requested Project, with zeros for one that has no members or repositories', async () => {
+    const { service } = build({
+      listMembershipSummaries: jest.fn(() =>
+        Promise.resolve([
+          {
+            delivery_project_id: 'dp-1',
+            developers: '3',
+            qa: '2',
+            viewer_kind: 'developer' as const,
+          },
+          {
+            delivery_project_id: 'dp-2',
+            developers: '0',
+            qa: '1',
+            viewer_kind: null,
+          },
+        ]),
+      ),
+      listLinkedRepositories: jest.fn(() =>
+        Promise.resolve([
+          {
+            delivery_project_id: 'dp-1',
+            project_id: 'p-api',
+            repo_full_name: 'acme/api',
+          },
+          {
+            delivery_project_id: 'dp-1',
+            project_id: 'p-web',
+            repo_full_name: 'acme/web',
+          },
+        ]),
+      ),
+    } as never);
+
+    const facts = await service.getOverviewFacts(
+      ['dp-1', 'dp-2', 'dp-3'],
+      'viewer-1',
+    );
+
+    expect([...facts.keys()]).toEqual(['dp-1', 'dp-2', 'dp-3']);
+    expect(facts.get('dp-1')).toEqual({
+      developers: 3,
+      qa: 2,
+      viewerKind: 'developer',
+      repositories: [
+        { projectId: 'p-api', repoFullName: 'acme/api' },
+        { projectId: 'p-web', repoFullName: 'acme/web' },
+      ],
+    });
+    expect(facts.get('dp-2')).toEqual({
+      developers: 0,
+      qa: 1,
+      viewerKind: null,
+      repositories: [],
+    });
+    expect(facts.get('dp-3')).toEqual({
+      developers: 0,
+      qa: 0,
+      viewerKind: null,
+      repositories: [],
+    });
+  });
+
+  it('reads members and repositories once each, for all Projects and the viewer', async () => {
+    const listMembershipSummaries = jest.fn(() => Promise.resolve([]));
+    const listLinkedRepositories = jest.fn(() => Promise.resolve([]));
+    const { service } = build({
+      listMembershipSummaries,
+      listLinkedRepositories,
+    } as never);
+
+    await service.getOverviewFacts(['dp-1', 'dp-2'], 'viewer-1');
+
+    expect(listMembershipSummaries).toHaveBeenCalledTimes(1);
+    expect(listMembershipSummaries).toHaveBeenCalledWith(
+      ['dp-1', 'dp-2'],
+      'viewer-1',
+    );
+    expect(listLinkedRepositories).toHaveBeenCalledTimes(1);
+    expect(listLinkedRepositories).toHaveBeenCalledWith(['dp-1', 'dp-2']);
+  });
+});

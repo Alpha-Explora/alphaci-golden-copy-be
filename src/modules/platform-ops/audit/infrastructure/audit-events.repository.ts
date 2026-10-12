@@ -4,6 +4,7 @@ import { DatabaseService } from '#kernel/db/database.service';
 import type {
   ExternalAuditBatch,
   GithubActivitySyncState,
+  ProjectEventSince,
 } from '#kernel/ports/audit.port';
 
 export interface AuditEventRecord {
@@ -149,6 +150,43 @@ export class AuditEventsRepository {
           ? 'project'
           : 'repository',
     }));
+  }
+
+  /**
+   * Newest created_at per project of `eventCode` events at or after that
+   * project's own `since`, in one statement (unnest pairs the project ids with
+   * their thresholds). Uses idx_audit_events_project_created. Projects with no
+   * matching event are absent.
+   */
+  async findLatestEventTimes(
+    eventCode: string,
+    lookups: readonly ProjectEventSince[],
+  ): Promise<Map<string, string>> {
+    const result = await this.databaseService.query<{
+      project_id: string;
+      last_at: string;
+    }>(
+      `
+        SELECT
+          lookup.project_id,
+          to_char(
+            MAX(event.created_at) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          ) AS last_at
+        FROM unnest($2::uuid[], $3::timestamptz[]) AS lookup(project_id, since)
+        JOIN audit.audit_events AS event
+          ON event.project_id = lookup.project_id
+         AND event.event_code = $1
+         AND event.created_at >= lookup.since
+        GROUP BY lookup.project_id;
+      `,
+      [
+        eventCode,
+        lookups.map((lookup) => lookup.projectId),
+        lookups.map((lookup) => lookup.since),
+      ],
+    );
+    return new Map(result.rows.map((row) => [row.project_id, row.last_at]));
   }
 
   /** The subset of `externalIds` already stored. */

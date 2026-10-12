@@ -6,10 +6,12 @@ import {
 } from '#kernel/composition/capability-resolver.port.js';
 import type {
   AuditExternalIngestPort,
+  AuditLatestEventQueryPort,
   ExternalAuditBatch,
   GithubActivitySyncState,
   ProjectAuditPage,
   ProjectAuditQuery,
+  ProjectEventSince,
 } from '#kernel/ports/audit.port';
 import {
   AuditEventsRepository,
@@ -20,7 +22,9 @@ const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
 @Injectable()
-export class AuditEventsService implements AuditExternalIngestPort {
+export class AuditEventsService
+  implements AuditExternalIngestPort, AuditLatestEventQueryPort
+{
   private readonly logger = new Logger(AuditEventsService.name);
 
   constructor(
@@ -73,6 +77,19 @@ export class AuditEventsService implements AuditExternalIngestPort {
       items,
       next: rows.length > limit ? (items.at(-1)?.createdAt ?? null) : null,
     };
+  }
+
+  async findLatestProjectEventTimes(
+    eventCode: string,
+    lookups: readonly ProjectEventSince[],
+  ): Promise<Map<string, string> | null> {
+    if (!this.enabled()) {
+      return null;
+    }
+    if (lookups.length === 0) {
+      return new Map();
+    }
+    return this.repository.findLatestEventTimes(eventCode, lookups);
   }
 
   isRecording(): boolean {

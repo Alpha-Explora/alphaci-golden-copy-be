@@ -31,11 +31,12 @@ import {
 } from '../qa-checklists/qa-project-context.service';
 import { qaProjectRequired } from '../qa-checklists/qa-errors';
 import { buildQaPromotionPullRequestBody } from './qa-promotion.pr-body';
-import type {
-  QaPromotionChecklist,
-  QaPromotionMergeResult,
-  QaPromotionPullRequestRef,
-  QaPromotionStatus,
+import {
+  QA_PROMOTION_MERGED_EVENT,
+  type QaPromotionChecklist,
+  type QaPromotionMergeResult,
+  type QaPromotionPullRequestRef,
+  type QaPromotionStatus,
 } from './qa-promotion.contracts';
 import type { QaHeadStatus, QaRunActorContext } from './qa-runs.contracts';
 import { QaUatHeadsService, type QaWriteVia } from './qa-uat-heads.service';
@@ -55,7 +56,6 @@ type PullRequestResolution =
   | { kind: 'ok'; pr: ResolvedPullRequest }
   | { kind: 'refused'; message: string };
 
-const PROMOTION_MERGED_EVENT = 'qa.promotion.merged';
 const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
 const UNFILED_REASON =
   'This repository is not filed under a Project; QA requirements belong to Projects';
@@ -451,7 +451,7 @@ export class QaPromotionService {
       workspaceId: project.workspace_id ?? null,
       projectId: project.id,
       actorUserId: actor.userId,
-      eventCode: PROMOTION_MERGED_EVENT,
+      eventCode: QA_PROMOTION_MERGED_EVENT,
       message: `uat (${headSha.slice(0, 7)}) merged to main via pull request #${String(pr.number)}`,
       metadata: {
         pullRequestNumber: pr.number,
@@ -492,7 +492,7 @@ export class QaPromotionService {
         notifications.record({
           userId,
           projectId: project.id,
-          eventCode: PROMOTION_MERGED_EVENT,
+          eventCode: QA_PROMOTION_MERGED_EVENT,
           title: 'QA-approved uat merged to main',
           body,
         }),

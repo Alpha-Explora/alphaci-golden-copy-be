@@ -146,3 +146,42 @@ describe('AuditEventsRepository', () => {
     ]);
   });
 });
+
+describe('AuditEventsRepository.findLatestEventTimes', () => {
+  it('is one statement pairing each project with its own threshold', async () => {
+    const query = jest.fn().mockResolvedValue({
+      rows: [
+        { project_id: 'p-api', last_at: '2026-10-04T09:30:00.123456Z' },
+        { project_id: 'p-web', last_at: '2026-10-05T11:00:00.000000Z' },
+      ],
+    });
+    const repository = new AuditEventsRepository(makeDatabaseService(query));
+
+    const times = await repository.findLatestEventTimes('qa.promotion.merged', [
+      { projectId: 'p-api', since: '2026-10-03T08:00:00.000000Z' },
+      { projectId: 'p-web', since: '2026-10-03T09:00:00.000000Z' },
+      { projectId: 'p-db', since: '2026-10-03T10:00:00.000000Z' },
+    ]);
+
+    expect(times).toEqual(
+      new Map([
+        ['p-api', '2026-10-04T09:30:00.123456Z'],
+        ['p-web', '2026-10-05T11:00:00.000000Z'],
+      ]),
+    );
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('unnest($2::uuid[], $3::timestamptz[])');
+    expect(sql).toContain('event.created_at >= lookup.since');
+    expect(sql).toContain('GROUP BY lookup.project_id');
+    expect(params).toEqual([
+      'qa.promotion.merged',
+      ['p-api', 'p-web', 'p-db'],
+      [
+        '2026-10-03T08:00:00.000000Z',
+        '2026-10-03T09:00:00.000000Z',
+        '2026-10-03T10:00:00.000000Z',
+      ],
+    ]);
+  });
+});

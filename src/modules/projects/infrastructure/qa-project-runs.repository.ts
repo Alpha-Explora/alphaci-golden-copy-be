@@ -6,7 +6,11 @@ import { QA_BRANCH } from '#kernel/config/pipeline-branches';
 import type { QaChecklistVerificationType } from '../application/qa-checklists/qa-checklists.contracts';
 import type { QaRequirementKind } from '../application/qa-checklists/qa-requirements.contracts';
 import type {
+  QaDefectSeverity,
   QaProjectVerificationStatus,
+  QaRunItemStatus,
+  QaRunStatus,
+  QaVerdict,
   QaVerificationStatusCounts,
 } from '../application/qa-runs/qa-runs.contracts';
 import type {
@@ -61,6 +65,31 @@ export interface QaProjectLatestSignoff {
   repositories: QaRunRepositoryRow[];
 }
 
+/**
+ * A Project's newest run with its current (non-superseded) sign-off, the
+ * handful of columns the team overview shows. Timestamps are ISO strings at
+ * microsecond precision, formatted in SQL so they round-trip as a `since`.
+ */
+export interface QaProjectRunHeadline {
+  deliveryProjectId: string;
+  runId: string;
+  status: QaRunStatus;
+  createdAt: string;
+  /** Null while the run is open (an open run has no active sign-off). */
+  verdict: QaVerdict | null;
+  signedAt: string | null;
+  signedByLogin: string | null;
+}
+
+/** One run item reduced to what the overview counts: where it came from and how it stands. */
+export interface QaRunItemFact {
+  runId: string;
+  sourceItemId: string | null;
+  requirementId: string | null;
+  status: QaRunItemStatus;
+  defectSeverity: QaDefectSeverity | null;
+}
+
 const EMPTY_COUNTS = (): QaVerificationStatusCounts => ({
   pending: 0,
   passed: 0,
@@ -68,6 +97,29 @@ const EMPTY_COUNTS = (): QaVerificationStatusCounts => ({
   blocked: 0,
   returned_to_dev: 0,
 });
+
+/**
+ * Verification counts per requirement from run item facts (null key = source
+ * requirement deleted). 'in_progress' is not a Project-run status; any legacy
+ * value folds into pending, the same as verificationCountsByRequirement.
+ */
+export function tallyVerificationByRequirement(
+  items: ReadonlyArray<Pick<QaRunItemFact, 'requirementId' | 'status'>>,
+): Map<string | null, QaVerificationStatusCounts> {
+  const map = new Map<string | null, QaVerificationStatusCounts>();
+  for (const item of items) {
+    const counts = map.get(item.requirementId) ?? EMPTY_COUNTS();
+    counts[foldVerificationStatus(item.status)] += 1;
+    map.set(item.requirementId, counts);
+  }
+  return map;
+}
+
+function foldVerificationStatus(status: string): QaProjectVerificationStatus {
+  return (
+    status === 'in_progress' ? 'pending' : status
+  ) as QaProjectVerificationStatus;
+}
 
 /**
  * Persistence for Project-scope runs. The shared run machinery - item writes,
@@ -362,6 +414,100 @@ export class QaProjectRunsRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * The newest run of each Project plus its active sign-off, for all
+   * `deliveryProjectIds` in ONE query (the overview must not ask per Project).
+   * Same order as findNewestProjectRun (created_at, id, newest first); a
+   * Project with no run is absent. The active sign-off is unique per run
+   * (uq_qa_run_signoffs_run_active), so the LEFT JOIN never fans out.
+   */
+  async findLatestRunHeadlines(
+    deliveryProjectIds: readonly string[],
+  ): Promise<Map<string, QaProjectRunHeadline>> {
+    const map = new Map<string, QaProjectRunHeadline>();
+    if (deliveryProjectIds.length === 0) {
+      return map;
+    }
+    const result = await this.databaseService.query<{
+      delivery_project_id: string;
+      run_id: string;
+      status: QaRunStatus;
+      created_at: string;
+      verdict: QaVerdict | null;
+      signed_at: string | null;
+      signed_by_login: string | null;
+    }>(
+      `
+        SELECT DISTINCT ON (r.delivery_project_id)
+          r.delivery_project_id,
+          r.id AS run_id,
+          r.status,
+          to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+          s.verdict,
+          to_char(s.signed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS signed_at,
+          s.signed_by_login
+        FROM projects.qa_verification_runs r
+        LEFT JOIN projects.qa_run_signoffs s
+          ON s.run_id = r.id AND s.superseded_at IS NULL
+        WHERE r.scope = 'project'
+          AND r.delivery_project_id = ANY($1::uuid[])
+        ORDER BY r.delivery_project_id, r.created_at DESC, r.id DESC;
+      `,
+      [deliveryProjectIds],
+    );
+    for (const row of result.rows) {
+      map.set(row.delivery_project_id, {
+        deliveryProjectId: row.delivery_project_id,
+        runId: row.run_id,
+        status: row.status,
+        createdAt: row.created_at,
+        verdict: row.verdict,
+        signedAt: row.signed_at,
+        signedByLogin: row.signed_by_login,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * Every item of the given runs reduced to its facts, grouped by run, in ONE
+   * query. A run with no items is absent.
+   */
+  async listItemFactsByRunIds(
+    runIds: readonly string[],
+  ): Promise<Map<string, QaRunItemFact[]>> {
+    const map = new Map<string, QaRunItemFact[]>();
+    if (runIds.length === 0) {
+      return map;
+    }
+    const result = await this.databaseService.query<{
+      run_id: string;
+      source_item_id: string | null;
+      requirement_id: string | null;
+      status: QaRunItemStatus;
+      defect_severity: QaDefectSeverity | null;
+    }>(
+      `
+        SELECT run_id, source_item_id, requirement_id, status, defect_severity
+        FROM projects.qa_run_items
+        WHERE run_id = ANY($1::uuid[]);
+      `,
+      [runIds],
+    );
+    for (const row of result.rows) {
+      const list = map.get(row.run_id) ?? [];
+      list.push({
+        runId: row.run_id,
+        sourceItemId: row.source_item_id,
+        requirementId: row.requirement_id,
+        status: row.status,
+        defectSeverity: row.defect_severity,
+      });
+      map.set(row.run_id, list);
+    }
+    return map;
+  }
+
   async listCoverageByRunIds(
     runIds: string[],
   ): Promise<Map<string, QaRunRepositoryRow[]>> {
@@ -444,10 +590,7 @@ export class QaProjectRunsRepository {
     for (const row of result.rows) {
       const counts = map.get(row.requirement_id) ?? EMPTY_COUNTS();
       // 'in_progress' is not a Project-run status; fold any legacy value into pending.
-      const status = (
-        row.status === 'in_progress' ? 'pending' : row.status
-      ) as QaProjectVerificationStatus;
-      counts[status] += Number(row.n);
+      counts[foldVerificationStatus(row.status)] += Number(row.n);
       map.set(row.requirement_id, counts);
     }
     return map;

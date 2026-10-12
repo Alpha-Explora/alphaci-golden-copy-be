@@ -150,3 +150,63 @@ describe('AuditEventsService', () => {
     });
   });
 });
+
+describe('AuditEventsService.findLatestProjectEventTimes', () => {
+  const repository = { findLatestEventTimes: jest.fn() };
+  const capabilityResolver = { deployment: jest.fn() };
+  const lookups = [
+    { projectId: 'p-api', since: '2026-10-03T08:00:00.000000Z' },
+    { projectId: 'p-web', since: '2026-10-03T08:00:00.000000Z' },
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    capabilityResolver.deployment.mockReturnValue(
+      new Set(['platform.audit-events']),
+    );
+  });
+
+  it('asks the repository once for every lookup', async () => {
+    repository.findLatestEventTimes.mockResolvedValue(
+      new Map([['p-api', '2026-10-04T09:30:00.000000Z']]),
+    );
+    const service = new AuditEventsService(
+      repository as never,
+      capabilityResolver as never,
+    );
+
+    await expect(
+      service.findLatestProjectEventTimes('qa.promotion.merged', lookups),
+    ).resolves.toEqual(new Map([['p-api', '2026-10-04T09:30:00.000000Z']]));
+    expect(repository.findLatestEventTimes).toHaveBeenCalledTimes(1);
+    expect(repository.findLatestEventTimes).toHaveBeenCalledWith(
+      'qa.promotion.merged',
+      lookups,
+    );
+  });
+
+  it('is null, not an empty answer, when audit recording is off', async () => {
+    capabilityResolver.deployment.mockReturnValue(new Set());
+    const service = new AuditEventsService(
+      repository as never,
+      capabilityResolver as never,
+    );
+
+    await expect(
+      service.findLatestProjectEventTimes('qa.promotion.merged', lookups),
+    ).resolves.toBeNull();
+    expect(repository.findLatestEventTimes).not.toHaveBeenCalled();
+  });
+
+  it('skips the query when there is nothing to look up', async () => {
+    const service = new AuditEventsService(
+      repository as never,
+      capabilityResolver as never,
+    );
+
+    await expect(
+      service.findLatestProjectEventTimes('qa.promotion.merged', []),
+    ).resolves.toEqual(new Map());
+    expect(repository.findLatestEventTimes).not.toHaveBeenCalled();
+  });
+});

@@ -1,6 +1,11 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import {
+  DELIVERY_PROJECT_OVERVIEW_QUERY,
+  type DeliveryProjectOverviewFacts,
+  type DeliveryProjectOverviewQuery,
+} from '#kernel/ports/delivery-project-overview.port';
+import {
   DEPLOYMENT_TARGETS_QUERY,
   type DeploymentTargetsQuery,
 } from '#kernel/ports/deployment-runtime.port';
@@ -43,6 +48,8 @@ export class QaProjectContextService {
     private readonly projectLink: ProjectLinkPort,
     @Inject(DEPLOYMENT_TARGETS_QUERY)
     private readonly deploymentTargets: DeploymentTargetsQuery,
+    @Inject(DELIVERY_PROJECT_OVERVIEW_QUERY)
+    private readonly overviewQuery: DeliveryProjectOverviewQuery,
   ) {}
 
   /** 404 when the Project does not exist or the caller is not in its group. */
@@ -81,6 +88,21 @@ export class QaProjectContextService {
     groupId: string,
   ): Promise<Array<{ id: string; name: string }>> {
     return this.projectLink.listDeliveryProjectsForGroup(groupId);
+  }
+
+  /**
+   * Members, the viewer's own membership and linked repositories of every
+   * given Project, for the team overview. One batched read through the
+   * hierarchy port, however many Projects there are.
+   */
+  listOverviewFacts(
+    deliveryProjectIds: readonly string[],
+    viewerUserId: string,
+  ): Promise<Map<string, DeliveryProjectOverviewFacts>> {
+    return this.overviewQuery.getOverviewFacts(
+      deliveryProjectIds,
+      viewerUserId,
+    );
   }
 
   /**

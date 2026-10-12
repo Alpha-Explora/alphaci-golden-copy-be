@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -10,7 +11,13 @@ import {
   AuditEventPublisher,
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
+import {
+  AUDIT_LATEST_EVENT_QUERY_PORT,
+  type AuditLatestEventQueryPort,
+  type ProjectEventSince,
+} from '#kernel/ports/audit.port';
 import type { DeliveryProjectDataCleanupPort } from '#kernel/ports/delivery-project-data-cleanup.port';
+import type { DeliveryProjectOverviewFacts } from '#kernel/ports/delivery-project-overview.port';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import { canSetProgress } from '../../domain/qa-run-access.rules';
 import {
@@ -20,12 +27,18 @@ import {
   type QaChecklistItemRow,
   type QaChecklistRow,
 } from '../../infrastructure/qa-checklists.repository';
-import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
+import {
+  QaProjectRunsRepository,
+  tallyVerificationByRequirement,
+  type QaProjectRunHeadline,
+} from '../../infrastructure/qa-project-runs.repository';
 import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
+import { QA_PROMOTION_MERGED_EVENT } from '../qa-runs/qa-promotion.contracts';
 import type { QaVerificationStatusCounts } from '../qa-runs/qa-runs.contracts';
 import { QaAccessService } from './qa-access.service';
 import { QaProjectContextService } from './qa-project-context.service';
+import { buildProjectOverview, promotionSince } from './qa-overview.assembly';
 import type { CreateRequirementDto } from './dto/create-requirement.dto';
 import type { CreateRequirementsBatchDto } from './dto/create-requirements-batch.dto';
 import type { ReorderRequirementItemsDto } from './dto/reorder-requirement-items.dto';
@@ -92,6 +105,8 @@ export interface RequirementActorContext {
  */
 @Injectable()
 export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
+  private readonly logger = new Logger(QaRequirementsService.name);
+
   constructor(
     private readonly checklists: QaChecklistsRepository,
     private readonly requirements: QaRequirementsRepository,
@@ -99,6 +114,10 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     private readonly runs: QaRunsRepository,
     private readonly access: QaAccessService,
     private readonly projectContext: QaProjectContextService,
+    // Required, not @Optional(): the overview reads promotion merges through
+    // it, and a silently-undefined collaborator would only fail on that call.
+    @Inject(AUDIT_LATEST_EVENT_QUERY_PORT)
+    private readonly auditQuery: AuditLatestEventQueryPort,
     // Explicit tokens: the sink aliases are type aliases, which TypeScript
     // emits as `Object` in design:paramtypes, so without @Inject Nest finds no
     // provider and @Optional() silently injects undefined.
@@ -169,7 +188,28 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     return this.assembleOne(row, role);
   }
 
-  /** Team-level, read-only: every Project of the team with its requirements' progress and verification. */
+  /**
+   * Team-level, read-only: every Project of the team with its requirements'
+   * progress and verification, plus what the Home dashboard summarizes per
+   * Project (newest run, counts, promotion, the caller's membership).
+   *
+   * The number of database round trips does not depend on how many Projects
+   * the team has: every per-Project read is one batched query over all the
+   * team's Project ids. Three sequential stages, each a parallel batch:
+   *   1. Projects, requirements, the caller's manage right;
+   *   2. requirement items, newest runs + sign-offs, members + repositories;
+   *   3. run items of those runs, promotion merges (audit).
+   *
+   * `counts.readyForQa` applies the My QA items rule (bucketMyQaItem) to the
+   * Project's NEWEST run. GET .../qa/my-items instead picks its run from the
+   * live uat heads (the run for the current heads, else the newest OPEN run),
+   * which would cost a GitHub read per repository per Project here. The two
+   * agree when there is no run, when the newest run is open, and when the
+   * heads have not moved since the newest signed-off run. They differ only
+   * when the newest run is signed off AND a uat head has moved since: my-items
+   * then has no run and lists every done item as ready, while this counts only
+   * the done items the signed-off run has not already decided.
+   */
   async overview(
     workspaceId: string,
     userId: string,
@@ -183,10 +223,20 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       this.requirements.listByWorkspace(workspaceId, includeArchived),
       this.access.canManage(userId),
     ]);
+    const projectIds = projects.map((project) => project.id);
 
-    const itemsByRequirement = await this.checklists.listItemsByChecklistIds(
-      rows.map((row) => row.id),
-    );
+    const [itemsByRequirement, latestRuns, facts] = await Promise.all([
+      this.checklists.listItemsByChecklistIds(rows.map((row) => row.id)),
+      this.projectRuns.findLatestRunHeadlines(projectIds),
+      this.projectContext.listOverviewFacts(projectIds, userId),
+    ]);
+    const [itemFactsByRun, mergedAtByRepository] = await Promise.all([
+      this.projectRuns.listItemFactsByRunIds(
+        [...latestRuns.values()].map((run) => run.runId),
+      ),
+      this.findPromotionMerges(latestRuns, facts),
+    ]);
+
     const summarize = (
       row: QaChecklistRow,
       verification: QaVerificationStatusCounts | null,
@@ -205,28 +255,37 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       };
     };
 
-    const groups = await Promise.all(
-      projects.map(async (project) => {
-        const latest = await this.projectRuns.findNewestProjectRun(project.id, {
-          openOnly: false,
-        });
-        const counts = latest
-          ? await this.projectRuns.verificationCountsByRequirement(latest.id)
-          : null;
-        return {
-          deliveryProject: { id: project.id, name: project.name },
-          requirements: rows
-            .filter((row) => row.delivery_project_id === project.id)
-            .map((row) =>
-              summarize(
-                row,
-                latest ? (counts?.get(row.id) ?? zeroCounts()) : null,
-                latest ? latest.status : null,
-              ),
-            ),
-        };
-      }),
-    );
+    const groups = projects.map((project) => {
+      const run = latestRuns.get(project.id);
+      const runItems = run ? (itemFactsByRun.get(run.runId) ?? []) : [];
+      const verification = run
+        ? tallyVerificationByRequirement(runItems)
+        : null;
+      const projectRows = rows.filter(
+        (row) => row.delivery_project_id === project.id,
+      );
+      return {
+        deliveryProject: { id: project.id, name: project.name },
+        requirements: projectRows.map((row) =>
+          summarize(
+            row,
+            run ? (verification?.get(row.id) ?? zeroCounts()) : null,
+            run ? run.status : null,
+          ),
+        ),
+        ...buildProjectOverview({
+          run,
+          runItems,
+          // The My QA items feed lists active requirements only, even when
+          // the overview was asked to include archived ones.
+          items: projectRows
+            .filter((row) => row.archived_at === null)
+            .flatMap((row) => itemsByRequirement.get(row.id) ?? []),
+          facts: facts.get(project.id),
+          mergedAtByRepository,
+        }),
+      };
+    });
 
     return {
       groups,
@@ -235,6 +294,43 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
         .map((row) => summarize(row, null, null)),
       permissions: { canManage },
     };
+  }
+
+  /**
+   * Newest `qa.promotion.merged` time per repository project id, for the
+   * repositories of every Project whose newest run is signed off (one audit
+   * query for all of them). Null when the merges cannot be known - audit
+   * recording is off, or the read failed - so the overview says nothing about
+   * promotion instead of a misleading "0 merged".
+   */
+  private async findPromotionMerges(
+    latestRuns: ReadonlyMap<string, QaProjectRunHeadline>,
+    facts: ReadonlyMap<string, DeliveryProjectOverviewFacts>,
+  ): Promise<Map<string, string> | null> {
+    const lookups: ProjectEventSince[] = [];
+    for (const [projectId, run] of latestRuns) {
+      if (run.status !== 'signed_off') {
+        continue;
+      }
+      const since = promotionSince(run);
+      for (const repository of facts.get(projectId)?.repositories ?? []) {
+        lookups.push({ projectId: repository.projectId, since });
+      }
+    }
+    if (lookups.length === 0) {
+      return new Map();
+    }
+    try {
+      return await this.auditQuery.findLatestProjectEventTimes(
+        QA_PROMOTION_MERGED_EVENT,
+        lookups,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not read promotion merges for the overview: ${String(error)}`,
+      );
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------
