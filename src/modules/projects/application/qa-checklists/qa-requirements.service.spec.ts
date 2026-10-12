@@ -1,5 +1,7 @@
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 
+import type { AuditLatestEventQueryPort } from '#kernel/ports/audit.port';
+import type { DeliveryProjectOverviewFacts } from '#kernel/ports/delivery-project-overview.port';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import {
   QaChecklistBatchInsertError,
@@ -7,7 +9,11 @@ import {
   type QaChecklistRow,
   type QaChecklistsRepository,
 } from '../../infrastructure/qa-checklists.repository';
-import type { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
+import type {
+  QaProjectRunHeadline,
+  QaProjectRunsRepository,
+  QaRunItemFact,
+} from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import type { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
 import type { QaAccessService } from './qa-access.service';
@@ -57,6 +63,49 @@ const itemRow = (
   progress_at: null,
   row_version: 1,
   updated_at: '2026-10-01T00:00:00.000Z',
+  ...overrides,
+});
+
+const headline = (
+  overrides: Partial<QaProjectRunHeadline> = {},
+): QaProjectRunHeadline => ({
+  deliveryProjectId: DP,
+  runId: 'run-1',
+  status: 'open',
+  createdAt: '2026-10-02T00:00:00.000000Z',
+  verdict: null,
+  signedAt: null,
+  signedByLogin: null,
+  ...overrides,
+});
+
+const signedOffHeadline = (
+  overrides: Partial<QaProjectRunHeadline> = {},
+): QaProjectRunHeadline =>
+  headline({
+    status: 'signed_off',
+    verdict: 'APPROVED',
+    signedAt: '2026-10-03T08:00:00.000000Z',
+    signedByLogin: 'qa-lead',
+    ...overrides,
+  });
+
+const runFact = (overrides: Partial<QaRunItemFact> = {}): QaRunItemFact => ({
+  runId: 'run-1',
+  sourceItemId: 'item-1',
+  requirementId: 'req-1',
+  status: 'pending',
+  defectSeverity: null,
+  ...overrides,
+});
+
+const overviewFacts = (
+  overrides: Partial<DeliveryProjectOverviewFacts> = {},
+): DeliveryProjectOverviewFacts => ({
+  developers: 0,
+  qa: 0,
+  viewerKind: null,
+  repositories: [],
   ...overrides,
 });
 
@@ -117,8 +166,8 @@ function setup({
   } as unknown as jest.Mocked<QaRequirementsRepository>;
   const projectRuns = {
     findReturnedOpenRunItems: jest.fn().mockResolvedValue([]),
-    findNewestProjectRun: jest.fn().mockResolvedValue(null),
-    verificationCountsByRequirement: jest.fn().mockResolvedValue(new Map()),
+    findLatestRunHeadlines: jest.fn().mockResolvedValue(new Map()),
+    listItemFactsByRunIds: jest.fn().mockResolvedValue(new Map()),
   } as unknown as jest.Mocked<QaProjectRunsRepository>;
   const runs = {
     requestRetest: jest.fn().mockResolvedValue({ id: 'ri-1' }),
@@ -138,7 +187,11 @@ function setup({
     listGroupProjects: jest
       .fn()
       .mockResolvedValue([{ id: DP, name: 'Checkout' }]),
+    listOverviewFacts: jest.fn().mockResolvedValue(new Map()),
   } as unknown as jest.Mocked<QaProjectContextService>;
+  const auditQuery = {
+    findLatestProjectEventTimes: jest.fn().mockResolvedValue(new Map()),
+  } as jest.Mocked<AuditLatestEventQueryPort>;
   const audit = { recordProjectEvent: jest.fn().mockResolvedValue(undefined) };
   const notifications = { record: jest.fn().mockResolvedValue(undefined) };
   const service = new QaRequirementsService(
@@ -148,6 +201,7 @@ function setup({
     runs,
     access,
     projectContext,
+    auditQuery,
     audit,
     notifications,
   );
@@ -159,6 +213,7 @@ function setup({
     runs,
     access,
     projectContext,
+    auditQuery,
     audit,
     notifications,
   };
@@ -466,35 +521,37 @@ describe('QaRequirementsService reads', () => {
 
     const overview = await service.overview('group-1', 'qa-1', false);
 
-    expect(overview.groups).toEqual([
-      {
-        deliveryProject: { id: DP, name: 'Checkout' },
-        requirements: [
-          expect.objectContaining({
-            id: 'req-1',
-            kind: 'functional',
-            itemCount: 1,
-            verification: null,
-            latestRunStatus: null,
-          }),
-        ],
-      },
-    ]);
+    expect(overview.groups).toHaveLength(1);
+    expect(overview.groups[0]).toMatchObject({
+      deliveryProject: { id: DP, name: 'Checkout' },
+      requirements: [
+        expect.objectContaining({
+          id: 'req-1',
+          kind: 'functional',
+          itemCount: 1,
+          verification: null,
+          latestRunStatus: null,
+        }),
+      ],
+    });
     expect(overview.unassigned.map((row) => row.id)).toEqual(['req-2']);
     expect(overview.permissions.canManage).toBe(false);
   });
 
   it('the overview carries the newest run verification counts and status', async () => {
     const { service, projectRuns } = setup();
-    projectRuns.findNewestProjectRun.mockResolvedValue({
-      id: 'run-1',
-      status: 'signed_off',
-    } as never);
-    projectRuns.verificationCountsByRequirement.mockResolvedValue(
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, headline({ status: 'signed_off' })]]),
+    );
+    projectRuns.listItemFactsByRunIds.mockResolvedValue(
       new Map([
         [
-          'req-1',
-          { pending: 0, passed: 1, failed: 0, blocked: 0, returned_to_dev: 0 },
+          'run-1',
+          [
+            runFact({ status: 'passed' }),
+            // A legacy 'in_progress' folds into pending, like the per-run tally.
+            runFact({ sourceItemId: 'item-2', status: 'in_progress' }),
+          ],
         ],
       ]),
     );
@@ -503,7 +560,13 @@ describe('QaRequirementsService reads', () => {
 
     expect(overview.groups[0]?.requirements[0]).toMatchObject({
       latestRunStatus: 'signed_off',
-      verification: { passed: 1 },
+      verification: {
+        pending: 1,
+        passed: 1,
+        failed: 0,
+        blocked: 0,
+        returned_to_dev: 0,
+      },
     });
   });
 
@@ -709,5 +772,414 @@ describe('QaRequirementsService.createBatch', () => {
       }),
     ).rejects.toThrow(NotFoundException);
     expect(fixture.access.canManage).not.toHaveBeenCalled();
+  });
+});
+
+describe('QaRequirementsService.overview - Project dashboard fields', () => {
+  const API = { projectId: 'p-api', repoFullName: 'acme/api' };
+  const WEB = { projectId: 'p-web', repoFullName: 'acme/web' };
+
+  it('a Project with no run: no latestRun, zero defects, no promotion', async () => {
+    const { service, projectRuns, auditQuery } = setup({ role: 'qa' });
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(new Map());
+
+    const overview = await service.overview('group-1', 'qa-1', false);
+
+    expect(overview.groups[0]).toMatchObject({
+      latestRun: null,
+      counts: {
+        openDefects: { blocker: 0, major: 0, minor: 0, unrated: 0 },
+        members: { developer: 0, qa: 0 },
+      },
+      promotion: null,
+      viewerMembership: null,
+    });
+    expect(auditQuery.findLatestProjectEventTimes).not.toHaveBeenCalled();
+  });
+
+  it('an open run: verdict and sign-off are null and promotion is not read', async () => {
+    const { service, projectRuns, projectContext, auditQuery } = setup();
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, headline()]]),
+    );
+    projectContext.listOverviewFacts.mockResolvedValue(
+      new Map([[DP, overviewFacts({ repositories: [API, WEB] })]]),
+    );
+
+    const overview = await service.overview('group-1', 'lead-1', false);
+
+    expect(overview.groups[0]?.latestRun).toEqual({
+      id: 'run-1',
+      status: 'open',
+      createdAt: '2026-10-02T00:00:00.000000Z',
+      verdict: null,
+      signedOffAt: null,
+      signedOffBy: null,
+    });
+    expect(overview.groups[0]?.promotion).toBeNull();
+    expect(auditQuery.findLatestProjectEventTimes).not.toHaveBeenCalled();
+  });
+
+  it('a signed-off APPROVED run with 1 of 2 repositories merged', async () => {
+    const { service, projectRuns, projectContext, auditQuery } = setup();
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, signedOffHeadline()]]),
+    );
+    projectContext.listOverviewFacts.mockResolvedValue(
+      new Map([[DP, overviewFacts({ repositories: [API, WEB] })]]),
+    );
+    auditQuery.findLatestProjectEventTimes.mockResolvedValue(
+      new Map([['p-api', '2026-10-04T09:30:00.123456Z']]),
+    );
+
+    const overview = await service.overview('group-1', 'lead-1', false);
+
+    expect(overview.groups[0]?.latestRun).toEqual({
+      id: 'run-1',
+      status: 'signed_off',
+      createdAt: '2026-10-02T00:00:00.000000Z',
+      verdict: 'APPROVED',
+      signedOffAt: '2026-10-03T08:00:00.000000Z',
+      signedOffBy: 'qa-lead',
+    });
+    expect(overview.groups[0]?.promotion).toEqual({
+      mergedRepositories: 1,
+      totalRepositories: 2,
+      lastMergedAt: '2026-10-04T09:30:00.123456Z',
+    });
+    // One audit read, bounded per repository by the sign-off time.
+    expect(auditQuery.findLatestProjectEventTimes).toHaveBeenCalledTimes(1);
+    expect(auditQuery.findLatestProjectEventTimes).toHaveBeenCalledWith(
+      'qa.promotion.merged',
+      [
+        { projectId: 'p-api', since: '2026-10-03T08:00:00.000000Z' },
+        { projectId: 'p-web', since: '2026-10-03T08:00:00.000000Z' },
+      ],
+    );
+  });
+
+  it('lastMergedAt is the newest merge across repositories; none merged is 0 of N', async () => {
+    const { service, projectRuns, projectContext, auditQuery } = setup();
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, signedOffHeadline({ verdict: 'CONDITIONAL' })]]),
+    );
+    projectContext.listOverviewFacts.mockResolvedValue(
+      new Map([[DP, overviewFacts({ repositories: [API, WEB] })]]),
+    );
+    auditQuery.findLatestProjectEventTimes.mockResolvedValue(
+      new Map([
+        ['p-api', '2026-10-04T09:30:00.000000Z'],
+        ['p-web', '2026-10-05T11:00:00.000000Z'],
+      ]),
+    );
+    const both = await service.overview('group-1', 'lead-1', false);
+    expect(both.groups[0]?.promotion).toEqual({
+      mergedRepositories: 2,
+      totalRepositories: 2,
+      lastMergedAt: '2026-10-05T11:00:00.000000Z',
+    });
+
+    auditQuery.findLatestProjectEventTimes.mockResolvedValue(new Map());
+    const none = await service.overview('group-1', 'lead-1', false);
+    expect(none.groups[0]?.promotion).toEqual({
+      mergedRepositories: 0,
+      totalRepositories: 2,
+      lastMergedAt: null,
+    });
+    expect(none.groups[0]?.latestRun?.verdict).toBe('CONDITIONAL');
+  });
+
+  it('promotion is left out, not shown as 0 merged, when merges cannot be read', async () => {
+    const { service, projectRuns, projectContext, auditQuery } = setup();
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, signedOffHeadline()]]),
+    );
+    projectContext.listOverviewFacts.mockResolvedValue(
+      new Map([[DP, overviewFacts({ repositories: [API] })]]),
+    );
+
+    // Audit recording is off: the port answers null.
+    auditQuery.findLatestProjectEventTimes.mockResolvedValue(null);
+    const off = await service.overview('group-1', 'lead-1', false);
+    expect(off.groups[0]?.promotion).toBeNull();
+    expect(off.groups[0]?.latestRun?.status).toBe('signed_off');
+
+    // The read failed: the Checklists page must still load.
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    auditQuery.findLatestProjectEventTimes.mockRejectedValue(
+      new Error('audit down'),
+    );
+    const failed = await service.overview('group-1', 'lead-1', false);
+    expect(failed.groups[0]?.promotion).toBeNull();
+    expect(failed.groups[0]?.counts.members).toEqual({ developer: 0, qa: 0 });
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('a signed-off Project with no linked repository reports 0 of 0', async () => {
+    const { service, projectRuns, auditQuery } = setup();
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, signedOffHeadline()]]),
+    );
+
+    const overview = await service.overview('group-1', 'lead-1', false);
+
+    expect(overview.groups[0]?.promotion).toEqual({
+      mergedRepositories: 0,
+      totalRepositories: 0,
+      lastMergedAt: null,
+    });
+    expect(auditQuery.findLatestProjectEventTimes).not.toHaveBeenCalled();
+  });
+
+  it('groups open defects by severity; a null severity is unrated; only failed, blocked and returned count', async () => {
+    const { service, projectRuns } = setup();
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, headline()]]),
+    );
+    projectRuns.listItemFactsByRunIds.mockResolvedValue(
+      new Map([
+        [
+          'run-1',
+          [
+            runFact({ status: 'failed', defectSeverity: 'blocker' }),
+            runFact({ status: 'blocked', defectSeverity: 'blocker' }),
+            runFact({ status: 'returned_to_dev', defectSeverity: 'major' }),
+            runFact({ status: 'failed', defectSeverity: 'minor' }),
+            runFact({ status: 'failed', defectSeverity: null }),
+            runFact({ status: 'returned_to_dev', defectSeverity: null }),
+            // Not open defects, whatever severity they still carry.
+            runFact({ status: 'passed', defectSeverity: 'major' }),
+            runFact({ status: 'pending', defectSeverity: 'blocker' }),
+          ],
+        ],
+      ]),
+    );
+
+    const overview = await service.overview('group-1', 'lead-1', false);
+
+    expect(overview.groups[0]?.counts.openDefects).toEqual({
+      blocker: 2,
+      major: 1,
+      minor: 1,
+      unrated: 2,
+    });
+  });
+
+  it('readyForQa counts done items whose run item is pending or missing, by the My QA items rule', async () => {
+    const { service, checklists, projectRuns, requirements } = setup();
+    requirements.listByWorkspace.mockResolvedValue([
+      requirementRow(),
+      requirementRow({ id: 'req-arch', archived_at: '2026-10-02T00:00:00Z' }),
+    ]);
+    const done = (id: string, checklistId = 'req-1') =>
+      itemRow({ id, checklist_id: checklistId, progress: 'done' });
+    checklists.listItemsByChecklistIds.mockResolvedValue(
+      new Map([
+        [
+          'req-1',
+          [
+            done('i-no-run-item'), // ready: no run item
+            done('i-pending'), // ready: run item pending
+            done('i-passed'), // decided
+            done('i-failed'), // decided
+            done('i-blocked'), // decided
+            done('i-returned'), // returned bucket, not ready
+            done('i-legacy'), // legacy in_progress run item is not pending
+            itemRow({ id: 'i-todo', progress: 'todo' }),
+            itemRow({ id: 'i-working', progress: 'in_progress' }),
+            itemRow({ id: 'i-todo-pending', progress: 'todo' }),
+          ],
+        ],
+        // The feed lists active requirements only, so an archived one's done
+        // item never counts even when the overview includes archived rows.
+        ['req-arch', [done('i-archived', 'req-arch')]],
+      ]),
+    );
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([[DP, headline()]]),
+    );
+    projectRuns.listItemFactsByRunIds.mockResolvedValue(
+      new Map([
+        [
+          'run-1',
+          [
+            runFact({ sourceItemId: 'i-pending', status: 'pending' }),
+            runFact({ sourceItemId: 'i-passed', status: 'passed' }),
+            runFact({ sourceItemId: 'i-failed', status: 'failed' }),
+            runFact({ sourceItemId: 'i-blocked', status: 'blocked' }),
+            runFact({ sourceItemId: 'i-returned', status: 'returned_to_dev' }),
+            runFact({ sourceItemId: 'i-legacy', status: 'in_progress' }),
+            runFact({ sourceItemId: 'i-todo-pending', status: 'pending' }),
+            // A run item whose source requirement item was deleted.
+            runFact({ sourceItemId: null, status: 'pending' }),
+          ],
+        ],
+      ]),
+    );
+
+    const overview = await service.overview('group-1', 'lead-1', true);
+
+    expect(overview.groups[0]?.counts.readyForQa).toBe(2);
+  });
+
+  it('with no run every done item is ready for QA', async () => {
+    const { service, checklists } = setup();
+    checklists.listItemsByChecklistIds.mockResolvedValue(
+      new Map([
+        [
+          'req-1',
+          [
+            itemRow({ id: 'a', progress: 'done' }),
+            itemRow({ id: 'b', progress: 'done' }),
+            itemRow({ id: 'c', progress: 'todo' }),
+          ],
+        ],
+      ]),
+    );
+
+    const overview = await service.overview('group-1', 'lead-1', false);
+
+    expect(overview.groups[0]?.latestRun).toBeNull();
+    expect(overview.groups[0]?.counts.readyForQa).toBe(2);
+  });
+
+  it('members come from the hierarchy port; viewerMembership is the caller own kind or null', async () => {
+    const { service, projectContext } = setup();
+    projectContext.listGroupProjects.mockResolvedValue([
+      { id: 'dp-dev', name: 'As developer' },
+      { id: 'dp-qa', name: 'As QA' },
+      { id: 'dp-none', name: 'Not a member' },
+      { id: 'dp-unknown', name: 'No facts at all' },
+    ]);
+    projectContext.listOverviewFacts.mockResolvedValue(
+      new Map([
+        [
+          'dp-dev',
+          overviewFacts({ developers: 3, qa: 1, viewerKind: 'developer' }),
+        ],
+        ['dp-qa', overviewFacts({ developers: 0, qa: 2, viewerKind: 'qa' })],
+        ['dp-none', overviewFacts({ developers: 2, qa: 2 })],
+      ]),
+    );
+
+    const overview = await service.overview('group-1', 'dev-1', false);
+
+    expect(
+      overview.groups.map((group) => [
+        group.deliveryProject.id,
+        group.counts.members,
+        group.viewerMembership,
+      ]),
+    ).toEqual([
+      ['dp-dev', { developer: 3, qa: 1 }, 'developer'],
+      ['dp-qa', { developer: 0, qa: 2 }, 'qa'],
+      ['dp-none', { developer: 2, qa: 2 }, null],
+      ['dp-unknown', { developer: 0, qa: 0 }, null],
+    ]);
+    expect(projectContext.listOverviewFacts).toHaveBeenCalledWith(
+      ['dp-dev', 'dp-qa', 'dp-none', 'dp-unknown'],
+      'dev-1',
+    );
+  });
+
+  it('a Project with zero requirements still gets every new field', async () => {
+    const { service, projectContext, projectRuns, requirements } = setup();
+    projectContext.listGroupProjects.mockResolvedValue([
+      { id: 'dp-empty', name: 'Empty' },
+    ]);
+    requirements.listByWorkspace.mockResolvedValue([]);
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map([
+        [
+          'dp-empty',
+          headline({ deliveryProjectId: 'dp-empty', runId: 'run-empty' }),
+        ],
+      ]),
+    );
+    projectContext.listOverviewFacts.mockResolvedValue(
+      new Map([
+        ['dp-empty', overviewFacts({ developers: 1, qa: 1, viewerKind: 'qa' })],
+      ]),
+    );
+
+    const overview = await service.overview('group-1', 'qa-1', false);
+
+    expect(overview.groups).toEqual([
+      {
+        deliveryProject: { id: 'dp-empty', name: 'Empty' },
+        requirements: [],
+        latestRun: expect.objectContaining({ id: 'run-empty', status: 'open' }),
+        counts: {
+          readyForQa: 0,
+          openDefects: { blocker: 0, major: 0, minor: 0, unrated: 0 },
+          members: { developer: 1, qa: 1 },
+        },
+        promotion: null,
+        viewerMembership: 'qa',
+      },
+    ]);
+  });
+
+  it('keeps the existing keys and reads once per field, however many Projects there are', async () => {
+    const { service, projectContext, projectRuns, auditQuery, requirements } =
+      setup();
+    const ids = ['dp-1', 'dp-2', 'dp-3', 'dp-4', 'dp-5'];
+    projectContext.listGroupProjects.mockResolvedValue(
+      ids.map((id) => ({ id, name: id })),
+    );
+    requirements.listByWorkspace.mockResolvedValue(
+      ids.map((id) =>
+        requirementRow({ id: `req-${id}`, delivery_project_id: id }),
+      ),
+    );
+    projectRuns.findLatestRunHeadlines.mockResolvedValue(
+      new Map(
+        ids.map((id) => [
+          id,
+          signedOffHeadline({ deliveryProjectId: id, runId: `run-${id}` }),
+        ]),
+      ),
+    );
+    projectContext.listOverviewFacts.mockResolvedValue(
+      new Map(
+        ids.map((id) => [
+          id,
+          overviewFacts({
+            repositories: [
+              { projectId: `p-${id}`, repoFullName: `acme/${id}` },
+            ],
+          }),
+        ]),
+      ),
+    );
+
+    const overview = await service.overview('group-1', 'lead-1', false);
+
+    expect(overview.groups).toHaveLength(5);
+    expect(Object.keys(overview).sort()).toEqual([
+      'groups',
+      'permissions',
+      'unassigned',
+    ]);
+    expect(Object.keys(overview.groups[0] ?? {}).sort()).toEqual([
+      'counts',
+      'deliveryProject',
+      'latestRun',
+      'promotion',
+      'requirements',
+      'viewerMembership',
+    ]);
+    expect(projectRuns.findLatestRunHeadlines).toHaveBeenCalledTimes(1);
+    expect(projectRuns.findLatestRunHeadlines).toHaveBeenCalledWith(ids);
+    expect(projectRuns.listItemFactsByRunIds).toHaveBeenCalledTimes(1);
+    expect(projectRuns.listItemFactsByRunIds).toHaveBeenCalledWith(
+      ids.map((id) => `run-${id}`),
+    );
+    expect(projectContext.listOverviewFacts).toHaveBeenCalledTimes(1);
+    expect(auditQuery.findLatestProjectEventTimes).toHaveBeenCalledTimes(1);
+    expect(
+      auditQuery.findLatestProjectEventTimes.mock.calls[0]?.[1],
+    ).toHaveLength(5);
   });
 });

@@ -2,12 +2,17 @@ import { NestFactory } from '@nestjs/core';
 import 'reflect-metadata';
 import { OutboxDispatcher } from '#kernel/events/outbox-dispatcher';
 import { OUTBOX_TOPICS } from '#kernel/events/outbox-topics';
+import { AUDIT_LATEST_EVENT_QUERY_PORT } from '#kernel/ports/audit.port';
+import { DELIVERY_PROJECT_OVERVIEW_QUERY } from '#kernel/ports/delivery-project-overview.port';
 import { DELIVERY_PROJECT_REPOSITORY_PROVISIONING } from '#kernel/ports/delivery-project-repository-provisioning.port';
 import { DeliveryProjectMembersService } from '../../src/modules/identity-access/hierarchy/application/delivery-project-members.service';
 import { HierarchyProjectLinkService } from '../../src/modules/identity-access/hierarchy/project-link/application/hierarchy-project-link.service';
 import { RepositoriesService } from '../../src/modules/identity-access/hierarchy/application/repositories.service';
 import { GroupsService } from '../../src/modules/identity-access/hierarchy/application/groups.service';
 import { OutboxRelayWorker } from '../../src/modules/platform-ops/application/outbox-relay.worker';
+import { AuditEventsService } from '../../src/modules/platform-ops/audit/application/audit-events.service';
+import { QaProjectContextService } from '../../src/modules/projects/application/qa-checklists/qa-project-context.service';
+import { QaRequirementsService } from '../../src/modules/projects/application/qa-checklists/qa-requirements.service';
 import { DeploymentProviderRegistry } from '../../src/modules/runtime/core/deployment-provider.registry';
 import { RuntimeProviderPackRegistry } from '../../src/modules/runtime/core/provider-pack';
 import { IdentityAccessModule } from '../../src/modules/identity-access/identity-access.module';
@@ -155,6 +160,62 @@ describe('AppModule boot smoke', () => {
       ).toBe('function');
 
       expect(app.get(OutboxRelayWorker)).toBeDefined();
+    } finally {
+      await app.close();
+    }
+  }, 30_000);
+
+  /*
+   * The team QA overview reads hierarchy facts and promotion merges through
+   * cross-context ports. A collaborator that is not bound only fails at the
+   * first overview call, which no unit test can see, so each one must be the
+   * real provider after boot.
+   */
+  it('wires the QA team-overview collaborators as real providers', async () => {
+    const app = await NestFactory.createApplicationContext(AppModule, {
+      logger: false,
+      abortOnError: false,
+    });
+    try {
+      const requirements = internals(
+        app.get(QaRequirementsService, { strict: false }),
+      );
+      for (const dependency of [
+        'checklists',
+        'requirements',
+        'projectRuns',
+        'runs',
+        'access',
+        'projectContext',
+        'auditQuery',
+      ]) {
+        expect([dependency, requirements[dependency]]).toEqual([
+          dependency,
+          expect.anything(),
+        ]);
+      }
+      expect(
+        typeof requirements['auditQuery']?.['findLatestProjectEventTimes'],
+      ).toBe('function');
+      expect(requirements['auditQuery']).toBe(
+        app.get(AuditEventsService, { strict: false }),
+      );
+
+      const context = internals(
+        app.get(QaProjectContextService, { strict: false }),
+      );
+      expect(typeof context['overviewQuery']?.['getOverviewFacts']).toBe(
+        'function',
+      );
+      expect(context['overviewQuery']).toBe(
+        app.get(HierarchyProjectLinkService),
+      );
+      expect(app.get(DELIVERY_PROJECT_OVERVIEW_QUERY, { strict: false })).toBe(
+        context['overviewQuery'],
+      );
+      expect(
+        app.get(AUDIT_LATEST_EVENT_QUERY_PORT, { strict: false }),
+      ).toBeInstanceOf(AuditEventsService);
     } finally {
       await app.close();
     }

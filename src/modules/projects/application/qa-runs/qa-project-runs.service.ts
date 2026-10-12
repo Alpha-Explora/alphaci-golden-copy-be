@@ -16,6 +16,7 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import { bucketMyQaItem } from '../../domain/qa-my-items.rules';
 import {
   canCreateRun,
   canDispatchAutomation,
@@ -391,14 +392,10 @@ export class QaProjectRunsService {
           runId: runItem ? (run?.id ?? null) : null,
           runItem,
         };
-        if (runItem?.status === 'returned_to_dev') {
-          feed.returned.push(entry);
-        } else if (item.progress === 'in_progress') {
-          feed.inProgress.push(entry);
-        } else if (item.progress === 'todo') {
-          feed.todo.push(entry);
-        } else if (!runItem || runItem.status === 'pending') {
-          feed.readyForQa.push(entry);
+        // Same rule the team overview counts `readyForQa` with.
+        const bucket = bucketMyQaItem(item.progress, runItem?.status ?? null);
+        if (bucket) {
+          feed[bucket].push(entry);
         }
       }
     }

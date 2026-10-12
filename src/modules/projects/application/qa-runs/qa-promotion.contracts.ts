@@ -7,6 +7,13 @@
 import type { QaHeadStatus, QaVerdict } from './qa-runs.contracts';
 
 /**
+ * The audit event (and notification code) recorded when a repository's uat is
+ * merged to main. One definition: the promotion service writes it, and the
+ * team overview reads it to say how far a signed-off run has been promoted.
+ */
+export const QA_PROMOTION_MERGED_EVENT = 'qa.promotion.merged';
+
+/**
  * DEPRECATED (kept for the frontend that predates Project requirements): one
  * entry per requirement of the Project, each carrying the Project-level
  * result in approvedForHead. Read run / repositories instead.

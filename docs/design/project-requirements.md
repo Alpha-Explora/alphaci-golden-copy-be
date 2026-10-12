@@ -368,15 +368,32 @@ Run items come from the open run for the current heads, or the newest open Proje
 `GET /workspaces/:workspaceId/qa-requirements/overview` (any workspace member)
 
 ```ts
-{ groups: [{ deliveryProject: {id,name}, requirements: RequirementSummary[] }],
+{ groups: [{ deliveryProject: {id,name}, requirements: RequirementSummary[],
+             latestRun: LatestRun | null,
+             counts: { readyForQa: number,
+                       openDefects: { blocker, major, minor, unrated },
+                       members: { developer: number, qa: number } },
+             promotion: { mergedRepositories, totalRepositories, lastMergedAt: iso | null } | null,
+             viewerMembership: 'developer' | 'qa' | null }],
   unassigned: RequirementSummary[],
   permissions: { canManage } }
 interface RequirementSummary { id; kind; name; itemCount;
   progressCounts; verification: { pending, passed, failed, blocked, returned_to_dev } | null;
   latestRunStatus: 'open'|'signed_off'|null; archivedAt }
+interface LatestRun { id; status: 'open'|'signed_off'; createdAt: iso;
+  verdict: 'APPROVED'|'REJECTED'|'CONDITIONAL' | null;   // current (non-superseded) sign-off; null while open
+  signedOffAt: iso | null; signedOffBy: string | null }  // signer's GitHub login
 ```
 
 `verification` is from the newest Project run of that Project, null when none. Groups come from `ProjectLinkPort` plus the requirement rows; Projects with no requirements are listed with an empty array.
+
+The per-group fields after `requirements` are additive (the Checklists page ignores them; the Home dashboard reads them). Every one of them is read in a batch over all the team's Projects, so the number of database round trips does not grow with the number of Projects (constant: Projects, requirements, caller role, requirement items, newest runs with sign-offs, members and repositories via the hierarchy port, run items, and one audit read when some newest run is signed off).
+
+- `latestRun` is the newest Project run (the same run `verification` is read from), null when the Project has none. `verdict`, `signedOffAt` and `signedOffBy` come from that run's active sign-off and are null while it is open.
+- `counts.readyForQa` is the size of the `readyForQa` bucket of `GET /delivery-projects/:id/qa/my-items` (section 2.5), computed by the same function (`bucketMyQaItem`, `domain/qa-my-items.rules.ts`) over the Project's non-archived requirement items and the newest run's items; with no run every done item counts. **Known gap:** my-items picks its run from the live `uat` heads (the run for the current heads, else the newest open run); the overview makes no GitHub call, so it always reads the newest run. They agree when there is no run, when the newest run is open, and when no head has moved since the newest signed-off run. They differ only when the newest run is signed off and a head has since moved: my-items then has no run and lists every done item, the overview counts only the done items that run left undecided.
+- `counts.openDefects` counts the newest run's items whose Verification is `failed`, `blocked` or `returned_to_dev`, by defect severity (a null severity is `unrated`); all zero with no run. A signed-off run still reports the defects it was signed off with.
+- `counts.members` is the number of ACTIVE rows of `hierarchy.delivery_project_members` by `member_kind`; `viewerMembership` is the caller's own active row (null for leads and admins, who are never members, and for non-members). Both come through the `DELIVERY_PROJECT_OVERVIEW_QUERY` port.
+- `promotion` is null unless `latestRun.status` is `signed_off`. Promotion is per repository, the run per Project, hence merged / total: `mergedRepositories` counts the Project's repositories that have a `qa.promotion.merged` audit event at or after `latestRun.signedOffAt`, `totalRepositories` the Project's non-archived repositories linked to an AlphaCI project (the only ones that can be promoted), `lastMergedAt` the newest such merge. It is also null when the merges cannot be read (audit recording is off, or the read failed), so the page says nothing about promotion rather than a misleading 0 merged.
 
 ## 3. Merge-to-main gate
 

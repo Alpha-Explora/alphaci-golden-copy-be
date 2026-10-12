@@ -111,11 +111,73 @@ export interface RequirementSummary {
   archivedAt: string | null;
 }
 
+/** Open defects of a Project's newest run, by severity (a null severity is `unrated`). */
+export interface OverviewDefectCounts {
+  blocker: number;
+  major: number;
+  minor: number;
+  unrated: number;
+}
+
+/** The newest Project run of a Project, as the team overview summarizes it. */
+export interface OverviewLatestRun {
+  id: string;
+  status: 'open' | 'signed_off';
+  /** ISO. */
+  createdAt: string;
+  /** From the run's current (non-superseded) sign-off; null while the run is open. */
+  verdict: 'APPROVED' | 'REJECTED' | 'CONDITIONAL' | null;
+  /** ISO; null while the run is open. */
+  signedOffAt: string | null;
+  /** The signer's GitHub login; null while the run is open. */
+  signedOffBy: string | null;
+}
+
+export interface OverviewProjectCounts {
+  /**
+   * Size of the `readyForQa` bucket of GET /delivery-projects/:id/qa/my-items,
+   * from the same bucketing rule (domain/qa-my-items.rules.ts). Read against
+   * the Project's newest run: see the note on QaRequirementsService.overview
+   * about when `my-items` can resolve a different run.
+   */
+  readyForQa: number;
+  /** Items of the newest run that are failed, blocked or returned to dev. All zero with no run. */
+  openDefects: OverviewDefectCounts;
+  /** ACTIVE Project members by kind. Leads and admins are never members. */
+  members: { developer: number; qa: number };
+}
+
+/**
+ * How far a signed-off Project run has been promoted to main. Promotion is per
+ * repository while the run is per Project, hence merged / total.
+ */
+export interface OverviewPromotion {
+  /** Repositories with a `qa.promotion.merged` event at or after the sign-off. */
+  mergedRepositories: number;
+  /** Repositories of the Project that are linked to an AlphaCI project (the ones that can be promoted). */
+  totalRepositories: number;
+  /** ISO; newest such merge, null when none. */
+  lastMergedAt: string | null;
+}
+
+export interface RequirementsOverviewGroup {
+  deliveryProject: { id: string; name: string };
+  requirements: RequirementSummary[];
+  /** Null when the Project has no Project run. */
+  latestRun: OverviewLatestRun | null;
+  counts: OverviewProjectCounts;
+  /**
+   * Null unless `latestRun.status` is `signed_off`. Also null when the merges
+   * cannot be read (audit recording is off, or the read failed): the overview
+   * then says nothing about promotion rather than a misleading 0 merged.
+   */
+  promotion: OverviewPromotion | null;
+  /** The caller's own ACTIVE membership of this Project; null for leads, admins and non-members. */
+  viewerMembership: 'developer' | 'qa' | null;
+}
+
 export interface RequirementsOverview {
-  groups: Array<{
-    deliveryProject: { id: string; name: string };
-    requirements: RequirementSummary[];
-  }>;
+  groups: RequirementsOverviewGroup[];
   unassigned: RequirementSummary[];
   permissions: { canManage: boolean };
 }

@@ -170,3 +170,75 @@ describe('HierarchyProjectLinkRepository Project lookups', () => {
     );
   });
 });
+
+describe('HierarchyProjectLinkRepository overview reads', () => {
+  function repo(rows: unknown[]) {
+    const query = jest.fn().mockResolvedValue({ rows });
+    return {
+      query,
+      repository: new HierarchyProjectLinkRepository({
+        query,
+      } as unknown as DatabaseService),
+    };
+  }
+
+  it('listMembershipSummaries is one query over every Project id, active members only, with the viewer kind', async () => {
+    const { query, repository } = repo([
+      {
+        delivery_project_id: 'dp-1',
+        developers: '2',
+        qa: '1',
+        viewer_kind: 'qa',
+      },
+    ]);
+
+    const rows = await repository.listMembershipSummaries(
+      ['dp-1', 'dp-2'],
+      'viewer-1',
+    );
+
+    expect(rows).toEqual([
+      {
+        delivery_project_id: 'dp-1',
+        developers: '2',
+        qa: '1',
+        viewer_kind: 'qa',
+      },
+    ]);
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('FROM hierarchy.delivery_project_members');
+    expect(sql).toContain("m.status = 'active'");
+    expect(sql).toContain('delivery_project_id = ANY($1::uuid[])');
+    expect(params).toEqual([['dp-1', 'dp-2'], 'viewer-1']);
+  });
+
+  it('listLinkedRepositories is one query, non-archived and linked only', async () => {
+    const { query, repository } = repo([
+      {
+        delivery_project_id: 'dp-1',
+        project_id: 'p-api',
+        repo_full_name: 'a/api',
+      },
+    ]);
+
+    await repository.listLinkedRepositories(['dp-1', 'dp-2']);
+
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('FROM hierarchy.repositories');
+    expect(sql).toContain("r.status <> 'archived'");
+    expect(sql).toContain('r.provisioned_project_id IS NOT NULL');
+    expect(params).toEqual([['dp-1', 'dp-2']]);
+  });
+
+  it('asks nothing for no Projects', async () => {
+    const { query, repository } = repo([]);
+
+    expect(await repository.listMembershipSummaries([], 'viewer-1')).toEqual(
+      [],
+    );
+    expect(await repository.listLinkedRepositories([])).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+  });
+});

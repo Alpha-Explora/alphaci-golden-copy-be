@@ -5,6 +5,7 @@ import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
+import { AuditModule } from '#modules/platform-ops/audit/audit.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
 import {
   DeliveryProjectQaMyItemsController,
@@ -49,6 +50,8 @@ import { QaUatHeadsService } from './qa-uat-heads.service';
     GithubModule,
     RuntimeModule,
     CiModule,
+    // AUDIT_LATEST_EVENT_QUERY_PORT (QaRequirementsService.overview: promotion merges).
+    AuditModule,
     // Supplies QaAccessService (project visibility, app-role, workspace-lead
     // lookups) and QaChecklistsRepository (checklist + item snapshot source
     // for POST create) — both exported by this module already.

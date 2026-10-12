@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 import type {
+  DeliveryProjectOverviewFacts,
+  DeliveryProjectOverviewQuery,
+} from '#kernel/ports/delivery-project-overview.port';
+import type {
   EnsureLinkResult,
   ProjectFolderLink,
   ProjectLinkPort,
@@ -48,7 +52,9 @@ export interface EnsureProjectLinkInput {
  * backfill and a re-link are the recovery paths.
  */
 @Injectable()
-export class HierarchyProjectLinkService implements ProjectLinkPort {
+export class HierarchyProjectLinkService
+  implements ProjectLinkPort, DeliveryProjectOverviewQuery
+{
   private readonly logger = new Logger(HierarchyProjectLinkService.name);
 
   constructor(
@@ -98,6 +104,42 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
     groupId: string,
   ): Promise<Array<{ id: string; name: string }>> {
     return this.repository.listActiveDeliveryProjects(groupId);
+  }
+
+  /**
+   * See DeliveryProjectOverviewQuery.getOverviewFacts: members and the
+   * viewer's own membership in one query, linked repositories in another,
+   * both for every Project at once. Errors propagate on purpose.
+   */
+  async getOverviewFacts(
+    deliveryProjectIds: readonly string[],
+    viewerUserId: string,
+  ): Promise<Map<string, DeliveryProjectOverviewFacts>> {
+    const facts = new Map<string, DeliveryProjectOverviewFacts>(
+      deliveryProjectIds.map((id) => [
+        id,
+        { developers: 0, qa: 0, viewerKind: null, repositories: [] },
+      ]),
+    );
+    const [memberships, repositories] = await Promise.all([
+      this.repository.listMembershipSummaries(deliveryProjectIds, viewerUserId),
+      this.repository.listLinkedRepositories(deliveryProjectIds),
+    ]);
+    for (const row of memberships) {
+      const entry = facts.get(row.delivery_project_id);
+      if (entry) {
+        entry.developers = Number(row.developers);
+        entry.qa = Number(row.qa);
+        entry.viewerKind = row.viewer_kind;
+      }
+    }
+    for (const row of repositories) {
+      facts.get(row.delivery_project_id)?.repositories.push({
+        projectId: row.project_id,
+        repoFullName: row.repo_full_name,
+      });
+    }
+    return facts;
   }
 
   /**
