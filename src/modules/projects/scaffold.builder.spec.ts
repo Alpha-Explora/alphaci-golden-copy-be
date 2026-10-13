@@ -79,6 +79,22 @@ describe('buildProjectScaffold', () => {
    * scaffold without a browser suite therefore goes red at its last stage on
    * the first promotion, for a project whose code is fine.
    */
+  it.each(['react', 'nextjs', 'node'])(
+    'marks the %s package private so the licence gate skips the app itself',
+    (stack) => {
+      const files = buildProjectScaffold({
+        ...baseOptions,
+        stack,
+        repoShape: 'standalone',
+      });
+      const pkg = JSON.parse(
+        files.find((file) => file.path === 'package.json')!.content,
+      ) as { private?: boolean; license?: string };
+      expect(pkg.private).toBe(true);
+      expect(pkg.license).toBeUndefined();
+    },
+  );
+
   it.each(['react', 'nextjs'])(
     'ships a runnable browser suite for %s',
     (stack) => {

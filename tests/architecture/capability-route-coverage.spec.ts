@@ -338,6 +338,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'listProjects', method: 'GET' },
         { handler: 'getProjectOverview', method: 'GET' },
         { handler: 'syncProjectSnapshot', method: 'POST' },
+        { handler: 'disableSonarAutomaticAnalysis', method: 'POST' },
         { handler: 'getWorkflowSettings', method: 'GET' },
         { handler: 'previewWorkflowSettings', method: 'POST' },
         { handler: 'createWorkflowUpdatePullRequest', method: 'POST' },
