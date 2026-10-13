@@ -171,7 +171,90 @@ describe('resolveStages', () => {
   });
 });
 
+describe('resolveStages on a branch', () => {
+  const allGreenButVerify = reported({
+    access: { status: 'success', updatedAt: minutesAgo(60) },
+    quality: { status: 'success', updatedAt: minutesAgo(59) },
+    package: { status: 'success', updatedAt: minutesAgo(58) },
+  });
+
+  it('does not stall verify on dev, where nothing is hosted and verify never runs', () => {
+    const result = resolveStages(allGreenButVerify, NOW, 'dev');
+
+    expect(result.verify.status).toBe('not_applicable');
+    expect(result.verify.friendlyMessages).toEqual([]);
+    expect(resolveOverallStatus(Object.values(result))).toBe('success');
+  });
+
+  it('still stalls verify on uat, where it is expected to report', () => {
+    const result = resolveStages(allGreenButVerify, NOW, 'uat');
+
+    expect(result.verify.status).toBe('stalled');
+    expect(resolveOverallStatus(Object.values(result))).toBe('failure');
+  });
+
+  it('still stalls verify on main', () => {
+    expect(resolveStages(allGreenButVerify, NOW, 'main').verify.status).toBe(
+      'stalled',
+    );
+  });
+
+  it('keeps legacy behaviour when no branch is given', () => {
+    expect(resolveStages(allGreenButVerify, NOW).verify.status).toBe('stalled');
+  });
+
+  it('treats the chained stages of a feature branch as not applicable', () => {
+    const result = resolveStages(
+      reported({ access: { status: 'success', updatedAt: minutesAgo(60) } }),
+      NOW,
+      'feature/login',
+    );
+
+    expect(result.quality.status).toBe('not_applicable');
+    expect(result.package.status).toBe('not_applicable');
+    expect(result.verify.status).toBe('not_applicable');
+    expect(resolveOverallStatus(Object.values(result))).toBe('success');
+  });
+
+  it('reports a stage that did report, even where the rule says it should not', () => {
+    const result = resolveStages(
+      reported({
+        access: { status: 'success', updatedAt: minutesAgo(60) },
+        quality: { status: 'failure', updatedAt: minutesAgo(59) },
+      }),
+      NOW,
+      'feature/login',
+    );
+
+    expect(result.quality.status).toBe('failure');
+  });
+
+  it('prefers not_applicable over blocked when an earlier stage failed', () => {
+    const result = resolveStages(
+      reported({
+        access: { status: 'success', updatedAt: minutesAgo(60) },
+        quality: { status: 'failure', updatedAt: minutesAgo(59) },
+      }),
+      NOW,
+      'dev',
+    );
+
+    expect(result.package.status).toBe('blocked');
+    expect(result.verify.status).toBe('not_applicable');
+  });
+});
+
 describe('resolveOverallStatus', () => {
+  it('ignores a stage that does not apply to the branch', () => {
+    expect(
+      resolveOverallStatus([
+        { status: 'success', friendlyMessages: [] },
+        { status: 'success', friendlyMessages: [] },
+        { status: 'not_applicable', friendlyMessages: [] },
+      ]),
+    ).toBe('success');
+  });
+
   it('counts a stalled stage as a failed run', () => {
     // The pipeline stopped and will not continue on its own.
     const status = resolveOverallStatus([

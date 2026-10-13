@@ -47,7 +47,7 @@ export interface StageReport {
 }
 
 /** What ingest stores under `results`, minus the per-tool list `checks` carries. */
-export type StageResults = Omit<CiResults, 'checks'>;
+export type StageResults = Omit<CiResults, 'checks' | 'skipped'>;
 
 /** One tool's outcome inside a stage. */
 export interface StageCheck {

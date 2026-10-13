@@ -155,12 +155,16 @@ describe('buildStagedWorkflowBundle', () => {
     expect(quality.jobs['report-results']?.needs).toContain('sonar');
     expect(quality.jobs['report-results']?.needs).toContain('typecheck');
 
-    // package: needs validate-access + build
+    // package: needs validate-access + build, and the promotion jobs so the
+    // report is sent after them rather than before
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
     expect(pkg.jobs['report-results']?.needs).toEqual([
       'pipeline-context',
       'validate-access',
       'build',
+      'production-gate',
+      'promote-to-uat',
+      'promote-to-main',
     ]);
   });
 
@@ -821,12 +825,34 @@ describe('annotation capture keeps the real diagnostics', () => {
    * naming a real problem arrives at WARNING level, because that is how Roslyn
    * analyzers and formatters report.
    */
-  it('does not filter on annotation_level, which dropped every real one', () => {
-    expect(captureLine()).not.toContain('annotation_level == "failure"');
+  it('does not filter code annotations on annotation_level, which dropped every real one', () => {
+    // Level only appears as the exception for `.github` (below); there is no
+    // `select(.annotation_level ...)` gating annotations that point at code.
+    expect(captureLine()).not.toMatch(/select\(\.annotation_level/);
+    expect(captureLine()).not.toMatch(/select\(\.path and \.annotation_level/);
   });
 
-  it('drops annotations pointing at the workflow file rather than the code', () => {
+  it('drops warning-level annotations pointing at the workflow file', () => {
     expect(captureLine()).toContain('startswith(".github")');
+  });
+
+  /*
+   * Every `::error::` a workflow step prints is attributed to `.github`:
+   * "AlphaCI refused the release (HTTP 502)", "Repository variable
+   * VERCEL_ALIAS is not set". The filter dropped them with the runner noise,
+   * so the one place the real reason was written never reached the product.
+   */
+  it('keeps failure-level annotations that point at the workflow file', () => {
+    expect(captureLine()).toContain(
+      'select(.path and ((.path | startswith(".github") | not) or .annotation_level == "failure"))',
+    );
+  });
+
+  it('keeps dropping the exit-code notice even though it is failure-level and on .github', () => {
+    const line = captureLine();
+    expect(line.indexOf('Process completed with exit code')).toBeGreaterThan(
+      line.indexOf('annotation_level == "failure"'),
+    );
   });
 
   it("drops the runner's own exit-code notice", () => {
@@ -1484,7 +1510,7 @@ describe('the verify stage', () => {
     // carries no prefix and needs no alias of its own.
     expect(step?.run).toContain('echo "ui-main=${VERCEL_ALIAS}"');
     expect(step?.run).toContain('echo "ui-uat=uat-${VERCEL_ALIAS}"');
-    expect(step?.run).toContain('require "VERCEL_ALIAS"');
+    expect(step?.run).toContain('require ui "VERCEL_ALIAS"');
   });
 
   /*
@@ -1541,8 +1567,8 @@ describe('the verify stage', () => {
     const run = verify.jobs['resolve-targets']?.steps?.[0]?.run ?? '';
 
     expect(run).toContain('require() {');
-    expect(run).toContain('require "RENDER_HEALTHCHECK_URL_UAT"');
-    expect(run).toContain('require "RENDER_HEALTHCHECK_URL_MAIN"');
+    expect(run).toContain('require api "RENDER_HEALTHCHECK_URL_UAT"');
+    expect(run).toContain('require api "RENDER_HEALTHCHECK_URL_MAIN"');
     // A dev run tests no deployed service, so it must not demand either.
     expect(run).toContain(
       'echo "Branch ${BRANCH} runs no tests against a deployed environment."',
