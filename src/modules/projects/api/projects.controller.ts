@@ -538,6 +538,36 @@ export class ProjectsController {
   }
 
   /**
+   * POST /api/v1/projects/:id/sonar/disable-automatic-analysis
+   * Repair for projects provisioned before Automatic Analysis was switched off
+   * at creation: SonarCloud refuses every CI scan while it is on. Lead/admin
+   * only; idempotent; a SonarCloud refusal comes back in the body
+   * (`disabled: false` + message) rather than as an error status.
+   */
+  @Post(':id/sonar/disable-automatic-analysis')
+  @UseGuards(SessionAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  async disableSonarAutomaticAnalysis(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+    if (!this.projectLifecycleService) {
+      throw new NotFoundException('SonarCloud repair is not available');
+    }
+    return this.projectLifecycleService.disableSonarAutomaticAnalysis(
+      id,
+      userId,
+    );
+  }
+
+  /**
    * POST /api/v1/projects/sync
    * Checks each provisioned project against the GitHub API to verify the
    * repository still exists. Missing repos are marked 'orphaned'; repos that

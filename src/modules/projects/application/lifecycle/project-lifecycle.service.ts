@@ -37,7 +37,11 @@ import type {
   SetupProjectResponse,
   SyncProjectsResponse,
 } from './projects.service.types';
-import { SonarCloudSetupService } from './sonar-cloud-setup.service';
+import {
+  SonarCloudSetupService,
+  sonarProjectKeyFor,
+  type SonarAutomaticAnalysisResult,
+} from './sonar-cloud-setup.service';
 
 /**
  * Narrow compatibility port for the provisioning use cases that are still
@@ -250,6 +254,66 @@ export class ProjectLifecycleService {
         : {}),
       ...(sonarProjectDeleted !== undefined ? { sonarProjectDeleted } : {}),
     };
+  }
+
+  /**
+   * Repair for projects provisioned before Automatic Analysis was switched off
+   * at creation: turns it off on the project's SonarCloud project so CI scans
+   * are accepted again. Idempotent; admin/lead only (403 PROJECT_ROLE_FORBIDDEN),
+   * an invisible project answers 404. A SonarCloud refusal is reported in the
+   * body (`disabled: false` + message), not thrown, so the caller can show it.
+   */
+  async disableSonarAutomaticAnalysis(
+    projectId: string,
+    userId: string,
+  ): Promise<SonarAutomaticAnalysisResult> {
+    const project = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!project) {
+      throw new NotFoundException(
+        `Project '${projectId}' not found or does not belong to the current user.`,
+      );
+    }
+
+    const role = await this.projectsRepository.findAppRole(userId);
+    if (!canManageProjectLifecycle(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Only a lead or admin may repair this project.',
+      });
+    }
+
+    const [owner, repo] = project.repo_full_name.split('/');
+    if (!owner || !repo || !this.sonarCloud) {
+      return {
+        projectKey: '',
+        disabled: false,
+        message: this.sonarCloud
+          ? `Could not derive an owner/repo from '${project.repo_full_name}'.`
+          : 'SonarCloud repair is not available on this server.',
+      };
+    }
+
+    const result = await this.sonarCloud.disableAutomaticAnalysis(
+      sonarProjectKeyFor(owner, repo),
+    );
+    await this.recordProductEvent({
+      userId,
+      projectId,
+      eventCode: result.disabled
+        ? 'project_sonar_autoscan_disabled'
+        : 'project_sonar_autoscan_disable_failed',
+      title: result.disabled
+        ? 'SonarCloud Automatic Analysis disabled'
+        : 'SonarCloud Automatic Analysis could not be disabled',
+      body: `${result.projectKey}: ${result.message}`,
+      metadata: { repoFullName: project.repo_full_name, ...result },
+    });
+    return result;
   }
 
   /** Deletes the live Render/Vercel resources; 409 if any is left. */

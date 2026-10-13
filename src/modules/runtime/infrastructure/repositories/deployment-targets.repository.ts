@@ -185,6 +185,26 @@ export class DeploymentTargetsRepository {
     return this.toSummary(row);
   }
 
+  /**
+   * Merges keys into `provider_metadata` in the database rather than replacing
+   * it, so two concurrent writers touching different keys cannot erase each
+   * other the way a read-modify-write of the whole object can.
+   */
+  async mergeProviderMetadata(
+    targetId: string,
+    updates: Record<string, unknown>,
+  ): Promise<void> {
+    await this.databaseService.query(
+      `
+        UPDATE env_provisioning.project_deployment_targets
+        SET provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $2::jsonb,
+            updated_at = NOW()
+        WHERE id = $1;
+      `,
+      [targetId, JSON.stringify(updates)],
+    );
+  }
+
   async updateDeploymentTargetMetadataForUser(
     projectId: string,
     targetId: string,

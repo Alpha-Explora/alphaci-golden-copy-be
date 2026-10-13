@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   NotFoundException,
   ServiceUnavailableException,
@@ -64,7 +65,11 @@ function build(options: {
     listDeploymentTargets: jest
       .fn()
       .mockResolvedValue(options.targets ?? [target()]),
-  } as unknown as DeploymentTargetsRepository;
+    mergeProviderMetadata: jest.fn().mockResolvedValue(undefined),
+  } as unknown as DeploymentTargetsRepository & {
+    mergeProviderMetadata: jest.Mock;
+  };
+  const audit = { recordProjectEvent: jest.fn().mockResolvedValue(undefined) };
 
   const service = new ReleasesService(
     repository,
@@ -74,9 +79,10 @@ function build(options: {
         envProvisioning: { enabled: options.enabled ?? true },
       }),
     } as never,
+    audit as never,
   );
 
-  return { service, releaser, repository };
+  return { service, releaser, repository, audit };
 }
 
 describe('ReleasesService', () => {
@@ -110,6 +116,90 @@ describe('ReleasesService', () => {
     expect(view.releaseId).toBe('target-uat.dep-9');
     expect(view.status).toBe('in_progress');
     expect(view.serviceUrl).toBe('https://demo-uat.onrender.com');
+  });
+
+  it('persists what the release changed on the target', async () => {
+    const { service, repository } = build({
+      releaser: {
+        start: jest.fn().mockResolvedValue({
+          providerReleaseId: 'dep-9',
+          status: 'pending',
+          providerMetadataUpdates: { imageUrl: 'ghcr.io/org/img:sha-abc1234' },
+        }),
+      },
+    });
+
+    await service.startRelease(request);
+
+    expect(repository.mergeProviderMetadata).toHaveBeenCalledWith(
+      'target-uat',
+      { imageUrl: 'ghcr.io/org/img:sha-abc1234' },
+    );
+  });
+
+  it('writes nothing when the release changed nothing', async () => {
+    const { service, repository } = build({});
+
+    await service.startRelease(request);
+
+    expect(repository.mergeProviderMetadata).not.toHaveBeenCalled();
+  });
+
+  it('still reports the release when saving its metadata fails', async () => {
+    const { service, repository } = build({
+      releaser: {
+        start: jest.fn().mockResolvedValue({
+          providerReleaseId: 'dep-9',
+          status: 'pending',
+          providerMetadataUpdates: { imageUrl: 'ghcr.io/org/img:sha-abc1234' },
+        }),
+      },
+    });
+    repository.mergeProviderMetadata.mockRejectedValue(new Error('db down'));
+
+    const view = await service.startRelease(request);
+
+    expect(view.releaseId).toBe('target-uat.dep-9');
+  });
+
+  it("rethrows the provider's refusal unchanged and audits it", async () => {
+    const refusal = new BadGatewayException(
+      'Render refused to update the service image (HTTP 400): unable to fetch image with provided input.',
+    );
+    const { service, audit, repository } = build({
+      releaser: { start: jest.fn().mockRejectedValue(refusal) },
+    });
+
+    await expect(service.startRelease(request)).rejects.toBe(refusal);
+
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        eventCode: 'deployment_release_failed',
+        message: expect.stringContaining('unable to fetch image'),
+        metadata: expect.objectContaining({
+          provider: 'render',
+          deploymentTargetId: 'target-uat',
+        }),
+      }),
+    );
+    expect(repository.mergeProviderMetadata).not.toHaveBeenCalled();
+  });
+
+  it('does not put an unexpected error message into the audit trail', async () => {
+    const { service, audit } = build({
+      releaser: {
+        start: jest
+          .fn()
+          .mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.1')),
+      },
+    });
+
+    await expect(service.startRelease(request)).rejects.toThrow('ECONNREFUSED');
+
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'The release failed unexpectedly' }),
+    );
   });
 
   it('says which branches do have a target when the branch has none', async () => {

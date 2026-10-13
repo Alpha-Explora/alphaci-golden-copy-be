@@ -182,6 +182,7 @@ POST /api/v1/projects/{id}/branch-protection
 POST /api/v1/projects/{id}/ci-runs/{runId}/rerun
 POST /api/v1/projects/{id}/drift/run
 POST /api/v1/projects/{id}/drift/{findingId}/repair
+POST /api/v1/projects/{id}/sonar/disable-automatic-analysis
 POST /api/v1/projects/{id}/sync
 POST /api/v1/projects/{id}/workflow-settings/pr
 POST /api/v1/projects/{id}/workflow-settings/preview

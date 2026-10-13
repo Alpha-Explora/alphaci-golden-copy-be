@@ -11,6 +11,12 @@ export type SonarProjectDeleteResult =
   | { status: 'deleted' | 'not_found'; sonarProjectKey: string }
   | { status: 'failed'; sonarProjectKey: string; message: string };
 
+export interface SonarAutomaticAnalysisResult {
+  projectKey: string;
+  disabled: boolean;
+  message: string;
+}
+
 /**
  * Installs the SonarCloud secrets this product's Quality stage reads.
  *
@@ -181,6 +187,75 @@ export class SonarCloudSetupService {
     }
   }
 
+  /**
+   * Turns SonarCloud's Automatic Analysis OFF for a project so the CI scan this
+   * product's pipelines run is accepted.
+   *
+   * Why: the SonarCloud organization has the sonarqubecloud GitHub App
+   * installed for every repository, so a project created through the API is
+   * bound to GitHub and SonarCloud analyses it on its own within seconds.
+   * SonarCloud then rejects every CI analysis of it ("You are running CI
+   * analysis while Automatic Analysis is enabled", exit 3).
+   *
+   * `api/autoscan/activation` is undocumented (SonarCloud's own UI calls it),
+   * so a failure here is reported, never thrown: provisioning must not be
+   * lost to an endpoint SonarCloud may change. Idempotent: disabling an
+   * already-disabled project is a no-op on their side.
+   */
+  async disableAutomaticAnalysis(
+    projectKey: string,
+  ): Promise<SonarAutomaticAnalysisResult> {
+    const managed =
+      this.configService?.getOrThrow<AppConfig>('app')?.envProvisioning
+        ?.flowciManaged;
+    const sonarToken = managed?.sonarToken?.trim();
+    if (!sonarToken) {
+      return {
+        projectKey,
+        disabled: false,
+        message: 'ALPHACI_SONAR_TOKEN is not configured.',
+      };
+    }
+    return this.requestAutomaticAnalysisOff(sonarToken, projectKey);
+  }
+
+  private async requestAutomaticAnalysisOff(
+    sonarToken: string,
+    projectKey: string,
+  ): Promise<SonarAutomaticAnalysisResult> {
+    try {
+      const response = await fetch(
+        'https://sonarcloud.io/api/autoscan/activation',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${sonarToken}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({ projectKey, enable: 'false' }),
+        },
+      );
+      if (response.ok) {
+        this.logger.log(
+          `SonarCloud Automatic Analysis disabled for ${projectKey}`,
+        );
+        return {
+          projectKey,
+          disabled: true,
+          message: 'Automatic Analysis is disabled.',
+        };
+      }
+      const detail = (await response.text()).slice(0, 300);
+      const message = `SonarCloud refused to disable Automatic Analysis (${String(response.status)}): ${detail}`;
+      this.logger.warn(`${message} [${projectKey}]`);
+      return { projectKey, disabled: false, message };
+    } catch (error) {
+      const message = `SonarCloud Automatic Analysis could not be disabled: ${String(error)}`;
+      this.logger.warn(`${message} [${projectKey}]`);
+      return { projectKey, disabled: false, message };
+    }
+  }
+
   private async ensureSonarCloudProject(input: {
     sonarToken: string;
     sonarOrganization: string;
@@ -188,6 +263,7 @@ export class SonarCloudSetupService {
     projectName: string;
     repoFullName: string;
   }): Promise<void> {
+    let projectExists = false;
     try {
       const body = new URLSearchParams({
         organization: input.sonarOrganization,
@@ -209,6 +285,7 @@ export class SonarCloudSetupService {
       );
 
       if (response.ok) {
+        projectExists = true;
         this.logger.log(
           `SonarCloud project ensured for ${input.repoFullName} (${input.sonarProjectKey})`,
         );
@@ -217,6 +294,7 @@ export class SonarCloudSetupService {
 
       const responseBody = await response.text();
       if (response.status === 400 && /already|exist|key/i.test(responseBody)) {
+        projectExists = true;
         this.logger.log(
           `SonarCloud project already exists for ${input.repoFullName} (${input.sonarProjectKey})`,
         );
@@ -231,6 +309,14 @@ export class SonarCloudSetupService {
         `SonarCloud project was not created for ${input.repoFullName}: ${String(error)}`,
       );
     } finally {
+      // Before the workflow YAML is pushed (every provisioning flow installs
+      // secrets first), so the first CI scan finds Automatic Analysis off.
+      if (projectExists) {
+        await this.requestAutomaticAnalysisOff(
+          input.sonarToken,
+          input.sonarProjectKey,
+        );
+      }
       await this.ensureSonarCloudProjectLink(input);
     }
   }

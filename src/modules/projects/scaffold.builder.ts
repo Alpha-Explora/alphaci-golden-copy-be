@@ -213,6 +213,8 @@ function buildPackageJson(packageName: string, stack: string): string {
   const pkg = {
     name: packageName,
     version: '0.1.0',
+    // Never published: lets the licence gate skip the app itself (--excludePrivatePackages).
+    private: true,
     scripts,
     dependencies: {} as Record<string, string>,
     devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
@@ -775,6 +777,8 @@ function buildPackagePackageJson(packageName: string, stack: string): string {
   const pkg = {
     name: packageName,
     version: '0.1.0',
+    // Never published: lets the licence gate skip the app itself (--excludePrivatePackages).
+    private: true,
     scripts: {
       build: 'tsc -p tsconfig.build.json',
       test: 'jest',
