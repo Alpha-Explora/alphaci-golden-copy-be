@@ -13,7 +13,13 @@ import {
 } from '#kernel/ports/project-visibility.port';
 import { CiRunReportsRepository } from '../infrastructure/ci-run-reports.repository';
 import { buildCiRunReport, type CiRunReport } from './ci-run-report';
-import { translateResults } from './translate-results';
+import {
+  cleanMessages,
+  reclassifyStoredFailure,
+  skippedMessage,
+  stripAnsiDeep,
+  translateResults,
+} from './translate-results';
 import type {
   RunGroup,
   RunsResponse,
@@ -103,6 +109,11 @@ const RESULT_KEYS = [
 const RESULT_LIST_CAP = 50;
 
 function capLists(value: unknown): unknown {
+  // Escape codes from a test runner's colouring: stripped on read so stored
+  // rows written before ingest cleaned them render clean too.
+  if (typeof value === 'string') {
+    return stripAnsiDeep(value);
+  }
   if (Array.isArray(value)) {
     return value.slice(0, RESULT_LIST_CAP).map(capLists);
   }
@@ -137,6 +148,38 @@ function readResults(results: unknown): StageResults | undefined {
 
   return Object.keys(picked).length > 0 ? (picked as StageResults) : undefined;
 }
+
+/**
+ * Why a stage was left out on purpose, when it reported that.
+ *
+ * Stored as a successful report carrying `results.skipped.reason` (the status
+ * column cannot hold a new value without a migration), so the read path turns
+ * it back into what it is: a stage that did not run, with the reason.
+ */
+function readSkipReason(results: unknown): string | undefined {
+  if (typeof results !== 'object' || results === null) {
+    return undefined;
+  }
+  const skipped = (results as Record<string, unknown>)['skipped'];
+  if (typeof skipped !== 'object' || skipped === null) {
+    return undefined;
+  }
+  const reason = (skipped as Record<string, unknown>)['reason'];
+  return typeof reason === 'string' && reason.trim() !== ''
+    ? stripAnsiDeep(reason)
+    : undefined;
+}
+
+/**
+ * A pull request's merge ref (`7/merge`).
+ *
+ * GitHub runs the access workflow on it for a pull_request event, so its
+ * report is filed under that ref. The chained stages file theirs under the
+ * pull request's HEAD branch, so a merge-ref group can only ever hold the
+ * access stage and every later one resolved to stalled: eleven red runs for
+ * pull requests that were fine. It is not a pipeline execution of a branch.
+ */
+const MERGE_REF = /^\d+\/merge$/;
 
 function optionalResults(results: unknown): { results?: StageResults } {
   const read = readResults(results);
@@ -179,9 +222,12 @@ export class CiReportsService {
         runId: body.runId,
         stage: body.stage,
         status,
-        results: {
+        results: stripAnsiDeep({
           ...(body.results.tests !== undefined && {
             tests: body.results.tests,
+          }),
+          ...(body.results.skipped !== undefined && {
+            skipped: body.results.skipped,
           }),
           ...(body.results.coverage !== undefined && {
             coverage: body.results.coverage,
@@ -206,7 +252,7 @@ export class CiReportsService {
            */
           ...(body.checks !== undefined &&
             body.checks.length > 0 && { checks: body.checks }),
-        },
+        }),
         friendlyMessages,
         ...(body.rawLogs !== undefined && { rawLogs: body.rawLogs }),
       });
@@ -379,9 +425,25 @@ export class CiReportsService {
     results: unknown;
     raw_logs: string | null;
   }): FriendlyMessage[] {
-    const stored = row.friendly_messages;
-    if (row.status !== 'failure' || (stored && stored.length > 0)) {
-      return stored ?? [];
+    const skipReason =
+      row.status === 'success' ? readSkipReason(row.results) : undefined;
+    if (skipReason !== undefined) {
+      return cleanMessages([skippedMessage(skipReason)]);
+    }
+
+    const stored = row.friendly_messages ?? [];
+    if (row.status !== 'failure') {
+      return cleanMessages(stored);
+    }
+
+    if (stored.length > 0) {
+      // Escape codes and `:null` locations are cleaned, and a verify failure
+      // filed under "Tests failed" for a deployment that never came up gets its
+      // real copy back. None of it needs the original annotations, which are
+      // not stored, so history benefits without a backfill.
+      return cleanMessages(
+        reclassifyStoredFailure(row.stage, stored, row.raw_logs),
+      );
     }
 
     return translateResults(
@@ -431,6 +493,9 @@ export class CiReportsService {
     for (const row of rows) {
       // pg returns bigint as string; parse to number (GitHub run IDs are safe integers)
       const runId = Number(row.run_id);
+      if (MERGE_REF.test(row.branch)) {
+        continue;
+      }
       const groupKey = `${row.repo_full_name}::${row.branch}::${row.commit_sha}`;
 
       if (!groupMap.has(groupKey)) {
@@ -447,13 +512,15 @@ export class CiReportsService {
 
       const group = groupMap.get(groupKey);
       if (group && !group.stages.has(row.stage)) {
+        const skipped =
+          row.status === 'success' && readSkipReason(row.results) !== undefined;
         group.stageRunIds.set(row.stage, runId);
         if (row.created_at < group.startedAt) {
           group.startedAt = row.created_at;
         }
         group.stages.set(row.stage, {
           stage: row.stage,
-          status: row.status,
+          status: skipped ? 'not_applicable' : row.status,
           runId,
           friendlyMessages: this.explainedMessages(row),
           githubRunUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
@@ -499,6 +566,10 @@ export class CiReportsService {
             { status: report.status, updatedAt: report.updatedAt },
           ]),
         ),
+        new Date(),
+        // Which stages the pipeline runs depends on the branch: verify has
+        // nothing to test on dev, so its absence there is not a stall.
+        group.branch,
       );
 
       const stages: StageReport[] = ALL_STAGES.map((stageName) => {

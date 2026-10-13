@@ -179,6 +179,7 @@ const STATUS_LABELS: Record<StageReport['status'], string> = {
   pending: 'Not run yet',
   blocked: 'Blocked by an earlier failure',
   stalled: 'Stalled',
+  not_applicable: 'Not run on this branch',
 };
 
 const OVERALL_LABELS: Record<RunGroup['overallStatus'], string> = {

@@ -443,11 +443,27 @@ export class CiReportSonarDto {
   issues?: CiReportSonarIssueDto[];
 }
 
+/**
+ * Why a stage left its work out on purpose, such as verify with nothing
+ * deployed. Reported as a success so no database constraint has to change, and
+ * read back as a stage that did not run, with this as the reason.
+ */
+export class CiReportSkippedDto {
+  @IsString()
+  @MaxLength(500)
+  reason!: string;
+}
+
 export class CiReportResultsDto {
   @IsOptional()
   @ValidateNested()
   @Type(() => CiReportTestResultsDto)
   tests?: CiReportTestResultsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CiReportSkippedDto)
+  skipped?: CiReportSkippedDto;
 
   @IsOptional()
   @ValidateNested()
