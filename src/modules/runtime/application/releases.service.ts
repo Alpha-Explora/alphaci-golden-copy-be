@@ -1,14 +1,17 @@
 import {
   BadRequestException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
+import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import type { DeploymentTargetSummary } from '../core/deployments.types';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import {
@@ -63,6 +66,10 @@ export class ReleasesService {
     @Inject(PROVIDER_RELEASER_REGISTRY)
     private readonly releasers: ProviderReleaserRegistryPort,
     private readonly configService: ConfigService,
+    // A class token, so Nest resolves it from the emitted type. Optional so a
+    // deployment without the outbox still releases.
+    @Optional()
+    private readonly auditEvents?: AuditEventPublisher,
   ) {}
 
   async startRelease(input: StartReleaseInput): Promise<ReleaseView> {
@@ -75,13 +82,20 @@ export class ReleasesService {
       `Releasing ${target.provider}/${target.slot} ${input.branch} for project ${input.projectId} at ${input.commitSha}`,
     );
 
-    const handle = await releaser.start({
-      target,
-      branch: input.branch,
-      commitSha: input.commitSha,
-      ...(input.artifact ? { artifact: input.artifact } : {}),
-    });
+    let handle: ProviderReleaseHandle;
+    try {
+      handle = await releaser.start({
+        target,
+        branch: input.branch,
+        commitSha: input.commitSha,
+        ...(input.artifact ? { artifact: input.artifact } : {}),
+      });
+    } catch (error) {
+      await this.recordFailure(target, input, error);
+      throw error;
+    }
 
+    await this.persistMetadata(target, handle);
     return this.toView(target, handle);
   }
 
@@ -112,6 +126,63 @@ export class ReleasesService {
     const releaser = this.releaserFor(target);
     const handle = await releaser.check({ target, providerReleaseId });
     return this.toView(target, handle);
+  }
+
+  /**
+   * Keeps what the release changed on the target row. Without it the next
+   * release reads the old image, decides it must patch again, and every run
+   * repeats the provider call that already succeeded.
+   *
+   * Never fails the release: the provider has already accepted it, and a lost
+   * write only costs one repeated, idempotent patch next time.
+   */
+  private async persistMetadata(
+    target: DeploymentTargetSummary,
+    handle: ProviderReleaseHandle,
+  ): Promise<void> {
+    const updates = handle.providerMetadataUpdates;
+    if (!updates || Object.keys(updates).length === 0) {
+      return;
+    }
+    try {
+      await this.deploymentTargets.mergeProviderMetadata(target.id, updates);
+    } catch (error) {
+      this.logger.warn(
+        `Release metadata for target ${target.id} was not saved: ${String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Leaves a trace of a refused release beside the pipeline's own log. The
+   * message is the provider's sentence already sanitised by the releaser; a
+   * non-HTTP error is reduced to a generic line so internals do not leak.
+   */
+  private async recordFailure(
+    target: DeploymentTargetSummary,
+    input: StartReleaseInput,
+    error: unknown,
+  ): Promise<void> {
+    const message =
+      error instanceof HttpException
+        ? error.message
+        : 'The release failed unexpectedly';
+    this.logger.warn(
+      `Release of ${target.provider}/${target.slot} ${input.branch} for project ${input.projectId} failed: ${message}`,
+    );
+    await this.auditEvents?.recordProjectEvent({
+      projectId: input.projectId,
+      actorUserId: null,
+      eventCode: 'deployment_release_failed',
+      message,
+      metadata: {
+        provider: target.provider,
+        slot: target.slot,
+        branch: input.branch,
+        commitSha: input.commitSha,
+        deploymentTargetId: target.id,
+      },
+    });
   }
 
   private async findTarget(
