@@ -87,9 +87,13 @@ export class RenderReleaseService implements ProviderReleaser {
      * pipeline's built container image (e.g. ghcr.io/org/repo:sha-xyz), or switching
      * image repositories, the backing image must first be updated via PATCH /services.
      */
+    let providerMetadataUpdates: Record<string, unknown> | undefined;
     if (artifact && this.requiresImagePatch(artifact, configured, bootstrap)) {
-      await this.patchServiceImage(serviceId, artifact, token);
-      request.target.providerMetadata['imageUrl'] = artifact;
+      await this.patchServiceImage(request.target, serviceId, artifact, token);
+      // Handed back rather than written into request.target: the caller owns
+      // persistence, and an in-memory edit of a row it read is lost with the
+      // request, which is how every release used to re-patch.
+      providerMetadataUpdates = { imageUrl: artifact };
     }
 
     const imageUrl = artifact || configured;
@@ -113,7 +117,10 @@ export class RenderReleaseService implements ProviderReleaser {
       );
     }
 
-    return this.toHandle(deployId, payload.status, request.target);
+    return {
+      ...this.toHandle(deployId, payload.status, request.target),
+      ...(providerMetadataUpdates ? { providerMetadataUpdates } : {}),
+    };
   }
 
   async check(input: {
@@ -178,17 +185,32 @@ export class RenderReleaseService implements ProviderReleaser {
     return repositoryOf(artifact) !== repositoryOf(configured);
   }
 
+  /**
+   * Points the service at the image the pipeline built.
+   *
+   * The body mirrors the one the service was created with (render-env.client
+   * `buildCreateServiceBody`): Render treats `image` as a replacement, so a
+   * PATCH that leaves out the registry credential drops it, and Render then
+   * tries to pull a private GHCR image anonymously and answers
+   * "unable to fetch image with provided input".
+   */
   private async patchServiceImage(
+    target: DeploymentTargetSummary,
     serviceId: string,
     imagePath: string,
     token: string,
   ): Promise<void> {
+    const ownerId = this.stringMetadata(target, 'renderOwnerId');
+    const registryCredentialId = this.registryCredentialId(target);
+
     const response = await fetch(`${RENDER_API_URL}/services/${serviceId}`, {
       method: 'PATCH',
       headers: this.headers(token),
       body: JSON.stringify({
         image: {
+          ...(ownerId ? { ownerId } : {}),
           imagePath,
+          ...(registryCredentialId ? { registryCredentialId } : {}),
         },
       }),
     });
@@ -196,6 +218,19 @@ export class RenderReleaseService implements ProviderReleaser {
     await this.readPayload(
       response,
       'Render refused to update the service image',
+    );
+  }
+
+  /** The credential recorded on the target at creation, else the configured shared one. */
+  private registryCredentialId(target: DeploymentTargetSummary): string | null {
+    const recorded = this.stringMetadata(target, 'renderRegistryCredentialId');
+    if (recorded) {
+      return recorded;
+    }
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    return (
+      config.envProvisioning.flowciManaged.renderRegistryCredentialId?.trim() ||
+      null
     );
   }
 
@@ -240,12 +275,51 @@ export class RenderReleaseService implements ProviderReleaser {
   ): Promise<RenderDeployPayload> {
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      const detail = body ? body.slice(0, 300) : '';
+      const detail = this.providerDetail(body);
+      const status = `HTTP ${String(response.status)}`;
+      const hint = /unable to fetch image/i.test(detail)
+        ? " Check that the registry credential Render holds can read this image (a GitHub token needs read:packages for the package's organisation)."
+        : '';
       throw new BadGatewayException(
-        `${message} (HTTP ${String(response.status)}). ${detail}`.trim(),
+        detail
+          ? `${message} (${status}): ${detail}.${hint}`
+          : `${message} (${status}).`,
       );
     }
 
     return (await response.json()) as RenderDeployPayload;
+  }
+
+  /**
+   * Render's own explanation of a refusal, safe to hand to the pipeline.
+   *
+   * Render answers `{"message":"..."}`; the sentence is what an operator needs,
+   * the envelope is noise. Anything credential-shaped is masked because this
+   * text travels to a customer repository's logs.
+   */
+  private providerDetail(body: string): string {
+    let text = body.trim();
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        const record = parsed as Record<string, unknown>;
+        const candidate = record['message'] ?? record['error'];
+        if (typeof candidate === 'string') {
+          text = candidate;
+        } else if (Array.isArray(candidate)) {
+          text = candidate.map(String).join('; ');
+        }
+      }
+    } catch {
+      // Not JSON: keep the raw text.
+    }
+
+    return text
+      .replace(/\b(rnd_|gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, '[redacted]')
+      .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\.$/, '')
+      .slice(0, 300);
   }
 }

@@ -31,12 +31,34 @@ function target(
   } as DeploymentTargetSummary;
 }
 
-function service(): RenderReleaseService {
+function service(registryCredentialId?: string): RenderReleaseService {
   return new RenderReleaseService({
     getOrThrow: () => ({
-      envProvisioning: { flowciManaged: { renderToken: 'rnd_test' } },
+      envProvisioning: {
+        flowciManaged: {
+          renderToken: 'rnd_test',
+          ...(registryCredentialId
+            ? { renderRegistryCredentialId: registryCredentialId }
+            : {}),
+        },
+      },
     }),
   } as never);
+}
+
+const GHCR_IMAGE = 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234';
+
+function bootstrapTarget(
+  metadata: Record<string, unknown> = {},
+): DeploymentTargetSummary {
+  return target({
+    providerMetadata: {
+      renderServiceUrl: 'https://demo-uat.onrender.com',
+      imageUrl: 'docker.io/library/nginx:alpine',
+      bootstrapImage: 'docker.io/library/nginx:alpine',
+      ...metadata,
+    },
+  });
 }
 
 function stubFetch(
@@ -131,6 +153,10 @@ describe('RenderReleaseService', () => {
         imagePath: 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234',
       },
     });
+    // The patch changed what the service runs, so the caller is told to keep it.
+    expect(handle.providerMetadataUpdates).toEqual({
+      imageUrl: 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234',
+    });
 
     // Call 2: POST deploy
     const [deployUrl, deployInit] = fetchMock.mock.calls[1] as [
@@ -146,6 +172,127 @@ describe('RenderReleaseService', () => {
     });
 
     expect(handle.providerReleaseId).toBe('dep-1');
+  });
+
+  describe('patching the image of a private registry', () => {
+    async function patchBody(
+      releaser: RenderReleaseService,
+      t: DeploymentTargetSummary,
+      artifact = GHCR_IMAGE,
+    ) {
+      const fetchMock = stubFetch();
+      await releaser.start({
+        target: t,
+        branch: 'uat',
+        commitSha: 'abc1234',
+        artifact,
+      });
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(init.method).toBe('PATCH');
+      expect(url).toBe('https://api.render.com/v1/services/srv-abc');
+      return JSON.parse(String(init.body)) as {
+        image: Record<string, unknown>;
+      };
+    }
+
+    it('sends the credential and owner recorded on the target', async () => {
+      const body = await patchBody(
+        service('rcr-configured'),
+        bootstrapTarget({
+          renderRegistryCredentialId: 'rcr-recorded',
+          renderOwnerId: 'tea-123',
+        }),
+      );
+
+      expect(body).toEqual({
+        image: {
+          ownerId: 'tea-123',
+          imagePath: GHCR_IMAGE,
+          registryCredentialId: 'rcr-recorded',
+        },
+      });
+    });
+
+    it('falls back to the configured credential when the target recorded none', async () => {
+      const body = await patchBody(
+        service('rcr-configured'),
+        bootstrapTarget(),
+      );
+
+      expect(body.image).toEqual({
+        imagePath: GHCR_IMAGE,
+        registryCredentialId: 'rcr-configured',
+      });
+    });
+
+    it('sends no credential when none is known', async () => {
+      const body = await patchBody(service(), bootstrapTarget());
+
+      expect(body.image).toEqual({ imagePath: GHCR_IMAGE });
+      expect(body.image).not.toHaveProperty('registryCredentialId');
+    });
+
+    it('treats a blank recorded credential as unknown', async () => {
+      const body = await patchBody(
+        service(),
+        bootstrapTarget({ renderRegistryCredentialId: '   ' }),
+      );
+
+      expect(body.image).not.toHaveProperty('registryCredentialId');
+    });
+
+    it('keeps the credential for a docker.io image, as the create call does', async () => {
+      const body = await patchBody(
+        service('rcr-configured'),
+        bootstrapTarget({ renderRegistryCredentialId: 'rcr-recorded' }),
+        'docker.io/library/redis:7',
+      );
+
+      expect(body.image).toEqual({
+        imagePath: 'docker.io/library/redis:7',
+        registryCredentialId: 'rcr-recorded',
+      });
+    });
+  });
+
+  it('skips the patch once the image is already on the target repository', async () => {
+    // What the caller persisted after the first release: the pipeline image.
+    const fetchMock = stubFetch();
+
+    const handle = await service('rcr-configured').start({
+      target: target({
+        providerMetadata: {
+          renderServiceUrl: 'https://demo-uat.onrender.com',
+          imageUrl: 'ghcr.io/org/alphaci-backend-uat-demo:sha-abc1234',
+          bootstrapImage: 'docker.io/library/nginx:alpine',
+        },
+      }),
+      branch: 'uat',
+      commitSha: 'def5678',
+      artifact: 'ghcr.io/org/alphaci-backend-uat-demo:sha-def5678',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].method).toBe(
+      'POST',
+    );
+    expect(handle.providerMetadataUpdates).toBeUndefined();
+  });
+
+  it('does not edit the target it was given', async () => {
+    stubFetch();
+    const t = bootstrapTarget();
+
+    await service().start({
+      target: t,
+      branch: 'uat',
+      commitSha: 'abc1234',
+      artifact: GHCR_IMAGE,
+    });
+
+    expect(t.providerMetadata['imageUrl']).toBe(
+      'docker.io/library/nginx:alpine',
+    );
   });
 
   it('falls back to the image the service was created with', async () => {
@@ -206,6 +353,57 @@ describe('RenderReleaseService', () => {
 
     await expect(promise).rejects.toThrow(BadGatewayException);
     await expect(promise).rejects.toThrow(/HTTP 402.*workspace over quota/s);
+  });
+
+  it("carries Render's own sentence, not the JSON envelope, when the image patch is refused", async () => {
+    stubFetch({
+      ok: false,
+      status: 400,
+      text: '{"message":"unable to fetch image with provided input"}',
+    });
+
+    const promise = service().start({
+      target: bootstrapTarget(),
+      branch: 'uat',
+      commitSha: 'abc1234',
+      artifact: GHCR_IMAGE,
+    });
+
+    await expect(promise).rejects.toThrow(BadGatewayException);
+    await expect(promise).rejects.toThrow(
+      /^Render refused to update the service image \(HTTP 400\): unable to fetch image with provided input\./,
+    );
+    await expect(promise).rejects.toThrow(/read:packages/);
+  });
+
+  it('does not call the deploy endpoint after a refused image patch', async () => {
+    const fetchMock = stubFetch({ ok: false, status: 400, text: 'nope' });
+
+    await expect(
+      service().start({
+        target: bootstrapTarget(),
+        branch: 'uat',
+        commitSha: 'abc1234',
+        artifact: GHCR_IMAGE,
+      }),
+    ).rejects.toThrow(BadGatewayException);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('masks credential-shaped text in what Render said', async () => {
+    stubFetch({
+      ok: false,
+      status: 401,
+      text: '{"message":"denied for Bearer abc.def and ghp_SECRET123 via rnd_KEY9"}',
+    });
+
+    const promise = service().check({
+      target: target(),
+      providerReleaseId: 'dep-1',
+    });
+
+    await expect(promise).rejects.toThrow(/denied for Bearer \[redacted\]/);
+    await expect(promise).rejects.not.toThrow(/SECRET123|rnd_KEY9|abc\.def/);
   });
 
   it('throws BadRequestException without a configured Render key', async () => {
