@@ -1,11 +1,11 @@
 {
-  "routeCount": 223,
+  "routeCount": 224,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "fd0a3ebea9f233125885373276610517b1241ae08f4122109a3fd5a5f54ea8ed",
+  "referenceSha256": "1a40d878f94465c00134762c1372f555bb96dc767d8fc47095ebdcc7f1bd7f4d",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "fd0a3ebea9f233125885373276610517b1241ae08f4122109a3fd5a5f54ea8ed",
+  "baselineSha256": "1a40d878f94465c00134762c1372f555bb96dc767d8fc47095ebdcc7f1bd7f4d",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -184,6 +184,12 @@
       "reason": "CI run report export: one pipeline execution (repository, branch, commit) as a downloadable failures-first report in JSON or Markdown, for the developer who has to fix it. Same session auth and project visibility as GET /ci/runs.",
       "routes": [
         "GET /api/v1/ci/runs/report"
+      ]
+    },
+    {
+      "reason": "SonarCloud repair: switch off Automatic Analysis on a provisioned project so SonarCloud accepts its CI scans again. Lead/admin only, same session auth and project visibility as the other project lifecycle routes.",
+      "routes": [
+        "POST /api/v1/projects/{id}/sonar/disable-automatic-analysis"
       ]
     }
   ]
