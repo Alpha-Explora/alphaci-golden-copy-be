@@ -137,3 +137,46 @@ describe('CiRunReportsRepository.latestStageReports: per-test detail', () => {
     expect(tests).not.toHaveProperty('cases');
   });
 });
+
+describe('CiRunReportsRepository.latestStageReports: a skipped stage is not a pass', () => {
+  it('leaves out a verify report the pipeline skipped because nothing was deployed', async () => {
+    const query = jest.fn().mockResolvedValue({
+      rows: [
+        {
+          stage: 'quality',
+          status: 'success',
+          run_id: '76',
+          repo_full_name: 'acme/web',
+          updated_at: '2026-10-14T01:00:00.000Z',
+          results: {},
+        },
+        {
+          stage: 'verify',
+          status: 'success',
+          run_id: '77',
+          repo_full_name: 'acme/web',
+          updated_at: '2026-10-14T01:05:00.000Z',
+          results: {
+            skipped: {
+              reason:
+                'Nothing was deployed for uat: VERCEL_ALIAS is not set - provision hosting in ALPHACI.',
+            },
+          },
+        },
+      ],
+    });
+    const repository = new CiRunReportsRepository({
+      query,
+    } as unknown as DatabaseService);
+
+    const results = await repository.latestStageReports({
+      repoFullName: 'acme/web',
+      branch: 'uat',
+      commitSha: 'abc',
+      stages: ['quality', 'verify'],
+    });
+
+    // QA automation reads "absent" as "no report yet" and never as passed.
+    expect(results.map((result) => result.stage)).toEqual(['quality']);
+  });
+});

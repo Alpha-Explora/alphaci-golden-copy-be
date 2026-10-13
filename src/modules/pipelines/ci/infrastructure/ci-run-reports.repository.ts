@@ -167,6 +167,12 @@ function readCases(tests: Record<string, unknown>): CiTestCase[] | undefined {
     .filter((entry): entry is CiTestCase => entry !== null);
 }
 
+/** True for a stage the pipeline skipped on purpose (`results.skipped`). */
+function isSkippedReport(results: Record<string, unknown> | null): boolean {
+  const skipped = results?.['skipped'];
+  return typeof skipped === 'object' && skipped !== null;
+}
+
 /**
  * Pull `results.tests` back out of the stored jsonb blob, the same
  * defensive shape as ci-reports.service.ts's readChecks: nothing the
@@ -257,17 +263,24 @@ export class CiRunReportsRepository implements CiStageResultsLookup {
       [input.repoFullName, input.branch, input.commitSha, input.stages],
     );
 
-    return result.rows.map((row) => {
-      const runId = Number(row.run_id);
-      return {
-        stage: row.stage as CiStageId,
-        status: row.status,
-        runId,
-        runUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
-        reportedAt: row.updated_at,
-        tests: readTestResults(row.results),
-      };
-    });
+    // A stage skipped on purpose (nothing deployed to test) is stored as
+    // `success` plus `results.skipped` so /ci/runs can say why. It examined
+    // nothing, so it must never read as a pass here: QA automation would
+    // otherwise mark Playwright/Bruno items "passed" with no test run. Left
+    // out, it reads as "no report yet", which is the truth.
+    return result.rows
+      .filter((row) => !isSkippedReport(row.results))
+      .map((row) => {
+        const runId = Number(row.run_id);
+        return {
+          stage: row.stage as CiStageId,
+          status: row.status,
+          runId,
+          runUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
+          reportedAt: row.updated_at,
+          tests: readTestResults(row.results),
+        };
+      });
   }
 
   /**
