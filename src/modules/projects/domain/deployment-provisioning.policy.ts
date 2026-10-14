@@ -237,6 +237,7 @@ export function withRepoShapeRootDirectory(
 
 export function forceManagedProvisioning(
   request: DeploymentProvisioningRequestDto | undefined,
+  deliveredByHost: (provider: string) => boolean = () => false,
 ): DeploymentProvisioningRequestDto | undefined {
   if (!request) {
     return undefined;
@@ -245,6 +246,8 @@ export function forceManagedProvisioning(
   return {
     ...request,
     targets: request.targets.map((target) => {
+      // An on-prem host is the customer's own machine, never a managed account.
+      if (deliveredByHost(target.provider)) return target;
       const managedTarget = {
         ...target,
         ownershipMode: 'flowci_managed' as const,

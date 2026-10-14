@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  ConflictException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -65,6 +66,16 @@ import {
   type DeploymentProviderResourcesTeardown,
   type ProviderResourcesTeardownResult,
 } from '../core/deployment-provisioning.contract';
+import {
+  EnvironmentTargetUnavailableError,
+  type DeploymentProjectEnvironment,
+  type EnvironmentDeploymentTarget,
+  type EnvironmentDeploymentTargetResolver,
+} from '#kernel/ports/deployment-runtime.port';
+import {
+  GITHUB_ACTIONS_SECRETS,
+  type GithubActionsSecretsPort,
+} from './ports/github-actions-secrets.port';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import type {
@@ -94,8 +105,24 @@ const EMPTY_PROVIDER_TARGET_POLICY: DeploymentProviderTargetPolicyResult = {
   providerMetadata: {},
 } as const;
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === '23505'
+  );
+}
+
 @Injectable()
-export class DeploymentTargetsService implements DeploymentProviderResourcesTeardown {
+export class DeploymentTargetsService
+  implements
+    DeploymentProviderResourcesTeardown,
+    EnvironmentDeploymentTargetResolver
+{
   private readonly logger = new Logger(DeploymentTargetsService.name);
 
   constructor(
@@ -144,12 +171,23 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
      */
     @Optional()
     private readonly logsHub?: DeploymentLogsHubService,
+    @Optional()
+    @Inject(GITHUB_ACTIONS_SECRETS)
+    private readonly githubActions?: GithubActionsSecretsPort,
   ) {}
 
-  async listDeploymentTargets(projectId: string, userId: string) {
+  async listDeploymentTargets(
+    projectId: string,
+    userId: string,
+    environmentId?: string,
+  ) {
     await this.getProjectOrThrow(projectId, userId);
+    if (environmentId !== undefined) this.requireEnvironmentId(environmentId);
     const targets =
-      await this.deploymentTargetsRepository.listDeploymentTargets(projectId);
+      await this.deploymentTargetsRepository.listDeploymentTargets(
+        projectId,
+        environmentId,
+      );
 
     // Enrich with copyable links: the live service URL and the provider
     // dashboard, so the UI never has to re-derive provider URL conventions.
@@ -163,17 +201,60 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
   async createDeploymentTarget(
     projectId: string,
     userId: string,
-    dto: CreateDeploymentTargetDto,
+    requested: CreateDeploymentTargetDto,
   ) {
     const project = await this.assertProjectLifecycleAccess(projectId, userId);
+    // Environment checks run before quota, provider, and GitHub calls, so a
+    // rejected request leaves nothing behind.
+    const environment =
+      requested.environmentId !== undefined
+        ? await this.availableEnvironment(
+            projectId,
+            requested.environmentId,
+            requested.slot,
+            requested.branchName,
+          )
+        : null;
+    const dto: CreateDeploymentTargetDto = environment
+      ? { ...requested, branchName: environment.sourceBranch }
+      : requested;
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
-    this.assertOwnershipModeAllowed(dto);
-    try {
-      assertProviderSlotAllowed(
-        dto.provider,
-        dto.slot,
-        this.providerRegistry?.find(dto.provider),
+    const definition = this.providerRegistry?.find(dto.provider);
+    const availability = definition?.isEnabled();
+    if (definition && availability && !availability.enabled) {
+      throw new BadRequestException(
+        availability.reason ?? definition.label + ' is not available here.',
       );
+    }
+    // A host-delivered provider is the customer's own machine: it sits outside
+    // the managed-or-own-account choice, needs no connection, and is only a
+    // record here. The host pulls its environment's releases.
+    const hostDelivered = this.deliveredByHost(dto.provider);
+    if (hostDelivered) {
+      if (!environment) {
+        throw new BadRequestException(
+          (definition?.label ?? dto.provider) +
+            ' targets belong to a project environment; pass environmentId.',
+        );
+      }
+      if (dto.ownershipMode !== 'byo') {
+        throw new BadRequestException(
+          (definition?.label ?? dto.provider) +
+            " targets run on the customer's own host; use ownershipMode byo.",
+        );
+      }
+    } else {
+      this.assertOwnershipModeAllowed(dto);
+    }
+    if (environment) {
+      await this.assertEnvironmentDelivery(
+        projectId,
+        environment,
+        hostDelivered,
+      );
+    }
+    try {
+      assertProviderSlotAllowed(dto.provider, dto.slot, definition);
     } catch (error) {
       mapSlotViolation(error);
     }
@@ -200,11 +281,13 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         ...providerPolicy.managedQuota,
       });
     }
-    const providerAuth = await this.resolveProviderToken(
-      dto.provider,
-      userId,
-      buildCreateTargetTokenInput(dto),
-    );
+    const providerAuth = hostDelivered
+      ? { token: '', connectionMetadata: {} }
+      : await this.resolveProviderToken(
+          dto.provider,
+          userId,
+          buildCreateTargetTokenInput(dto),
+        );
     const deploymentStrategy = this.deploymentStrategyResolver.resolve({
       provider: dto.provider,
       ownershipMode: dto.ownershipMode,
@@ -237,8 +320,20 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         }),
       ) ?? EMPTY_PROVIDER_TARGET_POLICY;
 
-    const target =
-      dto.action === 'create'
+    if (environment && !hostDelivered) {
+      await this.provisionGithubEnvironment(project, userId, environment);
+    }
+
+    const hostLabel =
+      dto.providerProjectName?.trim() || dto.projectName?.trim() || dto.slot;
+    const target = hostDelivered
+      ? {
+          id: hostLabel,
+          name: hostLabel,
+          provider: dto.provider,
+          metadata: {},
+        }
+      : dto.action === 'create'
         ? await this.clientRegistry.getClient(dto.provider).createTarget({
             token: providerAuth.token,
             repoFullName: project.repoFullName,
@@ -267,9 +362,10 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
             metadata: providerTargetPolicy.providerMetadata,
           };
 
-    const created =
-      await this.deploymentTargetsRepository.createDeploymentTarget(
-        buildCreateTargetPersistInput({
+    let created: DeploymentTargetSummary;
+    try {
+      created = await this.deploymentTargetsRepository.createDeploymentTarget({
+        ...buildCreateTargetPersistInput({
           projectId,
           dto,
           repoFullName: project.repoFullName,
@@ -277,7 +373,16 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
           providerTargetPolicy,
           deploymentStrategy,
         }),
-      );
+        environmentId: environment?.id ?? null,
+      });
+    } catch (error) {
+      if (environment && isUniqueViolation(error)) {
+        throw new ConflictException(
+          'This environment already has a ' + dto.slot + ' target.',
+        );
+      }
+      throw error;
+    }
     await this.recordTargetEvent({
       userId,
       projectId,
@@ -288,9 +393,210 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         targetId: created.id,
         provider: created.provider,
         slot: created.slot,
+        environmentId: created.environmentId ?? null,
       },
     });
     return created;
+  }
+
+  /**
+   * Operator mapping for a legacy target: attach it to an environment whose
+   * source branch it already deploys. The target ID is kept, so its env-var
+   * metadata and custom domains stay attached.
+   */
+  async attachEnvironment(
+    projectId: string,
+    targetId: string,
+    userId: string,
+    environmentId: unknown,
+  ): Promise<DeploymentTargetSummary> {
+    const project = await this.assertProjectLifecycleAccess(projectId, userId);
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+    if (target.environmentId) {
+      if (target.environmentId === environmentId) return target;
+      throw new ConflictException(
+        'This target already belongs to another environment.',
+      );
+    }
+    const environment = await this.availableEnvironment(
+      projectId,
+      environmentId,
+      target.slot,
+      target.branchName,
+    );
+    await this.assertEnvironmentDelivery(
+      projectId,
+      environment,
+      this.deliveredByHost(target.provider),
+    );
+    await this.provisionGithubEnvironment(project, userId, environment);
+
+    let attached: DeploymentTargetSummary | null;
+    try {
+      attached = await this.deploymentTargetsRepository.attachEnvironment(
+        projectId,
+        targetId,
+        environment.id,
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException(
+          'This environment already has a ' + target.slot + ' target.',
+        );
+      }
+      throw error;
+    }
+    if (!attached) {
+      throw new ConflictException(
+        'The target changed while it was being attached. Reload and retry.',
+      );
+    }
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_updated',
+      title: 'Deployment target attached to an environment',
+      body:
+        attached.providerProjectName + ' now deploys ' + environment.slug + '.',
+      metadata: {
+        targetId: attached.id,
+        provider: attached.provider,
+        slot: attached.slot,
+        environmentId: environment.id,
+      },
+    });
+    return attached;
+  }
+
+  /** The configured target for an environment and slot, with its URLs. */
+  async getEnvironmentTarget(
+    projectId: string,
+    environmentId: string,
+    slot: string,
+    userId: string,
+  ) {
+    await this.getProjectOrThrow(projectId, userId);
+    this.requireEnvironmentId(environmentId);
+    const environment =
+      await this.projectReferenceLookup.findProjectEnvironment(
+        projectId,
+        environmentId,
+      );
+    if (!environment) throw new NotFoundException('Environment not found');
+    const target = await this.deploymentTargetsRepository.findEnvironmentTarget(
+      projectId,
+      environmentId,
+      this.requireTargetSlot(slot),
+    );
+    if (!target) {
+      throw new NotFoundException(
+        new EnvironmentTargetUnavailableError('absent').message,
+      );
+    }
+    if (target.status !== 'active') {
+      throw new ConflictException(
+        new EnvironmentTargetUnavailableError(target.status).message,
+      );
+    }
+    return {
+      ...target,
+      publicUrl: this.providerPublicUrl(target),
+      dashboardUrl: this.providerDashboardUrl(target),
+    };
+  }
+
+  /**
+   * Resolve the target a release must deploy to. There is no fallback: an
+   * absent, missing, or failed target stops the caller.
+   */
+  async resolve(input: {
+    projectId: string;
+    environmentId: string;
+    slot: EnvironmentDeploymentTarget['slot'];
+  }): Promise<EnvironmentDeploymentTarget> {
+    const target = await this.deploymentTargetsRepository.findEnvironmentTarget(
+      input.projectId,
+      input.environmentId,
+      input.slot,
+    );
+    if (!target) throw new EnvironmentTargetUnavailableError('absent');
+    if (target.status !== 'active') {
+      throw new EnvironmentTargetUnavailableError(target.status);
+    }
+    return {
+      id: target.id,
+      projectId: target.projectId,
+      environmentId: input.environmentId,
+      slot: target.slot,
+      provider: target.provider,
+      providerProjectId: target.providerProjectId,
+      branchName: target.branchName,
+    };
+  }
+
+  private requireEnvironmentId(environmentId: unknown): string {
+    if (
+      typeof environmentId !== 'string' ||
+      !UUID_PATTERN.test(environmentId)
+    ) {
+      throw new BadRequestException('environmentId must be a UUID');
+    }
+    return environmentId;
+  }
+
+  /** The environment a new target may use: this project's, on its branch, and free for the slot. */
+  private async availableEnvironment(
+    projectId: string,
+    environmentId: unknown,
+    slot: EnvTargetSlot,
+    branchName: string | undefined,
+  ): Promise<DeploymentProjectEnvironment> {
+    const id = this.requireEnvironmentId(environmentId);
+    const environment =
+      await this.projectReferenceLookup.findProjectEnvironment(projectId, id);
+    if (!environment) throw new NotFoundException('Environment not found');
+    const branch = branchName?.trim();
+    if (branch && branch !== environment.sourceBranch) {
+      throw new BadRequestException(
+        'The target branch must be the environment source branch (' +
+          environment.sourceBranch +
+          ').',
+      );
+    }
+    const existing =
+      await this.deploymentTargetsRepository.findEnvironmentTarget(
+        projectId,
+        environment.id,
+        slot,
+      );
+    if (existing) {
+      throw new ConflictException(
+        'This environment already has a ' + slot + ' target.',
+      );
+    }
+    return environment;
+  }
+
+  private async provisionGithubEnvironment(
+    project: DeploymentProjectReference,
+    userId: string,
+    environment: DeploymentProjectEnvironment,
+  ): Promise<void> {
+    if (!this.githubActions) {
+      throw new InternalServerErrorException(
+        'GitHub environment provisioning is not configured.',
+      );
+    }
+    await this.githubActions.ensureDeploymentEnvironment({
+      userId,
+      repoFullName: project.repoFullName,
+      environmentName: environment.slug,
+      sourceBranch: environment.sourceBranch,
+    });
   }
 
   updateProviderMetadata(
@@ -1165,6 +1471,44 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     return this.providerRegistry?.find(provider)?.policy;
   }
 
+  /** Whether a host pulls this provider's deployments instead of a workflow. */
+  private deliveredByHost(provider: EnvProvider): boolean {
+    return (
+      this.providerRegistry?.find(provider)?.capabilities.connectivity ===
+      'indirect'
+    );
+  }
+
+  /**
+   * An environment is delivered one way: all its targets by the workflow, or
+   * all by its host. A promotion creates one deployment for the environment,
+   * reported by one party.
+   */
+  private async assertEnvironmentDelivery(
+    projectId: string,
+    environment: DeploymentProjectEnvironment,
+    hostDelivered: boolean,
+  ): Promise<void> {
+    const existing =
+      await this.deploymentTargetsRepository.listDeploymentTargets(
+        projectId,
+        environment.id,
+      );
+    if (
+      existing.some(
+        ({ provider }) => this.deliveredByHost(provider) !== hostDelivered,
+      )
+    ) {
+      throw new ConflictException(
+        environment.slug +
+          (hostDelivered
+            ? ' already has hosted targets'
+            : ' already has on-prem targets') +
+          '; every target in an environment must be delivered the same way.',
+      );
+    }
+  }
+
   private managedProviderConfig(
     config = this.configService.getOrThrow<AppConfig>('app'),
   ): Record<string, unknown> {
@@ -1253,7 +1597,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
 
     // Local-mock mode is a platform-wide switch, not a per-request fallback:
     // a live provider failure below reports 'unavailable' with no lines
-    // instead of quietly substituting sample data — see resolveMockLogs's
+    // instead of quietly substituting sample data ï¿½ see resolveMockLogs's
     // callers for why that distinction matters to the caller.
     if (!this.liveProvidersEnabled()) {
       return {
@@ -1295,7 +1639,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         ...this.providerOperationInput(target),
       });
       // An empty page here is a legitimate live result (a quiet deployment
-      // with no recent log lines) — queryLogs() throws instead of returning
+      // with no recent log lines) ï¿½ queryLogs() throws instead of returning
       // one for cases that aren't actually "live", like a missing Render
       // owner ID, so reaching this point at all means the fetch succeeded.
       return {

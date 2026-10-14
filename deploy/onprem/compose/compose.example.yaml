@@ -1,0 +1,56 @@
+# Example /opt/alphaci/compose/compose.yaml for one frontend and one backend
+# behind Caddy. The customer owns this file; copy it, then adjust services,
+# ports, and application settings. The agent supplies each release's images as
+# ALPHACI_IMAGE_<SLOT> (image@sha256 digests) and reads ALPHACI_HOSTNAME from
+# /opt/alphaci/agent.env.
+#
+# Application secrets stay on the host in /opt/alphaci/secrets/<service>.env
+# (mode 600, owned by root). AlphaCI never sees them.
+name: alphaci
+
+services:
+  frontend:
+    image: ${ALPHACI_IMAGE_FRONTEND:?the release has no frontend image}
+    restart: unless-stopped
+    # The generated React image serves on 8080 without root.
+    expose: ["8080"]
+
+  backend:
+    image: ${ALPHACI_IMAGE_BACKEND:?the release has no backend image}
+    restart: unless-stopped
+    # The generated .NET image listens on 8080.
+    expose: ["8080"]
+    env_file:
+      - path: /opt/alphaci/secrets/backend.env
+        required: false
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    environment:
+      ALPHACI_HOSTNAME: ${ALPHACI_HOSTNAME:?set ALPHACI_HOSTNAME in /opt/alphaci/agent.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/alphaci/tls:/tls:ro
+      - caddy-data:/data
+    depends_on: [frontend, backend]
+
+  # Optional public access without opening a router port or touching DNS on
+  # the host: an outbound Cloudflare Tunnel to Caddy's plain-HTTP listener.
+  # Enable with COMPOSE_PROFILES=tunnel in /opt/alphaci/agent.env. The token
+  # (TUNNEL_TOKEN=...) lives in /opt/alphaci/secrets/cloudflared.env, and the
+  # public hostname is set in the tunnel's dashboard (service: http://caddy:80),
+  # so changing the domain never means editing this file.
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    env_file:
+      - /opt/alphaci/secrets/cloudflared.env
+    depends_on: [caddy]
+
+volumes:
+  caddy-data: {}

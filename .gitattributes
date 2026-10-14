@@ -9,3 +9,5 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.txt text eol=lf
+*.sh text eol=lf
+deploy/onprem/agent/* text eol=lf

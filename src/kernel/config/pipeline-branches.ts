@@ -146,3 +146,9 @@ export function stageRunsOnBranch(
       return (HOSTED_BRANCHES as readonly string[]).includes(branch);
   }
 }
+/**
+ * The generated workflow that deploys a promoted release to a later project
+ * environment. The workflow generator writes it and Runtime dispatches it, so
+ * the file name is declared once here.
+ */
+export const ENVIRONMENT_PROMOTE_WORKFLOW_FILE = '30-alphaci-promote.yml';

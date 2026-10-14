@@ -182,7 +182,8 @@ module.exports = {
           "(^|/)tsconfig\\.json$",
           "\\.module\\.ts$",
           "(^|/)main\\.ts$",
-          "(^|/)__fixtures__/"
+          "(^|/)__fixtures__/",
+          "^tests/e2e/support/app-environment\\.ts$"
         ]
       },
       "to": {}

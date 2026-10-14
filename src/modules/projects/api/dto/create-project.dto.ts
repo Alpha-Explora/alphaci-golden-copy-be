@@ -17,6 +17,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import type { DeploymentProviderId } from '#kernel/ports/deployment-runtime.port';
+import { AddProjectEnvironmentDto } from './project-environment.dto';
 
 /** Rejects C0/C1 control characters (incl. newlines and tabs). */
 export const PROJECT_NAME_PATTERN = /^[^\p{Cc}]*$/u;
@@ -61,6 +62,19 @@ export class DeploymentProvisioningTargetDto {
   @IsOptional()
   @IsIn(['create', 'register_existing'])
   action?: 'create' | 'register_existing';
+
+  @IsOptional()
+  @IsUUID()
+  environmentId?: string;
+
+  /**
+   * Limits this target to one of the project's environments, replacing the
+   * target every other environment gets for the same slot. Omit it for a
+   * target every environment shares.
+   */
+  @IsOptional()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  environmentSlug?: string;
 
   @IsIn(['backend', 'frontend', 'standalone'])
   slot!: 'backend' | 'frontend' | 'standalone';
@@ -329,6 +343,12 @@ export class CreateProjectDto {
   @ValidateNested()
   @Type(() => MultiRepoConfigDto)
   multiRepoConfig?: MultiRepoConfigDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AddProjectEnvironmentDto)
+  environments?: AddProjectEnvironmentDto[];
 
   @IsOptional()
   @ValidateNested()

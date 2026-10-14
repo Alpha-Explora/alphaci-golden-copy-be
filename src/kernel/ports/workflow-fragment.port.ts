@@ -48,9 +48,43 @@ export interface WorkflowFragmentResult {
   readonly jobIds: string[];
   readonly promotionNeeds: string[];
 }
+/** One environment target, named by IDs, for an environments-mode pipeline. */
+export interface EnvironmentDeployInput {
+  readonly environment: {
+    readonly id: string;
+    readonly slug: string;
+    readonly sourceBranch: string;
+    readonly role: 'production' | 'non_production';
+  };
+  readonly targetId: string;
+  readonly needs: string[];
+  readonly if: string;
+  /** Full commit SHA expression to deploy. */
+  readonly commitSha: string;
+  /** image@sha256 reference expression, for providers that deploy a built image. */
+  readonly artifact: string | undefined;
+}
+
+/**
+ * The legacy `environment` input the reusable deploy workflows still require.
+ * Environment and target identity travel in environment-id and target-id.
+ */
+export function legacyEnvironmentLabel(
+  role: EnvironmentDeployInput['environment']['role'],
+): 'production' | 'uat' {
+  return role === 'production' ? 'production' : 'uat';
+}
 
 export interface WorkflowFragment {
   readonly provider: string;
+  /** True when this provider deploys a container image the pipeline builds. */
+  readonly deploysBuiltImage?: boolean;
+  /**
+   * True when a host pulls its own assignments, as an on-prem host does. The
+   * pipeline builds and registers the release; it has no deploy job to run
+   * and never reports the deployment.
+   */
+  readonly deliveredByHost?: boolean;
   expandTargets?(
     target: WorkflowTargetExpansionInput,
     context: WorkflowTargetExpansionContext,
@@ -60,6 +94,11 @@ export interface WorkflowFragment {
     branch: WorkflowFragmentBranch,
     context: WorkflowFragmentContext,
   ): WorkflowFragmentResult | undefined;
+  /** The deploy job for one environment target in an environments-mode pipeline. */
+  environmentDeployJob?(
+    input: EnvironmentDeployInput,
+    context: WorkflowFragmentContext,
+  ): Record<string, unknown>;
 }
 
 export const WORKFLOW_FRAGMENTS = Symbol('WorkflowFragments');
@@ -118,6 +157,28 @@ export class WorkflowFragmentRegistry {
 
   list(): WorkflowFragment[] {
     return [...this.fragmentsByProvider.values()];
+  }
+
+  deploysBuiltImage(provider: string): boolean {
+    return this.fragmentsByProvider.get(provider)?.deploysBuiltImage === true;
+  }
+
+  deliveredByHost(provider: string): boolean {
+    return this.fragmentsByProvider.get(provider)?.deliveredByHost === true;
+  }
+
+  environmentDeployJob(
+    provider: string,
+    input: EnvironmentDeployInput,
+    context: WorkflowFragmentContext,
+  ): Record<string, unknown> {
+    const fragment = this.fragmentsByProvider.get(provider);
+    if (!fragment?.environmentDeployJob) {
+      throw new Error(
+        `No environment deploy job is registered for provider: ${provider}`,
+      );
+    }
+    return fragment.environmentDeployJob(input, context);
   }
 }
 

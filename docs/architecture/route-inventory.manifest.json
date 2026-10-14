@@ -1,11 +1,11 @@
 {
-  "routeCount": 228,
+  "routeCount": 242,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "e52d7f9b134f328a80110912bdf752fe32988dd51119a38457d94981d06a0b5b",
+  "referenceSha256": "729e6a33212779eb5e9b5702e91bc1430798077b6d506bcd90c28433be754741",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "e52d7f9b134f328a80110912bdf752fe32988dd51119a38457d94981d06a0b5b",
+  "baselineSha256": "729e6a33212779eb5e9b5702e91bc1430798077b6d506bcd90c28433be754741",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -199,6 +199,25 @@
         "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments",
         "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments",
         "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments"
+      ]
+    },
+    {
+      "reason": "Project environment targets, release promotion, and outbound on-prem host delivery.",
+      "routes": [
+        "GET /api/v1/onprem/assignments",
+        "GET /api/v1/projects/{projectId}/environments",
+        "GET /api/v1/projects/{projectId}/environments/{environmentId}/deployment-targets/{slot}",
+        "GET /api/v1/projects/{projectId}/environments/{environmentId}/deployments",
+        "GET /api/v1/projects/{projectId}/releases",
+        "PATCH /api/v1/projects/{projectId}/environments/{environmentId}",
+        "POST /api/v1/ci/deployments/{deploymentId}/status",
+        "POST /api/v1/ci/releases/{releaseId}/deployment-status",
+        "POST /api/v1/onprem/deployments/{deploymentId}/status",
+        "POST /api/v1/projects/{projectId}/environments",
+        "POST /api/v1/projects/{projectId}/environments/{environmentId}/hosts",
+        "POST /api/v1/projects/{projectId}/environments/{environmentId}/promotions",
+        "PUT /api/v1/ci/releases/{releaseId}/manifest",
+        "PUT /api/v1/projects/{projectId}/deployment-targets/{targetId}/environment"
       ]
     }
   ]

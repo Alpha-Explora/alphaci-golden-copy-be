@@ -1,6 +1,5 @@
 import {
   buildProjectScaffold,
-  defaultIncludeDocker,
   normalizeProjectStack,
   normalizeRepoShape,
 } from './scaffold.builder';
@@ -28,7 +27,6 @@ describe('normalizeRepoShape', () => {
     expect(normalizeRepoShape('something-else')).toBe('standalone');
   });
 });
-
 describe('normalizeProjectStack', () => {
   it('maps catalog stack IDs and legacy project type IDs to canonical stacks', () => {
     expect(normalizeProjectStack('nextjs')).toBe('nextjs');
@@ -528,15 +526,5 @@ describe('buildProjectScaffold', () => {
     expect(packageBuildConfig.include).toEqual(['src']);
     expect(packageBuildConfig.compilerOptions?.['composite']).toBe(true);
     expect(packageBuildConfig.compilerOptions?.['noEmit']).toBe(false);
-  });
-});
-
-describe('defaultIncludeDocker', () => {
-  it('includes Docker for backend stacks only', () => {
-    expect(defaultIncludeDocker('nestjs')).toBe(true);
-    expect(defaultIncludeDocker('nestjs-api')).toBe(true);
-    expect(defaultIncludeDocker('nodejs')).toBe(true);
-    expect(defaultIncludeDocker('nextjs')).toBe(false);
-    expect(defaultIncludeDocker('react')).toBe(false);
   });
 });

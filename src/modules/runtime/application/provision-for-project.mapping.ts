@@ -28,6 +28,7 @@ function resolveCreateAction(
 }
 
 const OPTIONAL_CREATE_FIELDS = [
+  'environmentId',
   'providerConnectionId',
   'projectName',
   'providerProjectId',

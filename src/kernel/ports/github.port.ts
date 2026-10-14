@@ -372,6 +372,14 @@ export type GitHubCommitFilesResult =
     };
 
 export interface GithubProjectPort {
+  /** Provision the protected environment before its first workflow runs. */
+  ensureDeploymentEnvironment(input: {
+    userId: string;
+    repoFullName: string;
+    environmentName: string;
+    sourceBranch: string;
+  }): Promise<void>;
+
   getEnforcedOrg(): string;
   /**
    * Backwards-compatible event surface for direct adapters/tests. Production
