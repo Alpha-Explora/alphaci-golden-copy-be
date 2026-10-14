@@ -16,6 +16,7 @@ import {
 import { canDispatchAutomation } from '../../domain/qa-run-access.rules';
 import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRunRepositoryRow } from '../../infrastructure/qa-runs.repository';
+import { ProjectIterationsService } from '../qa-checklists/project-iterations.service';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
 import { QaProjectContextService } from '../qa-checklists/qa-project-context.service';
 import { QaUatHeadsService, type QaWriteVia } from './qa-uat-heads.service';
@@ -74,6 +75,7 @@ export class QaAutomationDispatchService {
     // Concrete class token: a missing provider fails boot, and
     // tests/architecture/http-boot.spec.ts reads it back to prove it resolved.
     private readonly heads: QaUatHeadsService,
+    private readonly iterations: ProjectIterationsService,
     @Optional()
     @Inject(AuditEventPublisher)
     private readonly auditEventsService?: AuditEventPublisher,
@@ -101,6 +103,7 @@ export class QaAutomationDispatchService {
       );
     }
 
+    await this.iterations.assertRowWritable(run);
     if (run.status === 'signed_off') {
       throw new ConflictException(
         'This run is signed off. Reopen it to make changes.',

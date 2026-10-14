@@ -35,16 +35,18 @@ describe('QaProjectRunsRepository.findLatestRunHeadlines', () => {
       },
     ]);
 
+    // The Iteration ids (each Project's current one), not the Project ids.
     const headlines = await repository.findLatestRunHeadlines([
-      'dp-1',
-      'dp-2',
-      'dp-3',
+      'it-1',
+      'it-2',
+      'it-3',
     ]);
 
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, params] = query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('DISTINCT ON (r.delivery_project_id)');
-    expect(sql).toContain('r.delivery_project_id = ANY($1::uuid[])');
+    expect(sql).toContain('r.iteration_id = ANY($1::uuid[])');
+    expect(sql).not.toContain('r.delivery_project_id = ANY');
     expect(sql).toContain("r.scope = 'project'");
     // Same tie-break as findNewestProjectRun.
     expect(sql).toContain(
@@ -52,7 +54,7 @@ describe('QaProjectRunsRepository.findLatestRunHeadlines', () => {
     );
     // Only the ACTIVE sign-off: a reopened run's old verdict must not show.
     expect(sql).toContain('s.superseded_at IS NULL');
-    expect(params).toEqual([['dp-1', 'dp-2', 'dp-3']]);
+    expect(params).toEqual([['it-1', 'it-2', 'it-3']]);
 
     expect([...headlines.keys()]).toEqual(['dp-1', 'dp-2']);
     expect(headlines.get('dp-1')).toEqual({
@@ -161,5 +163,123 @@ describe('tallyVerificationByRequirement', () => {
       blocked: 0,
       returned_to_dev: 0,
     });
+  });
+});
+
+describe('QaProjectRunsRepository is scoped by Iteration, not by Project (P3)', () => {
+  const sqlOf = (query: jest.Mock) => query.mock.calls[0]?.[0] as string;
+
+  it.each([
+    [
+      'findRunByFingerprint',
+      (r: QaProjectRunsRepository) => r.findRunByFingerprint('it-1', 'fp'),
+      ['it-1', 'fp'],
+    ],
+    [
+      'listProjectRuns',
+      (r: QaProjectRunsRepository) =>
+        r.listProjectRuns('it-1', { limit: 10, cursor: null }),
+      ['it-1', 10],
+    ],
+    [
+      'findNewestProjectRun',
+      (r: QaProjectRunsRepository) =>
+        r.findNewestProjectRun('it-1', { openOnly: true }),
+      ['it-1', true],
+    ],
+    [
+      'findReturnedOpenRunItems',
+      (r: QaProjectRunsRepository) =>
+        r.findReturnedOpenRunItems('it-1', 'item-1'),
+      ['it-1', 'item-1'],
+    ],
+  ])('%s filters on iteration_id', async (_name, call, params) => {
+    const { query, repository } = build();
+
+    await call(repository);
+
+    expect(sqlOf(query)).toContain('iteration_id = $1');
+    expect(sqlOf(query)).not.toContain('delivery_project_id = $1');
+    expect(query.mock.calls[0]?.[1]).toEqual(params);
+  });
+
+  it('findLatestSignedOff filters the sign-off join on the run Iteration', async () => {
+    const { query, repository } = build();
+
+    expect(await repository.findLatestSignedOff('it-1')).toBeNull();
+
+    expect(sqlOf(query)).toContain('r.iteration_id = $1');
+    expect(query.mock.calls[0]?.[1]).toEqual(['it-1']);
+  });
+
+  it('findProjectRun still addresses a run by id within its Project, so a delivered Iteration run stays readable', async () => {
+    const { query, repository } = build();
+
+    await repository.findProjectRun('dp-1', 'run-1');
+
+    expect(sqlOf(query)).toContain('delivery_project_id = $2');
+    expect(sqlOf(query)).not.toContain('iteration_id');
+  });
+});
+
+describe('QaProjectRunsRepository.createRun (P1: the key is (Iteration, heads))', () => {
+  const input = {
+    deliveryProjectId: 'dp-1',
+    iterationId: 'it-2',
+    projectName: 'Checkout',
+    headsFingerprint: 'f'.repeat(64),
+    repositories: [],
+    createdBy: 'qa-1',
+    createdByLogin: 'qa',
+    items: [],
+  };
+
+  it('stores the Iteration and conflicts on (iteration_id, heads_fingerprint)', async () => {
+    const run = { id: 'run-new', iteration_id: 'it-2' };
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [run] }) // INSERT ... RETURNING
+      .mockResolvedValue({ rows: [] }); // prior-run lookup
+    const repository = new QaProjectRunsRepository({
+      withTransaction: (fn: (c: { query: jest.Mock }) => unknown) =>
+        fn({ query }),
+    } as unknown as DatabaseService);
+
+    const result = await repository.createRun(input);
+
+    expect(result.created).toBe(true);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('iteration_id');
+    expect(sql).toContain(
+      "ON CONFLICT (iteration_id, heads_fingerprint) WHERE scope = 'project'",
+    );
+    expect(params).toContain('it-2');
+    // The previous run to link items to is the Iteration's, not the Project's.
+    const [priorSql, priorParams] = query.mock.calls[1] as [string, unknown[]];
+    expect(priorSql).toContain('iteration_id = $1');
+    expect(priorParams).toEqual(['it-2', 'run-new']);
+  });
+
+  it('on a conflict returns the existing run of the SAME Iteration', async () => {
+    const existing = { id: 'run-old', iteration_id: 'it-2' };
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [] }) // INSERT conflicted
+      .mockResolvedValueOnce({ rows: [existing] }) // SELECT existing
+      .mockResolvedValue({ rows: [] }); // items, coverage
+    const repository = new QaProjectRunsRepository({
+      withTransaction: (fn: (c: { query: jest.Mock }) => unknown) =>
+        fn({ query }),
+    } as unknown as DatabaseService);
+
+    const result = await repository.createRun(input);
+
+    expect(result).toMatchObject({ created: false, run: existing });
+    const [selectSql, selectParams] = query.mock.calls[1] as [
+      string,
+      unknown[],
+    ];
+    expect(selectSql).toContain('iteration_id = $1 AND heads_fingerprint = $2');
+    expect(selectParams).toEqual(['it-2', input.headsFingerprint]);
   });
 });

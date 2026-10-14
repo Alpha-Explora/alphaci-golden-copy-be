@@ -4,6 +4,12 @@ import type { AuditLatestEventQueryPort } from '#kernel/ports/audit.port';
 import type { DeliveryProjectOverviewFacts } from '#kernel/ports/delivery-project-overview.port';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import {
+  deliveredIterationRow,
+  fakeIterations,
+  iterationRow,
+} from '../../__fixtures__/project-iterations';
+import type { ProjectIterationRow } from '../../infrastructure/project-iterations.repository';
+import {
   QaChecklistBatchInsertError,
   type QaChecklistItemRow,
   type QaChecklistRow,
@@ -41,6 +47,7 @@ const requirementRow = (
   updated_at: '2026-10-01T00:00:00.000Z',
   kind: 'functional',
   delivery_project_id: DP,
+  iteration_id: 'it-1',
   legacy_checklist_id: null,
   ...overrides,
 });
@@ -121,15 +128,17 @@ function setup({
   member = true,
   manage,
   row = requirementRow(),
+  iteration = iterationRow(),
 }: {
   role?: PlatformAppRole;
   member?: boolean;
   manage?: boolean;
   row?: QaChecklistRow | null;
+  iteration?: ProjectIterationRow;
 } = {}) {
   const checklists = {
     findById: jest.fn().mockResolvedValue(row),
-    listByDeliveryProject: jest.fn().mockResolvedValue([requirementRow()]),
+    listByIteration: jest.fn().mockResolvedValue([requirementRow()]),
     listItemsByChecklistIds: jest
       .fn()
       .mockResolvedValue(new Map([['req-1', [itemRow()]]])),
@@ -194,6 +203,8 @@ function setup({
   } as jest.Mocked<AuditLatestEventQueryPort>;
   const audit = { recordProjectEvent: jest.fn().mockResolvedValue(undefined) };
   const notifications = { record: jest.fn().mockResolvedValue(undefined) };
+  const { service: iterations, repository: iterationRepository } =
+    fakeIterations(iteration);
   const service = new QaRequirementsService(
     checklists,
     requirements,
@@ -201,12 +212,14 @@ function setup({
     runs,
     access,
     projectContext,
+    iterations,
     auditQuery,
     audit,
     notifications,
   );
   return {
     service,
+    iterationRepository,
     checklists,
     requirements,
     projectRuns,
@@ -303,7 +316,7 @@ describe('QaRequirementsService - who may define requirements', () => {
       'group-1',
       'Dup',
       undefined,
-      { deliveryProjectId: DP, kind: 'system' },
+      { iterationId: 'it-1', kind: 'system' },
     );
   });
 
@@ -675,7 +688,7 @@ describe('QaRequirementsService.createBatch', () => {
       'group-1',
       'A',
       undefined,
-      { deliveryProjectId: DP, kind: 'functional' },
+      { iterationId: 'it-1', kind: 'functional' },
     );
     expect(checklists.createManyWithItems).not.toHaveBeenCalled();
   });
@@ -1122,11 +1135,26 @@ describe('QaRequirementsService.overview - Project dashboard fields', () => {
   });
 
   it('keeps the existing keys and reads once per field, however many Projects there are', async () => {
-    const { service, projectContext, projectRuns, auditQuery, requirements } =
-      setup();
+    const {
+      service,
+      projectContext,
+      projectRuns,
+      auditQuery,
+      requirements,
+      iterationRepository,
+    } = setup();
     const ids = ['dp-1', 'dp-2', 'dp-3', 'dp-4', 'dp-5'];
+    const iterationIds = ids.map((id) => `it-${id}`);
     projectContext.listGroupProjects.mockResolvedValue(
       ids.map((id) => ({ id, name: id })),
+    );
+    iterationRepository.findCurrentByDeliveryProjects.mockResolvedValue(
+      new Map(
+        ids.map((id) => [
+          id,
+          iterationRow({ id: `it-${id}`, delivery_project_id: id }),
+        ]),
+      ),
     );
     requirements.listByWorkspace.mockResolvedValue(
       ids.map((id) =>
@@ -1171,7 +1199,18 @@ describe('QaRequirementsService.overview - Project dashboard fields', () => {
       'viewerMembership',
     ]);
     expect(projectRuns.findLatestRunHeadlines).toHaveBeenCalledTimes(1);
-    expect(projectRuns.findLatestRunHeadlines).toHaveBeenCalledWith(ids);
+    // Batched by Iteration: each Project's CURRENT one, in one query each.
+    expect(
+      iterationRepository.findCurrentByDeliveryProjects,
+    ).toHaveBeenCalledWith(ids);
+    expect(projectRuns.findLatestRunHeadlines).toHaveBeenCalledWith(
+      iterationIds,
+    );
+    expect(requirements.listByWorkspace).toHaveBeenCalledWith(
+      'group-1',
+      false,
+      iterationIds,
+    );
     expect(projectRuns.listItemFactsByRunIds).toHaveBeenCalledTimes(1);
     expect(projectRuns.listItemFactsByRunIds).toHaveBeenCalledWith(
       ids.map((id) => `run-${id}`),
@@ -1181,5 +1220,176 @@ describe('QaRequirementsService.overview - Project dashboard fields', () => {
     expect(
       auditQuery.findLatestProjectEventTimes.mock.calls[0]?.[1],
     ).toHaveLength(5);
+  });
+});
+
+describe('QaRequirementsService - Iterations', () => {
+  const DELIVERED = deliveredIterationRow({ number: 3 });
+  const CODE = 'ITERATION_DELIVERED';
+
+  it('create and createBatch store the active Iteration of the Project on every new requirement', async () => {
+    const { service, checklists } = setup();
+
+    await service.create(DP, 'lead-1', { kind: 'system', name: 'API checks' });
+    await service.createBatch(DP, 'lead-1', {
+      kind: 'functional',
+      requirements: [{ name: 'A' }, { name: 'B' }],
+    });
+
+    expect(checklists.createWithItems).toHaveBeenCalledWith(
+      expect.objectContaining({ deliveryProjectId: DP, iterationId: 'it-1' }),
+    );
+    expect(checklists.createManyWithItems).toHaveBeenCalledWith([
+      expect.objectContaining({ iterationId: 'it-1' }),
+      expect.objectContaining({ iterationId: 'it-1' }),
+    ]);
+  });
+
+  it('lists the requirements of the current Iteration only', async () => {
+    const { service, checklists } = setup();
+
+    await service.listForProject(DP, 'lead-1', {
+      kind: undefined,
+      includeArchived: true,
+    });
+
+    expect(checklists.listByIteration).toHaveBeenCalledWith('it-1', {
+      includeArchived: true,
+    });
+  });
+
+  it('the same name may exist in another Iteration: the conflict check is scoped to one Iteration', async () => {
+    const { service, checklists } = setup({
+      iteration: iterationRow({ id: 'it-2', number: 2 }),
+    });
+
+    await service.create(DP, 'lead-1', { kind: 'system', name: 'Checkout' });
+
+    expect(checklists.hasActiveNameConflict).toHaveBeenCalledWith(
+      'group-1',
+      'Checkout',
+      undefined,
+      { iterationId: 'it-2', kind: 'system' },
+    );
+  });
+
+  it('an update checks the name against the own Iteration of the requirement', async () => {
+    const { service, checklists } = setup({
+      row: requirementRow({ iteration_id: 'it-7' }),
+    });
+    checklists.updateMeta.mockResolvedValue(requirementRow({ name: 'New' }));
+
+    await service.update('req-1', 'lead-1', {
+      expectedVersion: 3,
+      name: 'New',
+    });
+
+    expect(checklists.hasActiveNameConflict).toHaveBeenCalledWith(
+      'group-1',
+      'New',
+      'req-1',
+      { iterationId: 'it-7', kind: 'functional' },
+    );
+  });
+
+  describe('a delivered Iteration refuses every requirement write (409 ITERATION_DELIVERED)', () => {
+    type Call = (fixture: ReturnType<typeof setup>) => Promise<unknown>;
+    const writes: Array<[string, Call]> = [
+      [
+        'create',
+        (f) => f.service.create(DP, 'lead-1', { kind: 'system', name: 'x' }),
+      ],
+      [
+        'createBatch',
+        (f) =>
+          f.service.createBatch(DP, 'lead-1', {
+            kind: 'system',
+            requirements: [{ name: 'x' }],
+          }),
+      ],
+      [
+        'update',
+        (f) => f.service.update('req-1', 'lead-1', { expectedVersion: 3 }),
+      ],
+      ['archive', (f) => f.service.archive('req-1', 'lead-1')],
+      [
+        'addItem',
+        (f) => f.service.addItem('req-1', 'lead-1', { title: 'Another' }),
+      ],
+      [
+        'updateItem',
+        (f) =>
+          f.service.updateItem('req-1', 'item-1', 'lead-1', {
+            expectedRowVersion: 1,
+            title: 'Renamed',
+          }),
+      ],
+      ['deleteItem', (f) => f.service.deleteItem('req-1', 'item-1', 'lead-1')],
+      [
+        'reorderItems',
+        (f) =>
+          f.service.reorderItems('req-1', 'lead-1', { itemIds: ['item-1'] }),
+      ],
+      [
+        'setProgress',
+        (f) =>
+          f.service.setProgress('req-1', 'item-1', actor, {
+            progress: 'done',
+            expectedRowVersion: 1,
+          }),
+      ],
+    ];
+
+    it.each(writes)('%s', async (_name, call) => {
+      const fixture = setup({
+        role: 'lead',
+        iteration: DELIVERED,
+        row: requirementRow({ iteration_id: DELIVERED.id }),
+      });
+
+      await expect(call(fixture)).rejects.toMatchObject({
+        response: {
+          code: CODE,
+          message:
+            'Iteration 3 was delivered. Start the next iteration to change this.',
+        },
+      });
+      expect(fixture.checklists.createWithItems).not.toHaveBeenCalled();
+      expect(fixture.checklists.createManyWithItems).not.toHaveBeenCalled();
+      expect(fixture.checklists.updateMeta).not.toHaveBeenCalled();
+      expect(fixture.checklists.archive).not.toHaveBeenCalled();
+      expect(fixture.requirements.appendItem).not.toHaveBeenCalled();
+      expect(fixture.requirements.updateItemDefinition).not.toHaveBeenCalled();
+      expect(fixture.requirements.deleteItem).not.toHaveBeenCalled();
+      expect(fixture.requirements.reorderItems).not.toHaveBeenCalled();
+      expect(fixture.requirements.setProgress).not.toHaveBeenCalled();
+    });
+
+    it('reads stay open: the requirements of a delivered Iteration still list', async () => {
+      const { service } = setup({ iteration: DELIVERED });
+
+      await expect(
+        service.listForProject(DP, 'lead-1', {
+          kind: undefined,
+          includeArchived: false,
+        }),
+      ).resolves.toMatchObject({ requirements: [{ id: 'req-1' }] });
+    });
+
+    it('a requirement with no Iteration (an unassigned legacy checklist) is not guarded', async () => {
+      const { service, requirements } = setup({
+        role: 'lead',
+        row: requirementRow({
+          kind: 'system',
+          delivery_project_id: null,
+          iteration_id: null,
+        }),
+      });
+      requirements.reorderItems.mockResolvedValue(true);
+
+      await expect(
+        service.reorderItems('req-1', 'lead-1', { itemIds: ['item-1'] }),
+      ).resolves.toBeDefined();
+    });
   });
 });

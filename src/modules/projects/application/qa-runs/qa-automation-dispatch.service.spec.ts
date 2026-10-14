@@ -7,6 +7,11 @@ import {
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import type { GithubProjectPort } from '#kernel/ports/github.port';
 import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  deliveredIterationRow,
+  fakeIterations,
+} from '../../__fixtures__/project-iterations';
+import type { ProjectIterationRow } from '../../infrastructure/project-iterations.repository';
 import type { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import type {
   QaProjectRunRow,
@@ -26,7 +31,12 @@ const MOVED = 'c'.repeat(40);
 const actor = { userId: 'user-1', userLogin: 'qa', oauthToken: 'gho_token' };
 
 const runRow = (status: 'open' | 'signed_off' = 'open') =>
-  ({ id: RUN_ID, status, scope: 'project' }) as unknown as QaProjectRunRow;
+  ({
+    id: RUN_ID,
+    status,
+    scope: 'project',
+    iteration_id: 'it-1',
+  }) as unknown as QaProjectRunRow;
 
 const coverage: QaRunRepositoryRow[] = [
   {
@@ -51,8 +61,10 @@ function setup({
     | { dispatched: true }
     | { dispatched: false; reason: string; message: string },
   installationToken = 'app-token' as string | null,
+  iteration,
 }: {
   role?: PlatformAppRole;
+  iteration?: ProjectIterationRow;
   run?: QaProjectRunRow | null;
   branchHeads?: Record<string, string>;
   /** The GitHub App installation token; null = no installation resolves. */
@@ -110,15 +122,26 @@ function setup({
           ),
       ),
   } as unknown as jest.Mocked<QaUatHeadsService>;
+  const { service: iterations, repository: iterationRepository } =
+    fakeIterations(iteration);
   const service = new QaAutomationDispatchService(
     access,
     projectContext,
     projectRuns,
     github,
     heads,
+    iterations,
     audit,
   );
-  return { service, access, projectRuns, github, audit, heads };
+  return {
+    service,
+    access,
+    projectRuns,
+    github,
+    audit,
+    heads,
+    iterationRepository,
+  };
 }
 
 describe('QaAutomationDispatchService (Project runs)', () => {
@@ -256,6 +279,25 @@ describe('QaAutomationDispatchService (Project runs)', () => {
         {},
       ),
     ).rejects.toThrow(ConflictException);
+  });
+
+  it('a delivered Iteration refuses a dispatch with 409 ITERATION_DELIVERED, before touching GitHub', async () => {
+    const delivered = deliveredIterationRow({ number: 5 });
+    const { service, github } = setup({
+      iteration: delivered,
+      run: { ...runRow('signed_off'), iteration_id: delivered.id },
+    });
+
+    await expect(service.dispatch(DP, actor, RUN_ID, {})).rejects.toMatchObject(
+      {
+        response: {
+          code: 'ITERATION_DELIVERED',
+          message:
+            'Iteration 5 was delivered. Start the next iteration to change this.',
+        },
+      },
+    );
+    expect(github.dispatchWorkflow).not.toHaveBeenCalled();
   });
 
   it('409 GITHUB_REAUTH only when neither an installation nor a session token exists, before touching GitHub', async () => {

@@ -2,6 +2,10 @@ import { NotFoundException } from '@nestjs/common';
 
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import {
+  deliveredIterationRow,
+  fakeIterations,
+} from '../../__fixtures__/project-iterations';
+import {
   jpegBytes,
   pngBytes,
   webpBytes,
@@ -19,6 +23,7 @@ import {
   type QaRunItemRow,
   type QaRunsRepository,
 } from '../../infrastructure/qa-runs.repository';
+import type { ProjectIterationRow } from '../../infrastructure/project-iterations.repository';
 import type { QaAccessService } from '../qa-checklists/qa-access.service';
 import type {
   QaProjectContext,
@@ -50,6 +55,7 @@ const runRow = (status: 'open' | 'signed_off' = 'open'): QaProjectRunRow =>
     id: 'run-1',
     scope: 'project',
     delivery_project_id: DP,
+    iteration_id: 'it-1',
     status,
   }) as QaProjectRunRow;
 
@@ -81,11 +87,13 @@ function setup({
   run = runRow(),
   configured = true,
   existing = [] as QaRunItemAttachmentRow[],
+  iteration,
 }: {
   role?: PlatformAppRole;
   run?: QaProjectRunRow | null;
   configured?: boolean;
   existing?: QaRunItemAttachmentRow[];
+  iteration?: ProjectIterationRow;
 } = {}) {
   const runs = {
     findItemForRun: jest
@@ -167,6 +175,7 @@ function setup({
     storage,
     access,
     projectContext,
+    fakeIterations(iteration).service,
     audit,
   );
   return {
@@ -878,5 +887,57 @@ describe('parseQaAttachmentFields', () => {
     expect(
       thrown(() => parseQaAttachmentFields({ source: 'fax' })),
     ).toMatchObject({ status: 400 });
+  });
+});
+
+describe('QaRunAttachmentsService - delivered Iteration', () => {
+  const delivered = deliveredIterationRow({ number: 4 });
+  const GUARD = {
+    status: 409,
+    response: expect.objectContaining({
+      code: 'ITERATION_DELIVERED',
+      message:
+        'Iteration 4 was delivered. Start the next iteration to change this.',
+    }),
+  };
+
+  it('add is refused before touching storage', async () => {
+    const { service, storage, attachments } = setup({
+      iteration: delivered,
+      run: { ...runRow('signed_off'), iteration_id: delivered.id },
+    });
+
+    await expect(
+      service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIELDS),
+    ).rejects.toMatchObject(GUARD);
+    expect(storage.upload).not.toHaveBeenCalled();
+    expect(attachments.insert).not.toHaveBeenCalled();
+  });
+
+  it('remove is refused', async () => {
+    const mine = attachmentRow({ id: 'mine', created_by: 'qa-1' });
+    const { service, attachments } = setup({
+      iteration: delivered,
+      run: { ...runRow('signed_off'), iteration_id: delivered.id },
+      existing: [mine],
+    });
+
+    await expect(
+      service.remove(DP, actor('qa-1'), 'run-1', 'mine'),
+    ).rejects.toMatchObject(GUARD);
+    expect(attachments.deleteById).not.toHaveBeenCalled();
+  });
+
+  it('reads still work: the screenshots of a delivered Iteration stay visible', async () => {
+    const { service } = setup({
+      iteration: delivered,
+      run: { ...runRow('signed_off'), iteration_id: delivered.id },
+      existing: [attachmentRow()],
+    });
+
+    const list = await service.listForRun(DP, actor(), 'run-1');
+
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]?.canDelete).toBe(false);
   });
 });

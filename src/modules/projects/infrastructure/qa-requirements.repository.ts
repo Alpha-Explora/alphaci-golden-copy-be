@@ -236,68 +236,72 @@ export class QaRequirementsRepository {
   }
 
   /**
-   * True when any requirement of the Project was created, edited, archived,
+   * True when any requirement of the Iteration was created, edited, archived,
    * had an item added/edited/deleted, or was reordered after `since`.
    * Progress writes touch only items, so they never count.
    */
   async requirementsChangedSince(
-    deliveryProjectId: string,
+    iterationId: string,
     since: string,
   ): Promise<boolean> {
     const result = await this.databaseService.query<{ changed: boolean }>(
       `
         SELECT EXISTS (
           SELECT 1 FROM projects.qa_checklists
-          WHERE delivery_project_id = $1 AND updated_at > $2::timestamptz
+          WHERE iteration_id = $1 AND updated_at > $2::timestamptz
         ) AS changed;
       `,
-      [deliveryProjectId, since],
+      [iterationId, since],
     );
     return result.rows[0]?.changed ?? false;
   }
 
-  /** Active requirement rows of a Project, with their kind, for run snapshots and the gate. */
-  async listActiveByDeliveryProject(
-    deliveryProjectId: string,
-  ): Promise<QaChecklistRow[]> {
+  /** Active requirement rows of an Iteration, with their kind, for run snapshots and the gate. */
+  async listActiveByIteration(iterationId: string): Promise<QaChecklistRow[]> {
     const result = await this.databaseService.query<QaChecklistRow>(
       `
         SELECT * FROM projects.qa_checklists
-        WHERE delivery_project_id = $1 AND archived_at IS NULL
+        WHERE iteration_id = $1 AND archived_at IS NULL
         ORDER BY (kind = 'functional') DESC, created_at, id;
       `,
-      [deliveryProjectId],
+      [iterationId],
     );
     return result.rows;
   }
 
-  /** Active requirements per Project for a workspace (the team-level overview). */
+  /**
+   * Requirements for a workspace's team-level overview: the unassigned legacy
+   * checklists, plus those of the given Iterations (each Project's current
+   * one). Requirements of any other Iteration are not part of the overview.
+   */
   async listByWorkspace(
     workspaceId: string,
     includeArchived: boolean,
+    iterationIds: readonly string[],
   ): Promise<QaChecklistRow[]> {
     const result = await this.databaseService.query<QaChecklistRow>(
       `
         SELECT * FROM projects.qa_checklists
         WHERE workspace_id = $1 AND ($2::boolean OR archived_at IS NULL)
+          AND (delivery_project_id IS NULL OR iteration_id = ANY($3::uuid[]))
         ORDER BY (kind = 'functional') DESC, created_at, id;
       `,
-      [workspaceId, includeArchived],
+      [workspaceId, includeArchived, iterationIds],
     );
     return result.rows;
   }
 
-  async countActiveByDeliveryProject(
-    deliveryProjectId: string,
+  async countActiveByIteration(
+    iterationId: string,
     kind?: QaRequirementKind,
   ): Promise<number> {
     const result = await this.databaseService.query<{ n: string }>(
       `
         SELECT COUNT(*) AS n FROM projects.qa_checklists
-        WHERE delivery_project_id = $1 AND archived_at IS NULL
+        WHERE iteration_id = $1 AND archived_at IS NULL
           AND ($2::text IS NULL OR kind = $2);
       `,
-      [deliveryProjectId, kind ?? null],
+      [iterationId, kind ?? null],
     );
     return Number(result.rows[0]?.n ?? 0);
   }

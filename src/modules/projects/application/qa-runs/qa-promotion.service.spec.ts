@@ -1,6 +1,10 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import type { GithubProjectPort } from '#kernel/ports/github.port';
+import {
+  fakeIterations,
+  iterationRow,
+} from '../../__fixtures__/project-iterations';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import type {
   AuditEventPublisher,
@@ -73,7 +77,7 @@ function setup({
       .mockResolvedValue(filed ? folder() : null),
   } as unknown as jest.Mocked<QaProjectContextService>;
   const requirements = {
-    listActiveByDeliveryProject: jest.fn().mockResolvedValue(
+    listActiveByIteration: jest.fn().mockResolvedValue(
       Array.from({ length: requirementCount }, (_, i) => ({
         id: `req-${i}`,
         name: `Requirement ${i}`,
@@ -149,17 +153,30 @@ function setup({
     record: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<NotificationEventPublisher>;
 
+  const { service: iterations, repository: iterationRepository } =
+    fakeIterations();
   const service = new QaPromotionService(
     access,
     projectContext,
     requirements,
     projectRuns,
     headsService,
+    iterations,
     github,
     audit,
     notifications,
   );
-  return { service, access, github, audit, notifications, headsService };
+  return {
+    service,
+    access,
+    github,
+    audit,
+    notifications,
+    headsService,
+    requirements,
+    projectRuns,
+    iterationRepository,
+  };
 }
 
 describe('QaPromotionService.getStatus (per-Project gate)', () => {
@@ -184,6 +201,22 @@ describe('QaPromotionService.getStatus (per-Project gate)', () => {
       expect.objectContaining({ name: 'Requirement 0', approvedForHead: true }),
       expect.objectContaining({ name: 'Requirement 1', approvedForHead: true }),
     ]);
+  });
+
+  it('gates on the requirements and the sign-off of the current Iteration only', async () => {
+    const { service, requirements, projectRuns, iterationRepository } = setup();
+    iterationRepository.findCurrent.mockResolvedValue(
+      iterationRow({ id: 'it-4', number: 4 }),
+    );
+
+    await service.getStatus('p-api', actor);
+
+    expect(requirements.listActiveByIteration).toHaveBeenCalledWith('it-4');
+    expect(projectRuns.findLatestSignedOff).toHaveBeenCalledWith('it-4');
+    expect(requirements.requirementsChangedSince).toHaveBeenCalledWith(
+      'it-4',
+      expect.any(String),
+    );
   });
 
   it('blocks this repository when ANOTHER repository of the Project moved', async () => {

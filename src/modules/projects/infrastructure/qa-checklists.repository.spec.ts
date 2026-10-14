@@ -81,7 +81,15 @@ describe('QaChecklistsRepository', () => {
     expect(query).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining('INSERT INTO projects.qa_checklists'),
-      ['workspace-1', 'Release checklist', null, 'user-1', 'system', null],
+      [
+        'workspace-1',
+        'Release checklist',
+        null,
+        'user-1',
+        'system',
+        null,
+        null,
+      ],
     );
     expect(query).toHaveBeenNthCalledWith(
       2,
@@ -233,5 +241,126 @@ describe('QaChecklistsRepository', () => {
 
     expect(query).toHaveBeenCalledTimes(1);
     expect(result).toEqual([]);
+  });
+});
+
+describe('QaChecklistsRepository - Iterations', () => {
+  it('createWithItems stores the Iteration next to the Project', async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [checklistRow({ id: 'c-1' })] })
+      .mockResolvedValue({ rows: [] });
+    const repository = new QaChecklistsRepository(makeDatabaseService(query));
+
+    await repository.createWithItems({
+      workspaceId: 'workspace-1',
+      name: 'Checkout',
+      description: null,
+      createdBy: 'lead-1',
+      kind: 'functional',
+      deliveryProjectId: 'dp-1',
+      iterationId: 'it-3',
+      items: [],
+    });
+
+    const [sql, params] = query.mock.calls.find(([text]) =>
+      String(text).includes('INSERT INTO projects.qa_checklists'),
+    ) as [string, unknown[]];
+    expect(sql).toContain('delivery_project_id, iteration_id');
+    expect(params).toEqual([
+      'workspace-1',
+      'Checkout',
+      null,
+      'lead-1',
+      'functional',
+      'dp-1',
+      'it-3',
+    ]);
+  });
+
+  it('a legacy checklist is created without an Iteration', async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [checklistRow({ id: 'c-1' })] })
+      .mockResolvedValue({ rows: [] });
+    const repository = new QaChecklistsRepository(makeDatabaseService(query));
+
+    await repository.createWithItems({
+      workspaceId: 'workspace-1',
+      name: 'Legacy',
+      description: null,
+      createdBy: 'lead-1',
+      items: [],
+    });
+
+    const [, params] = query.mock.calls.find(([text]) =>
+      String(text).includes('INSERT INTO projects.qa_checklists'),
+    ) as [string, unknown[]];
+    expect(params.slice(5)).toEqual([null, null]);
+  });
+
+  it('listByIteration reads one Iteration', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    const repository = new QaChecklistsRepository(makeDatabaseService(query));
+
+    await repository.listByIteration('it-3', {
+      kind: 'functional',
+      includeArchived: true,
+    });
+
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('WHERE iteration_id = $1');
+    expect(params).toEqual(['it-3', 'functional', true]);
+  });
+
+  it('countActiveFeaturesByIteration counts in the given Iterations and keys by Project', async () => {
+    const query = jest.fn().mockResolvedValue({
+      rows: [{ delivery_project_id: 'dp-1', count: '2' }],
+    });
+    const repository = new QaChecklistsRepository(makeDatabaseService(query));
+
+    const counts = await repository.countActiveFeaturesByIteration([
+      'it-1',
+      'it-2',
+    ]);
+
+    expect(query.mock.calls[0]?.[0]).toContain(
+      'iteration_id = ANY($1::uuid[])',
+    );
+    expect(query.mock.calls[0]?.[1]).toEqual([['it-1', 'it-2']]);
+    expect(counts).toEqual(new Map([['dp-1', 2]]));
+
+    query.mockClear();
+    expect((await repository.countActiveFeaturesByIteration([])).size).toBe(0);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('hasActiveNameConflict is scoped to one Iteration (the legacy scope has none)', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ exists: false }] });
+    const repository = new QaChecklistsRepository(makeDatabaseService(query));
+
+    await repository.hasActiveNameConflict('ws-1', 'Checkout', undefined, {
+      iterationId: 'it-3',
+      kind: 'functional',
+    });
+    await repository.hasActiveNameConflict('ws-1', 'Legacy');
+
+    expect(query.mock.calls[0]?.[0]).toContain(
+      'iteration_id IS NOT DISTINCT FROM $4::uuid',
+    );
+    expect(query.mock.calls[0]?.[1]).toEqual([
+      'ws-1',
+      'Checkout',
+      null,
+      'it-3',
+      'functional',
+    ]);
+    expect(query.mock.calls[1]?.[1]).toEqual([
+      'ws-1',
+      'Legacy',
+      null,
+      null,
+      'system',
+    ]);
   });
 });

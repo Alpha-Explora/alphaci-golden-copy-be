@@ -7,6 +7,7 @@
 
 import type { CiTestCase } from '#kernel/ports/ci-stage-results.port';
 
+import type { ProjectIterationRef } from '../qa-checklists/project-iterations.contracts';
 import type {
   QaChecklistTargetPersona,
   QaChecklistVerificationType,
@@ -392,6 +393,8 @@ export interface ProjectQaRunListItem {
   scope: 'project';
   deliveryProjectId: string;
   deliveryProjectName: string;
+  /** The Iteration this run belongs to. Absent on reports frozen before Iterations existed. */
+  iteration?: ProjectIterationRef | null;
   branch: string;
   status: QaRunStatus;
   createdBy: QaActor;

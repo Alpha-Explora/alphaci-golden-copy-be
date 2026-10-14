@@ -5,6 +5,12 @@ import {
 } from '@nestjs/common';
 
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import {
+  deliveredIterationRow,
+  fakeIterations,
+  iterationRow,
+} from '../../__fixtures__/project-iterations';
+import type { ProjectIterationRow } from '../../infrastructure/project-iterations.repository';
 import type { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
 import type { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
@@ -59,6 +65,7 @@ const runRow = (overrides: Partial<QaProjectRunRow> = {}): QaProjectRunRow => ({
   project_id: null,
   commit_sha: null,
   delivery_project_id: DP,
+  iteration_id: 'it-1',
   heads_fingerprint: 'f'.repeat(64),
   checklist_id: null,
   checklist_version: 0,
@@ -129,6 +136,7 @@ function setup({
   readings = [reading(API, SHA_API), reading(WEB, SHA_WEB)],
   items = [itemRow()],
   run = runRow(),
+  iteration = iterationRow(),
 }: {
   role?: PlatformAppRole;
   readings?:
@@ -136,6 +144,7 @@ function setup({
     | Array<{ kind: 'branch_missing'; repository: typeof API }>;
   items?: QaRunItemRow[];
   run?: QaProjectRunRow | null;
+  iteration?: ProjectIterationRow;
 } = {}) {
   const runs = {
     listItemsByRunId: jest.fn().mockResolvedValue(items),
@@ -206,7 +215,7 @@ function setup({
     ),
   } as unknown as jest.Mocked<QaChecklistsRepository>;
   const requirements = {
-    listActiveByDeliveryProject: jest.fn().mockResolvedValue([
+    listActiveByIteration: jest.fn().mockResolvedValue([
       { id: 'req-1', name: 'Checkout', kind: 'functional' },
       { id: 'req-2', name: 'API checks', kind: 'system' },
     ]),
@@ -251,6 +260,8 @@ function setup({
   const audit = { recordProjectEvent: jest.fn().mockResolvedValue(undefined) };
   const notifications = { record: jest.fn().mockResolvedValue(undefined) };
 
+  const { service: iterations, repository: iterationRepository } =
+    fakeIterations(iteration);
   const service = new QaProjectRunsService(
     runs,
     projectRuns,
@@ -262,11 +273,13 @@ function setup({
     heads,
     automation,
     attachments,
+    iterations,
     audit,
     notifications,
   );
   return {
     service,
+    iterationRepository,
     attachments,
     runs,
     projectRuns,
@@ -395,7 +408,7 @@ describe('QaProjectRunsService.create', () => {
 
   it('QA_NO_REQUIREMENTS when there is nothing to verify', async () => {
     const { service, requirements } = setup();
-    requirements.listActiveByDeliveryProject.mockResolvedValue([]);
+    requirements.listActiveByIteration.mockResolvedValue([]);
 
     await expect(service.create(DP, actor())).rejects.toMatchObject({
       response: { code: 'QA_NO_REQUIREMENTS' },
@@ -898,5 +911,252 @@ describe('QaProjectRunsService attachments in the run payload and report', () =>
 
     expect(frozenReport.frozen).toBe(true);
     expect(frozenReport.run.items[0]?.attachments).toEqual(refs.get('ri-1'));
+  });
+});
+
+describe('QaProjectRunsService - Iterations', () => {
+  const DELIVERED = deliveredIterationRow({ number: 2 });
+  const patch = (overrides: Record<string, unknown> = {}) =>
+    ({ expectedRowVersion: 1, ...overrides }) as never;
+  const GUARD = {
+    response: {
+      code: 'ITERATION_DELIVERED',
+      message:
+        'Iteration 2 was delivered. Start the next iteration to change this.',
+    },
+  };
+  const deliveredRun = () =>
+    runRow({ status: 'signed_off', iteration_id: DELIVERED.id });
+
+  describe('scoping (P3): every Project read resolves the active Iteration once', () => {
+    it('create reads the requirements of the Iteration and stores it on the run', async () => {
+      const { service, projectRuns, requirements, iterationRepository } = setup(
+        { iteration: iterationRow({ id: 'it-9', number: 9 }) },
+      );
+      projectRuns.createRun.mockResolvedValue({
+        created: true,
+        run: runRow({ iteration_id: 'it-9' }),
+        items: [itemRow()],
+        repositories: coverage,
+      });
+
+      await service.create(DP, actor());
+
+      expect(iterationRepository.findCurrent).toHaveBeenCalledTimes(1);
+      expect(requirements.listActiveByIteration).toHaveBeenCalledWith('it-9');
+      expect(projectRuns.createRun).toHaveBeenCalledWith(
+        expect.objectContaining({ deliveryProjectId: DP, iterationId: 'it-9' }),
+      );
+    });
+
+    it('the run key is (Iteration, heads): the same heads in a new Iteration are a new run', async () => {
+      const heads = [reading(API, SHA_API), reading(WEB, SHA_WEB)];
+      const first = setup({ readings: heads });
+      const second = setup({
+        readings: heads,
+        iteration: iterationRow({ id: 'it-2', number: 2 }),
+      });
+      for (const fixture of [first, second]) {
+        fixture.projectRuns.createRun.mockResolvedValue({
+          created: true,
+          run: runRow(),
+          items: [itemRow()],
+          repositories: coverage,
+        });
+      }
+
+      await first.service.create(DP, actor());
+      await second.service.create(DP, actor());
+
+      const [a] = first.projectRuns.createRun.mock.calls[0]!;
+      const [b] = second.projectRuns.createRun.mock.calls[0]!;
+      expect(a.headsFingerprint).toBe(b.headsFingerprint);
+      expect([a.iterationId, b.iterationId]).toEqual(['it-1', 'it-2']);
+    });
+
+    it('list, current and my-items all ask the repositories for the Iteration, not the Project', async () => {
+      const { service, projectRuns, requirements } = setup({
+        iteration: iterationRow({ id: 'it-5', number: 5 }),
+      });
+
+      await service.list(DP, 'qa-1', { limit: undefined, cursor: undefined });
+      await service.current(DP, actor());
+      await service.myItems(DP, actor());
+
+      expect(projectRuns.listProjectRuns).toHaveBeenCalledWith(
+        'it-5',
+        expect.any(Object),
+      );
+      expect(projectRuns.findRunByFingerprint).toHaveBeenCalledWith(
+        'it-5',
+        expect.any(String),
+      );
+      expect(projectRuns.findNewestProjectRun).toHaveBeenCalledWith('it-5', {
+        openOnly: false,
+      });
+      expect(projectRuns.findNewestProjectRun).toHaveBeenCalledWith('it-5', {
+        openOnly: true,
+      });
+      expect(requirements.listActiveByIteration).toHaveBeenCalledWith('it-5');
+    });
+
+    it('a run payload carries its Iteration, and "requirements changed" is the run\'s own Iteration', async () => {
+      const { service, requirements } = setup({
+        run: runRow({ iteration_id: 'it-1' }),
+      });
+
+      const run = await service.getById(DP, actor(), 'run-1');
+
+      expect(run.iteration).toEqual({
+        id: 'it-1',
+        number: 1,
+        status: 'active',
+      });
+      expect(requirements.requirementsChangedSince).toHaveBeenCalledWith(
+        'it-1',
+        expect.any(String),
+      );
+    });
+
+    it('a Project with no Iteration yet gets Iteration 1 on first use', async () => {
+      const fixture = setup();
+      fixture.iterationRepository.findCurrent
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(iterationRow());
+
+      await fixture.service.list(DP, 'qa-1', {
+        limit: undefined,
+        cursor: undefined,
+      });
+
+      expect(
+        fixture.iterationRepository.insertFirstIfNone,
+      ).toHaveBeenCalledWith([DP]);
+      expect(fixture.projectRuns.listProjectRuns).toHaveBeenCalledWith(
+        'it-1',
+        expect.any(Object),
+      );
+    });
+  });
+
+  describe('the guard (P8): a delivered Iteration refuses every Project run write', () => {
+    it('create', async () => {
+      const { service, projectRuns } = setup({ iteration: DELIVERED });
+
+      await expect(service.create(DP, actor())).rejects.toMatchObject(GUARD);
+      expect(projectRuns.createRun).not.toHaveBeenCalled();
+    });
+
+    it('item status / notes / severity', async () => {
+      const { service, runs } = setup({
+        iteration: DELIVERED,
+        run: deliveredRun(),
+      });
+
+      await expect(
+        service.updateItem(
+          DP,
+          actor(),
+          'run-1',
+          'ri-1',
+          patch({ status: 'passed', notes: 'late note' }),
+        ),
+      ).rejects.toMatchObject(GUARD);
+      expect(runs.updateItem).not.toHaveBeenCalled();
+    });
+
+    it('sign-off', async () => {
+      const { service, runs } = setup({
+        iteration: DELIVERED,
+        run: deliveredRun(),
+      });
+
+      await expect(
+        service.signoff(DP, actor(), 'run-1', { verdict: 'REJECTED' }),
+      ).rejects.toMatchObject(GUARD);
+      expect(runs.createSignoff).not.toHaveBeenCalled();
+    });
+
+    it('reopen is blocked too: the code is already in main', async () => {
+      const { service, runs } = setup({
+        role: 'lead',
+        iteration: DELIVERED,
+        run: deliveredRun(),
+      });
+
+      await expect(
+        service.reopen(DP, actor('lead-1'), 'run-1'),
+      ).rejects.toMatchObject(GUARD);
+      expect(runs.reopenRun).not.toHaveBeenCalled();
+    });
+
+    it("the Iteration of the RUN decides, not the Project's current one", async () => {
+      // The Project already moved on (active Iteration 3); the run still belongs to delivered Iteration 2.
+      const { service, runs, iterationRepository } = setup({
+        iteration: iterationRow({ id: 'it-3', number: 3 }),
+        run: deliveredRun(),
+      });
+      iterationRepository.findById.mockResolvedValue(DELIVERED);
+
+      await expect(
+        service.updateItem(
+          DP,
+          actor(),
+          'run-1',
+          'ri-1',
+          patch({ status: 'passed' }),
+        ),
+      ).rejects.toMatchObject(GUARD);
+      expect(runs.updateItem).not.toHaveBeenCalled();
+    });
+
+    it('offers no control on a delivered Iteration, not even for an open leftover run or Reopen', async () => {
+      for (const status of ['open', 'signed_off'] as const) {
+        const { service } = setup({
+          role: 'lead',
+          iteration: DELIVERED,
+          run: runRow({ status, iteration_id: DELIVERED.id }),
+        });
+
+        const run = await service.getById(DP, actor('lead-1'), 'run-1');
+
+        expect(run.permissions).toEqual({
+          canSetVerification: false,
+          canSignOff: false,
+          canReopen: false,
+          canDispatch: false,
+        });
+        expect(run.attachments.canAdd).toBe(false);
+      }
+    });
+
+    it('an active Iteration keeps the existing controls', async () => {
+      const open = setup({ role: 'lead' });
+      expect(
+        (await open.service.getById(DP, actor('lead-1'), 'run-1')).permissions,
+      ).toMatchObject({ canSetVerification: true, canSignOff: true });
+
+      const signed = setup({
+        role: 'lead',
+        run: runRow({ status: 'signed_off' }),
+      });
+      expect(
+        (await signed.service.getById(DP, actor('lead-1'), 'run-1'))
+          .permissions,
+      ).toMatchObject({ canReopen: true, canSignOff: false });
+    });
+
+    it('reads of a delivered Iteration still work', async () => {
+      const { service } = setup({ iteration: DELIVERED, run: deliveredRun() });
+
+      const run = await service.getById(DP, actor(), 'run-1');
+
+      expect(run.iteration).toEqual({
+        id: 'it-1',
+        number: 2,
+        status: 'delivered',
+      });
+      expect(run.permissions.canSetVerification).toBe(false);
+    });
   });
 });

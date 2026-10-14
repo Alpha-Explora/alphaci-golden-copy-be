@@ -40,6 +40,8 @@ export interface QaChecklistRow {
   kind: QaRequirementKind;
   /** The owning Project (hierarchy delivery project); null = unassigned legacy checklist. */
   delivery_project_id: string | null;
+  /** The Iteration a Project requirement belongs to; null only for an unassigned legacy checklist. */
+  iteration_id: string | null;
   legacy_checklist_id: string | null;
 }
 
@@ -70,6 +72,8 @@ export interface CreateQaChecklistInput {
   /** Defaults to a legacy, unassigned 'system' checklist. */
   kind?: QaRequirementKind;
   deliveryProjectId?: string | null;
+  /** Required whenever deliveryProjectId is set (qa_checklists_iteration_scope_chk). */
+  iterationId?: string | null;
 }
 
 export interface UpdateQaChecklistMetaPatch {
@@ -131,8 +135,8 @@ export class QaChecklistsRepository {
     const result = await client.query<QaChecklistRow>(
       `
         INSERT INTO projects.qa_checklists
-          (workspace_id, name, description, created_by, kind, delivery_project_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
+          (workspace_id, name, description, created_by, kind, delivery_project_id, iteration_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *;
       `,
       [
@@ -142,6 +146,7 @@ export class QaChecklistsRepository {
         input.createdBy,
         input.kind ?? 'system',
         input.deliveryProjectId ?? null,
+        input.iterationId ?? null,
       ],
     );
     const checklist = result.rows[0];
@@ -182,14 +187,15 @@ export class QaChecklistsRepository {
   }
 
   /**
-   * Active Features (kind='functional', not archived) per Project, one query.
-   * Projects with none are absent from the map.
+   * Active Features (kind='functional', not archived) per Project, one query,
+   * counted in the given Iterations only (each Project's current one). The map
+   * is keyed by Project; Projects with none are absent.
    */
-  async countActiveFeaturesByDeliveryProject(
-    deliveryProjectIds: readonly string[],
+  async countActiveFeaturesByIteration(
+    iterationIds: readonly string[],
   ): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
-    if (deliveryProjectIds.length === 0) {
+    if (iterationIds.length === 0) {
       return counts;
     }
     const result = await this.databaseService.query<{
@@ -199,12 +205,12 @@ export class QaChecklistsRepository {
       `
         SELECT delivery_project_id, count(*)::text AS count
         FROM projects.qa_checklists
-        WHERE delivery_project_id = ANY($1::uuid[])
+        WHERE iteration_id = ANY($1::uuid[])
           AND kind = 'functional'
           AND archived_at IS NULL
         GROUP BY delivery_project_id;
       `,
-      [deliveryProjectIds],
+      [iterationIds],
     );
     for (const row of result.rows) {
       counts.set(row.delivery_project_id, Number(row.count));
@@ -212,20 +218,20 @@ export class QaChecklistsRepository {
     return counts;
   }
 
-  /** The Project's requirements (functional first, then system, oldest first). */
-  async listByDeliveryProject(
-    deliveryProjectId: string,
+  /** One Iteration's requirements (functional first, then system, oldest first). */
+  async listByIteration(
+    iterationId: string,
     options: { kind?: QaRequirementKind; includeArchived: boolean },
   ): Promise<QaChecklistRow[]> {
     const result = await this.databaseService.query<QaChecklistRow>(
       `
         SELECT * FROM projects.qa_checklists
-        WHERE delivery_project_id = $1
+        WHERE iteration_id = $1
           AND ($2::text IS NULL OR kind = $2)
           AND ($3::boolean OR archived_at IS NULL)
         ORDER BY (kind = 'functional') DESC, created_at, id;
       `,
-      [deliveryProjectId, options.kind ?? null, options.includeArchived],
+      [iterationId, options.kind ?? null, options.includeArchived],
     );
     return result.rows;
   }
@@ -299,17 +305,18 @@ export class QaChecklistsRepository {
 
   /**
    * Case-insensitive, active-only (archived_at IS NULL) name collision check
-   * within one scope: a Project and kind, or (the default) the unassigned
-   * legacy 'system' scope. Mirrors uq_qa_requirements_scope_name_active.
+   * within one scope: an Iteration and kind, or (the default) the unassigned
+   * legacy 'system' scope (no Iteration). Mirrors
+   * uq_qa_requirements_iteration_name_active.
    */
   async hasActiveNameConflict(
     workspaceId: string,
     name: string,
     excludeId?: string,
     scope: {
-      deliveryProjectId: string | null;
+      iterationId: string | null;
       kind: QaRequirementKind;
-    } = { deliveryProjectId: null, kind: 'system' },
+    } = { iterationId: null, kind: 'system' },
   ): Promise<boolean> {
     const result = await this.databaseService.query<{ exists: boolean }>(
       `
@@ -318,18 +325,12 @@ export class QaChecklistsRepository {
           WHERE workspace_id = $1
             AND lower(name) = lower($2)
             AND archived_at IS NULL
-            AND delivery_project_id IS NOT DISTINCT FROM $4::uuid
+            AND iteration_id IS NOT DISTINCT FROM $4::uuid
             AND kind = $5
             AND ($3::uuid IS NULL OR id <> $3)
         ) AS exists;
       `,
-      [
-        workspaceId,
-        name,
-        excludeId ?? null,
-        scope.deliveryProjectId,
-        scope.kind,
-      ],
+      [workspaceId, name, excludeId ?? null, scope.iterationId, scope.kind],
     );
     return result.rows[0]?.exists ?? false;
   }

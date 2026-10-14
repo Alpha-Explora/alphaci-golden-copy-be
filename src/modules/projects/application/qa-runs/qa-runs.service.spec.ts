@@ -4,6 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import {
+  deliveredIterationRow,
+  fakeIterations,
+} from '../../__fixtures__/project-iterations';
 import type { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import type {
@@ -25,6 +29,7 @@ const legacyRun = (): QaVerificationRunRow => ({
   id: 'run-1',
   scope: 'repository',
   delivery_project_id: null,
+  iteration_id: null,
   heads_fingerprint: null,
   project_id: 'project-1',
   checklist_id: 'checklist-1',
@@ -72,7 +77,13 @@ const runItem = (overrides: Partial<QaRunItemRow> = {}): QaRunItemRow =>
     ...overrides,
   }) as QaRunItemRow;
 
-function setup({ visible = true }: { visible?: boolean } = {}) {
+function setup({
+  visible = true,
+  iteration,
+}: {
+  visible?: boolean;
+  iteration?: ReturnType<typeof deliveredIterationRow>;
+} = {}) {
   const repository = {
     listRunsForProject: jest.fn().mockResolvedValue([legacyRun()]),
     listItemsByRunIds: jest
@@ -126,6 +137,7 @@ function setup({ visible = true }: { visible?: boolean } = {}) {
     projectRunsRepository,
     requirementsRepository,
     requirementsService,
+    fakeIterations(iteration).service,
   );
   return {
     service,
@@ -221,7 +233,7 @@ describe('QaRunsService.requestRetest (alias)', () => {
         source_item_id: 'item-9',
         requirement_id: 'req-9',
       }),
-      run: { id: 'prun-1', delivery_project_id: 'dp-1' },
+      run: { id: 'prun-1', delivery_project_id: 'dp-1', iteration_id: 'it-1' },
     } as never);
 
     const result = await service.requestRetest(
@@ -239,6 +251,37 @@ describe('QaRunsService.requestRetest (alias)', () => {
       { progress: 'done', expectedRowVersion: 4, note: 'fixed' },
     );
     expect(result).toMatchObject({ id: 'prun-1' });
+  });
+
+  it('a delivered Iteration refuses the retest request with 409 ITERATION_DELIVERED', async () => {
+    const delivered = deliveredIterationRow({ number: 2 });
+    const { service, repository, projectRunsRepository, requirementsService } =
+      setup({ iteration: delivered });
+    repository.findRunForProject.mockResolvedValue(null);
+    projectRunsRepository.findRunItemWithProjectRun.mockResolvedValue({
+      item: runItem({
+        id: 'ri-9',
+        run_id: 'prun-1',
+        source_item_id: 'item-9',
+        requirement_id: 'req-9',
+      }),
+      run: {
+        id: 'prun-1',
+        delivery_project_id: 'dp-1',
+        iteration_id: delivered.id,
+      },
+    } as never);
+
+    await expect(
+      service.requestRetest('project-1', actor, 'prun-1', 'ri-9', {}),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'ITERATION_DELIVERED',
+        message:
+          'Iteration 2 was delivered. Start the next iteration to change this.',
+      },
+    });
+    expect(requirementsService.setProgress).not.toHaveBeenCalled();
   });
 
   it('refuses a Project run of a different Project, and a QA caller', async () => {

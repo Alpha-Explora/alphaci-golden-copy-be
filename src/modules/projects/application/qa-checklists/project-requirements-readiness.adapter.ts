@@ -6,6 +6,7 @@ import {
 } from '#kernel/composition/capability-resolver.port.js';
 import type { ProjectRequirementsReadinessPort } from '#kernel/ports/project-requirements-readiness.port';
 import { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
+import { ProjectIterationsService } from './project-iterations.service';
 
 /**
  * ProjectRequirementsReadinessPort: projects owns qa_checklists, so the
@@ -17,6 +18,7 @@ import { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repos
 export class ProjectRequirementsReadinessAdapter implements ProjectRequirementsReadinessPort {
   constructor(
     private readonly checklists: QaChecklistsRepository,
+    private readonly iterations: ProjectIterationsService,
     // Explicit token: an interface-typed constructor param emits as Object and
     // Nest would find no provider.
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
@@ -36,10 +38,13 @@ export class ProjectRequirementsReadinessAdapter implements ProjectRequirementsR
     if (!this.isFeatureRuleEnabled() || deliveryProjectIds.length === 0) {
       return counts;
     }
-    const active =
-      await this.checklists.countActiveFeaturesByDeliveryProject(
-        deliveryProjectIds,
-      );
+    // Features count in each Project's current Iteration only. Read-only: a
+    // Project with no Iteration yet has no Feature either.
+    const current =
+      await this.iterations.findCurrentForProjects(deliveryProjectIds);
+    const active = await this.checklists.countActiveFeaturesByIteration(
+      [...current.values()].map((iteration) => iteration.id),
+    );
     for (const [id, count] of active) {
       counts.set(id, count);
     }

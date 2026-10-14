@@ -37,6 +37,8 @@ export interface ProjectRunSnapshotItem {
 
 export interface CreateProjectRunInput {
   deliveryProjectId: string;
+  /** The Project's active Iteration: part of the idempotency key. */
+  iterationId: string;
   /** Stored as the run's label (checklist_name). */
   projectName: string;
   /** sha256 hex of the sorted "<provisioned_project_id>:<head_sha>" lines. */
@@ -52,7 +54,7 @@ export interface CreateProjectRunInput {
 }
 
 export interface CreateProjectRunResult {
-  /** false when a run for this (Project, set of heads) already existed and was returned instead. */
+  /** false when a run for this (Iteration, set of heads) already existed and was returned instead. */
   created: boolean;
   run: QaProjectRunRow;
   items: QaRunItemRow[];
@@ -134,9 +136,9 @@ export class QaProjectRunsRepository {
 
   /**
    * Idempotent create: INSERT ... ON CONFLICT DO NOTHING on the
-   * (delivery_project_id, heads_fingerprint) partial unique index, then
-   * SELECT, so two concurrent requests for the same set of heads converge on
-   * one run. The coverage rows and the item snapshot are written in the same
+   * (iteration_id, heads_fingerprint) partial unique index, then SELECT, so
+   * two concurrent requests for the same set of heads converge on one run. The
+   * same heads in a NEW Iteration are a new key, hence a new run. The coverage rows and the item snapshot are written in the same
    * transaction, and only on the branch that actually created the run.
    */
   async createRun(
@@ -146,12 +148,12 @@ export class QaProjectRunsRepository {
       const insertResult = await client.query<QaProjectRunRow>(
         `
           INSERT INTO projects.qa_verification_runs (
-            scope, delivery_project_id, heads_fingerprint, project_id, checklist_id,
-            checklist_version, checklist_name, branch, commit_sha, commit_source,
-            created_by, created_by_login
+            scope, delivery_project_id, iteration_id, heads_fingerprint, project_id,
+            checklist_id, checklist_version, checklist_name, branch, commit_sha,
+            commit_source, created_by, created_by_login
           )
-          VALUES ('project', $1, $2, NULL, NULL, 0, $3, $4, NULL, 'branch_head', $5, $6)
-          ON CONFLICT (delivery_project_id, heads_fingerprint) WHERE scope = 'project'
+          VALUES ('project', $1, $7, $2, NULL, NULL, 0, $3, $4, NULL, 'branch_head', $5, $6)
+          ON CONFLICT (iteration_id, heads_fingerprint) WHERE scope = 'project'
           DO NOTHING
           RETURNING *;
         `,
@@ -162,6 +164,7 @@ export class QaProjectRunsRepository {
           QA_BRANCH,
           input.createdBy,
           input.createdByLogin,
+          input.iterationId,
         ],
       );
 
@@ -174,7 +177,7 @@ export class QaProjectRunsRepository {
         );
         const priorBySource = await this.priorItemsBySource(
           client,
-          input.deliveryProjectId,
+          input.iterationId,
           inserted.id,
         );
         const items = await this.insertRunItems(
@@ -189,9 +192,9 @@ export class QaProjectRunsRepository {
       const existingResult = await client.query<QaProjectRunRow>(
         `
           SELECT * FROM projects.qa_verification_runs
-          WHERE scope = 'project' AND delivery_project_id = $1 AND heads_fingerprint = $2;
+          WHERE scope = 'project' AND iteration_id = $1 AND heads_fingerprint = $2;
         `,
-        [input.deliveryProjectId, input.headsFingerprint],
+        [input.iterationId, input.headsFingerprint],
       );
       const existing = existingResult.rows[0];
       if (!existing) {
@@ -254,21 +257,21 @@ export class QaProjectRunsRepository {
     );
   }
 
-  /** source_item_id -> run item id, from the Project's newest earlier run. */
+  /** source_item_id -> run item id, from the Iteration's newest earlier run. */
   private async priorItemsBySource(
     client: Pick<PoolClient, 'query'>,
-    deliveryProjectId: string,
+    iterationId: string,
     excludeRunId: string,
   ): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     const priorRun = await client.query<{ id: string }>(
       `
         SELECT id FROM projects.qa_verification_runs
-        WHERE scope = 'project' AND delivery_project_id = $1 AND id <> $2
+        WHERE scope = 'project' AND iteration_id = $1 AND id <> $2
         ORDER BY created_at DESC, id DESC
         LIMIT 1;
       `,
-      [deliveryProjectId, excludeRunId],
+      [iterationId, excludeRunId],
     );
     const priorRunId = priorRun.rows[0]?.id;
     if (!priorRunId) {
@@ -356,28 +359,28 @@ export class QaProjectRunsRepository {
   }
 
   async findRunByFingerprint(
-    deliveryProjectId: string,
+    iterationId: string,
     headsFingerprint: string,
   ): Promise<QaProjectRunRow | null> {
     const result = await this.databaseService.query<QaProjectRunRow>(
       `
         SELECT * FROM projects.qa_verification_runs
-        WHERE scope = 'project' AND delivery_project_id = $1 AND heads_fingerprint = $2;
+        WHERE scope = 'project' AND iteration_id = $1 AND heads_fingerprint = $2;
       `,
-      [deliveryProjectId, headsFingerprint],
+      [iterationId, headsFingerprint],
     );
     return result.rows[0] ?? null;
   }
 
-  /** Newest Project run first; `cursor` is the previous page's last (createdAt, id). */
+  /** One Iteration's Project runs, newest first; `cursor` is the previous page's last (createdAt, id). */
   async listProjectRuns(
-    deliveryProjectId: string,
+    iterationId: string,
     options: {
       limit: number;
       cursor: { createdAt: string; id: string } | null;
     },
   ): Promise<QaProjectRunRow[]> {
-    const values: unknown[] = [deliveryProjectId];
+    const values: unknown[] = [iterationId];
     let cursorSql = '';
     if (options.cursor) {
       values.push(options.cursor.createdAt, options.cursor.id);
@@ -387,7 +390,7 @@ export class QaProjectRunsRepository {
     const result = await this.databaseService.query<QaProjectRunRow>(
       `
         SELECT * FROM projects.qa_verification_runs
-        WHERE scope = 'project' AND delivery_project_id = $1 ${cursorSql}
+        WHERE scope = 'project' AND iteration_id = $1 ${cursorSql}
         ORDER BY created_at DESC, id DESC
         LIMIT $${values.length};
       `,
@@ -396,36 +399,36 @@ export class QaProjectRunsRepository {
     return result.rows;
   }
 
-  /** The newest Project run, optionally only an open one. */
+  /** The Iteration's newest Project run, optionally only an open one. */
   async findNewestProjectRun(
-    deliveryProjectId: string,
+    iterationId: string,
     options: { openOnly: boolean },
   ): Promise<QaProjectRunRow | null> {
     const result = await this.databaseService.query<QaProjectRunRow>(
       `
         SELECT * FROM projects.qa_verification_runs
-        WHERE scope = 'project' AND delivery_project_id = $1
+        WHERE scope = 'project' AND iteration_id = $1
           AND ($2::boolean = FALSE OR status = 'open')
         ORDER BY created_at DESC, id DESC
         LIMIT 1;
       `,
-      [deliveryProjectId, options.openOnly],
+      [iterationId, options.openOnly],
     );
     return result.rows[0] ?? null;
   }
 
   /**
    * The newest run of each Project plus its active sign-off, for all
-   * `deliveryProjectIds` in ONE query (the overview must not ask per Project).
-   * Same order as findNewestProjectRun (created_at, id, newest first); a
-   * Project with no run is absent. The active sign-off is unique per run
+   * `iterationIds` (each Project's current Iteration) in ONE query (the
+   * overview must not ask per Project). Same order as findNewestProjectRun
+   * (created_at, id, newest first); a Project with no run is absent. The active sign-off is unique per run
    * (uq_qa_run_signoffs_run_active), so the LEFT JOIN never fans out.
    */
   async findLatestRunHeadlines(
-    deliveryProjectIds: readonly string[],
+    iterationIds: readonly string[],
   ): Promise<Map<string, QaProjectRunHeadline>> {
     const map = new Map<string, QaProjectRunHeadline>();
-    if (deliveryProjectIds.length === 0) {
+    if (iterationIds.length === 0) {
       return map;
     }
     const result = await this.databaseService.query<{
@@ -450,10 +453,10 @@ export class QaProjectRunsRepository {
         LEFT JOIN projects.qa_run_signoffs s
           ON s.run_id = r.id AND s.superseded_at IS NULL
         WHERE r.scope = 'project'
-          AND r.delivery_project_id = ANY($1::uuid[])
+          AND r.iteration_id = ANY($1::uuid[])
         ORDER BY r.delivery_project_id, r.created_at DESC, r.id DESC;
       `,
-      [deliveryProjectIds],
+      [iterationIds],
     );
     for (const row of result.rows) {
       map.set(row.delivery_project_id, {
@@ -532,12 +535,12 @@ export class QaProjectRunsRepository {
   }
 
   /**
-   * The Project run whose ACTIVE sign-off has the greatest signed_at. A
-   * reopened (superseded) sign-off no longer counts, and an open run never has
-   * an active one - exactly "the latest signed-off Project run".
+   * The Iteration's Project run whose ACTIVE sign-off has the greatest
+   * signed_at. A reopened (superseded) sign-off no longer counts, and an open
+   * run never has an active one - exactly "the latest signed-off Project run".
    */
   async findLatestSignedOff(
-    deliveryProjectId: string,
+    iterationId: string,
   ): Promise<QaProjectLatestSignoff | null> {
     const signoffResult = await this.databaseService.query<QaRunSignoffRow>(
       `
@@ -545,13 +548,13 @@ export class QaProjectRunsRepository {
         FROM projects.qa_run_signoffs s
         JOIN projects.qa_verification_runs r ON r.id = s.run_id
         WHERE r.scope = 'project'
-          AND r.delivery_project_id = $1
+          AND r.iteration_id = $1
           AND r.status = 'signed_off'
           AND s.superseded_at IS NULL
         ORDER BY s.signed_at DESC, s.id DESC
         LIMIT 1;
       `,
-      [deliveryProjectId],
+      [iterationId],
     );
     const signoff = signoffResult.rows[0];
     if (!signoff) {
@@ -597,11 +600,11 @@ export class QaProjectRunsRepository {
   }
 
   /**
-   * Run items of the Project's OPEN runs that were sent back to development
+   * Run items of the Iteration's OPEN runs that were sent back to development
    * for this requirement item: what a Progress -> done flips back to pending.
    */
   async findReturnedOpenRunItems(
-    deliveryProjectId: string,
+    iterationId: string,
     sourceItemId: string,
   ): Promise<QaRunItemRow[]> {
     const result = await this.databaseService.query<QaRunItemRow>(
@@ -611,11 +614,11 @@ export class QaProjectRunsRepository {
         JOIN projects.qa_verification_runs r ON r.id = i.run_id
         WHERE r.scope = 'project'
           AND r.status = 'open'
-          AND r.delivery_project_id = $1
+          AND r.iteration_id = $1
           AND i.source_item_id = $2
           AND i.status = 'returned_to_dev';
       `,
-      [deliveryProjectId, sourceItemId],
+      [iterationId, sourceItemId],
     );
     return result.rows;
   }
