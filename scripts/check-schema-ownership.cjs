@@ -35,8 +35,20 @@ function pairs(entries) {
   return new Set(entries);
 }
 
-/** Historical migrations that must remain replayable without changing data. */
+/** Exact cross-schema allowances for replayable history and reviewed migration transitions. */
 const LEGACY_MIGRATION_REFERENCES = new Map([
+  [
+    'projects/20260925050000_project_environments.sql',
+    pairs(['env_provisioning.project_deployment_targets']),
+  ],
+  [
+    'runtime/20260928100000_deployment_target_environments.sql',
+    pairs(['projects.project_environments']),
+  ],
+  [
+    'runtime/20260928200000_release_registry.sql',
+    pairs(['projects.provisioned_projects', 'projects.project_environments']),
+  ],
   [
     'identity-access/20260606_domain_schema_bootstrap.sql',
     pairs([
@@ -237,7 +249,7 @@ const TRANSITIONAL_SOURCE_REFERENCES = new Map([
   ],
   [
     'src/modules/pipelines/ci/application/ci-reports.service.ts',
-    pairs(['projects.provisioned_projects']),
+    pairs(['projects.provisioned_projects', 'projects.project_environments']),
   ],
   [
     'src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts',

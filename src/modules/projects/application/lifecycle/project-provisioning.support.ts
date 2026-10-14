@@ -28,6 +28,7 @@ import type {
   CreateProjectDto,
 } from '../../api/dto/create-project.dto';
 import type { ProjectsRepository } from '../../infrastructure/projects.repository';
+import type { ProjectEnvironmentInput } from '../../domain/project-environment.policy';
 import {
   filterDeploymentProvisioningRequest,
   forceManagedProvisioning,
@@ -53,6 +54,10 @@ import type {
   StagedWorkflowFile,
 } from '../workflows/index';
 import type { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import type {
+  StagedEnvironmentTarget,
+  StagedWorkflowEnvironment,
+} from '../workflows/staged-workflow.builder';
 
 /** One branch's outcome, as recorded in the audit event and the admin report. */
 export interface GithubBranchProtectionResult {
@@ -93,6 +98,8 @@ export interface WorkflowBundleOptions {
   hasTestsDirectory?: boolean | undefined;
   /** `owner/repo` of the paired frontend/backend repository (multi-repo only). See StagedWorkflowOptions. */
   siblingRepoFullName?: string | undefined;
+  environments?: StagedWorkflowEnvironment[] | undefined;
+  environmentTargets?: StagedEnvironmentTarget[] | undefined;
 }
 
 /**
@@ -307,14 +314,16 @@ export class ProjectProvisioningSupport {
       );
     }
 
-    return this.workflowFiles.pushWorkflowFile(
+    // Through the GitHub port, like every other repository write, so the
+    // push uses its retrying client and can be replaced at the port.
+    return this.githubService.putFileContent(
       accessToken,
       owner,
       repo,
       filePath,
       content,
-      commitMessage,
       branch,
+      commitMessage,
     );
   }
 
@@ -399,7 +408,11 @@ export class ProjectProvisioningSupport {
     slots: DeploymentProvisioningTargetDto['slot'][];
   }): Promise<DeploymentProvisioningResult> {
     const request = filterDeploymentProvisioningRequest(
-      forceManagedProvisioning(input.request),
+      forceManagedProvisioning(
+        input.request,
+        (provider) =>
+          this.workflowFragmentRegistry?.deliveredByHost(provider) ?? false,
+      ),
       input.slots,
     );
     if (!request?.enabled || request.targets.length === 0) {
@@ -587,20 +600,42 @@ export class ProjectProvisioningSupport {
   }
 
   async createProjectRow(
-    input: Parameters<ProjectsRepository['create']>[0],
+    input: Parameters<ProjectsRepository['create']>[0] & {
+      environments?: ProjectEnvironmentInput[];
+    },
     linkOptions?: NewProjectLinkOptions,
   ): Promise<{
     row: Awaited<ReturnType<ProjectsRepository['create']>>;
-    /**
-     * The hierarchy delivery project this row was linked under (existing or
-     * newly auto-created), or null when no link happened. Callers linking a
-     * multi-repo/microservices PAIR read this from the first row's result and
-     * feed it back in as the second row's `linkOptions.deliveryProjectId`, so
-     * both land under the same chain instead of each creating its own.
-     */
     deliveryProjectId: string | null;
   }> {
-    const row = await this.projectsRepository.create(input);
+    const { environments, ...projectInput } = input;
+    const row = await this.projectsRepository.create(projectInput);
+
+    if (environments) {
+      try {
+        await this.projectsRepository.createProjectEnvironments(
+          row.id,
+          environments,
+        );
+      } catch (error) {
+        try {
+          const deleted = await this.projectsRepository.deleteByIdAndUser(
+            row.id,
+            row.user_id,
+          );
+          if (!deleted) {
+            this.logger.warn(
+              `Compensation: failed to delete project row ${row.id} after environment insert failure`,
+            );
+          }
+        } catch (cleanupError) {
+          this.logger.warn(
+            `Compensation: failed to delete project row ${row.id} after environment insert failure: ${String(cleanupError)}`,
+          );
+        }
+        throw error;
+      }
+    }
 
     let link: Awaited<ReturnType<ProjectLinkPort['ensureLink']>> | undefined;
     try {
@@ -810,10 +845,11 @@ export class ProjectProvisioningSupport {
     userId: string;
     projectId: string;
     workspaceId?: string | null;
+    branches?: readonly string[];
   }): Promise<void> {
     const repoFullName = `${input.owner}/${input.repo}`;
     const branches: GithubBranchProtectionResult[] = [];
-    for (const name of PROTECTED_BRANCHES) {
+    for (const name of input.branches ?? PROTECTED_BRANCHES) {
       try {
         const outcome = await this.githubService.ensurePullRequestProtection(
           input.token,
@@ -856,7 +892,7 @@ export class ProjectProvisioningSupport {
             ? `Branch protection could not be applied to ${failed
                 .map((branch) => branch.name)
                 .join(', ')}`
-            : 'Pull requests are now required on dev, uat and main',
+            : `Pull requests are now required on ${(input.branches ?? PROTECTED_BRANCHES).join(', ')}`,
         metadata: { repoFullName, branches },
       });
     } catch (error) {

@@ -1,12 +1,22 @@
 {
+  "rootDir": "../..",
+  "roots": ["<rootDir>/tests/e2e"],
   "moduleFileExtensions": ["js", "json", "ts"],
-  "rootDir": ".",
   "testEnvironment": "node",
   "testRegex": "\\.e2e-spec\\.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
   "moduleNameMapper": {
+    "^#kernel/(.*)\\.js$": "<rootDir>/src/kernel/$1",
+    "^#kernel/(.*)$": "<rootDir>/src/kernel/$1",
+    "^#modules/(.*)\\.js$": "<rootDir>/src/modules/$1",
+    "^#modules/(.*)$": "<rootDir>/src/modules/$1",
     "^(\\.{1,2}/.*)\\.js$": "$1"
-  }
+  },
+  "globalSetup": "<rootDir>/tests/e2e/support/global-setup.ts",
+  "globalTeardown": "<rootDir>/tests/e2e/support/global-teardown.ts",
+  "setupFiles": ["<rootDir>/tests/e2e/support/app-environment.ts"],
+  "reporters": ["default", "<rootDir>/tests/e2e/support/report-reporter.cjs"],
+  "testTimeout": 60000
 }

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
@@ -13,6 +14,13 @@ import { UsageModule } from '#modules/billing/usage/usage.module.js';
 import { WorkspacesModule } from '#modules/identity-access/workspaces/workspaces.module.js';
 import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { DeploymentTargetsController } from './api/deployment-targets.controller';
+import { EnvironmentDeploymentTargetsController } from './api/environment-deployment-targets.controller';
+import { EnvironmentReleasesController } from './api/environment-releases.controller';
+import { OnpremAgentController } from './api/onprem-agent.controller';
+import { ProjectReleasesController } from './api/project-releases.controller';
+import { ReleaseRegistryService } from './application/release-registry.service';
+import { ReleaseRegistryRepository } from './infrastructure/repositories/release-registry.repository';
+import { ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER } from '#kernel/ports/deployment-runtime.port';
 import { DeploymentTargetsRepository } from './infrastructure/repositories/deployment-targets.repository';
 import { DeploymentTargetsService } from './application/deployment-targets.service';
 import { DeploymentLogsHubService } from './application/deployment-logs-hub.service';
@@ -80,6 +88,8 @@ import {
 } from './core/provider-pack';
 import type { DeploymentProvider } from './core/deployment-provider.contract';
 import { createGcpProviderPack } from './infrastructure/providers/gcp/gcp-provider.pack';
+import { OnpremComposeDeploymentProvider } from './infrastructure/providers/onprem/onprem-compose.provider';
+import { createOnpremComposeProviderPack } from './infrastructure/providers/onprem/onprem-compose-provider.pack';
 import { createRenderProviderPack } from './infrastructure/providers/render/render-provider.pack';
 import { createVercelProviderPack } from './infrastructure/providers/vercel/vercel-provider.pack';
 import {
@@ -116,6 +126,10 @@ import {
     ReleasesController,
     ProviderConnectionsController,
     DeploymentTargetsController,
+    EnvironmentDeploymentTargetsController,
+    EnvironmentReleasesController,
+    OnpremAgentController,
+    ProjectReleasesController,
     EnvVarsController,
     CustomDomainsController,
   ],
@@ -142,6 +156,12 @@ import {
     // (it owns the log pollers and the per-credential rate-limit cooldowns).
     DeploymentLogsHubService,
     DeploymentTargetsService,
+    ReleaseRegistryRepository,
+    ReleaseRegistryService,
+    {
+      provide: ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER,
+      useExisting: DeploymentTargetsService,
+    },
     {
       provide: DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
       useExisting: DeploymentTargetsService,
@@ -158,6 +178,21 @@ import {
       inject: [DeploymentProviderRegistry],
     },
     {
+      // Discoverable always; usable only where ONPREM_RELEASES_ENABLED turns
+      // on-prem hosts on, so existing on-prem targets keep generating valid
+      // pipelines even while the flag is off.
+      provide: OnpremComposeDeploymentProvider,
+      inject: [ConfigService, DeploymentProviderRegistry],
+      useFactory: (
+        configService: ConfigService,
+        registry: DeploymentProviderRegistry,
+      ) =>
+        new OnpremComposeDeploymentProvider(
+          configService.get<string>('ONPREM_RELEASES_ENABLED') === 'true',
+          registry,
+        ),
+    },
+    {
       provide: RUNTIME_PROVIDER_PACKS,
       useFactory: (
         renderProvider: DeploymentProvider,
@@ -170,6 +205,7 @@ import {
         vercelClient: VercelEnvClient,
         vercelCiSecretsInstaller: VercelCiSecretsService,
         gcpProvider: GcpDeploymentProvider,
+        onpremProvider: OnpremComposeDeploymentProvider,
         workflowFragments: readonly WorkflowFragment[],
       ) => [
         createRenderProviderPack({
@@ -192,6 +228,7 @@ import {
           ciSecretsInstaller: vercelCiSecretsInstaller,
         }),
         createGcpProviderPack({ provider: gcpProvider }),
+        createOnpremComposeProviderPack({ provider: onpremProvider }),
       ],
       inject: [
         RENDER_DEPLOYMENT_PROVIDER,
@@ -204,6 +241,7 @@ import {
         VercelEnvClient,
         VercelCiSecretsService,
         GcpDeploymentProvider,
+        OnpremComposeDeploymentProvider,
         WORKFLOW_FRAGMENTS,
       ],
     },
@@ -239,6 +277,10 @@ import {
           githubService.setActionsSecretStrict(...args),
         setActionsVariableStrict: (...args) =>
           githubService.setActionsVariableStrict(...args),
+        ensureDeploymentEnvironment: (input) =>
+          githubService.ensureDeploymentEnvironment(input),
+        dispatchWorkflow: (input) =>
+          githubService.dispatchReleaseWorkflow(input),
       }),
     },
     {
@@ -341,6 +383,7 @@ import {
     DEPLOYMENT_ENV_METADATA_QUERY,
     DEPLOYMENT_TARGET_DELETION,
     DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,
+    ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER,
     PROVIDER_CLIENT_REGISTRY,
     PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
     WorkflowFragmentRegistry,

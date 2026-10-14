@@ -1,7 +1,7 @@
 ---
 type: "Playbook"
 title: "Deployment provisioning"
-description: "Operate the current Runtime provider provisioning paths for Render, Vercel, and GCP."
+description: "Operate the current Runtime provider provisioning paths for Render, Vercel, GCP, and on-prem hosts."
 tags: [runbook, runtime, providers, deployment]
 status: stable
 sources:
@@ -28,8 +28,37 @@ Runtime can create provider deployment targets during project setup and push ini
 | Vercel | managed or configured connection through Runtime | CI-pushed deployment and preview support where enabled |
 | Render | managed or configured connection through Runtime | image-pushed, Git-connected, or existing-service strategies according to target policy |
 | GCP | GCP deployment module and Runtime registry | Cloud Run and Artifact Registry provisioning when enabled |
+| On-prem host (`onprem-compose`) | Runtime registry, available when `ONPREM_RELEASES_ENABLED=true` | A target record only; the environment's host pulls signed releases by digest |
 
 Provider selection, policy, credentials, workflow fragments, and client availability remain inside Runtime provider packs. Use the [provider map](/architecture/provider-map.generated.md) for the current source locations and capability limits.
+
+## Delivery
+
+Every environment is delivered one way, and each deployment records which:
+
+- **Workflow**: Render and Vercel targets. The generated pipeline deploys the first environment on push and runs `30-alphaci-promote.yml` for a promotion; CI reports status with the project CI token.
+- **Host**: on-prem targets. The pipeline builds, registers, and signs the release but runs no deploy job. The environment's host pulls the assignment and is the only party that may report its status.
+
+An environment cannot mix the two: creating or attaching a target that would mix them is refused with 409, and project creation refuses it with 400 before the repository exists.
+
+## On-prem targets
+
+On-prem targets belong to a project environment and use `ownershipMode: byo`; the host is the customer's machine, never a managed account, and AlphaCI holds none of its credentials. Creating one makes no provider or GitHub call. Its label is `providerProjectName`, `projectName`, or the slot.
+
+At project creation, give a target an `environmentSlug` to limit it to one environment. It replaces that environment's shared target for the same slot. For hosted test and UAT with production on a host:
+
+```json
+{
+  "targets": [
+    { "slot": "backend", "provider": "render", "ownershipMode": "flowci_managed" },
+    { "slot": "frontend", "provider": "vercel", "ownershipMode": "flowci_managed" },
+    { "slot": "backend", "provider": "onprem-compose", "ownershipMode": "byo", "environmentSlug": "main" },
+    { "slot": "frontend", "provider": "onprem-compose", "ownershipMode": "byo", "environmentSlug": "main" }
+  ]
+}
+```
+
+The package workflow builds an image for every slot any environment's container target needs, so the production host can pull a frontend that test deploys to Vercel from source. Register the host with `POST /projects/:projectId/environments/:environmentId/hosts` and install the agent from `deploy/onprem/agent`.
 
 ## Managed Render
 

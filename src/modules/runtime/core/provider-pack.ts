@@ -76,6 +76,18 @@ export class RuntimeProviderPackRegistry {
         `Provider pack '${id}' contains workflow fragment '${pack.workflowFragment.provider}'`,
       );
     }
+    // The runtime reads delivery from the provider, the pipeline builder from
+    // the fragment; a pack whose two halves disagree would deploy twice or not
+    // at all.
+    if (
+      pack.workflowFragment &&
+      (pack.workflowFragment.deliveredByHost === true) !==
+        (pack.provider.capabilities.connectivity === 'indirect')
+    ) {
+      throw new Error(
+        `Provider pack '${id}' disagrees with itself about host delivery`,
+      );
+    }
     if (pack.ciSecretsInstaller && pack.ciSecretsInstaller.provider !== id) {
       throw new Error(
         `Provider pack '${id}' contains CI installer '${pack.ciSecretsInstaller.provider}'`,

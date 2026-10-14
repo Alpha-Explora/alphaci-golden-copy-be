@@ -8,6 +8,53 @@ target for production, without hand-editing generated workflows. Decision:
 The [host setup guide](2026-09-25-onprem-client-setup-guide.md) holds the
 installation and enterprise-client checklist.
 
+## Local integration on 2026-10-14
+
+The current FE, BE, and central workflow implementation is on local branches
+named `codex/onprem-integration-20261014`, integrated with their latest fetched
+main branches. Earlier checklists below record the original implementation;
+this section describes the current integration. No remote branch or release
+tag was changed and no shared database migration was applied.
+
+- Backend: environment CRUD, scoped deployment targets, immutable releases,
+  explicit promotion, trusted-key signature verification, host registration,
+  outbound assignment polling, deployment status, and Compose agent rollback.
+- Frontend: Hosting environment cards can add an on-prem target per available
+  slot, register a host, show its one-time token, and promote releases with the
+  current persona permissions and a second confirmation for production.
+- Workflow: builds publish digest-pinned images; signing supports Cloud KMS
+  and a lab PEM key; Render/Vercel deployments use explicit environment targets.
+  A stale generated promotion workflow refuses mismatched recorded target IDs.
+- Project provisioning publishes the generated workflows before considering
+  the project complete, and uses the current audited branch-protection policy.
+
+Local tests use a disposable loopback PostgreSQL database. Provider APIs are
+recording fakes; the Linux host-agent tests run the actual shell/signature and
+rollback logic with a Docker command shim. These tests do not prove a client
+Windows reboot, GHCR pull permissions, production KMS access, or real customer
+application health. The host setup guide remains the acceptance procedure for
+those checks.
+
+Verification of the integrated tree: backend typecheck, build, lint, architecture
+boundaries, schema ownership, capabilities, composition source, capability
+ledger, and documentation checks passed. Backend unit/architecture suite:
+3,818 passed, 41 skipped; on-prem API/migration/host-agent suite: 63 passed.
+Frontend typecheck, touched-file lint, architecture/documentation checks and
+6 focused tests passed. Browser verification could not reach an authenticated
+backend at localhost:4000 and remains incomplete. The central workflow's CI
+selected actionlint list and canonical/signing-related contract checks passed;
+a broader scan still reports existing findings in unrelated workflows.
+
+For a deployed pilot, publish and pin a reviewed central-workflow revision
+containing `sign-release.yml` before opting a project into this flow. The
+currently published `v1` does not contain that workflow. Apply the additive
+migrations, configure the signing public key trust map on the backend and the
+matching PEM on the host, then enable `ONPREM_RELEASES_ENABLED`. Configure
+KMS workload identity and repository variables (or a lab-only signing secret),
+GHCR read access, host token, Compose file, health checks, DNS, and TLS. Run the
+setup guide's pull, failed-health rollback, reconnect, and reboot checks before
+calling a customer installation ready.
+
 ## Environment and deployment contract
 
 | Example environment | Source branch | Role | Frontend slot | Backend slot |

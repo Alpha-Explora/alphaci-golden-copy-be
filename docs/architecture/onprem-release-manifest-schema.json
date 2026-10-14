@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alphaci.dev/schemas/onprem-release-manifest/1.json",
+  "title": "AlphaCI on-prem release manifest",
+  "description": "Signed payload: the RFC 8785 canonical JSON of this object. manifestSha256 is the lowercase hex SHA-256 of those bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "releaseId",
+    "projectId",
+    "sourceEnvironmentId",
+    "sourceBranch",
+    "commitSha",
+    "createdAt",
+    "artifacts",
+    "workflowRun"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "releaseId": { "type": "string", "format": "uuid" },
+    "projectId": { "type": "string", "format": "uuid" },
+    "sourceEnvironmentId": { "type": "string", "format": "uuid" },
+    "sourceBranch": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot", "image", "digest"],
+        "properties": {
+          "slot": { "enum": ["backend", "frontend", "standalone"] },
+          "image": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
+          },
+          "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "checksum", "mode"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "checksum": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "mode": { "enum": ["expand", "contract"] }
+        }
+      }
+    },
+    "workflowRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "repo", "runId", "url"],
+      "properties": {
+        "provider": { "const": "github_actions" },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "runId": { "type": "string", "pattern": "^[0-9]{1,20}$" },
+        "url": { "type": "string", "pattern": "^https://" }
+      }
+    }
+  }
+}

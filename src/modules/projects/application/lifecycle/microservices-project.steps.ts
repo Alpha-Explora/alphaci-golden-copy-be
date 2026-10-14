@@ -256,6 +256,7 @@ export async function persistPackedBackendRow(input: {
       repoShape: normalizeRepoShape(dto.repoShape),
       projectTypeId: backend.projectTypeId,
       workflowRecipeId: backend.workflowRecipeId ?? null,
+      ...(dto.environments ? { environments: dto.environments } : {}),
       projectOptions: {
         ...support.repositoryOwnershipMetadata(dto, ownerLogin),
         ...packedTestsProjectOption(dto.tests),

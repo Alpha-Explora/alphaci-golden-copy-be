@@ -13,6 +13,10 @@ import {
   type DeploymentWorkflowTarget,
   type StagedWorkflowFile,
 } from './index';
+import type {
+  StagedEnvironmentTarget,
+  StagedWorkflowEnvironment,
+} from './staged-workflow.builder';
 import type { DeploymentProviderId as DeploymentProvider } from '#kernel/ports/deployment-runtime.port';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 
@@ -63,6 +67,9 @@ export class ProjectWorkflowFilesService {
     hasTestsDirectory?: boolean | undefined;
     /** `owner/repo` of the paired frontend/backend repository (multi-repo only). See StagedWorkflowOptions. */
     siblingRepoFullName?: string | undefined;
+    /** Project environments; when set, the pipeline is generated from them. */
+    environments?: StagedWorkflowEnvironment[] | undefined;
+    environmentTargets?: StagedEnvironmentTarget[] | undefined;
   }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
     const {
       templateId,
@@ -78,6 +85,8 @@ export class ProjectWorkflowFilesService {
       centralWorkflowRef,
       hasTestsDirectory,
       siblingRepoFullName,
+      environments,
+      environmentTargets,
     } = options;
 
     const template = await this.catalogService.getTemplateById(templateId);
@@ -100,6 +109,8 @@ export class ProjectWorkflowFilesService {
         ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
         ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
         ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
+        ...(environments?.length && { environments }),
+        ...(environmentTargets && { environmentTargets }),
       },
       this.workflowFragmentRegistry,
     );

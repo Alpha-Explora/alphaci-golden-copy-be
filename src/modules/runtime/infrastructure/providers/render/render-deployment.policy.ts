@@ -300,6 +300,9 @@ function shouldFanOutRenderTarget(
   target: DeploymentProvisioningTarget,
   allTargets: readonly DeploymentProvisioningTarget[],
 ): boolean {
+  // An environment's target is exactly one service; the environment, not a
+  // fixed branch list, decides where it deploys.
+  if (target.environmentId) return false;
   if (
     target.ownershipMode !== 'flowci_managed' ||
     target.renderDeployMethod === 'existing_service'

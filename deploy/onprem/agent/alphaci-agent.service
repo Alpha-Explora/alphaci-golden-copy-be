@@ -1,0 +1,9 @@
+[Unit]
+Description=AlphaCI on-prem release agent (one poll)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+Environment=ALPHACI_AGENT_CONFIG=/opt/alphaci/agent.env
+ExecStart=/opt/alphaci/bin/alphaci-agent
