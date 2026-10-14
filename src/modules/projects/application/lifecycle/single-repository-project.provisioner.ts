@@ -10,6 +10,7 @@ import {
   withRepoShapeRootDirectory,
 } from '../../domain/deployment-provisioning.policy';
 import { normalizeRepoShape } from '../../scaffold.builder';
+import { targetsForEnvironment } from '../../domain/environment-deployment-targets.policy';
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import type { SetupProjectDto } from '../../api/dto/setup-project.dto';
 import type {
@@ -21,6 +22,7 @@ import {
   newChainLinkOptions,
   type ProjectProvisioningSupport,
 } from './project-provisioning.support';
+import type { StagedEnvironmentTarget } from '../workflows/staged-workflow.builder';
 import {
   BRANCHES_CREATED_ON_PROVISION,
   PROVISIONED_BRANCHES,
@@ -59,6 +61,8 @@ export class SingleRepositoryProjectProvisioner {
     );
 
     // 2. Load template and build workflow YAML
+    // With environments, this first bundle only fixes the file list and
+    // workflow path; the real pipeline is generated once targets exist.
     const { workflowFiles, outputFileName } =
       await this.support.buildWorkflowBundle({
         templateId,
@@ -80,6 +84,18 @@ export class SingleRepositoryProjectProvisioner {
           dto.servicePath,
           this.support.workflowFragmentRegistry,
         ),
+        ...(dto.environments
+          ? {
+              environments: dto.environments.map((environment, position) => ({
+                id: environment.slug,
+                slug: environment.slug,
+                sourceBranch: environment.sourceBranch,
+                position,
+                role: environment.role,
+              })),
+              environmentTargets: [],
+            }
+          : {}),
       });
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
@@ -145,6 +161,7 @@ export class SingleRepositoryProjectProvisioner {
           repoShape,
           projectTypeId: dto.projectTypeId,
           workflowRecipeId: dto.workflowRecipeId ?? null,
+          ...(dto.environments ? { environments: dto.environments } : {}),
           projectOptions: {
             ...this.support.repositoryOwnershipMetadata(dto, ownerLogin),
             ...(dto.tests ? { tests: dto.tests } : {}),
@@ -181,6 +198,26 @@ export class SingleRepositoryProjectProvisioner {
         ownerLogin,
         repoName,
       );
+
+      if (dto.environments) {
+        return await this.completeEnvironmentProject({
+          userId,
+          dto,
+          row,
+          templateId,
+          repoShape,
+          provisioningToken,
+          ownerLogin,
+          repoName,
+          repoUrl,
+          repoFullName,
+          workflowPath,
+          deploymentProvisioning: effectiveDeploymentProvisioning,
+          markComplete: () => {
+            provisioningComplete = true;
+          },
+        });
+      }
 
       // 5. Push workflow YAML to main now that the secrets exist, then record
       // the resulting commit on the project row.
@@ -271,6 +308,196 @@ export class SingleRepositoryProjectProvisioner {
       }
       throw error;
     }
+  }
+  /**
+   * Finish a project created with its own environments, once the repository,
+   * project row, environments, and CI secrets exist.
+   *
+   * The pipeline names real environment and target IDs, so it is generated
+   * last: create each distinct source branch, protect every branch except the
+   * first environment's, provision one target per environment and slot (each
+   * through the environment-aware target path, which also provisions and
+   * protects its GitHub Environment), then generate the pipeline and push it
+   * to every source branch.
+   */
+  private async completeEnvironmentProject(input: {
+    userId: string;
+    dto: CreateProjectDto;
+    row: ProvisionedProjectRow;
+    templateId: string;
+    repoShape: string;
+    provisioningToken: string;
+    ownerLogin: string;
+    repoName: string;
+    repoUrl: string;
+    repoFullName: string;
+    workflowPath: string;
+    deploymentProvisioning: CreateProjectDto['deploymentProvisioning'];
+    markComplete: () => void;
+  }): Promise<CreateProjectResponse> {
+    const { dto, row, provisioningToken, ownerLogin, repoName } = input;
+    const environments =
+      await this.support.projectsRepository.listProjectEnvironments(row.id);
+    const first = environments[0];
+    if (!first) {
+      throw new UnprocessableEntityException(
+        'The project environments were not stored.',
+      );
+    }
+    const branches = [
+      ...new Set(environments.map(({ sourceBranch }) => sourceBranch)),
+    ];
+
+    for (const branch of branches.filter((name) => name !== 'main')) {
+      await this.support.githubService.createBranch(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        branch,
+        'main',
+      );
+    }
+    // The first environment's branch is where developers push; every later
+    // environment's branch is protected, and main always is.
+
+    const slots = resolveSingleRepoDeploymentSlots(
+      input.deploymentProvisioning,
+    );
+    const environmentTargets: StagedEnvironmentTarget[] = [];
+    const provisioned: Awaited<
+      ReturnType<ProjectProvisioningSupport['provisionDeploymentTargets']>
+    >[] = [];
+    for (const environment of environments) {
+      const request = input.deploymentProvisioning
+        ? {
+            ...input.deploymentProvisioning,
+            targets: targetsForEnvironment(
+              input.deploymentProvisioning.targets,
+              environment.slug,
+            ).map((target) => ({
+              ...target,
+              environmentId: environment.id,
+              branchName: environment.sourceBranch,
+              ...(target.projectName
+                ? { projectName: target.projectName + '-' + environment.slug }
+                : {}),
+            })),
+          }
+        : undefined;
+      const result = await this.support.provisionDeploymentTargets({
+        projectId: row.id,
+        userId: input.userId,
+        repoFullName: input.repoFullName,
+        githubAccessToken: provisioningToken,
+        request,
+        slots,
+      });
+      provisioned.push(result);
+      for (const target of result.targets) {
+        if (target.status !== 'failed' && target.deploymentTargetId) {
+          environmentTargets.push({
+            environmentId: environment.id,
+            slot: target.slot,
+            targetId: target.deploymentTargetId,
+            provider: target.provider,
+          });
+        }
+      }
+    }
+
+    const { workflowFiles } = await this.support.buildWorkflowBundle({
+      templateId: input.templateId,
+      serviceName: dto.serviceName,
+      servicePath: dto.servicePath,
+      nodeVersion: dto.nodeVersion,
+      coverageThreshold: dto.coverageThreshold,
+      customOutputFileName: dto.outputFileName,
+      hasTestsDirectory: input.repoShape === 'standalone',
+      environments: environments.map((environment) => ({
+        id: environment.id,
+        slug: environment.slug,
+        sourceBranch: environment.sourceBranch,
+        position: environment.position,
+        role: environment.role,
+      })),
+      environmentTargets,
+    });
+
+    let pushed: { commitSha: string; commitUrl: string | null } | undefined;
+    for (const branch of branches) {
+      const commit = await this.support.pushWorkflowFiles(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        workflowFiles,
+        branch,
+      );
+      if (branch === first.sourceBranch) pushed = commit;
+    }
+    await this.support.protectPipelineBranches({
+      token: provisioningToken,
+      owner: ownerLogin,
+      repo: repoName,
+      userId: input.userId,
+      projectId: row.id,
+      workspaceId: row.workspace_id ?? null,
+      branches: [
+        ...new Set([
+          ...branches.filter((name) => name !== first.sourceBranch),
+          'main',
+        ]),
+      ],
+    });
+
+    await this.support.projectsRepository.updateStatus(
+      row.id,
+      'provisioned',
+      pushed?.commitSha,
+      pushed?.commitUrl,
+    );
+
+    input.markComplete();
+
+    await this.support.recordProductEvent({
+      userId: input.userId,
+      projectId: row.id,
+      eventCode: 'project_created',
+      title: 'Project created',
+      body: `${input.repoFullName} is now tracked by ALPHACI.`,
+      metadata: {
+        repoFullName: input.repoFullName,
+        repoShape: input.repoShape,
+        projectTypeId: dto.projectTypeId,
+        environments: environments.map(({ slug }) => slug),
+      },
+    });
+
+    const targets = provisioned.flatMap(({ targets: created }) => created);
+    return {
+      id: row.id,
+      repoFullName: input.repoFullName,
+      repoUrl: input.repoUrl,
+      status: 'provisioned',
+      branchesCreated: [...new Set(['main', ...branches])],
+      workflowPath: input.workflowPath,
+      workflowFiles: workflowFileMetadata(workflowFiles),
+      githubCommitSha: pushed?.commitSha ?? '',
+      githubCommitUrl: pushed?.commitUrl ?? null,
+      projectTypeId: dto.projectTypeId,
+      workflowRecipeId: dto.workflowRecipeId ?? '',
+      deploymentProvisioning: {
+        status:
+          targets.length === 0
+            ? 'skipped'
+            : targets.every(({ status }) => status === 'failed')
+              ? 'failed'
+              : targets.some(({ status }) => status === 'failed')
+                ? 'partial'
+                : (provisioned.find(({ status }) => status !== 'skipped')
+                    ?.status ?? 'skipped'),
+        targets,
+      },
+    };
   }
 
   async setupProject(

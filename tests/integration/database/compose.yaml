@@ -1,0 +1,26 @@
+# Disposable local PostgreSQL fixture for the E2E suite (npm run test:e2e) and
+# opt-in database integration tests. Database files stay in tmpfs; the only
+# host bind mount is the read-only Supabase-role bootstrap script.
+# The published port is loopback-only and the credentials are test-only.
+services:
+  migration-test-postgres:
+    image: postgres:16-alpine
+    restart: 'no'
+    environment:
+      POSTGRES_DB: alphaci_migration_test
+      POSTGRES_USER: alphaci_migration_test
+      POSTGRES_PASSWORD: alphaci_migration_test_only
+    ports:
+      - '127.0.0.1:55432:5432'
+    volumes:
+      - ./init/01-supabase-roles.sql:/docker-entrypoint-initdb.d/01-supabase-roles.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U alphaci_migration_test -d alphaci_migration_test
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    stop_grace_period: 20s

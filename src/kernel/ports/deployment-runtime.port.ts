@@ -94,6 +94,8 @@ export interface DeploymentProvisioningEnvSet {
 
 export interface DeploymentProvisioningTarget {
   action?: DeploymentProvisioningAction;
+  /** Project environment this target deploys; set by environment-aware creation. */
+  environmentId?: string;
   slot: DeploymentSlot;
   provider: DeploymentProvider;
   ownershipMode: DeploymentOwnershipMode;
@@ -175,10 +177,71 @@ export interface DeploymentProjectReferenceLookup {
     projectId: string,
     userId: string,
   ): Promise<DeploymentProjectReference | null>;
+  /** One environment of the project, or null when it belongs to another project. */
+  findProjectEnvironment(
+    projectId: string,
+    environmentId: string,
+  ): Promise<DeploymentProjectEnvironment | null>;
+  /** The project's environments in position order. */
+  listProjectEnvironments(
+    projectId: string,
+  ): Promise<DeploymentProjectEnvironment[]>;
 }
 
 export const DEPLOYMENT_PROJECT_REFERENCE_LOOKUP = Symbol(
   'DEPLOYMENT_PROJECT_REFERENCE_LOOKUP',
+);
+
+/** The project environment facts a deployment target is keyed and checked by. */
+export interface DeploymentProjectEnvironment {
+  id: string;
+  slug: string;
+  sourceBranch: string;
+  role: 'production' | 'non_production';
+  position: number;
+}
+
+/** The deployment target configured for one environment and slot. */
+export interface EnvironmentDeploymentTarget {
+  id: string;
+  projectId: string;
+  environmentId: string;
+  slot: 'backend' | 'frontend' | 'standalone';
+  provider: string;
+  providerProjectId: string;
+  branchName: string;
+}
+
+export type EnvironmentTargetUnavailableReason =
+  | 'absent'
+  | 'missing'
+  | 'failed';
+
+/**
+ * Thrown when an environment has no usable target for a slot. Callers must
+ * stop; there is no fallback to another provider or to a branch lookup.
+ */
+export class EnvironmentTargetUnavailableError extends Error {
+  constructor(readonly reason: EnvironmentTargetUnavailableReason) {
+    super(
+      reason === 'absent'
+        ? 'No deployment target is configured for this environment and slot.'
+        : 'The deployment target for this environment is ' + reason + '.',
+    );
+    this.name = 'EnvironmentTargetUnavailableError';
+  }
+}
+
+export interface EnvironmentDeploymentTargetResolver {
+  resolve(input: {
+    projectId: string;
+    environmentId: string;
+    slot: EnvironmentDeploymentTarget['slot'];
+  }): Promise<EnvironmentDeploymentTarget>;
+}
+
+export const ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER = Symbol(
+  'ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER',
 );
 
 export interface DeploymentHistoryItem {

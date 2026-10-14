@@ -81,14 +81,14 @@ describe('AppModule boot smoke', () => {
         .list()
         .map((provider) => provider.id)
         .sort(),
-    ).toEqual(['gcp', 'render', 'vercel']);
+    ).toEqual(['gcp', 'onprem-compose', 'render', 'vercel']);
     const providerPacks = app.get(RuntimeProviderPackRegistry);
     expect(
       providerPacks
         .list()
         .map((pack) => pack.id)
         .sort(),
-    ).toEqual(['gcp', 'render', 'vercel']);
+    ).toEqual(['gcp', 'onprem-compose', 'render', 'vercel']);
     expect(providerPacks.get('render').client?.provider).toBe('render');
     expect(providerPacks.get('vercel').workflowFragment?.provider).toBe(
       'vercel',

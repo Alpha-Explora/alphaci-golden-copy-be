@@ -9,6 +9,8 @@ describe('VercelCiSecretsService', () => {
   const githubService = {
     setActionsSecretStrict: jest.fn(),
     setActionsVariableStrict: jest.fn(),
+    ensureDeploymentEnvironment: jest.fn(),
+    dispatchWorkflow: jest.fn(),
   };
   const providerConnectionsRepository = {
     findActiveProviderConnection: jest.fn(),

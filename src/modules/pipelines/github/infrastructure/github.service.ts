@@ -2599,11 +2599,168 @@ export class GithubService
   }
 
   /**
-   * Pull-request-only protection that keeps what the branch already has; see
-   * github-branch-protection.ts for the rule and the merge. Provisioning seeds
-   * the env-guard check (the guard workflow runs on every push and pull
-   * request to a pipeline branch, so the context is always present on PR head
-   * commits of provisioned repos).
+   * Provision a GitHub Environment whose deployments are limited to one
+   * source branch. GitHub creates an unprotected environment the first time a
+   * workflow names one, so this runs before any generated workflow does.
+   * Any other branch rule already on the environment is removed.
+   */
+  async ensureDeploymentEnvironment(input: {
+    userId: string;
+    repoFullName: string;
+    environmentName: string;
+    sourceBranch: string;
+  }): Promise<void> {
+    const token = await this.requireInstallationToken(
+      input.userId,
+      input.repoFullName,
+      'its deployment environment cannot be provisioned',
+    );
+    const headers = {
+      Authorization: 'Bearer ' + token,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'cicd-workflow-product',
+      'Content-Type': 'application/json',
+    };
+    const base =
+      'https://api.github.com/repos/' +
+      input.repoFullName +
+      '/environments/' +
+      encodeURIComponent(input.environmentName);
+    const fail = async (step: string, response: Response): Promise<never> => {
+      throw new BadGatewayException(
+        'GitHub rejected ' +
+          step +
+          ' for environment ' +
+          input.environmentName +
+          ' on ' +
+          input.repoFullName +
+          ' (' +
+          String(response.status) +
+          '): ' +
+          (await response.text()),
+      );
+    };
+
+    const environment = await this.http.fetchWithRetry(base, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        deployment_branch_policy: {
+          protected_branches: false,
+          custom_branch_policies: true,
+        },
+      }),
+    });
+    if (!environment.ok) await fail('the environment update', environment);
+
+    const policiesUrl = base + '/deployment-branch-policies';
+    const listed = await this.http.fetchWithRetry(
+      policiesUrl + '?per_page=100',
+      {
+        method: 'GET',
+        headers,
+      },
+    );
+    if (!listed.ok) await fail('the branch policy list', listed);
+    const { branch_policies: policies = [] } = (await listed.json()) as {
+      branch_policies?: Array<{ id: number; name: string; type?: string }>;
+    };
+
+    for (const policy of policies) {
+      if (policy.name === input.sourceBranch && policy.type !== 'tag') continue;
+      const removed = await this.http.fetchWithRetry(
+        policiesUrl + '/' + String(policy.id),
+        { method: 'DELETE', headers },
+      );
+      if (!removed.ok && removed.status !== 404) {
+        await fail('removing branch policy ' + policy.name, removed);
+      }
+    }
+
+    if (
+      !policies.some(
+        (policy) => policy.name === input.sourceBranch && policy.type !== 'tag',
+      )
+    ) {
+      const added = await this.http.fetchWithRetry(policiesUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: input.sourceBranch, type: 'branch' }),
+      });
+      if (!added.ok) await fail('the branch policy', added);
+    }
+  }
+
+  /** Start a workflow_dispatch run; GitHub answers 204 when it accepts it. */
+  async dispatchReleaseWorkflow(input: {
+    userId: string;
+    repoFullName: string;
+    workflowFile: string;
+    ref: string;
+    inputs: Record<string, string>;
+  }): Promise<void> {
+    const token = await this.requireInstallationToken(
+      input.userId,
+      input.repoFullName,
+      'its workflow cannot be dispatched',
+    );
+    const response = await this.http.fetchWithRetry(
+      'https://api.github.com/repos/' +
+        input.repoFullName +
+        '/actions/workflows/' +
+        encodeURIComponent(input.workflowFile) +
+        '/dispatches',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: input.ref, inputs: input.inputs }),
+      },
+    );
+    if (!response.ok) {
+      throw new BadGatewayException(
+        'GitHub refused to dispatch ' +
+          input.workflowFile +
+          ' on ' +
+          input.repoFullName +
+          ' (' +
+          String(response.status) +
+          '): ' +
+          (await response.text()),
+      );
+    }
+  }
+
+  private async requireInstallationToken(
+    userId: string,
+    repoFullName: string,
+    consequence: string,
+  ): Promise<string> {
+    const token = await this.getInstallationAccessTokenForUserRepo(
+      userId,
+      repoFullName,
+    );
+    if (!token) {
+      throw new BadGatewayException(
+        'The GitHub app is not installed for ' +
+          repoFullName +
+          ', so ' +
+          consequence +
+          '.',
+      );
+    }
+    return token;
+  }
+
+  /**
+   * Every protected branch requires the env-guard check by default so a pull
+   * request that adds a `.env`-style file can never be merged; the guard
+   * workflow runs on all pushes and pull requests, so the context is always
+   * present on PR head commits of provisioned repos.
    */
   ensurePullRequestProtection(
     accessToken: string,

@@ -262,6 +262,7 @@ export async function persistMultiRepoStandaloneRow(input: {
       repoShape: normalizeRepoShape(dto.repoShape),
       projectTypeId: slot.projectTypeId,
       workflowRecipeId: slot.workflowRecipeId ?? null,
+      ...(dto.environments ? { environments: dto.environments } : {}),
       projectOptions: {
         ...support.repositoryOwnershipMetadata(dto, ownerLogin),
         ...(includeTests ? testsProjectOption(dto.tests) : {}),

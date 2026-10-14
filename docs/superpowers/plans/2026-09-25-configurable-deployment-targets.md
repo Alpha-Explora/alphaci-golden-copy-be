@@ -8,6 +8,53 @@ target for production, without hand-editing generated workflows. Decision:
 The [host setup guide](2026-09-25-onprem-client-setup-guide.md) holds the
 installation and enterprise-client checklist.
 
+## Local integration on 2026-10-14
+
+The current FE, BE, and central workflow implementation is on local branches
+named `codex/onprem-integration-20261014`, integrated with their latest fetched
+main branches. Earlier checklists below record the original implementation;
+this section describes the current integration. No remote branch or release
+tag was changed and no shared database migration was applied.
+
+- Backend: environment CRUD, scoped deployment targets, immutable releases,
+  explicit promotion, trusted-key signature verification, host registration,
+  outbound assignment polling, deployment status, and Compose agent rollback.
+- Frontend: Hosting environment cards can add an on-prem target per available
+  slot, register a host, show its one-time token, and promote releases with the
+  current persona permissions and a second confirmation for production.
+- Workflow: builds publish digest-pinned images; signing supports Cloud KMS
+  and a lab PEM key; Render/Vercel deployments use explicit environment targets.
+  A stale generated promotion workflow refuses mismatched recorded target IDs.
+- Project provisioning publishes the generated workflows before considering
+  the project complete, and uses the current audited branch-protection policy.
+
+Local tests use a disposable loopback PostgreSQL database. Provider APIs are
+recording fakes; the Linux host-agent tests run the actual shell/signature and
+rollback logic with a Docker command shim. These tests do not prove a client
+Windows reboot, GHCR pull permissions, production KMS access, or real customer
+application health. The host setup guide remains the acceptance procedure for
+those checks.
+
+Verification of the integrated tree: backend typecheck, build, lint, architecture
+boundaries, schema ownership, capabilities, composition source, capability
+ledger, and documentation checks passed. Backend unit/architecture suite:
+3,818 passed, 41 skipped; on-prem API/migration/host-agent suite: 63 passed.
+Frontend typecheck, touched-file lint, architecture/documentation checks and
+6 focused tests passed. Browser verification could not reach an authenticated
+backend at localhost:4000 and remains incomplete. The central workflow's CI
+selected actionlint list and canonical/signing-related contract checks passed;
+a broader scan still reports existing findings in unrelated workflows.
+
+For a deployed pilot, publish and pin a reviewed central-workflow revision
+containing `sign-release.yml` before opting a project into this flow. The
+currently published `v1` does not contain that workflow. Apply the additive
+migrations, configure the signing public key trust map on the backend and the
+matching PEM on the host, then enable `ONPREM_RELEASES_ENABLED`. Configure
+KMS workload identity and repository variables (or a lab-only signing secret),
+GHCR read access, host token, Compose file, health checks, DNS, and TLS. Run the
+setup guide's pull, failed-health rollback, reconnect, and reboot checks before
+calling a customer installation ready.
+
 ## Environment and deployment contract
 
 | Example environment | Source branch | Role | Frontend slot | Backend slot |
@@ -61,50 +108,36 @@ to the customer host.
 
 ## Current state
 
-- [x] Ubuntu WSL2 test host has its own Docker Engine, Compose, Buildx, Cosign,
-  and `/opt/alphaci` directories. Evidence: `docker info` reported Ubuntu
-  26.04.1, Docker was active, and `hello-world` ran on 2026-09-25.
-- [ ] The host's trust, TLS, and secret files await the release key and scoped
-  credentials. The directories are empty; `secrets/` is root-owned, mode 700.
-- [ ] Runtime and generated workflows still assume hosted `uat` and `main`;
-  `dev` is a working branch without hosted infrastructure. Render can fan out
-  to a `main` service. Provider packs for on-prem are not registered.
+- [x] The Ubuntu WSL2 laptop has its own Docker Engine, Compose, Buildx, Cosign, and the `/opt/alphaci` directories. The setup guide records the 2026-09-25 checks; the release workflow and host acceptance were not exercised in this refresh.
+- [ ] The setup guide's recorded next host inputs are the signing public key, TLS files, GHCR pull credential, agent token, and application secrets. Recheck the machine before the host-agent phase.
+- [ ] On current `main`, managed `uat`/`main` deployment assumptions remain. The on-prem provider, host agent, and mixed deployment activation are not merged; `dev` is not hosted.
+- [ ] All feature commits below are local. No branches were pushed and no PRs were opened or merged.
+- [x] The three temporary rollout branches were created locally on 2026-10-05 from the last fetched `origin/main` refs: backend `24760fc` (E1 and R1), frontend `90fb9cb` (F1 and F2), and workflow `827c860` (W1 and W2). The original feature branch refs remain intact. A live remote-head check was blocked by network unavailability, so refresh `origin/main` before the next phase gate.
 
 ## Parallel implementation and pull requests
 
-One Luna agent owns one PR in one Codex-managed isolated Git checkout. Run up
-to three implementation agents concurrently while the root agent reviews
-contracts and diffs. A dependent PR initially targets the preceding branch in its own
-repository; retarget it to `main` after the lower PR merges. Independent PRs
-target `main`. Link cross-repository dependencies in PR descriptions; Git
-cannot stack branches across repositories. Keep incomplete capabilities gated.
+Keep all implementation off `main` during this rollout. Create one temporary integration branch per repository from the current `main`: `codex/onprem-rollout-be`, `codex/onprem-rollout-fe`, and `codex/onprem-rollout-workflow`. Use short-lived feature branches in isolated checkouts for each reviewable slice, and target their PRs at that repository's integration branch. Stack dependent PRs only within the same repository; once a lower slice lands in its integration branch, retarget the next PR there. Record cross-repository dependencies here and do not integrate a dependent slice until its contract is available in the corresponding repository's integration branch. Keep integration branches current with `main` at phase gates and before final review. Merge the integration branches to `main` only after Phase 5 acceptance, including the deferred mixed-deployment E2E run, succeeds; then retire them. Keep the older divergent feature branches intact as recovery copies and do not merge them wholesale. Group commits around coherent behavior; each PR is a review and rollback unit. Keep incomplete capabilities gated.
 
-**Baseline gate:** implementation has not started. The focused deployment plan,
-ADR-0012, and host guide landed on `main` as PR #100 at `4575e1c`; its
-documentation, boundary, and full CI checks passed. The original backend local
-`main` still contains prior local-only commits and untracked `artifacts/`; do
-not use it as an implementation base. Create fresh isolated checkouts from
-the current remote `main`. The frontend's prior `codex/golden-copy-trunk`
-commits remain on that branch; its untracked pnpm files and backend
-`artifacts/` remain untouched. Two earlier backend isolated checkouts for
-target routing and the React image were clean at `cdb78ae` when inspected;
-check their ownership and base again before reusing them. Fetch and confirm
-all three remote heads again when implementation begins.
+The existing CI supports these temporary branches: backend and frontend push/PR gates have no branch filters, and workflow validation runs on matching pull-request paths without a base-branch restriction. The workflow repository's `publish-v1-tag.yml` remains main-only. These implementation branches are separate from customer deployment source branches (`dev`, `uat`, and `main`).
+
+**Baseline and local progress (2026-10-05):** the locally cached `origin/main` heads are backend `b56aae1`, frontend `5fdf53e`, and `alphaci-workflow` `2bbc4f5` (last fetched 2026-10-04). A live `ls-remote` check could not reach GitHub, so these may have moved. The older `codex/configurable-deployment-targets` branches remain preserved: backend is 22 commits ahead / 59 behind, frontend 2 ahead / 106 behind, and workflow 4 ahead / 4 behind. The rollout branches below use the cached bases; refresh and reconcile them with current `main` before the next phase gate. Do not merge the stale branches wholesale.
+
+| Repository | Local short-lived stack | Base and current evidence |
+|---|---|---|
+| Backend | E1 `codex/onprem-stack-20261004-be-e1` (`6eceaab`); R1 `codex/onprem-stack-20261004-be-r1` (`1fe1054`) | Both start from `b56aae1`. E1 typecheck, build, documentation, schema-ownership, capability, application-boundary, targeted ESLint, and diff checks passed. Its generated route baseline lists main's 207 routes plus the three E1 controller routes; the runtime route-inventory command exited 1 without diagnostics, so actual route enumeration remains unverified. No DB/API/E2E acceptance was run. R1 typecheck, build, changed-file lint, and diff checks passed; its unit tests were not run. |
+| Frontend | F1 `codex/onprem-stack-20261004-fe-f1-main` (`9075a37`) -> F2 `codex/onprem-stack-20261004-fe-f2-after-f1` (`90fb9cb`) | F1 starts from `5fdf53e`; F2 is stacked on F1. Typecheck, production build, documentation, architecture-boundary, changed-file lint, and diff checks passed on both. Builds warned that `NEXT_PUBLIC_API_BASE_URL` was unset and used the local `http://localhost:4000` fallback; no deployed API connection was verified. The earlier reversed F1/F2 branches remain intact as recovery copies. |
+| `alphaci-workflow` | W1 `codex/onprem-stack-20261004-workflow-w1` (`f434c01`) -> W2 `codex/onprem-stack-20261004-workflow-w2` (through `827c860`) | Based on workflow `2bbc4f5`. W2 carries KMS signing, lab-key fallback, SARIF handling, the customer-host GHCR authentication note, and CRLF-tolerant contract validators. GCP contract, matcher, workflow-doc/comment, and diff checks pass. TRX validation is blocked locally by missing Windows Python; manifest validation by missing Windows `jq`; WSL has no Node; local `actionlint` is unavailable. CI validation remains required. |
 
 | Stack | PR branches in merge order | Repository | Dependency |
 |---|---|---|---|
-| Environment core | E1 `codex/project-environments` -> E2 `codex/environment-targets` -> E3 `codex/environment-pipelines` | Backend | Start from reconciled `main` |
-| On-prem control | C1 `codex/onprem-release-contract` -> C2 `codex/onprem-compose-provider` -> C3 `codex/mixed-deployment-activation` | Backend | C1 from E1; C2 from E3 after C1 merges; C3 from C2 |
-| Host package | H1 `codex/onprem-host-agent` -> H2 `codex/onprem-windows-host` | Backend | H1 from C1; H2 from H1 |
-| Central workflows | W1 `codex/configurable-managed-workflows` -> W2 `codex/signed-onprem-release` | `alphaci-workflow` | W1 from its updated `main`; W2 consumes C1 API |
-| React image | R1 `codex/onprem-react-image` | Backend | Independent updated `main` |
-| Product UI | F1 `codex/project-environment-setup` -> F2 `codex/environment-operations` | Frontend | F1 consumes E1 API; F2 consumes E2/E3 APIs |
+| Environment core | E1 `codex/onprem-stack-20261004-be-e1` -> E2 `codex/onprem-stack-20261004-be-e2` -> E3 `codex/onprem-stack-20261004-be-e3` | Backend | E1 starts from latest `main`; target `codex/onprem-rollout-be` |
+| On-prem control | C1 `codex/onprem-stack-20261004-be-c1` -> C2 `codex/onprem-stack-20261004-be-c2` -> C3 `codex/onprem-stack-20261004-be-c3` | Backend | C1 from E1; C2 depends on E3 and C1; C3 from C2; target `codex/onprem-rollout-be` |
+| Host package | H1 `codex/onprem-stack-20261004-be-h1` -> H2 `codex/onprem-stack-20261004-be-h2` | Backend | H1 from C1; H2 from H1; target `codex/onprem-rollout-be` |
+| Central workflows | W1 `codex/onprem-stack-20261004-workflow-w1` -> W2 `codex/onprem-stack-20261004-workflow-w2` | `alphaci-workflow` | W1 starts from latest `main`; W2 consumes the C1 API contract; target `codex/onprem-rollout-workflow` |
+| React image | R1 `codex/onprem-stack-20261004-be-r1` | Backend | Independent from latest backend `main`; target `codex/onprem-rollout-be` |
+| Product UI | F1 `codex/onprem-stack-20261004-fe-f1-main` -> F2 `codex/onprem-stack-20261004-fe-f2-after-f1` | Frontend | F1 waits for E1; F2 waits for E2/E3; target `codex/onprem-rollout-fe` |
 
-The useful parallel waves are **E1 + W1 + R1**, then **E2 + C1 + F1**, then
-**E3 + W2 + H1**, then **C2 + H2 + F2**. Cross-stack work may use a contract
-from an open PR, but its merge waits for that dependency to land. C3 stays
-draft until the central `@v1` tag includes W2, the host package and UI are
-merged, and the mixed deployment acceptance run passes.
+The parallel waves remain **E1 + W1 + R1**, then **E2 + C1 + F1**, then **E3 + W2 + H1**, then **C2 + H2 + F2**. Local branches can be prepared in parallel, but each PR targets its repository's rollout branch and waits for its cross-repository contract. C3 stays draft until the central `@v1` ref contains W2, the host package and UI have landed, and the mixed deployment acceptance run passes. E2E remains deferred during implementation; no current-main on-prem readiness claim is made. Keep all three rollout branches off `main` until that acceptance run passes, then prepare one final integration-to-`main` PR per repository for coordinated review.
 
 ### Phase 0: integrate the baseline and lock the contracts
 
@@ -116,15 +149,14 @@ merged, and the mixed deployment acceptance run passes.
   merged as `4575e1c`; documentation, boundary, and full CI checks passed.
 - [x] Freeze the E1 environment API, E2 target identity, C1 release manifest,
   and W1 reusable-workflow inputs below. Copy these contracts into the first
-  implementation PR descriptions; open those PRs as drafts when their diffs
-  are reviewable. Evidence: Phase 0 read-only backend, workflow, and baseline
+  implementation PR descriptions; target those PRs at the per-repository
+  rollout branches. Evidence: Phase 0 read-only backend, workflow, and baseline
   reviews on 2026-09-25.
 
-#### Frozen implementation contracts
+These contracts were frozen before implementation. E1 and W1 now have local feature slices, and FE setup/operations slices are also staged locally. The contracts remain the target for review; a local branch is not a landed or production-ready capability. Keep the current branch-based API and generated workflow behavior for legacy projects until their environment mapping is explicit.
 
-These are design contracts for E1, E2, C1, and W1, not claims that the APIs or
-workflows exist. Keep the current branch-based API and generated workflow
-behavior for legacy projects until their environment mapping is explicit.
+| Slice | Public contract | Required invariant |
+|---|---|---|
 
 | Slice | Public contract | Required invariant |
 |---|---|---|
@@ -134,25 +166,22 @@ behavior for legacy projects until their environment mapping is explicit.
 | C1 manifest | Canonical signed payload: `schemaVersion`, `releaseId`, `projectId`, `sourceEnvironmentId`, `sourceBranch`, full `commitSha`, `createdAt`, `artifacts[{slot, image, digest}]`, optional `migrations[{id, checksum, mode}]`, and `workflowRun{provider, repo, runId, url}`. Envelope: manifest hash plus `signature{algorithm, keyId, value}`. A host assignment separately names destination environment and target IDs. | Container artifact references use `image@sha256:<64 hex>`; floating tags are refused. The host verifies the signature with its pinned public key before pulling any artifact. Neither manifest nor assignment contains host secrets. Vercel records its own deployment ID from the pinned commit rather than claiming the same image digest. |
 | W1 | Preserve existing reusable-workflow inputs, defaults, and outputs. Add optional string `environment-id`, `environment-name`, and `target-id` to managed deploy/release workflows. Keep existing `commit-sha`/`checkout-ref`, `artifact`, `image-digest`, and Vercel deployment outputs; expose a canonical digest image reference from `docker-build.yml`. New-mode callers provide the IDs, a full pinned SHA, and digest for container targets explicitly. | Legacy callers continue their current path when new IDs are absent. New-mode callers never resolve an environment or target from branch text and never fall back to DEV/UAT/MAIN credentials. The caller validates the provisioned, protected GitHub Environment and exact target before invoking deployment. Branch pushes to later environments can run quality gates but cannot call deployment; explicit promotion supplies the release ID. Render and Compose reuse the same digest; Vercel checks out the pinned SHA and records its distinct deployment ID. |
 
-E1 backfill uses effective project branches and target settings. If those
-settings cannot unambiguously identify one production environment, leave that
-project on the legacy compatibility path and require an operator mapping;
-never guess from the name `main` or change its current deployment behavior.
-E2 then attaches legacy target rows to the resolved environment IDs without
-replacing target IDs. E3 owns generated caller changes: W1 alone does not
-remove the current fixed `dev`/`uat`/`main` enumeration. W2 owns manifest
-signing and registration; W1 does not add host credentials to a deploy job.
+E1 backfill uses effective project branches and target settings. If those settings cannot unambiguously identify one production environment, leave that project on the legacy compatibility path and require an operator mapping; never guess from the name `main` or change its current deployment behavior. E2 then attaches legacy target rows to the resolved environment IDs without replacing target IDs. E3 owns generated caller changes: W1 alone does not remove the current fixed `dev`/`uat`/`main` enumeration. W2 owns manifest signing and registration; W1 does not add host credentials to a deploy job.
+
+For private GHCR packages, the customer host uses its own machine-account token limited to `read:packages`. Store it only on the host for digest pulls; do not pass it into Actions or place it in the AlphaCI release record or signed manifest. Public packages need no host pull token. The workflow contract is documented in `alphaci-workflow/docs/workflows/docker-build.md`; host installation and rotation are in the setup guide.
 
 ### Phase 1: environment identity and reusable foundations (E1, W1, R1)
 
-- [ ] **E1**, backend PR to `main`: add project-owned ordered environment
+Local branches for E1, W1, R1, F1, F2, and W2 are prepared as listed above. The E1 slice has fresh compile/static-gate evidence; the FE stacks have fresh compile/static-gate evidence with the build-time API URL warning recorded. Workflow validation has partial local coverage (see the table); the actionlint CI gate and missing local prerequisites remain. R1 compile/static checks pass; its unit tests were not run. Merge these feature PRs into the per-repository rollout branches after review; do not merge them to `main` during these phases.
+
+- [ ] **E1**, backend PR to `codex/onprem-rollout-be`: add project-owned ordered environment
   records and API with stable ID, immutable slug, display name, source branch,
   role, and exactly one production environment. Accept additions and display
   name changes; reject destructive edits until a migration flow exists. Backfill
   existing projects without changing their branches, targets, or hosted costs.
   Evidence: additive migration on a disposable database and API behavior for
   legacy and custom projects, including two environments on one branch.
-- [ ] **W1**, central workflow PR to `main`: extend existing `docker-build.yml`,
+- [ ] **W1**, central workflow PR to `codex/onprem-rollout-workflow`: extend existing `docker-build.yml`,
   `release.yml`, `render-deploy.yml`, and `vercel-deploy.yml` only where their
   contracts need pinned commit, environment ID, target ID, or artifact output.
   Remove fixed test/UAT/main secret or branch assumptions from managed deploy
@@ -160,7 +189,7 @@ signing and registration; W1 does not add host credentials to a deploy job.
   caller. Update contract docs, catalog, and validation lists; avoid a new
   reusable workflow when an existing one fits. Evidence: reusable callers
   accept nonstandard names and immutable release references.
-- [ ] **R1**, backend PR to `main`: add a static-serving Dockerfile to the
+- [ ] **R1**, backend PR to `codex/onprem-rollout-be`: add a static-serving Dockerfile to the
   generated React scaffold and reproducible GHCR build path. Keep Vercel
   deployment available. Evidence: image digest tied to the scaffold revision.
 
@@ -180,7 +209,7 @@ signing and registration; W1 does not add host credentials to a deploy job.
   environment ID, source commit, and immutable slot artifacts. Keep it inactive
   for projects without on-prem targets. Evidence: authorization and manifest
   behavior at the API boundary.
-- [ ] **F1**, frontend PR to its own `main`: edit the ordered environment set
+- [ ] **F1**, frontend PR to `codex/onprem-rollout-fe`: edit the ordered environment set
   during project setup, starting from the editable `dev/uat/main` template.
   Read E1's API, display the actual created branches, and remove frontend-only
   branch-rank constants. Existing projects display their effective legacy
@@ -236,7 +265,7 @@ signing and registration; W1 does not add host credentials to a deploy job.
   names and two environments sharing one branch. Verify one auto-deploy per
   push, explicit promotion, pinned source identity, provider isolation,
   install, upgrade, rejected signature, failed-health rollback, and restart
-  recovery. Record a repeatable report tied to the commit. Defer this long E2E
+  recovery. Produce a verifiable report and artifacts tied to the source commit, regenerable with one command. Defer this long E2E
   run while building earlier phases, but do not merge C3 or claim client
   readiness until it passes on the laptop and Windows Server 2022 VM with
   nested virtualization.

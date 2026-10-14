@@ -32,7 +32,7 @@ This map is generated from the owner and exact transition-reference data used by
 
 ## Explicit migration transition references
 
-These are exact file-to-schema.table allowances required for historical migrations to remain replayable. They are not blanket filename exemptions.
+These are exact file-to-schema.table allowances for historical migrations that must remain replayable and explicitly reviewed migration transitions. They are not blanket filename exemptions.
 
 | Migration file | Allowed transition references |
 |---|---|
@@ -58,10 +58,13 @@ These are exact file-to-schema.table allowances required for historical migratio
 | `projects/20260611200404_workflow_settings_preview.sql` | `identity.app_users` |
 | `projects/20260611202529_workflow_update_requests.sql` | `identity.app_users` |
 | `projects/20260613_project_sync_findings.sql` | `env_provisioning.project_deployment_targets` |
+| `projects/20260925050000_project_environments.sql` | `env_provisioning.project_deployment_targets` |
 | `projects/20261001010000_project_requirements.sql` | `hierarchy.delivery_projects`, `hierarchy.repositories` |
 | `projects/20261014010000_qa_run_item_attachments.sql` | `storage.buckets` |
 | `runtime/20260608_env_provisioning.sql` | `identity.app_users`, `projects.provisioned_projects` |
 | `runtime/20260701_gcp_runtime_expand_contract.sql` | `billing_lifecycle.runtime_cost_summaries`, `identity.app_users`, `orgs.workspaces`, `projects.provisioned_projects` |
+| `runtime/20260928100000_deployment_target_environments.sql` | `projects.project_environments` |
+| `runtime/20260928200000_release_registry.sql` | `projects.project_environments`, `projects.provisioned_projects` |
 
 ## Explicit source transition references
 
@@ -78,7 +81,7 @@ These are exact source-file allowances for current cross-context reads or shared
 | `src/modules/identity-access/hierarchy/infrastructure/group-activity.repository.ts` | `audit.audit_events` |
 | `src/modules/identity-access/hierarchy/infrastructure/groups.repository.ts` | `hierarchy.systems` |
 | `src/modules/identity-access/workspaces/infrastructure/workspaces.repository.ts` | `projects.provisioned_projects` |
-| `src/modules/pipelines/ci/application/ci-reports.service.ts` | `projects.provisioned_projects` |
+| `src/modules/pipelines/ci/application/ci-reports.service.ts` | `projects.project_environments`, `projects.provisioned_projects` |
 | `src/modules/pipelines/ci/infrastructure/ci-tokens.repository.ts` | `billing.user_subscriptions`, `identity.app_users`, `projects.provisioned_projects` |
 | `src/modules/platform-ops/audit/infrastructure/audit-events.repository.ts` | `identity.app_users` |
 | `src/modules/platform-ops/feedback/infrastructure/feedback.repository.ts` | `identity.app_users` |

@@ -1,4 +1,9 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import {
@@ -52,6 +57,8 @@ import {
 } from '#kernel/ports/project-requirements-readiness.port';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
+import { validateProjectEnvironmentDefinitions } from '../../domain/project-environment.policy';
+import { environmentTargetsProblem } from '../../domain/environment-deployment-targets.policy';
 
 export type * from './projects.service.types';
 
@@ -142,6 +149,30 @@ export class ProjectProvisioningApplicationService {
     accessToken: string | null,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
+    if (dto.environments) {
+      const violation = validateProjectEnvironmentDefinitions(dto.environments);
+      if (violation) {
+        throw new BadRequestException(
+          'Invalid project environments: ' + violation.replaceAll('_', ' '),
+        );
+      }
+      const shape = normalizeRepoShape(dto.repoShape);
+      if (shape === 'microservices' || shape === 'multi-repo') {
+        throw new BadRequestException(
+          'Custom project environments are supported for single-repository projects. Create a ' +
+            shape +
+            ' project without an environments list for now.',
+        );
+      }
+    }
+    const targetsProblem = environmentTargetsProblem(
+      dto.environments,
+      dto.deploymentProvisioning?.targets ?? [],
+      (provider) =>
+        this.support.workflowFragmentRegistry?.deliveredByHost(provider) ??
+        false,
+    );
+    if (targetsProblem) throw new BadRequestException(targetsProblem);
     await this.support.assertWithinQuota(userId, 'projects', 1, null);
     const workspaceId =
       await this.support.workspaceGate.resolveWorkspaceIdForCreate(

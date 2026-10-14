@@ -26,6 +26,8 @@ import { ProjectFolderService } from './application/folder/project-folder.servic
 import { ProjectCommitsService } from './application/github-activity/project-commits.service';
 import { ProjectGithubActivityService } from './application/github-activity/project-github-activity.service';
 import { ProjectGithubTokenResolver } from './application/github-activity/project-github-token.resolver';
+import { ProjectEnvironmentsController } from './api/project-environments.controller';
+import { ProjectEnvironmentsService } from './application/project-environments.service';
 import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provider';
 import { ProjectDashboardSnapshotsRepository } from './infrastructure/project-dashboard-snapshots.repository';
 import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service';
@@ -88,9 +90,11 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectPlaywrightLiveController,
     ProjectFolderController,
     ProjectActivityController,
+    ProjectEnvironmentsController,
   ],
   providers: [
     ProjectsService,
+    ProjectEnvironmentsService,
     {
       provide: PROJECT_PROVISIONING_PORT,
       useExisting: ProjectProvisioningApplicationService,
