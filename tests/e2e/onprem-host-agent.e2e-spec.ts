@@ -35,8 +35,10 @@ const previousTrustKeys = process.env['ALPHACI_RELEASE_TRUST_KEYS_JSON'];
 const previousOnpremFlag = process.env['ONPREM_RELEASES_ENABLED'];
 const DOCKER_STUB = [
   '#!/usr/bin/env bash',
-  '# Records every docker call; fails compose for an env file naming FAIL_DIGEST.',
+  '# Records every docker call; fails compose for an env file naming FAIL_DIGEST,',
+  '# and every pull when FAIL_PULL is set.',
   'echo "$*" >> /work/docker.log',
+  'if [ "$1" = pull ] && [ -n "${FAIL_PULL:-}" ]; then exit 1; fi',
   'if [ "$1" = compose ] && [ -n "${FAIL_DIGEST:-}" ]; then',
   '  for argument in "$@"; do',
   '    if [ -f "$argument" ] && grep -q "$FAIL_DIGEST" "$argument"; then exit 1; fi',
@@ -372,6 +374,23 @@ describe('On-prem host agent', () => {
       expect.stringContaining('/work/state/' + deploymentId + '.env up'),
       expect.stringContaining('/work/state/current.env up'),
     ]);
+    expect(readFileSync(join(work, 'state', 'current.env'), 'utf8')).toContain(
+      digest('a'),
+    );
+  });
+
+  it('reports a failed pull as failed and leaves the running release alone', async () => {
+    const deploymentId = await promoteToProduction(
+      await release('d', trusted.privateKey),
+    );
+
+    const log = await runAgent(['-e', 'FAIL_PULL=1']);
+
+    expect(await status(deploymentId)).toBe('failed');
+    expect(log).toContain('pull ghcr.io/e2e-org/api@' + digest('d'));
+    expect(log.split('\n').some((line) => line.startsWith('compose'))).toBe(
+      false,
+    );
     expect(readFileSync(join(work, 'state', 'current.env'), 'utf8')).toContain(
       digest('a'),
     );

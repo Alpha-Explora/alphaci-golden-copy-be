@@ -48,9 +48,12 @@ compose() {
   "$DOCKER" compose -p "$PROJECT" -f "$ALPHACI_COMPOSE_FILE" --env-file "$1" "${@:2}"
 }
 
-# verify <assignment.json>: the manifest hash matches, and AlphaCI signed it
-# with the key this host trusts.
+# verify <assignment.json>: the manifest hash matches, AlphaCI signed it with
+# the key this host trusts, and the signed release belongs to the project this
+# host serves. One signing key covers every project, so the project check is
+# what keeps another project's signed release off this host.
 verify() {
+  [ "$(jq -r '.envelope.manifest.projectId' "$1")" = "$(jq -r '.assignment.projectId' "$1")" ] || return 1
   jq -cSj '.envelope.manifest' "$1" > "$WORK/canonical.json"
   [ "$(sha256sum "$WORK/canonical.json" | cut -d' ' -f1)" = "$(jq -r '.envelope.manifestSha256' "$1")" ] || return 1
   [ "$(jq -r '.envelope.signature.algorithm' "$1")" = ecdsa-p256-sha256 ] || return 1
@@ -59,11 +62,14 @@ verify() {
 }
 
 # release_env <assignment.json>: the Compose variables of a release, refusing
-# any artifact that is not pinned by digest.
+# any artifact that is not pinned by digest or whose image name could break
+# out of its env-file line.
 release_env() {
   jq -r '.envelope.manifest as $m
     | if ($m.commitSha | test("^[0-9a-f]{40}$"))
          and ($m.artifacts | all(.digest | test("^sha256:[0-9a-f]{64}$")))
+         and ($m.artifacts | all(.image | test("^[A-Za-z0-9][A-Za-z0-9._/:-]*$")))
+         and ($m.artifacts | all(.slot | test("^[a-z]+$")))
       then
         "ALPHACI_RELEASE_ID=\($m.releaseId)",
         "ALPHACI_COMMIT_SHA=\($m.commitSha)",
@@ -76,42 +82,49 @@ healthy() {
     curl -fsS --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors "$ALPHACI_HEALTH_URL" > /dev/null
 }
 
-# deploy <assignment.json>
+# deploy <assignment.json>: returns non-zero only when AlphaCI could not be
+# told the outcome; the deployment stays assigned and the next cycle retries.
 deploy() {
-  local id next ok=1
+  local id next pulled=1
   id=$(jq -r '.deploymentId' "$1")
   if ! verify "$1"; then
-    log "deployment $id: signature or manifest hash rejected; nothing pulled"
-    report "$id" failed "The host rejected the release signature or manifest hash, so nothing was pulled."
+    log "deployment $id: signature, manifest hash, or project rejected; nothing pulled"
+    report "$id" failed "The host rejected the release signature, manifest hash, or project, so nothing was pulled." || return 1
     return 0
   fi
   next="$STATE_DIR/$id.env"
   if ! release_env "$1" > "$next"; then
     rm -f "$next"
-    report "$id" failed "The release names an artifact that is not pinned by digest."
+    report "$id" failed "The release names an artifact that is not pinned by digest or has an invalid image name." || return 1
     return 0
   fi
 
-  report "$id" deploying
+  report "$id" deploying || return 1
   while IFS='=' read -r key reference; do
     case "$key" in
-      ALPHACI_IMAGE_*) "$DOCKER" pull "$reference" > /dev/null || ok=0 ;;
+      ALPHACI_IMAGE_*) "$DOCKER" pull "$reference" > /dev/null || pulled=0 ;;
     esac
   done < "$next"
 
-  if [ "$ok" = 1 ] && compose "$next" up -d --wait --wait-timeout "$HEALTH_TIMEOUT" && healthy; then
-    cp "$next" "$STATE_DIR/current.env"
-    report "$id" healthy
+  if [ "$pulled" = 0 ]; then
+    log "deployment $id: an image could not be pulled; nothing changed"
+    report "$id" failed "An image could not be pulled from the registry, so nothing was changed on the host." || return 1
+    return 0
+  fi
+
+  if compose "$next" up -d --wait --wait-timeout "$HEALTH_TIMEOUT" && healthy; then
+    cp "$next" "$STATE_DIR/current.env" || return 1
+    report "$id" healthy || return 1
     log "deployment $id healthy"
     return 0
   fi
 
   if [ -f "$STATE_DIR/current.env" ] &&
     compose "$STATE_DIR/current.env" up -d --wait --wait-timeout "$HEALTH_TIMEOUT"; then
-    report "$id" rolled_back "The new release failed its health check; the previous release is running again."
+    report "$id" rolled_back "The new release failed its health check; the previous release is running again." || return 1
     log "deployment $id rolled back"
   else
-    report "$id" failed "The new release failed its health check and no previous release could be restored."
+    report "$id" failed "The new release failed its health check and no previous release could be restored." || return 1
     log "deployment $id failed"
   fi
 }
@@ -159,5 +172,6 @@ curl -fsS --max-time 30 "$API/api/v1/onprem/assignments" \
 count=$(jq 'length' "$WORK/assignments.json")
 for index in $(seq 0 $((count - 1))); do
   jq ".[$index]" "$WORK/assignments.json" > "$WORK/assignment.json"
-  deploy "$WORK/assignment.json"
+  # One assignment AlphaCI could not be told about must not stop the others.
+  deploy "$WORK/assignment.json" || log "deployment $(jq -r '.deploymentId' "$WORK/assignment.json"): status report failed; retrying next cycle"
 done
