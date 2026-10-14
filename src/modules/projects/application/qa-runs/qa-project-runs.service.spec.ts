@@ -869,7 +869,9 @@ describe('QaProjectRunsService attachments in the run payload and report', () =>
     };
     expect(frozen.items[0]?.attachments).toEqual(refs.get('ri-1'));
     expect(JSON.stringify(frozen)).not.toContain('signed.example');
-    expect(input.expectedAttachmentCount).toBe(1);
+    expect(input.expectedAttachmentIds).toEqual(
+      refs.get('ri-1')!.map((ref) => ref.id),
+    );
   });
 
   it('a live report carries items[].attachments; a signed-off run serves exactly its frozen report', async () => {

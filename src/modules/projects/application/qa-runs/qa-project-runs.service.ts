@@ -670,9 +670,8 @@ export class QaProjectRunsService {
           count: items.length,
           rowVersionSum: items.reduce((sum, item) => sum + item.row_version, 0),
         },
-        expectedAttachmentCount: [...attachmentRefs.values()].reduce(
-          (sum, refs) => sum + refs.length,
-          0,
+        expectedAttachmentIds: [...attachmentRefs.values()].flatMap((refs) =>
+          refs.map((ref) => ref.id),
         ),
       })
       .catch((error: unknown) => {

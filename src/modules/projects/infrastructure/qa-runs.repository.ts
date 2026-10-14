@@ -205,11 +205,12 @@ export interface CreateSignoffInput {
    */
   expectedItems: { count: number; rowVersionSum: number };
   /**
-   * Project runs only: how many attachments the frozen report lists. Adding or
-   * removing a screenshot does not bump an item's row_version, so this is the
-   * guard that keeps the report from freezing a stale attachment list.
+   * Project runs only: the ids of the attachments the frozen report lists.
+   * Adding or removing a screenshot does not bump an item's row_version, so
+   * this is the guard that keeps the report from freezing a stale attachment
+   * list. The exact ids, not a count: a delete plus an add keeps the count.
    */
-  expectedAttachmentCount?: number;
+  expectedAttachmentIds?: readonly string[];
 }
 
 export interface QaReturnedItemRow {
@@ -249,6 +250,16 @@ export class QaRunItemsChangedError extends Error {
  * signoff waits for in-flight item writes (then sees their row versions), and
  * an item write waits for an in-flight signoff (then sees status signed_off).
  */
+/** The same ids, in any order. */
+function sameIds(
+  actual: readonly string[],
+  expected: readonly string[],
+): boolean {
+  if (actual.length !== expected.length) return false;
+  const want = new Set(expected);
+  return actual.every((id) => want.has(id));
+}
+
 export async function lockOpenRunForItemWrite(
   client: PoolClient,
   runId: string,
@@ -836,14 +847,16 @@ export class QaRunsRepository {
       ) {
         throw new QaRunItemsChangedError(input.runId);
       }
-      if (input.expectedAttachmentCount !== undefined) {
-        const attachments = await client.query<{ count: string }>(
-          `SELECT COUNT(*) AS count FROM projects.qa_run_item_attachments WHERE run_id = $1;`,
+      if (input.expectedAttachmentIds !== undefined) {
+        const attachments = await client.query<{ id: string }>(
+          `SELECT id::text AS id FROM projects.qa_run_item_attachments WHERE run_id = $1;`,
           [input.runId],
         );
         if (
-          Number(attachments.rows[0]?.count ?? 0) !==
-          input.expectedAttachmentCount
+          !sameIds(
+            attachments.rows.map((row) => row.id),
+            input.expectedAttachmentIds,
+          )
         ) {
           throw new QaRunItemsChangedError(input.runId);
         }
