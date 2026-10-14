@@ -23,9 +23,12 @@ export const DEFAULT_OUTBOX_RELAY_INTERVAL_MS = 15_000;
  * repository deletions GitHub had refused. The user was never told, and the
  * audit table's newest row was three weeks old.
  *
- * Runs only the platform topics. Hierarchy grant/revoke also live in the
- * outbox, but their handlers change GitHub team membership, so they stay behind
- * the explicit manual path rather than firing every fifteen seconds.
+ * Always runs the platform topics. Hierarchy grant/revoke also live in the
+ * outbox, but their handlers change GitHub team membership, so they are
+ * drained here only when HIERARCHY_GITHUB_SYNC_MODE=live, the same switch that
+ * selects the live GitHub provider. In stub mode they stay behind the manual
+ * script / Render cron. With the cron also running nothing is delivered twice:
+ * every claim is leased and SKIP LOCKED.
  *
  * Safe with several instances running: rows are claimed one at a time under a
  * lease with SKIP LOCKED, so two relays cannot deliver the same event.
@@ -91,7 +94,10 @@ export class OutboxRelayWorker implements OnModuleInit, OnModuleDestroy {
 
     this.running = true;
     try {
-      const delivered = await this.relay.processPlatformEventsOnce();
+      let delivered = await this.relay.processPlatformEventsOnce();
+      if (process.env['HIERARCHY_GITHUB_SYNC_MODE'] === 'live') {
+        delivered += await this.relay.processHierarchyEventsOnce();
+      }
       if (delivered > 0) {
         this.logger.log(`Delivered ${String(delivered)} outbox event(s).`);
       }

@@ -145,6 +145,10 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
           { handler: 'deleteDeliveryProject', method: 'DELETE' },
           { handler: 'createRepository', method: 'POST' },
           { handler: 'listRepositories', method: 'GET' },
+          { handler: 'listMembers', method: 'GET' },
+          { handler: 'addMember', method: 'POST' },
+          { handler: 'resyncMembers', method: 'POST' },
+          { handler: 'removeMember', method: 'DELETE' },
         ],
       },
     'src/modules/identity-access/hierarchy/api/groups.controller.ts': {
@@ -215,6 +219,21 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'validate', method: 'POST' },
         { handler: 'ingestReport', method: 'POST' },
         { handler: 'getRuns', method: 'GET' },
+        { handler: 'getRunReport', method: 'GET' },
+      ],
+    },
+    'src/modules/pipelines/ci/api/ci-playwright-progress.controller.ts': {
+      reason:
+        'CI integration surface (token-authenticated live Playwright progress)',
+      routes: [{ handler: 'ingest', method: 'POST' }],
+    },
+    'src/modules/pipelines/ci/api/ci-visual.controller.ts': {
+      reason: 'CI integration surface (token-authenticated visual baselines)',
+      routes: [
+        { handler: 'listBaselines', method: 'GET' },
+        { handler: 'getBaselineFile', method: 'GET' },
+        { handler: 'ingestSummary', method: 'POST' },
+        { handler: 'ingestFile', method: 'POST' },
       ],
     },
     'src/modules/runtime/api/releases.controller.ts': {
@@ -295,6 +314,20 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'mergePullRequest', method: 'POST' },
         { handler: 'compareBranches', method: 'GET' },
         { handler: 'createPullRequest', method: 'POST' },
+        { handler: 'getBrowserTestsStatus', method: 'GET' },
+        { handler: 'addBrowserTests', method: 'POST' },
+      ],
+    },
+    'src/modules/projects/api/project-playwright-live.controller.ts': {
+      reason: 'project workspace surface (live Playwright progress)',
+      routes: [{ handler: 'getLive', method: 'GET' }],
+    },
+    'src/modules/projects/api/project-visual.controller.ts': {
+      reason: 'project workspace surface (visual baselines)',
+      routes: [
+        { handler: 'getVisual', method: 'GET' },
+        { handler: 'getImage', method: 'GET' },
+        { handler: 'approve', method: 'POST' },
       ],
     },
     'src/modules/projects/api/projects.controller.ts': {
@@ -305,6 +338,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
         { handler: 'listProjects', method: 'GET' },
         { handler: 'getProjectOverview', method: 'GET' },
         { handler: 'syncProjectSnapshot', method: 'POST' },
+        { handler: 'disableSonarAutomaticAnalysis', method: 'POST' },
         { handler: 'getWorkflowSettings', method: 'GET' },
         { handler: 'previewWorkflowSettings', method: 'POST' },
         { handler: 'createWorkflowUpdatePullRequest', method: 'POST' },

@@ -10,3 +10,5 @@ export type {
   CiRunContract,
   CiRunStatusContract,
 } from './contracts/ci.contract';
+export { VISUAL_REGRESSION_PORT } from '#kernel/ports/visual-regression.port';
+export { PLAYWRIGHT_LIVE_PORT } from '#kernel/ports/playwright-live.port';

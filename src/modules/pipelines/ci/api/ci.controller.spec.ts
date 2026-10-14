@@ -3,11 +3,48 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { StreamableFile } from '@nestjs/common';
 import type { Request } from 'express';
 
 import { CiController } from './ci.controller';
 import type { CiService } from '../application/ci.service';
 import type { CiReportsService } from '../application/ci-reports.service';
+
+const REPORT = {
+  schemaVersion: 'ci-run-report/v1',
+  generatedAt: '2026-10-09T09:00:00.000Z',
+  repoFullName: 'acme/orders-api',
+  branch: 'uat',
+  commitSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+  startedAt: '2026-10-09T07:55:00.000Z',
+  overallStatus: 'failure',
+  summary: { stages: 1, passed: 0, failed: 1, inProgress: 0, notRun: 0 },
+  failures: [
+    {
+      stage: 'quality',
+      severity: 'error',
+      title: 'Tests failed',
+      detail: 'd',
+      hint: 'h',
+      items: [],
+    },
+  ],
+  stages: [],
+};
+
+const RUN_QUERY = {
+  repoFullName: 'acme/orders-api',
+  branch: 'uat',
+  commitSha: REPORT.commitSha,
+};
+
+async function bodyOf(file: StreamableFile): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of file.getStream()) {
+    chunks.push(Buffer.from(chunk as Buffer));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 const makeService = () =>
   ({
@@ -23,6 +60,7 @@ const makeReportsService = () =>
   ({
     ingestReport: jest.fn().mockResolvedValue({ received: true }),
     getRuns: jest.fn().mockResolvedValue({ runs: [] }),
+    getRunReport: jest.fn().mockResolvedValue(REPORT),
   }) as unknown as CiReportsService;
 
 const makeRequest = (userId?: string): Request =>
@@ -229,5 +267,64 @@ describe('CiController', () => {
     await expect(
       controller.getRuns(makeRequest('user-2'), { repoFullName: 'owner/repo' }),
     ).rejects.toThrow(ForbiddenException);
+  });
+
+  // ─── GET /ci/runs/report ─────────────────────────────────────────────────
+
+  it('downloads the run report as JSON by default, named for the repo, branch and commit', async () => {
+    const file = await controller.getRunReport(
+      makeRequest('user-1'),
+      RUN_QUERY,
+    );
+
+    expect(reportsService.getRunReport).toHaveBeenCalledWith(
+      'user-1',
+      'acme/orders-api',
+      'uat',
+      REPORT.commitSha,
+    );
+    expect(file.getHeaders().type).toBe('application/json; charset=utf-8');
+    expect(file.getHeaders().disposition).toBe(
+      'attachment; filename="CI-Results-orders-api-uat-a1b2c3d.json"',
+    );
+    expect(JSON.parse(await bodyOf(file))).toMatchObject({
+      schemaVersion: 'ci-run-report/v1',
+    });
+  });
+
+  it.each(['md', 'markdown'] as const)(
+    'downloads Markdown for format=%s',
+    async (format) => {
+      const file = await controller.getRunReport(makeRequest('user-1'), {
+        ...RUN_QUERY,
+        format,
+      });
+
+      expect(file.getHeaders().type).toBe('text/markdown; charset=utf-8');
+      expect(file.getHeaders().disposition).toContain('.md"');
+      expect(await bodyOf(file)).toContain(
+        '# CI results: acme/orders-api · uat @ a1b2c3d',
+      );
+    },
+  );
+
+  it('rejects a run report request without a session user', async () => {
+    await expect(
+      controller.getRunReport(makeRequest(), RUN_QUERY),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(reportsService.getRunReport).not.toHaveBeenCalled();
+  });
+
+  it('propagates ForbiddenException and NotFoundException from the service', async () => {
+    (reportsService.getRunReport as jest.Mock)
+      .mockRejectedValueOnce(new ForbiddenException('nope'))
+      .mockRejectedValueOnce(new NotFoundException('none'));
+
+    await expect(
+      controller.getRunReport(makeRequest('user-1'), RUN_QUERY),
+    ).rejects.toThrow(ForbiddenException);
+    await expect(
+      controller.getRunReport(makeRequest('user-1'), RUN_QUERY),
+    ).rejects.toThrow(NotFoundException);
   });
 });

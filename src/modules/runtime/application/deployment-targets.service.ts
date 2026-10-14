@@ -82,6 +82,11 @@ import {
   PROVIDER_CI_SECRETS_INSTALLER_REGISTRY,
   type ProviderCiSecretsInstallerRegistryPort,
 } from './ports/provider-ci-secrets-installer.port';
+import { ProviderRateLimitedError } from '../core/provider-rate-limited.error';
+import {
+  DeploymentLogsHubService,
+  type DeploymentLogsReader,
+} from './deployment-logs-hub.service';
 
 const EMPTY_PROVIDER_TARGET_POLICY: DeploymentProviderTargetPolicyResult = {
   storage: {},
@@ -133,6 +138,12 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     @Optional()
     @Inject(APP_ROLE_LOOKUP)
     private readonly appRoleLookup?: AppRoleLookup,
+    /**
+     * Shared log reads + the per-credential 429 cooldown. Optional so direct
+     * constructions (specs) fall back to an unshared read.
+     */
+    @Optional()
+    private readonly logsHub?: DeploymentLogsHubService,
   ) {}
 
   async listDeploymentTargets(projectId: string, userId: string) {
@@ -1174,6 +1185,42 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
     userId: string,
     query?: DeploymentLogsQuery,
   ): Promise<DeploymentLogsResponse> {
+    const reader = await this.openLogsReader(projectId, targetId, userId);
+
+    try {
+      return this.logsHub
+        ? await this.logsHub.read(reader, query ?? {})
+        : await reader.read(query ?? {});
+    } catch (err) {
+      if (err instanceof ProviderRateLimitedError) {
+        // A plain read has no stream to keep alive, so a 429 is reported like
+        // any other provider failure - with our own sentence, never the
+        // provider's raw response body.
+        return {
+          source: 'unavailable',
+          reason: err.message,
+          logs: [],
+          hasMore: false,
+          next: null,
+          filters: reader.filters,
+        };
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Resolves and access-checks a target ONCE and hands back a reader for its
+   * logs. The log stream opens one per subscriber (so every viewer is
+   * authorised) but polls through the shared hub, which is why the reader also
+   * names the provider rate-limit bucket: a connection id (or the managed
+   * credential), never the token itself.
+   */
+  async openLogsReader(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<DeploymentLogsReader> {
     const target =
       await this.deploymentTargetsRepository.findDeploymentTargetForUser(
         targetId,
@@ -1183,11 +1230,30 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
       throw new NotFoundException('Deployment target not found');
     }
 
+    const bucketKey =
+      target.ownershipMode === 'flowci_managed'
+        ? `${target.provider}:managed`
+        : `${target.provider}:connection:${target.providerConnectionId ?? target.id}`;
+
+    return {
+      provider: target.provider,
+      filters: this.supportedLogFilters(target.provider),
+      bucketKey,
+      targetKey: `${bucketKey}:target:${target.id}`,
+      read: (query) => this.readTargetLogs(target, userId, query),
+    };
+  }
+
+  private async readTargetLogs(
+    target: DeploymentTargetSummary,
+    userId: string,
+    query: DeploymentLogsQuery,
+  ): Promise<DeploymentLogsResponse> {
     const filters = this.supportedLogFilters(target.provider);
 
     // Local-mock mode is a platform-wide switch, not a per-request fallback:
     // a live provider failure below reports 'unavailable' with no lines
-    // instead of quietly substituting sample data â€” see resolveMockLogs's
+    // instead of quietly substituting sample data — see resolveMockLogs's
     // callers for why that distinction matters to the caller.
     if (!this.liveProvidersEnabled()) {
       return {
@@ -1229,7 +1295,7 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         ...this.providerOperationInput(target),
       });
       // An empty page here is a legitimate live result (a quiet deployment
-      // with no recent log lines) â€” queryLogs() throws instead of returning
+      // with no recent log lines) — queryLogs() throws instead of returning
       // one for cases that aren't actually "live", like a missing Render
       // owner ID, so reaching this point at all means the fetch succeeded.
       return {
@@ -1240,6 +1306,11 @@ export class DeploymentTargetsService implements DeploymentProviderResourcesTear
         filters,
       };
     } catch (err) {
+      // Not "unavailable": the caller must be able to tell a rate limit (wait,
+      // then carry on) from a failure, and the hub owns the cooldown.
+      if (err instanceof ProviderRateLimitedError) {
+        throw err;
+      }
       this.logger.warn(
         `Failed to retrieve ${target.provider} logs: ${(err as Error).message}`,
       );

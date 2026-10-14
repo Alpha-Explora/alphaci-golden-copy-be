@@ -1,5 +1,10 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 
+import {
+  vercelAliasHost,
+  vercelBranchAlias,
+} from '#kernel/ports/workflow-fragment.port';
+
 import type {
   DeploymentProvider,
   DeploymentProviderConnectionPreparationInput,
@@ -17,19 +22,21 @@ import {
 } from '../core/legacy-provider.shared';
 
 const VERCEL_PRESENTATION: DeploymentProviderPresentation = {
+  /*
+   * Same derivation as VercelDeploymentPolicy.provisioning.resolvePublicUrl
+   * (and the deploy job and verify stage behind it): production is the
+   * project's own host, every other lane is the CLI-published branch alias
+   * `<branch>-<project>.vercel.app`.
+   *
+   * This used to build `<project>-git-<branch>-<team>`, an address Vercel only
+   * assigns to builds from its own Git integration. The pipeline deploys with
+   * the CLI, so that host answered 404 DEPLOYMENT_NOT_FOUND in the studios.
+   */
   publicUrl: (target, lane = 'production') => {
     if (!target.providerProjectName) return null;
-    const productionUrl = `https://${target.providerProjectName}.vercel.app`;
-    if (lane === 'production') return productionUrl;
-
-    const teamSlug = providerMetadataString(target, 'vercelTeamSlug');
-    const branch = target.branchName?.trim() ?? '';
-    return teamSlug && branch
-      ? `https://${target.providerProjectName}-git-${branch
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '')}-${teamSlug}.vercel.app`
-      : productionUrl;
+    const aliasHost = vercelAliasHost(target.providerProjectName);
+    const branch = lane === 'production' ? null : target.branchName?.trim();
+    return `https://${branch ? vercelBranchAlias(branch, aliasHost) : aliasHost}`;
   },
   dashboardUrl: (target) => {
     const teamSlug = providerMetadataString(target, 'vercelTeamSlug');

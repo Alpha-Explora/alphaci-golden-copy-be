@@ -23,6 +23,7 @@ import type {
 } from '../qa-checklists/qa-project-context.service';
 import type { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
 import type { QaAutomationService } from './qa-automation.service';
+import type { QaRunAttachmentsService } from './qa-run-attachments.service';
 import {
   QaProjectRunsService,
   buildHeadStatuses,
@@ -242,6 +243,11 @@ function setup({
   const automation = {
     forRun: jest.fn().mockResolvedValue({ verify: null, quality: null }),
   } as unknown as jest.Mocked<QaAutomationService>;
+  const attachments = {
+    countsByItem: jest.fn().mockResolvedValue(new Map<string, number>()),
+    referencesForRun: jest.fn().mockResolvedValue(new Map()),
+    isEnabled: jest.fn().mockReturnValue(true),
+  } as unknown as jest.Mocked<QaRunAttachmentsService>;
   const audit = { recordProjectEvent: jest.fn().mockResolvedValue(undefined) };
   const notifications = { record: jest.fn().mockResolvedValue(undefined) };
 
@@ -255,11 +261,13 @@ function setup({
     projectContext,
     heads,
     automation,
+    attachments,
     audit,
     notifications,
   );
   return {
     service,
+    attachments,
     runs,
     projectRuns,
     checklists,
@@ -767,5 +775,128 @@ describe('QaProjectRunsService.myItems', () => {
 
     expect(projectRuns.findRunByFingerprint).toHaveBeenCalled();
     expect(projectRuns.findNewestProjectRun).not.toHaveBeenCalled();
+  });
+});
+
+describe('QaProjectRunsService attachments in the run payload and report', () => {
+  const refs = new Map([
+    [
+      'ri-1',
+      [
+        {
+          id: 'att-1',
+          caption: 'Receipt shown',
+          kind: 'evidence' as const,
+          contentType: 'image/png' as const,
+        },
+      ],
+    ],
+  ]);
+
+  it('adds attachmentCount per item and the run-level enabled / canAdd flags', async () => {
+    const { service, attachments } = setup({
+      items: [itemRow(), itemRow({ id: 'ri-2', position: 1 })],
+    });
+    attachments.countsByItem.mockResolvedValue(new Map([['ri-1', 3]]));
+
+    const run = await service.getById(DP, actor(), 'run-1');
+
+    expect(run.items.map((item) => item.attachmentCount)).toEqual([3, 0]);
+    expect(run.attachments).toEqual({ enabled: true, canAdd: true });
+    expect(run.items[0]).not.toHaveProperty('attachments');
+  });
+
+  it('enabled is false when storage is not configured, and canAdd follows role and run state', async () => {
+    const off = setup();
+    off.attachments.isEnabled.mockReturnValue(false);
+    expect(
+      (await off.service.getById(DP, actor(), 'run-1')).attachments,
+    ).toEqual({ enabled: false, canAdd: true });
+
+    const dev = setup({ role: 'member' });
+    expect(
+      (await dev.service.getById(DP, actor(), 'run-1')).attachments,
+    ).toEqual({ enabled: true, canAdd: false });
+
+    const signed = setup({ run: runRow({ status: 'signed_off' }) });
+    expect(
+      (await signed.service.getById(DP, actor(), 'run-1')).attachments,
+    ).toEqual({ enabled: true, canAdd: false });
+  });
+
+  it('also counts on the current-run read', async () => {
+    const { service, projectRuns, attachments } = setup();
+    projectRuns.findRunByFingerprint.mockResolvedValue(runRow());
+    attachments.countsByItem.mockResolvedValue(new Map([['ri-1', 2]]));
+
+    const current = await service.current(DP, actor());
+
+    expect(current.run?.items[0]?.attachmentCount).toBe(2);
+    expect(current.run?.attachments.enabled).toBe(true);
+  });
+
+  it('freezes attachment ids and captions (no URLs) into the sign-off and guards the count', async () => {
+    const { service, runs, attachments } = setup({
+      items: [
+        itemRow({
+          status: 'passed',
+          verified_by: 'qa-1',
+          verified_by_login: 'qa',
+        }),
+      ],
+    });
+    attachments.referencesForRun.mockResolvedValue(refs);
+    attachments.countsByItem.mockResolvedValue(new Map([['ri-1', 1]]));
+    runs.createSignoff.mockResolvedValue({
+      run: runRow({ status: 'signed_off' }),
+      signoff: {
+        id: 's-1',
+        run_id: 'run-1',
+        verdict: 'APPROVED',
+        summary: null,
+        conditions: null,
+        signed_by: 'qa-1',
+        signed_by_login: 'qa',
+        signed_at: '2026-10-01T01:00:00.000Z',
+      } as QaRunSignoffRow,
+    });
+
+    await service.signoff(DP, actor(), 'run-1', { verdict: 'APPROVED' });
+
+    const input = runs.createSignoff.mock.calls[0]![0];
+    const frozen = input.reportJson as {
+      items: Array<{ attachments: unknown[] }>;
+    };
+    expect(frozen.items[0]?.attachments).toEqual(refs.get('ri-1'));
+    expect(JSON.stringify(frozen)).not.toContain('signed.example');
+    expect(input.expectedAttachmentIds).toEqual(
+      refs.get('ri-1')!.map((ref) => ref.id),
+    );
+  });
+
+  it('a live report carries items[].attachments; a signed-off run serves exactly its frozen report', async () => {
+    const live = setup();
+    live.attachments.referencesForRun.mockResolvedValue(refs);
+
+    const liveReport = await live.service.buildReport(DP, actor(), 'run-1');
+
+    expect(liveReport.run.items[0]?.attachments).toEqual(refs.get('ri-1'));
+
+    const frozenRun = {
+      ...(await live.service.getById(DP, actor(), 'run-1')),
+      status: 'signed_off',
+      items: [{ ...liveReport.run.items[0]!, attachments: refs.get('ri-1') }],
+    };
+    const signed = setup({ run: runRow({ status: 'signed_off' }) });
+    signed.runs.findActiveSignoff.mockResolvedValue({
+      ...({ id: 's-1' } as QaRunSignoffRow),
+      report_json: frozenRun as unknown as Record<string, unknown>,
+    });
+    signed.attachments.referencesForRun.mockResolvedValue(new Map());
+
+    const frozenReport = await signed.service.buildReport(DP, actor(), 'run-1');
+
+    expect(frozenReport.frozen).toBe(true);
+    expect(frozenReport.run.items[0]?.attachments).toEqual(refs.get('ri-1'));
   });
 });

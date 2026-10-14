@@ -324,6 +324,30 @@ describe('renderQaReportMarkdown / checklist — automated suffix', () => {
     const md = renderQaReportMarkdown(report({ run: run({ items }) }));
     expect(md).toContain('Pending (auto: not run)');
   });
+
+  it('renders an unlinked item as "not linked to a test" and counts it as neither passed nor failed', () => {
+    const items = [
+      item({
+        status: 'pending',
+        verificationType: 'playwright',
+        automated: {
+          source: 'playwright',
+          stage: 'verify',
+          status: 'unlinked',
+          scope: 'stage',
+          matchedSpec: null,
+          failure: null,
+          runId: 42,
+          runUrl: 'https://github.com/acme/repo/actions/runs/42',
+          reportedAt: '2026-09-25T00:00:00.000Z',
+        },
+      }),
+    ];
+    const md = renderQaReportMarkdown(report({ run: run({ items }) }));
+    expect(md).toContain('Pending (auto: not linked to a test)');
+    expect(md).not.toContain('auto: passed');
+    expect(md).not.toContain('auto: failed');
+  });
 });
 
 describe('renderQaReportMarkdown / automated results', () => {

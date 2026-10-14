@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
-import { fetchWithRetry } from '../core/fetch-with-retry';
+import { throwIfRateLimited } from '../core/fetch-with-retry';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
@@ -338,11 +338,15 @@ export class RenderEnvClient implements DeploymentProvider {
       input.targetId,
       input,
     );
-    const response = await fetchWithRetry(
+    // Plain fetch, not fetchWithRetry: this is the polled path (every open log
+    // console, via the shared poller), and retrying a 429 here would add
+    // requests while the key is already limited. A final 429 becomes a typed
+    // error so the caller can cool down for as long as Render asks.
+    const response = await fetch(
       `${RENDER_API_URL}/logs?${params.toString()}`,
       { headers: this.headers(input.token) },
-      'Render',
     );
+    throwIfRateLimited(response, 'Render');
     await this.assertOk(response, 'Render logs could not be loaded');
     const data = (await response.json()) as RenderLogsPayload;
 

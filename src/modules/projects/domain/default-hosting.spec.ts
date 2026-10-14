@@ -222,6 +222,25 @@ describe('default hosting for a project with two halves', () => {
     expect(result).toBeUndefined();
   });
 
+  it('adds no default to either half when the caller turned hosting off', () => {
+    const result = twoHalves({ enabled: false, targets: [] });
+
+    expect(result).toEqual({ enabled: false, targets: [] });
+  });
+
+  it('adds no default to a single repository when the caller turned hosting off', () => {
+    const result = withDefaultCreateDeploymentProvisioning({
+      request: { enabled: false, targets: [] },
+      projectTypeId: 'react',
+      serviceName: 'orders-frontend',
+      repoName: 'orders-fe',
+      servicePath: '.',
+      deploymentProvisioningDefaults: defaults,
+    });
+
+    expect(result).toEqual({ enabled: false, targets: [] });
+  });
+
   it('keeps the caller variables when it adds the frontend default', () => {
     const sharedEnv = [
       { lane: 'production' as const, vars: [{ key: 'A', value: 'b' }] },

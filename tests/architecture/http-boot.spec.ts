@@ -95,6 +95,9 @@ const { QaChecklistsService } =
 const { ProjectWorkflowsService } =
   require('../../src/modules/projects/application/workflows/project-workflows.service.js') as typeof import('../../src/modules/projects/application/workflows/project-workflows.service.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaUatHeadsService } =
+  require('../../src/modules/projects/application/qa-runs/qa-uat-heads.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-uat-heads.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { QaPromotionService } =
   require('../../src/modules/projects/application/qa-runs/qa-promotion.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-promotion.service.js');
 
@@ -328,6 +331,32 @@ describe('HTTP application boot', () => {
       expect(auditEventPublisher).toBeInstanceOf(AuditEventPublisher);
       expect(injected).toBeInstanceOf(AuditEventPublisher);
       expect(injected).toBe(auditEventPublisher);
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  /*
+   * Run Playwright and Merge to main write to GitHub as the ALPHACI App via
+   * QaUatHeadsService.resolveWriteCredential. Both services hold it as a
+   * plain constructor dependency; this proves each received the real
+   * provider (a hand-built unit test fake cannot), so a regression to an
+   * undefined resolver fails here rather than silently falling back to the
+   * caller's read-only OAuth token.
+   */
+  it('gives the QA write paths the real QaUatHeadsService write-credential resolver', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const heads = app.get(QaUatHeadsService, { strict: false });
+      expect(typeof heads.resolveWriteCredential).toBe('function');
+      for (const service of [QaAutomationDispatchService, QaPromotionService]) {
+        const resolved: unknown = app.get(service, { strict: false });
+        const instance = resolved as { heads?: unknown };
+        expect(instance.heads).toBeInstanceOf(QaUatHeadsService);
+        expect(instance.heads).toBe(heads);
+      }
     } finally {
       await app.close();
     }

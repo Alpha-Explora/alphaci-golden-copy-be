@@ -127,6 +127,21 @@ describe('DeploymentTargetsRepository', () => {
     );
   });
 
+  it('merges provider metadata keys in SQL instead of replacing the object', async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await repository.mergeProviderMetadata('target-1', {
+      imageUrl: 'ghcr.io/o/i:t',
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "COALESCE(provider_metadata, '{}'::jsonb) || $2::jsonb",
+      ),
+      ['target-1', '{"imageUrl":"ghcr.io/o/i:t"}'],
+    );
+  });
+
   it('throws when provider metadata update returns no row', async () => {
     query.mockResolvedValueOnce({ rows: [] });
 

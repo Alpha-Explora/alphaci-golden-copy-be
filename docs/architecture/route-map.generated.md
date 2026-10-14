@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 207 current API routes."
+description: "Generated inventory of the 228 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,13 +15,15 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **207 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **228 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
 - `DELETE /api/v1/admin/users/{id}/role`
 - `DELETE /api/v1/auth/account`
 - `DELETE /api/v1/delivery-projects/{deliveryProjectId}`
+- `DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}`
+- `DELETE /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments/{attachmentId}`
 - `DELETE /api/v1/groups/{groupId}`
 - `DELETE /api/v1/groups/{groupId}/members/{memberId}`
 - `DELETE /api/v1/projects/{id}`
@@ -52,10 +54,16 @@ The current compiled API exposes **207 routes** under the global `/api/v1` prefi
 - `GET /api/v1/catalog/templates/{templateId}`
 - `GET /api/v1/ci/releases/{releaseId}`
 - `GET /api/v1/ci/runs`
+- `GET /api/v1/ci/runs/report`
+- `GET /api/v1/ci/visual-baselines`
+- `GET /api/v1/ci/visual-baselines/file`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}`
+- `GET /api/v1/delivery-projects/{deliveryProjectId}/members`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/current`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}`
+- `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments`
+- `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/report`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa/my-items`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/repositories`
@@ -107,15 +115,19 @@ The current compiled API exposes **207 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/qa-runs/{runId}/report`
 - `GET /api/v1/projects/{projectId}/qa/promotion`
 - `GET /api/v1/projects/{projectId}/workspace/branches`
+- `GET /api/v1/projects/{projectId}/workspace/browser-tests`
 - `GET /api/v1/projects/{projectId}/workspace/compare`
 - `GET /api/v1/projects/{projectId}/workspace/files`
 - `GET /api/v1/projects/{projectId}/workspace/jobs/{jobId}/logs`
+- `GET /api/v1/projects/{projectId}/workspace/playwright-live`
 - `GET /api/v1/projects/{projectId}/workspace/pull-requests`
 - `GET /api/v1/projects/{projectId}/workspace/pull-requests/{number}`
 - `GET /api/v1/projects/{projectId}/workspace/pull-requests/{number}/files`
 - `GET /api/v1/projects/{projectId}/workspace/runs`
 - `GET /api/v1/projects/{projectId}/workspace/runs/{runId}/failure-log`
 - `GET /api/v1/projects/{projectId}/workspace/runs/{runId}/jobs`
+- `GET /api/v1/projects/{projectId}/workspace/visual`
+- `GET /api/v1/projects/{projectId}/workspace/visual/image`
 - `GET /api/v1/provider-connections`
 - `GET /api/v1/qa-checklists/{id}`
 - `GET /api/v1/repositories/{repositoryId}`
@@ -156,12 +168,18 @@ The current compiled API exposes **207 routes** under the global `/api/v1` prefi
 - `POST /api/v1/auth/dev/quick-login`
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/auth/onboarding/complete`
+- `POST /api/v1/ci/playwright-progress`
 - `POST /api/v1/ci/releases`
 - `POST /api/v1/ci/report`
 - `POST /api/v1/ci/validate`
+- `POST /api/v1/ci/visual-results/file`
+- `POST /api/v1/ci/visual-summary`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/archive`
+- `POST /api/v1/delivery-projects/{deliveryProjectId}/members`
+- `POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/automation/dispatch`
+- `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/reopen`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/signoff`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/repositories`
@@ -189,6 +207,7 @@ The current compiled API exposes **207 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{id}/ci-runs/{runId}/rerun`
 - `POST /api/v1/projects/{id}/drift/run`
 - `POST /api/v1/projects/{id}/drift/{findingId}/repair`
+- `POST /api/v1/projects/{id}/sonar/disable-automatic-analysis`
 - `POST /api/v1/projects/{id}/sync`
 - `POST /api/v1/projects/{id}/workflow-settings/pr`
 - `POST /api/v1/projects/{id}/workflow-settings/preview`
@@ -205,8 +224,10 @@ The current compiled API exposes **207 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen`
 - `POST /api/v1/projects/{projectId}/qa-runs/{runId}/signoff`
 - `POST /api/v1/projects/{projectId}/qa/promotion/merge`
+- `POST /api/v1/projects/{projectId}/workspace/browser-tests`
 - `POST /api/v1/projects/{projectId}/workspace/pull-requests`
 - `POST /api/v1/projects/{projectId}/workspace/pull-requests/{number}/merge`
+- `POST /api/v1/projects/{projectId}/workspace/visual/approve`
 - `POST /api/v1/provider-connections`
 - `POST /api/v1/qa-checklists/{id}/archive`
 - `POST /api/v1/repositories/{repositoryId}/archive`

@@ -141,6 +141,7 @@ const AUTOMATION_ITEM_STATUS_LABELS: Record<QaAutomationItemStatus, string> = {
   failed: 'failed',
   unknown: 'unknown',
   not_run: 'not run',
+  unlinked: 'not linked to a test',
 };
 
 const SEVERITY_LABELS: Record<'blocker' | 'major' | 'minor', string> = {

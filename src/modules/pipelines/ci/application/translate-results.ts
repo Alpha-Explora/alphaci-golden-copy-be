@@ -1,3 +1,4 @@
+import type { CiTestCase } from '#kernel/ports/ci-stage-results.port';
 import type { StageId } from './stages';
 
 export interface FriendlyMessage {
@@ -14,6 +15,8 @@ export interface CiResults {
     failed: number;
     total: number;
     failures?: { name: string; message?: string }[];
+    /** Every browser test with its detail, when the pipeline reports it. */
+    cases?: CiTestCase[];
   };
   coverage?: { pct: number; threshold: number };
   lint?: {
@@ -69,7 +72,21 @@ export interface CiResults {
       threshold?: string;
     }[];
     measures?: Record<string, string>;
+    /** The most severe issues on new code, at most 20. */
+    issues?: {
+      rule: string;
+      severity?: string;
+      type?: string;
+      message: string;
+      file?: string;
+      line?: number;
+    }[];
   };
+  /**
+   * The stage left its work out on purpose, and says why. Reported as a
+   * success (the stage did not fail) and read back as not run.
+   */
+  skipped?: { reason: string };
   /** Every job in the stage and what it concluded — the per-tool view. */
   checks?: {
     name: string;
@@ -92,7 +109,125 @@ type FailedJobKind =
   | 'build'
   | 'publish'
   | 'security'
+  | 'deployment'
+  | 'schema'
+  | 'targets'
+  | 'promotion'
   | 'unknown';
+
+/*
+ * ANSI escape sequences (colour, bold, cursor) that a test runner or compiler
+ * prints into its output. Playwright colours its assertion messages, and the
+ * codes arrived in the product as `[31m`-style noise around the words. Built
+ * from the character code rather than written as a literal so the control
+ * character is not in the source, which `no-control-regex` rightly rejects.
+ */
+const ESCAPE = String.fromCharCode(27);
+const ANSI_SEQUENCE = new RegExp(
+  String.raw`${ESCAPE}\[[0-9;?]*[ -/]*[@-~]`,
+  'g',
+);
+
+/** Remove ANSI escape sequences from text. */
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_SEQUENCE, '');
+}
+
+/** `stripAnsi` over every string inside a value of any shape. */
+export function stripAnsiDeep<T>(value: T): T {
+  if (typeof value === 'string') {
+    return stripAnsi(value) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry: unknown) => stripAnsiDeep(entry)) as T;
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, stripAnsiDeep(entry)]),
+    ) as T;
+  }
+  return value;
+}
+
+/** `Program.cs:null` is a location with the line missing. Drop the `:null`. */
+function dropNullLine(text: string): string {
+  return text.replace(/:null(?=\s|$)/g, '');
+}
+
+/**
+ * Messages as they should be shown, whenever they were written.
+ *
+ * Applied at ingest AND on read. Ingest alone would fix new reports and leave
+ * every stored one with its escape codes and its `:null` locations; reading
+ * through the same function makes history benefit without a backfill.
+ */
+export function cleanMessages(
+  messages: readonly FriendlyMessage[],
+): FriendlyMessage[] {
+  return messages.map((message) => ({
+    ...message,
+    title: stripAnsi(message.title),
+    detail: stripAnsi(message.detail),
+    hint: stripAnsi(message.hint),
+    ...(message.items !== undefined && {
+      items: message.items.map((item) => ({
+        label: dropNullLine(stripAnsi(item.label)),
+        ...(item.sub !== undefined && {
+          sub: dropNullLine(stripAnsi(item.sub)),
+        }),
+      })),
+    }),
+  }));
+}
+
+/**
+ * Re-label a STORED verify failure that was filed under the wrong kind.
+ *
+ * Messages are written at ingest, so history keeps whatever the translator said
+ * then. For verify that was "Tests failed - run the failing test command
+ * locally" on a run that never got past waiting for the deployment, because
+ * the job id (`api-tests-uat`) contains `test`. The failed step is stored in
+ * `rawLogs`, so the correct copy can be put back on read, without a backfill.
+ * Only the title and hint are replaced, and only where the stored message still
+ * carries the misleading copy; the detail and items are left as they were.
+ */
+export function reclassifyStoredFailure(
+  stage: Stage,
+  messages: readonly FriendlyMessage[],
+  rawLogs: string | null | undefined,
+): FriendlyMessage[] {
+  const first = reportedFailedJobs(rawLogs ?? undefined)[0];
+  if (first === undefined) {
+    return [...messages];
+  }
+
+  const kind = classifyFailedJob(first, stage);
+  if (kind !== 'deployment' && kind !== 'schema' && kind !== 'targets') {
+    return [...messages];
+  }
+
+  const copy = FAILED_JOB_COPY[kind];
+  const stale = new Set([
+    FAILED_JOB_COPY.test.title,
+    `GitHub job "${first}" failed`,
+  ]);
+
+  return messages.map((message) =>
+    message.severity === 'error' && stale.has(message.title)
+      ? { ...message, title: copy.title, hint: copy.hint }
+      : message,
+  );
+}
+
+/** What a stage that left its work out on purpose shows in place of results. */
+export function skippedMessage(reason: string): FriendlyMessage {
+  return {
+    severity: 'info',
+    title: 'Not run',
+    detail: reason,
+    hint: 'This is not a failure of the code. Once the missing piece exists, the next run tests it.',
+  };
+}
 
 /** Maximum number of detail items surfaced in a FriendlyMessage. */
 const ITEMS_CAP = 20;
@@ -136,6 +271,20 @@ const FAILED_JOB_KIND_NEEDLES: ReadonlyArray<{
   },
 ];
 
+/**
+ * A step name that says the deployed service never answered.
+ *
+ * Matched on the STEP, not the job. The job is `api-tests-uat`, which contains
+ * `test`, so classifying by id alone filed a failure to wait for the
+ * deployment under "Tests failed - run the failing test command locally":
+ * advice that cannot help, because nothing was tested.
+ */
+const DEPLOYMENT_WAIT_STEP =
+  /wait for .*(deploy|health|service)|health ?check/i;
+
+/** A step name that says no OpenAPI document could be located. */
+const SCHEMA_STEP = /locate schema|openapi|swagger/i;
+
 const FAILED_JOB_COPY: Record<
   Exclude<FailedJobKind, 'unknown'>,
   { title: string; hint: string }
@@ -171,6 +320,27 @@ const FAILED_JOB_COPY: Record<
   security: {
     title: 'Security or code-quality check failed',
     hint: DEFAULT_FAILED_JOB_HINT,
+  },
+  /*
+   * The post-deploy tests never started: they poll the deployed service until
+   * it answers its health check, and it did not. The fault is the deployment
+   * (crashed on start, still cold, wrong address), not the code under test.
+   */
+  deployment: {
+    title: 'The deployment never became healthy',
+    hint: 'The post-deploy tests wait for the deployed service to answer its health check, and it never did, so nothing was tested. Check the deploy step of the package stage and the hosting provider logs for a service that failed to start, then run the pipeline again.',
+  },
+  schema: {
+    title: 'No OpenAPI document found',
+    hint: 'The contract tests need an OpenAPI document and could not find one in the repository. Commit one (openapi.json or swagger.json at the service root) or publish it from the running service, then run the pipeline again.',
+  },
+  targets: {
+    title: 'The deployed service could not be located',
+    hint: 'The post-deploy tests could not work out where the service is deployed, so nothing was tested. Provision hosting for this project in ALPHACI, or restore the repository variable named in the job output, then run the pipeline again.',
+  },
+  promotion: {
+    title: 'The promotion pull request could not be created',
+    hint: 'The build and deploy passed, but the pull request into the next branch failed. The reason is listed below: usually a token that may not open pull requests, or a branch protection rule that rejected it.',
   },
 };
 
@@ -217,8 +387,36 @@ function failedJobId(jobName: string): string {
   return (jobName.split(' > ')[0] ?? jobName).split(' / ')[0]!.trim();
 }
 
-function classifyFailedJob(jobName: string): FailedJobKind {
+/** The step a reported job failed in, when the report names one. */
+function failedStepName(jobName: string): string {
+  const index = jobName.indexOf(' > ');
+  return index === -1 ? '' : jobName.slice(index + 3).trim();
+}
+
+function classifyFailedJob(jobName: string, stage?: Stage): FailedJobKind {
   const job = failedJobId(jobName).toLowerCase();
+
+  /*
+   * The step outranks the job id, in the verify stage above all: every job
+   * there is called `*-tests-*`, so the id alone says "a test failed" for a
+   * run that never got as far as testing anything.
+   */
+  const step = failedStepName(jobName);
+  if (stage === 'verify' || stage === undefined) {
+    if (DEPLOYMENT_WAIT_STEP.test(step)) {
+      return 'deployment';
+    }
+    if (SCHEMA_STEP.test(step)) {
+      return 'schema';
+    }
+  }
+  if (job === 'resolve-targets') {
+    return 'targets';
+  }
+  if (job.startsWith('promote-to-')) {
+    return 'promotion';
+  }
+
   for (const rule of FAILED_JOB_KIND_NEEDLES) {
     if (rule.needles.some((needle) => job.includes(needle))) {
       return rule.kind;
@@ -230,7 +428,19 @@ function classifyFailedJob(jobName: string): FailedJobKind {
 function failedJobCopy(
   kind: FailedJobKind,
   jobName: string,
+  stage?: Stage,
 ): { title: string; hint: string } {
+  /*
+   * A verify test that really failed drove a DEPLOYED service, so "run the
+   * failing test command locally" points at the wrong place: the same red can
+   * be the code, the deployment or the environment.
+   */
+  if (kind === 'test' && stage === 'verify') {
+    return {
+      title: 'Post-deploy tests failed',
+      hint: 'These tests drive the deployed service, so the failure can be the code, the deployment or its environment. The reasons listed below say which request or assertion failed.',
+    };
+  }
   if (kind !== 'unknown') {
     return FAILED_JOB_COPY[kind];
   }
@@ -247,10 +457,10 @@ function failedJobCopy(
  * older ones, which is why every field is optional and the list may be empty.
  */
 export interface CiAnnotation {
-  path?: string;
-  line?: number;
-  title?: string;
-  message?: string;
+  path?: string | null;
+  line?: number | null;
+  title?: string | null;
+  message?: string | null;
   /**
    * GitHub's severity: 'failure', 'warning' or 'notice'.
    *
@@ -259,7 +469,19 @@ export interface CiAnnotation {
    * annotation is what fails the build. Without the level, advice and a block
    * are indistinguishable.
    */
-  level?: string;
+  level?: string | null;
+}
+
+/**
+ * A line number that is a number. The payload carries `null` for an annotation
+ * with no line, and `Program.cs:null` is what a template literal made of it.
+ */
+function hasLine(line: unknown): line is number {
+  return typeof line === 'number' && Number.isFinite(line);
+}
+
+function isWorkflowLevel(path: string | undefined | null): boolean {
+  return path !== undefined && path !== null && path.startsWith('.github');
 }
 
 /**
@@ -271,13 +493,24 @@ export interface CiAnnotation {
 function annotationItems(annotations: readonly CiAnnotation[]): MessageItem[] {
   return capItems(
     annotations.map((annotation) => {
-      const where =
-        annotation.path === undefined
-          ? undefined
-          : annotation.line === undefined
-            ? annotation.path
-            : `${annotation.path}:${String(annotation.line)}`;
       const text = annotation.message ?? annotation.title ?? '';
+
+      /*
+       * A workflow-level `::error::` is attributed to `.github`, which is the
+       * folder the workflow file sits in and not a place anyone can fix. Its
+       * message IS the finding ("Repository variable VERCEL_ALIAS is not set"),
+       * so it leads, with no location to mislead.
+       */
+      if (isWorkflowLevel(annotation.path) && text !== '') {
+        return { label: text };
+      }
+
+      const where =
+        annotation.path === undefined || annotation.path === null
+          ? undefined
+          : hasLine(annotation.line)
+            ? `${annotation.path}:${String(annotation.line)}`
+            : annotation.path;
 
       return {
         label: where ?? annotation.title ?? text,
@@ -326,13 +559,97 @@ function advisoryAnnotationMessage(
   };
 }
 
+/**
+ * Every failed job: the ones the stage named, then any the per-tool list adds.
+ *
+ * The workflow only names five, and on a repository where the failed-job lookup
+ * is not permitted it names none, while `checks` carries every job with its
+ * conclusion. Taking both is what lets a failed audit be recognised, and every
+ * failed job listed, whichever of the two the pipeline managed to send.
+ */
+function failedJobsOf(
+  rawLogs: string | undefined,
+  checks: CiResults['checks'],
+): string[] {
+  const named = reportedFailedJobs(rawLogs);
+  const seen = new Set(named.map((job) => failedJobId(job).toLowerCase()));
+  const extra: string[] = [];
+
+  for (const check of checks ?? []) {
+    if (check.conclusion !== 'failure') {
+      continue;
+    }
+    const id = failedJobId(check.name).toLowerCase();
+    if (!seen.has(id)) {
+      seen.add(id);
+      extra.push(check.name);
+    }
+  }
+
+  return [...named, ...extra];
+}
+
+/**
+ * Whether an error message already produced from `results` accounts for a
+ * failed job, so the job is not listed a second time.
+ *
+ * Each rule mirrors one `push*Messages` above and only claims jobs that
+ * message really explains: failing tests explain the test jobs, lint errors the
+ * lint job, and so on. Anything else - a type check, a build, the licence scan
+ * when no forbidden licence was reported - is not covered and gets listed.
+ */
+function coveredJobPredicate(
+  results: CiResults,
+  auditFailed: boolean,
+): (jobId: string) => boolean {
+  const needles: string[] = [];
+  if ((results.tests?.failed ?? 0) > 0) needles.push('test');
+  if ((results.lint?.errors ?? 0) > 0) needles.push('lint');
+  if (
+    (results.security?.critical ?? 0) > 0 ||
+    ((results.security?.high ?? 0) > 0 && auditFailed)
+  ) {
+    needles.push('audit', 'security');
+  }
+  if ((results.findings?.secrets ?? 0) > 0) needles.push('secret');
+  if ((results.findings?.forbiddenLicenses ?? 0) > 0) needles.push('licen');
+  if (
+    results.sonar?.gate === 'ERROR' ||
+    results.sonar?.blockedBy === 'automatic-analysis'
+  ) {
+    needles.push('sonar');
+  }
+
+  return (jobId) => {
+    const id = jobId.toLowerCase();
+    return needles.some((needle) => id.includes(needle));
+  };
+}
+
+function otherFailedJobsMessage(
+  stage: Stage,
+  jobs: readonly string[],
+): FriendlyMessage {
+  const first = jobs[0]!;
+  const copy = failedJobCopy(classifyFailedJob(first, stage), first, stage);
+  const single = jobs.length === 1;
+
+  return {
+    severity: 'error',
+    title: single ? copy.title : `${String(jobs.length)} other jobs failed`,
+    detail: single
+      ? 'This job failed as well, and nothing above accounts for it.'
+      : `${String(jobs.length)} more jobs failed in the ${stage} stage, and nothing above accounts for them.`,
+    hint: single ? copy.hint : DEFAULT_FAILED_JOB_HINT,
+    items: capItems(jobs.map((job) => ({ label: job }))),
+  };
+}
+
 function unreportedFailureMessage(
   stage: Stage,
-  rawLogs?: string,
+  failedJobs: readonly string[],
   annotations: readonly CiAnnotation[] = [],
 ): FriendlyMessage {
-  const failedJobs = reportedFailedJobs(rawLogs);
-
   // Annotations are the actual errors, so they outrank the job name. A job
   // name says where to look; an annotation says what is wrong and on which
   // line, which is the whole point of not sending people to GitHub.
@@ -341,7 +658,11 @@ function unreportedFailureMessage(
     // annotations still stand on their own — they name the files and lines.
     const copy =
       failedJobs.length > 0
-        ? failedJobCopy(classifyFailedJob(failedJobs[0]!), failedJobs[0]!)
+        ? failedJobCopy(
+            classifyFailedJob(failedJobs[0]!, stage),
+            failedJobs[0]!,
+            stage,
+          )
         : {
             title: `The ${stage} stage reported errors`,
             hint: DEFAULT_FAILED_JOB_HINT,
@@ -357,7 +678,11 @@ function unreportedFailureMessage(
 
   if (failedJobs.length > 0) {
     const firstJob = failedJobs[0]!;
-    const copy = failedJobCopy(classifyFailedJob(firstJob), firstJob);
+    const copy = failedJobCopy(
+      classifyFailedJob(firstJob, stage),
+      firstJob,
+      stage,
+    );
     return {
       severity: 'error',
       title: copy.title,
@@ -457,7 +782,7 @@ function toLintIssueItem(
 ): MessageItem {
   const label = issue.rule ?? 'lint';
   const filePart = issue.file ?? '';
-  const linePart = issue.line !== undefined ? `:${String(issue.line)}` : '';
+  const linePart = hasLine(issue.line) ? `:${String(issue.line)}` : '';
   const sub = `${filePart}${linePart}`;
   return {
     label,
@@ -551,9 +876,9 @@ function pushFindingsMessages(
             label:
               item.file === undefined
                 ? (item.rule ?? 'secret')
-                : item.line === undefined
-                  ? item.file
-                  : `${item.file}:${String(item.line)}`,
+                : hasLine(item.line)
+                  ? `${item.file}:${String(item.line)}`
+                  : item.file,
             ...(item.rule !== undefined && { sub: item.rule }),
           })),
         ),
@@ -721,6 +1046,7 @@ function pushSonarMessages(
 function pushSecurityMessages(
   messages: FriendlyMessage[],
   security: SecurityResult,
+  auditFailed: boolean,
 ): void {
   if (security.critical > 0) {
     const base: FriendlyMessage = {
@@ -749,7 +1075,14 @@ function pushSecurityMessages(
 
   if (security.high > 0) {
     const base: FriendlyMessage = {
-      severity: 'warning',
+      /*
+       * An error when the audit job FAILED. The audit blocks on high as well as
+       * critical on the branches where it is blocking, so the high-severity
+       * findings are the reason the stage is red; calling them a warning hid
+       * the cause of a failure behind advice. On a branch where the audit
+       * passed they remain what they are, a warning.
+       */
+      severity: auditFailed ? 'error' : 'warning',
       title: `${String(security.high)} high-severity vulnerability(s)`,
       detail: `${String(security.high)} high-severity vulnerability(s) found.`,
       // Tool-neutral: this path now serves .NET as well, where the command
@@ -788,6 +1121,14 @@ export function translateResults(
     return messages;
   }
 
+  /*
+   * The stage left its work out on purpose and said why. It is not a result:
+   * there is nothing to translate, only the reason to show.
+   */
+  if (results.skipped !== undefined) {
+    return cleanMessages([skippedMessage(results.skipped.reason)]);
+  }
+
   const { tests, coverage, lint, security, sonar, findings } = results;
 
   if (tests !== undefined) {
@@ -807,8 +1148,13 @@ export function translateResults(
     pushLintMessages(messages, lint);
   }
 
+  const failedJobs = failedJobsOf(rawLogs, results.checks);
+  const auditFailed = failedJobs.some((job) =>
+    /audit|security/.test(failedJobId(job).toLowerCase()),
+  );
+
   if (security !== undefined) {
-    pushSecurityMessages(messages, security);
+    pushSecurityMessages(messages, security, auditFailed);
   }
 
   if (findings !== undefined) {
@@ -845,8 +1191,34 @@ export function translateResults(
   );
 
   if (conclusion === 'failure' && !alreadyExplained) {
-    messages.unshift(unreportedFailureMessage(stage, rawLogs, annotations));
-  } else if (annotations.length > 0) {
+    messages.unshift(unreportedFailureMessage(stage, failedJobs, annotations));
+  }
+
+  /*
+   * Every failed job, not only the first one that explains itself.
+   *
+   * One message used to stand in for the whole stage: Sonar failing its gate
+   * made the stage "explained", and a failed licence scan and a failed lint job
+   * beside it were never mentioned - so the reader fixed Sonar, pushed, and
+   * met the next one. The jobs a message above already accounts for are left
+   * out; the rest are listed. When nothing explained the failure and there are
+   * no annotations, the message above already lists every job.
+   */
+  if (
+    conclusion === 'failure' &&
+    (alreadyExplained || annotations.length > 0)
+  ) {
+    const covered = coveredJobPredicate(results, auditFailed);
+    const uncovered = failedJobs.filter((job) => !covered(failedJobId(job)));
+    if (uncovered.length > 0) {
+      messages.push(otherFailedJobsMessage(stage, uncovered));
+    }
+  }
+
+  if (
+    !(conclusion === 'failure' && !alreadyExplained) &&
+    annotations.length > 0
+  ) {
     /*
      * Everything else that carries annotations: a stage that passed, and a
      * failure that already explained itself. Appended rather than unshifted —
@@ -855,5 +1227,5 @@ export function translateResults(
     messages.push(advisoryAnnotationMessage(stage, conclusion, annotations));
   }
 
-  return messages;
+  return cleanMessages(messages);
 }

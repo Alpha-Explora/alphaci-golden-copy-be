@@ -110,3 +110,39 @@ export const PROVISIONED_BRANCHES: readonly string[] = [
   DEFAULT_BRANCH,
   ...BRANCHES_CREATED_ON_PROVISION,
 ];
+
+/** The reported stages of a generated pipeline, in the order they run. */
+export type PipelineStageName = 'access' | 'quality' | 'package' | 'verify';
+
+/**
+ * Whether a generated pipeline runs this stage's work on this branch.
+ *
+ * The workflow generator and the run reader have to agree on this and neither
+ * owns the other. The generator scopes jobs by branch (build and quality run on
+ * every tier of the flow, the post-deploy tests only where something is hosted);
+ * the reader had no idea, so a stage that is absent BY DESIGN on a branch -
+ * verify on dev - was read as a stage that never arrived, resolved to
+ * `stalled`, and turned a green run red.
+ *
+ *   access   runs on every ref the workflow triggers on, pull requests included
+ *   quality  the tiers of the flow (PIPELINE_BRANCHES)
+ *   package  the tiers of the flow (PIPELINE_BRANCHES)
+ *   verify   only where there is a deployment to test (HOSTED_BRANCHES)
+ *
+ * Any other ref - a feature branch, a pull request's merge ref - has no
+ * chained-stage work: those jobs are scoped out by branch and report nothing.
+ */
+export function stageRunsOnBranch(
+  stage: PipelineStageName,
+  branch: string,
+): boolean {
+  switch (stage) {
+    case 'access':
+      return true;
+    case 'quality':
+    case 'package':
+      return (PIPELINE_BRANCHES as readonly string[]).includes(branch);
+    case 'verify':
+      return (HOSTED_BRANCHES as readonly string[]).includes(branch);
+  }
+}

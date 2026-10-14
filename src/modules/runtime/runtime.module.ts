@@ -15,6 +15,7 @@ import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { DeploymentTargetsController } from './api/deployment-targets.controller';
 import { DeploymentTargetsRepository } from './infrastructure/repositories/deployment-targets.repository';
 import { DeploymentTargetsService } from './application/deployment-targets.service';
+import { DeploymentLogsHubService } from './application/deployment-logs-hub.service';
 import {
   DEPLOYMENT_DRIFT_FINDINGS_STORE,
   DEPLOYMENT_DRIFT_QUERY,
@@ -137,6 +138,9 @@ import {
       useExisting: DeploymentTargetsRepository,
     },
     ProviderConnectionsService,
+    // Plain class with no constructor deps: one shared instance is the point
+    // (it owns the log pollers and the per-credential rate-limit cooldowns).
+    DeploymentLogsHubService,
     DeploymentTargetsService,
     {
       provide: DEPLOYMENT_PROVIDER_RESOURCES_TEARDOWN,

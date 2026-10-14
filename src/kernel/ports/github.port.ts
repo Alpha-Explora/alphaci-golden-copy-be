@@ -168,7 +168,26 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestSummary {
   body: string | null;
 }
 
-/** One check GitHub ran against a pull request's head commit. */
+/**
+ * One line GitHub attached to a check run: a lint error, a failing test, a
+ * compiler message. These are the actual errors, with a file and a line.
+ */
+export interface GitHubCheckAnnotation {
+  path: string;
+  line: number | null;
+  /** GitHub's own vocabulary: `failure`, `warning` or `notice`. */
+  level: string;
+  title: string | null;
+  message: string;
+}
+
+/**
+ * One check GitHub ran against a pull request's head commit.
+ *
+ * The identity and detail fields below were added after the first six, and are
+ * always present (null when GitHub has nothing to say) except `annotations`,
+ * which is omitted when it was not looked up.
+ */
 export interface GitHubPullRequestCheck {
   name: string;
   status: string;
@@ -176,7 +195,54 @@ export interface GitHubPullRequestCheck {
   detailsUrl: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  /** The check run id; null for a commit status, which has none. */
+  id: number | null;
+  /** A check run (Actions or an app) or a legacy commit status. */
+  kind: 'check-run' | 'status';
+  /**
+   * The workflow this check belongs to. Two jobs of the same name from two
+   * workflows are otherwise indistinguishable. Null when the check did not
+   * come from GitHub Actions, or the workflow lookup failed.
+   */
+  workflowName: string | null;
+  /** The event that triggered that workflow (`pull_request`, `push`, ...). */
+  event: string | null;
+  /**
+   * The Actions job id, so the product can open the job's own log. For a
+   * GitHub Actions check run the check-run id IS the job id; null for any
+   * other app and for statuses.
+   */
+  jobId: number | null;
+  /** The check run's `output.title`. */
+  title: string | null;
+  /** The check run's `output.summary`, cut to a readable length. */
+  summary: string | null;
+  /** A commit status's description. Null for check runs. */
+  description: string | null;
+  /**
+   * The errors GitHub recorded against a FAILED check run. Present (possibly
+   * empty) only when they were looked up; absent for passing checks, for
+   * statuses, and when the lookup failed.
+   */
+  annotations?: GitHubCheckAnnotation[];
 }
+
+/**
+ * What reading a job log can honestly say.
+ *
+ * `expired` and `no-access` used to be one `null`, so a token that simply could
+ * not read the logs of a private repository was reported as "the log expired".
+ */
+export type GitHubJobLogResult =
+  | { status: 'ok'; content: string; truncated: boolean }
+  /** GitHub says the log is gone (410). */
+  | { status: 'expired' }
+  /**
+   * 403 or 404: GitHub answers a token that may not read Actions logs with a
+   * 404 as often as a 403, so this does not prove the log exists. Callers that
+   * know the job's age can still decide an old one has simply expired.
+   */
+  | { status: 'no-access' };
 
 /** The outcome of asking GitHub to merge. */
 export interface GitHubMergeResult {
@@ -258,6 +324,52 @@ export interface GitHubOpenPullRequestInput {
 export type GitHubOpenPullRequestResult =
   | { created: true; pullRequest: GitHubPullRequestSummary }
   | { created: false; message: string };
+
+/**
+ * What reading a handful of paths at one ref found.
+ *
+ * `content` is null for a file that exists but could not be decoded as text
+ * (a directory, a binary, an empty file) - `exists` is the question callers
+ * mostly ask.
+ */
+export interface GitHubRepoFileProbe {
+  exists: boolean;
+  content: string | null;
+}
+
+/**
+ * `unauthorized` is GitHub no longer accepting the token (401). Every other
+ * refusal on a read is a transport failure and throws.
+ */
+export type GitHubRepoFilesResult =
+  | { read: true; files: Record<string, GitHubRepoFileProbe> }
+  | { read: false; reason: 'unauthorized'; message: string };
+
+export interface GitHubCommitFilesInput {
+  /** Existing branch the new one starts from. */
+  fromBranch: string;
+  /** Branch to create. Created LAST, so a failure leaves nothing behind. */
+  newBranch: string;
+  message: string;
+  /** Full file contents (UTF-8) to add or replace in the one commit. */
+  files: { path: string; content: string }[];
+}
+
+/**
+ * The outcome of committing files to a new branch on a person's behalf.
+ *
+ *   unauthorized  401 - the sign-in was revoked or replaced.
+ *   forbidden     403/404 - the person lacks write access.
+ *   branch_exists 422 on the ref - `newBranch` was taken (a lost race).
+ *   base_missing  `fromBranch` does not exist.
+ */
+export type GitHubCommitFilesResult =
+  | { committed: true; commitSha: string }
+  | {
+      committed: false;
+      reason: 'unauthorized' | 'forbidden' | 'branch_exists' | 'base_missing';
+      message: string;
+    };
 
 export interface GithubProjectPort {
   getEnforcedOrg(): string;
@@ -466,6 +578,17 @@ export interface GithubProjectPort {
     branch?: string | null,
     limit?: number,
   ): Promise<GitHubWorkflowRunSummary[]>;
+  /**
+   * The newest run of ONE workflow file on a branch (GET
+   * /actions/workflows/{file}/runs?branch=&per_page=1), or null when it has
+   * none. Throws on API failure; callers degrade.
+   */
+  getLatestWorkflowFileRun(
+    accessToken: string,
+    repoFullName: string,
+    workflowFile: string,
+    branch: string,
+  ): Promise<GitHubWorkflowRunSummary | null>;
   getWorkflowRunJobs(
     accessToken: string,
     repoFullName: string,
@@ -476,7 +599,7 @@ export interface GithubProjectPort {
     repoFullName: string,
     jobId: number,
     maxChars?: number,
-  ): Promise<{ content: string; truncated: boolean } | null>;
+  ): Promise<GitHubJobLogResult>;
   listPullRequests(
     accessToken: string,
     repoFullName: string,
@@ -531,6 +654,26 @@ export interface GithubProjectPort {
     repoFullName: string,
     input: GitHubOpenPullRequestInput,
   ): Promise<GitHubOpenPullRequestResult>;
+  /**
+   * Read several paths at `ref`, in parallel. Used by the browser-test
+   * status/PR flow to learn which starter files, lockfiles and package.json a
+   * repository already has.
+   */
+  readRepoFiles(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+    paths: readonly string[],
+  ): Promise<GitHubRepoFilesResult>;
+  /**
+   * Commit `files` to a NEW branch in one commit through the Git Data API
+   * (blobs, tree, commit, then the ref), attributed to the token's owner.
+   */
+  commitFilesToNewBranch(
+    accessToken: string,
+    repoFullName: string,
+    input: GitHubCommitFilesInput,
+  ): Promise<GitHubCommitFilesResult>;
   /**
    * Dispatch a `workflow_dispatch` run on a person's behalf — first caller:
    * QA automation's "Run Playwright" (re-dispatches the generated verify

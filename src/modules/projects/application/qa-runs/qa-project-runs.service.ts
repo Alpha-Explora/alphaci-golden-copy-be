@@ -16,8 +16,10 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import { bucketMyQaItem } from '../../domain/qa-my-items.rules';
 import {
   canCreateRun,
+  canAddEvidence,
   canDispatchAutomation,
   canReopenRun,
   canSetReturnedToDev,
@@ -59,6 +61,7 @@ import {
 import { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
 import type { QaProgress } from '../qa-checklists/qa-requirements.contracts';
 import { QaAutomationService } from './qa-automation.service';
+import { QaRunAttachmentsService } from './qa-run-attachments.service';
 import { matchAutomatedResult } from './qa-automation-matching';
 import {
   buildQaProjectReport,
@@ -81,6 +84,7 @@ import {
   type QaProjectRunsPage,
   type QaRunActorContext,
   type QaRunAutomation,
+  type QaRunItemAttachmentRef,
   type QaRunItemPrevious,
 } from './qa-runs.contracts';
 import {
@@ -180,6 +184,7 @@ export class QaProjectRunsService {
     private readonly projectContext: QaProjectContextService,
     private readonly heads: QaUatHeadsService,
     private readonly automation: QaAutomationService,
+    private readonly attachments: QaRunAttachmentsService,
     // Explicit tokens: the sink aliases are type aliases, which TypeScript
     // emits as `Object` in design:paramtypes, so without @Inject Nest finds no
     // provider and @Optional() silently injects undefined.
@@ -330,7 +335,10 @@ export class QaProjectRunsService {
     const frozen = activeSignoff !== null;
     const run = frozen
       ? (activeSignoff.report_json as unknown as ProjectQaRun)
-      : await this.getById(project.deliveryProjectId, actor, runId);
+      : this.withAttachmentRefs(
+          await this.getById(project.deliveryProjectId, actor, runId),
+          await this.attachments.referencesForRun(runRow.id),
+        );
     const history = await this.runs.listSupersededSignoffs(runRow.id);
     return buildQaProjectReport({
       generatedAt: new Date().toISOString(),
@@ -391,14 +399,10 @@ export class QaProjectRunsService {
           runId: runItem ? (run?.id ?? null) : null,
           runItem,
         };
-        if (runItem?.status === 'returned_to_dev') {
-          feed.returned.push(entry);
-        } else if (item.progress === 'in_progress') {
-          feed.inProgress.push(entry);
-        } else if (item.progress === 'todo') {
-          feed.todo.push(entry);
-        } else if (!runItem || runItem.status === 'pending') {
-          feed.readyForQa.push(entry);
+        // Same rule the team overview counts `readyForQa` with.
+        const bucket = bucketMyQaItem(item.progress, runItem?.status ?? null);
+        if (bucket) {
+          feed[bucket].push(entry);
         }
       }
     }
@@ -629,6 +633,7 @@ export class QaProjectRunsService {
     const coverage = await this.coverageOf(run.id);
     const readings = await this.heads.readHeads(project.repositories, actor);
 
+    const attachmentRefs = await this.attachments.referencesForRun(run.id);
     const reportBase = await this.assembleRun({
       project,
       run: { ...run, status: 'signed_off', updated_at: now },
@@ -639,7 +644,7 @@ export class QaProjectRunsService {
       readings,
     });
     const report: ProjectQaRun = {
-      ...reportBase,
+      ...this.withAttachmentRefs(reportBase, attachmentRefs),
       signoff: {
         id: signoffId,
         verdict: dto.verdict,
@@ -665,6 +670,9 @@ export class QaProjectRunsService {
           count: items.length,
           rowVersionSum: items.reduce((sum, item) => sum + item.row_version, 0),
         },
+        expectedAttachmentIds: [...attachmentRefs.values()].flatMap((refs) =>
+          refs.map((ref) => ref.id),
+        ),
       })
       .catch((error: unknown) => {
         if (error instanceof QaRunItemsChangedError) {
@@ -944,20 +952,26 @@ export class QaProjectRunsService {
     const sourceIds = items
       .map((item) => item.source_item_id)
       .filter((id): id is string => id !== null);
-    const [priorSummaries, progressBySource, automationByRepository, changed] =
-      await Promise.all([
-        this.runs.findPriorItemSummaries(
-          items
-            .map((item) => item.prior_run_item_id)
-            .filter((id): id is string => id !== null),
-        ),
-        this.requirements.listItemsByIds(sourceIds),
-        this.automationFor(coverage),
-        this.requirements.requirementsChangedSince(
-          project.deliveryProjectId,
-          signoff?.signed_at ?? run.created_at,
-        ),
-      ]);
+    const [
+      priorSummaries,
+      progressBySource,
+      automationByRepository,
+      changed,
+      attachmentCounts,
+    ] = await Promise.all([
+      this.runs.findPriorItemSummaries(
+        items
+          .map((item) => item.prior_run_item_id)
+          .filter((id): id is string => id !== null),
+      ),
+      this.requirements.listItemsByIds(sourceIds),
+      this.automationFor(coverage),
+      this.requirements.requirementsChangedSince(
+        project.deliveryProjectId,
+        signoff?.signed_at ?? run.created_at,
+      ),
+      this.attachments.countsByItem(run.id),
+    ]);
 
     const repositories = buildHeadStatuses(
       project.repositories,
@@ -988,6 +1002,7 @@ export class QaProjectRunsService {
         requirementKind: row.requirement_kind,
         acceptanceCriteria: row.acceptance_criteria,
         progress,
+        attachmentCount: attachmentCounts.get(row.id) ?? 0,
       };
     });
 
@@ -1003,8 +1018,26 @@ export class QaProjectRunsService {
         canReopen: !open && canReopenRun(role),
         canDispatch: open && canDispatchAutomation(role),
       },
+      attachments: {
+        enabled: this.attachments.isEnabled(),
+        canAdd: open && canAddEvidence(role),
+      },
       automation: merged,
       automationByRepository,
+    };
+  }
+
+  /** The report carries each item's attachment ids and captions (no URLs: signed URLs expire). */
+  private withAttachmentRefs(
+    run: ProjectQaRun,
+    refs: ReadonlyMap<string, QaRunItemAttachmentRef[]>,
+  ): ProjectQaRun {
+    return {
+      ...run,
+      items: run.items.map((item) => ({
+        ...item,
+        attachments: refs.get(item.id) ?? [],
+      })),
     };
   }
 

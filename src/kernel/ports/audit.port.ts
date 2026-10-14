@@ -51,9 +51,36 @@ export interface ProjectAuditPage {
   next: string | null;
 }
 
+/** One repository project and the earliest time that counts for it. */
+export interface ProjectEventSince {
+  projectId: string;
+  /** ISO. Events recorded at or after this instant count. */
+  since: string;
+}
+
 /** Read capability exposed by platform-ops to project read models. */
 export interface AuditQueryPort {
   listProjectEvents(query: ProjectAuditQuery): Promise<ProjectAuditPage>;
+}
+
+/**
+ * "Has this happened, and when" across many projects at once, for read models
+ * that summarize (the team QA overview) rather than list events like the Audit
+ * tab does. A separate port from AuditQueryPort so the Audit tab's consumers
+ * do not depend on it.
+ */
+export interface AuditLatestEventQueryPort {
+  /**
+   * One query for all `lookups`, never one per project: the newest `createdAt`
+   * (ISO) of an event with `eventCode` recorded against each project at or
+   * after that project's own `since`. A project with no such event is absent
+   * from the map. Null when audit recording is off: nothing is stored then, so
+   * "no event" would be an answer the port cannot give.
+   */
+  findLatestProjectEventTimes(
+    eventCode: string,
+    lookups: readonly ProjectEventSince[],
+  ): Promise<Map<string, string> | null>;
 }
 
 /** Security-sensitive audit capability whose writes are always enabled. */
@@ -114,5 +141,8 @@ export interface AuditExternalIngestPort {
 }
 
 export const AUDIT_QUERY_PORT = Symbol('AuditQueryPort');
+export const AUDIT_LATEST_EVENT_QUERY_PORT = Symbol(
+  'AuditLatestEventQueryPort',
+);
 export const AUDIT_EXTERNAL_INGEST_PORT = Symbol('AuditExternalIngestPort');
 export const AUDIT_SECURITY_PORT = Symbol('AuditSecurityPort');

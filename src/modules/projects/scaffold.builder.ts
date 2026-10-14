@@ -8,6 +8,8 @@
 // Shape-aware: the scaffold structure varies by repoShape (standalone, monorepo,
 // microservices, multi-repo) as well as the technology stack.
 
+import { browserTestDevDependencies } from './application/workflows/browser-test-dependencies';
+import { buildBrowserTestStarterFiles } from './scaffolds/browser-test-starter';
 import { buildDotnetStandaloneScaffold } from './scaffolds/dotnet-scaffold';
 import type { ScaffoldFile } from './scaffolds/scaffold-file';
 
@@ -211,6 +213,8 @@ function buildPackageJson(packageName: string, stack: string): string {
   const pkg = {
     name: packageName,
     version: '0.1.0',
+    // Never published: lets the licence gate skip the app itself (--excludePrivatePackages).
+    private: true,
     scripts,
     dependencies: {} as Record<string, string>,
     devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
@@ -255,124 +259,17 @@ function buildPackageJson(packageName: string, stack: string): string {
    * the runner and the script with the scaffold is what keeps that stage
    * green on a project nobody has written a spec for yet - without them a
    * fresh repository goes red at its last stage on the first promotion.
+   *
+   * Versions come from the shared browser-test dependency constant: the
+   * visual checks need @playwright/test >= 1.50 and the accessibility check
+   * needs @axe-core/playwright.
    */
   if (isNextJs || stack === 'react') {
     scripts['test:e2e'] = 'playwright test';
-    pkg.devDependencies['@playwright/test'] = '^1.49.0';
+    Object.assign(pkg.devDependencies, browserTestDevDependencies());
   }
 
   return JSON.stringify(pkg, null, 2);
-}
-
-/**
- * Playwright configuration for the deployed-app suite.
- *
- * testDir and the `.e2e-spec.ts` suffix match what jest.config.ts already
- * excludes, so the two runners cannot pick up each other's files.
- *
- * The base URL arrives as E2E_BASE_URL, which playwright-e2e.yml sets from
- * the verify stage's resolved deployment hostname. There is no fallback to
- * localhost on purpose: a suite that quietly tests a dev server instead of
- * the deployment it was pointed at is worse than one that fails.
- *
- * A uat/main preview sits behind Vercel's Standard Protection, which answers
- * every request - Playwright's included - with a redirect to Vercel's own
- * SSO page rather than the app. VERCEL_AUTOMATION_BYPASS_SECRET is the
- * per-project key playwright-e2e.yml is handed when a Vercel frontend target
- * installed one (staged-workflow.builder.ts's uiTestJob); sent as a header,
- * it is Vercel's own documented way past that wall for CI. Unset - no Vercel
- * frontend target, or one that predates this - and the suite runs exactly as
- * it did before, against whatever E2E_BASE_URL resolves to unprotected.
- */
-function buildPlaywrightConfig(): string {
-  return [
-    "import { defineConfig, devices } from '@playwright/test';",
-    '',
-    'const baseURL = process.env.E2E_BASE_URL;',
-    '',
-    'if (!baseURL) {',
-    '  throw new Error(',
-    "    'E2E_BASE_URL is not set. The end-to-end suite runs against a deployed " +
-      "environment, so there is no default to fall back to.',",
-    '  );',
-    '}',
-    '',
-    'const vercelAutomationBypassSecret =',
-    '  process.env.VERCEL_AUTOMATION_BYPASS_SECRET;',
-    '',
-    'export default defineConfig({',
-    "  testDir: 'tests/e2e',",
-    "  testMatch: '**/*.e2e-spec.ts',",
-    '  // A deployed environment is shared, so a failure is worth one retry',
-    '  // before it is called a failure - but only in CI, where flakes cost a',
-    '  // promotion rather than a rerun.',
-    '  retries: process.env.CI ? 1 : 0,',
-    '  // The json reporter is what ALPHACI reads to show per-test results',
-    '  // beside the other tools, instead of one pass/fail word for the whole',
-    '  // suite. The verify stage sets PLAYWRIGHT_JSON_OUTPUT_NAME, which takes',
-    '  // precedence over the path given here, so the two cannot drift.',
-    '  reporter: process.env.CI',
-    '    ? [["list"], ["json", { outputFile: "test-results/alphaci-e2e.json" }], ["html", { open: "never" }]]',
-    '    : "list",',
-    '  use: {',
-    '    baseURL,',
-    "    trace: 'on-first-retry',",
-    '    // Vercel Protection Bypass for Automation: gets Playwright past the',
-    "    // deployment's SSO wall on a protected uat/main preview. Omitted",
-    '    // entirely when the secret is not set, rather than sent empty.',
-    '    ...(vercelAutomationBypassSecret',
-    '      ? {',
-    '          extraHTTPHeaders: {',
-    "            'x-vercel-protection-bypass': vercelAutomationBypassSecret,",
-    "            'x-vercel-set-bypass-cookie': 'true',",
-    '          },',
-    '        }',
-    '      : {}),',
-    '  },',
-    '  projects: [',
-    "    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },",
-    '  ],',
-    '});',
-    '',
-  ].join('\n');
-}
-
-/**
- * The smoke spec every generated frontend starts with.
- *
- * Deliberately shallow: it asserts the deployment answers and renders, which
- * is the question the verify stage exists to ask. Anything about this app's
- * own behaviour belongs in specs the team writes, and a scaffold that guessed
- * at those would ship failing tests on day one.
- */
-function buildE2eSmokeSpec(serviceName: string): string {
-  return [
-    "import { expect, test } from '@playwright/test';",
-    '',
-    `test.describe('${serviceName} deployment', () => {`,
-    "  test('serves its entry page', async ({ page }) => {",
-    "    const response = await page.goto('/');",
-    '',
-    '    expect(response?.ok()).toBeTruthy();',
-    "    await expect(page.locator('body')).toBeVisible();",
-    '  });',
-    '});',
-    '',
-  ].join('\n');
-}
-
-/** The browser-suite files a frontend scaffold ships, rooted at `prefix`. */
-function buildBrowserSuiteFiles(
-  serviceName: string,
-  prefix = '',
-): ScaffoldFile[] {
-  return [
-    { path: `${prefix}playwright.config.ts`, content: buildPlaywrightConfig() },
-    {
-      path: `${prefix}tests/e2e/home.e2e-spec.ts`,
-      content: buildE2eSmokeSpec(serviceName),
-    },
-  ];
 }
 
 // Base tsconfig covers src AND tests so `tsc --noEmit` type-checks the test
@@ -501,6 +398,7 @@ function buildTestsReadme(): string {
     '- Mirror the `src/` structure: `src/user/user.service.ts` is tested by `tests/unit/user/user.service.spec.ts`.',
     '- Co-located specs inside `src/` also work, but `tests/unit/` is the checked convention: CI verifies this folder exists.',
     '- When you add end-to-end suites, keep them in `tests/e2e/` and name files `*.e2e-spec.ts` so the unit test runner does not pick them up.',
+    '- Frontends start with four browser checks in `tests/e2e/` (pages, links, accessibility, visual). Add routes to `PAGES` in `tests/e2e/support.ts` as the app grows.',
     '',
   ].join('\n');
 }
@@ -879,6 +777,8 @@ function buildPackagePackageJson(packageName: string, stack: string): string {
   const pkg = {
     name: packageName,
     version: '0.1.0',
+    // Never published: lets the licence gate skip the app itself (--excludePrivatePackages).
+    private: true,
     scripts: {
       build: 'tsc -p tsconfig.build.json',
       test: 'jest',
@@ -1006,7 +906,7 @@ function buildServiceSubdirFiles(
       },
       { path: `${dir}/src/app/page.tsx`, content: buildNextPage(serviceName) },
       { path: `${dir}/next.config.ts`, content: buildNextConfig() },
-      ...buildBrowserSuiteFiles(serviceName, `${dir}/`),
+      ...buildBrowserTestStarterFiles(`${dir}/`),
     );
   } else if (stack === 'react') {
     files.push(
@@ -1015,7 +915,7 @@ function buildServiceSubdirFiles(
         path: `${dir}/tests/unit/App.spec.tsx`,
         content: buildReactAppSpec(serviceName, '../../src/App'),
       },
-      ...buildBrowserSuiteFiles(serviceName, `${dir}/`),
+      ...buildBrowserTestStarterFiles(`${dir}/`),
     );
   }
 
@@ -1100,7 +1000,7 @@ function buildStandaloneScaffold(
       { path: 'src/app/layout.tsx', content: buildNextLayout(serviceName) },
       { path: 'src/app/page.tsx', content: buildNextPage(serviceName) },
       { path: 'next.config.ts', content: buildNextConfig() },
-      ...buildBrowserSuiteFiles(serviceName),
+      ...buildBrowserTestStarterFiles(),
     ];
   } else if (stack === 'react') {
     stackFiles = [
@@ -1109,7 +1009,7 @@ function buildStandaloneScaffold(
         path: 'tests/unit/App.spec.tsx',
         content: buildReactAppSpec(serviceName, '../../src/App'),
       },
-      ...buildBrowserSuiteFiles(serviceName),
+      ...buildBrowserTestStarterFiles(),
     ];
   } else {
     stackFiles = [];

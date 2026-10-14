@@ -92,6 +92,12 @@ export function withDefaultCreateDeploymentProvisioning(input: {
     | DeploymentProvisioningDefaultsPort
     | undefined;
 }): DeploymentProvisioningRequestDto | undefined {
+  // An explicit "no hosting" (enabled: false) is a choice, not an omission:
+  // never add a default target on top of it. Only an absent request gets one.
+  if (input.request?.enabled === false) {
+    return input.request;
+  }
+
   const role: 'backend' | 'frontend' = isBackendProjectType(input.projectTypeId)
     ? 'backend'
     : 'frontend';
@@ -157,6 +163,9 @@ export function withDefaultFrontendDeploymentProvisioning(input: {
     | DeploymentProvisioningDefaultsPort
     | undefined;
 }): DeploymentProvisioningRequestDto | undefined {
+  if (input.request?.enabled === false) {
+    return input.request;
+  }
   const existingTargets = input.request?.targets ?? [];
   if (existingTargets.some((target) => target.slot === 'frontend')) {
     return input.request;

@@ -12,68 +12,40 @@ import {
   type ProjectVisibilityLookup,
 } from '#kernel/ports/project-visibility.port';
 import { CiRunReportsRepository } from '../infrastructure/ci-run-reports.repository';
-import { translateResults } from './translate-results';
+import { buildCiRunReport, type CiRunReport } from './ci-run-report';
+import {
+  cleanMessages,
+  reclassifyStoredFailure,
+  skippedMessage,
+  stripAnsiDeep,
+  translateResults,
+} from './translate-results';
+import type {
+  RunGroup,
+  RunsResponse,
+  StageCheck,
+  StageReport,
+  StageResults,
+} from './ci-run.types';
 import {
   resolveOverallStatus,
   resolveStages,
   STAGE_ORDER,
   type StageId,
-  type StageStatus,
 } from './resolve-stage-status';
 import type { CiReportBodyDto } from '../api/dto/ci-report-body.dto';
 import type { CiRunStatus } from '../infrastructure/ci-run-reports.repository';
 import type { FriendlyMessage } from './translate-results';
 
-// ─── Response shapes ──────────────────────────────────────────────────────────
-
-export interface StageReport {
-  stage: StageId;
-  status: StageStatus;
-  /**
-   * The GitHub run this stage executed in.
-   *
-   * Sent so a client can ask for the stage's failure output without parsing it
-   * back out of `githubRunUrl`, which is a display string and free to change.
-   */
-  runId: number;
-  friendlyMessages: FriendlyMessage[];
-  githubRunUrl: string;
-  updatedAt: string;
-  rawLogs: string | null;
-  /**
-   * What each tool in the stage concluded.
-   *
-   * A stage status answers "did quality pass". It cannot answer "did the
-   * licence scan pass", and the client had no way to ask: `results` was stored
-   * and never returned, so one bar stood in for seven tools.
-   *
-   * Empty for a stage reported by a pipeline generated before per-tool
-   * reporting existed. Empty means "not known", never "no tools ran".
-   */
-  checks: StageCheck[];
-}
-
-/** One tool's outcome inside a stage. */
-export interface StageCheck {
-  name: string;
-  conclusion: string;
-  startedAt?: string;
-  completedAt?: string;
-}
-
-export interface RunGroup {
-  runId: number;
-  repoFullName: string;
-  branch: string;
-  commitSha: string;
-  startedAt: string;
-  overallStatus: 'success' | 'failure' | 'running' | 'cancelled' | 'partial';
-  stages: StageReport[];
-}
-
-export interface RunsResponse {
-  runs: RunGroup[];
-}
+// Response shapes live in ci-run.types.ts; re-exported so importers of this
+// module keep working.
+export type {
+  RunGroup,
+  RunsResponse,
+  StageCheck,
+  StageReport,
+  StageResults,
+} from './ci-run.types';
 
 // ─── Ownership lookup row ─────────────────────────────────────────────────────
 
@@ -123,6 +95,97 @@ function readChecks(results: Record<string, unknown>): StageCheck[] {
   });
 }
 
+/** The structured result keys returned to clients, in storage order. */
+const RESULT_KEYS = [
+  'tests',
+  'coverage',
+  'lint',
+  'security',
+  'findings',
+  'sonar',
+] as const;
+
+/** Defensive ceiling on any list inside a stored result. Ingest already caps. */
+const RESULT_LIST_CAP = 50;
+
+function capLists(value: unknown): unknown {
+  // Escape codes from a test runner's colouring: stripped on read so stored
+  // rows written before ingest cleaned them render clean too.
+  if (typeof value === 'string') {
+    return stripAnsiDeep(value);
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, RESULT_LIST_CAP).map(capLists);
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, capLists(entry)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * The structured results back out of the stored blob, or undefined for none.
+ *
+ * Same distrust as `readChecks`: the column is jsonb, so a key is returned
+ * only when it is an object, and the lists inside are capped again in case a
+ * row predates the limits ingest enforces today.
+ */
+function readResults(results: unknown): StageResults | undefined {
+  if (typeof results !== 'object' || results === null) {
+    return undefined;
+  }
+
+  const stored = results as Record<string, unknown>;
+  const picked: Record<string, unknown> = {};
+  for (const key of RESULT_KEYS) {
+    const value = stored[key];
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      picked[key] = capLists(value);
+    }
+  }
+
+  return Object.keys(picked).length > 0 ? (picked as StageResults) : undefined;
+}
+
+/**
+ * Why a stage was left out on purpose, when it reported that.
+ *
+ * Stored as a successful report carrying `results.skipped.reason` (the status
+ * column cannot hold a new value without a migration), so the read path turns
+ * it back into what it is: a stage that did not run, with the reason.
+ */
+function readSkipReason(results: unknown): string | undefined {
+  if (typeof results !== 'object' || results === null) {
+    return undefined;
+  }
+  const skipped = (results as Record<string, unknown>)['skipped'];
+  if (typeof skipped !== 'object' || skipped === null) {
+    return undefined;
+  }
+  const reason = (skipped as Record<string, unknown>)['reason'];
+  return typeof reason === 'string' && reason.trim() !== ''
+    ? stripAnsiDeep(reason)
+    : undefined;
+}
+
+/**
+ * A pull request's merge ref (`7/merge`).
+ *
+ * GitHub runs the access workflow on it for a pull_request event, so its
+ * report is filed under that ref. The chained stages file theirs under the
+ * pull request's HEAD branch, so a merge-ref group can only ever hold the
+ * access stage and every later one resolved to stalled: eleven red runs for
+ * pull requests that were fine. It is not a pipeline execution of a branch.
+ */
+const MERGE_REF = /^\d+\/merge$/;
+
+function optionalResults(results: unknown): { results?: StageResults } {
+  const read = readResults(results);
+  return read ? { results: read } : {};
+}
+
 @Injectable()
 export class CiReportsService {
   private readonly logger = new Logger(CiReportsService.name);
@@ -159,9 +222,12 @@ export class CiReportsService {
         runId: body.runId,
         stage: body.stage,
         status,
-        results: {
+        results: stripAnsiDeep({
           ...(body.results.tests !== undefined && {
             tests: body.results.tests,
+          }),
+          ...(body.results.skipped !== undefined && {
+            skipped: body.results.skipped,
           }),
           ...(body.results.coverage !== undefined && {
             coverage: body.results.coverage,
@@ -186,7 +252,7 @@ export class CiReportsService {
            */
           ...(body.checks !== undefined &&
             body.checks.length > 0 && { checks: body.checks }),
-        },
+        }),
         friendlyMessages,
         ...(body.rawLogs !== undefined && { rawLogs: body.rawLogs }),
       });
@@ -244,6 +310,32 @@ export class CiReportsService {
       offset,
     );
     return { runs: this.groupIntoRuns(rows) };
+  }
+
+  /**
+   * The report of one pipeline execution, for export. Same visibility rule as
+   * the run list: the caller must be able to see the repository's project.
+   * A 404 when nothing was reported for that repository, branch and commit.
+   */
+  async getRunReport(
+    userId: string,
+    repoFullName: string,
+    branch: string,
+    commitSha: string,
+  ): Promise<CiRunReport> {
+    await this.assertOwnership(userId, repoFullName);
+    const rows = await this.ciRunReportsRepository.findByRepoBranchSha(
+      repoFullName,
+      branch,
+      commitSha,
+    );
+    const run = this.groupIntoRuns(rows)[0];
+    if (!run) {
+      throw new NotFoundException(
+        `No CI results were reported for ${repoFullName} on ${branch} at ${commitSha.slice(0, 7)}.`,
+      );
+    }
+    return buildCiRunReport({ generatedAt: new Date().toISOString(), run });
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
@@ -333,9 +425,25 @@ export class CiReportsService {
     results: unknown;
     raw_logs: string | null;
   }): FriendlyMessage[] {
-    const stored = row.friendly_messages;
-    if (row.status !== 'failure' || (stored && stored.length > 0)) {
-      return stored ?? [];
+    const skipReason =
+      row.status === 'success' ? readSkipReason(row.results) : undefined;
+    if (skipReason !== undefined) {
+      return cleanMessages([skippedMessage(skipReason)]);
+    }
+
+    const stored = row.friendly_messages ?? [];
+    if (row.status !== 'failure') {
+      return cleanMessages(stored);
+    }
+
+    if (stored.length > 0) {
+      // Escape codes and `:null` locations are cleaned, and a verify failure
+      // filed under "Tests failed" for a deployment that never came up gets its
+      // real copy back. None of it needs the original annotations, which are
+      // not stored, so history benefits without a backfill.
+      return cleanMessages(
+        reclassifyStoredFailure(row.stage, stored, row.raw_logs),
+      );
     }
 
     return translateResults(
@@ -385,6 +493,9 @@ export class CiReportsService {
     for (const row of rows) {
       // pg returns bigint as string; parse to number (GitHub run IDs are safe integers)
       const runId = Number(row.run_id);
+      if (MERGE_REF.test(row.branch)) {
+        continue;
+      }
       const groupKey = `${row.repo_full_name}::${row.branch}::${row.commit_sha}`;
 
       if (!groupMap.has(groupKey)) {
@@ -401,19 +512,22 @@ export class CiReportsService {
 
       const group = groupMap.get(groupKey);
       if (group && !group.stages.has(row.stage)) {
+        const skipped =
+          row.status === 'success' && readSkipReason(row.results) !== undefined;
         group.stageRunIds.set(row.stage, runId);
         if (row.created_at < group.startedAt) {
           group.startedAt = row.created_at;
         }
         group.stages.set(row.stage, {
           stage: row.stage,
-          status: row.status,
+          status: skipped ? 'not_applicable' : row.status,
           runId,
           friendlyMessages: this.explainedMessages(row),
           githubRunUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
           updatedAt: row.updated_at,
           rawLogs: row.raw_logs,
           checks: readChecks(row.results),
+          ...optionalResults(row.results),
         });
       }
     }
@@ -452,6 +566,10 @@ export class CiReportsService {
             { status: report.status, updatedAt: report.updatedAt },
           ]),
         ),
+        new Date(),
+        // Which stages the pipeline runs depends on the branch: verify has
+        // nothing to test on dev, so its absence there is not a stall.
+        group.branch,
       );
 
       const stages: StageReport[] = ALL_STAGES.map((stageName) => {

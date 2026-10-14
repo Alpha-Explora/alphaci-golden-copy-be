@@ -170,6 +170,64 @@ export class AssignmentsRepository {
     return result.rows.map((row) => this.toRecord(row));
   }
 
+  /**
+   * Which of `repositoryIds` already carry a live assignment for `userId`
+   * (desired 'assigned', effective 'pending' or 'active'). The Project
+   * fan-out skips these so adding a member twice never re-queues a verified
+   * grant; 'failed' and 'revoked' rows are reset by the fan-out instead.
+   */
+  async listLiveRepositoryIdsForUserWithClient(
+    client: Pick<PoolClient, 'query'>,
+    userId: string,
+    repositoryIds: string[],
+  ): Promise<Set<string>> {
+    if (repositoryIds.length === 0) return new Set();
+    const result = await client.query<{ repository_id: string }>(
+      `
+        SELECT repository_id
+        FROM hierarchy.repository_assignments
+        WHERE user_id = $1
+          AND repository_id = ANY($2::uuid[])
+          AND desired_state = 'assigned'
+          AND effective_state IN ('pending', 'active');
+      `,
+      [userId, repositoryIds],
+    );
+    return new Set(result.rows.map((row) => row.repository_id));
+  }
+
+  /**
+   * Every desired-'assigned' assignment the user holds on a repository of one
+   * Project, with who created that repository (a creator keeps their own
+   * grant when removed from the Project).
+   */
+  async listAssignedForUserInDeliveryProjectWithClient(
+    client: Pick<PoolClient, 'query'>,
+    deliveryProjectId: string,
+    userId: string,
+  ): Promise<
+    Array<{ assignmentId: string; repositoryCreatedBy: string | null }>
+  > {
+    const result = await client.query<{
+      id: string;
+      created_by: string | null;
+    }>(
+      `
+        SELECT a.id, r.created_by
+        FROM hierarchy.repository_assignments AS a
+        JOIN hierarchy.repositories AS r ON r.id = a.repository_id
+        WHERE r.delivery_project_id = $1
+          AND a.user_id = $2
+          AND a.desired_state = 'assigned';
+      `,
+      [deliveryProjectId, userId],
+    );
+    return result.rows.map((row) => ({
+      assignmentId: row.id,
+      repositoryCreatedBy: row.created_by,
+    }));
+  }
+
   async listActiveOrPendingForUser(
     userId: string,
   ): Promise<AssignmentRecord[]> {

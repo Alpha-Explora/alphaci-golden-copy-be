@@ -28,6 +28,8 @@ export interface LinkProjectInput {
   projectStatus: string;
   /** Link into this existing delivery project instead of creating a new chain. */
   deliveryProjectId?: string;
+  /** 'created' only when ALPHACI just created the GitHub repository; default 'attached'. */
+  origin?: 'created' | 'attached';
 }
 
 export interface LinkResult {
@@ -113,6 +115,82 @@ export class HierarchyProjectLinkRepository {
         ORDER BY created_at, id;
       `,
       [groupId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * ACTIVE members per Project (by kind) plus the viewer's own kind, for the
+   * Projects in `deliveryProjectIds`, in one query. A Project with no active
+   * member has no row. `member_kind` is unique per (Project, user), so the
+   * viewer's MAX is their one kind.
+   */
+  async listMembershipSummaries(
+    deliveryProjectIds: readonly string[],
+    viewerUserId: string,
+  ): Promise<
+    Array<{
+      delivery_project_id: string;
+      developers: string;
+      qa: string;
+      viewer_kind: 'developer' | 'qa' | null;
+    }>
+  > {
+    if (deliveryProjectIds.length === 0) return [];
+    const result = await this.databaseService.query<{
+      delivery_project_id: string;
+      developers: string;
+      qa: string;
+      viewer_kind: 'developer' | 'qa' | null;
+    }>(
+      `
+        SELECT
+          m.delivery_project_id,
+          COUNT(*) FILTER (WHERE m.member_kind = 'developer') AS developers,
+          COUNT(*) FILTER (WHERE m.member_kind = 'qa') AS qa,
+          MAX(m.member_kind) FILTER (WHERE m.user_id::text = $2) AS viewer_kind
+        FROM hierarchy.delivery_project_members m
+        WHERE m.delivery_project_id = ANY($1::uuid[])
+          AND m.status = 'active'
+        GROUP BY m.delivery_project_id;
+      `,
+      [deliveryProjectIds, viewerUserId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Non-archived repositories of several Projects that are linked to a
+   * provisioned project, oldest first, in one query. Same filter as
+   * queryFolder (a row with no provisioned project or no repo name is not
+   * something a Project run covers).
+   */
+  async listLinkedRepositories(deliveryProjectIds: readonly string[]): Promise<
+    Array<{
+      delivery_project_id: string;
+      project_id: string;
+      repo_full_name: string;
+    }>
+  > {
+    if (deliveryProjectIds.length === 0) return [];
+    const result = await this.databaseService.query<{
+      delivery_project_id: string;
+      project_id: string;
+      repo_full_name: string;
+    }>(
+      `
+        SELECT
+          r.delivery_project_id,
+          r.provisioned_project_id AS project_id,
+          r.repo_full_name
+        FROM hierarchy.repositories r
+        WHERE r.delivery_project_id = ANY($1::uuid[])
+          AND r.status <> 'archived'
+          AND r.provisioned_project_id IS NOT NULL
+          AND r.repo_full_name IS NOT NULL
+        ORDER BY r.created_at, r.id;
+      `,
+      [deliveryProjectIds],
     );
     return result.rows;
   }
@@ -248,9 +326,9 @@ export class HierarchyProjectLinkRepository {
       `
         INSERT INTO hierarchy.repositories (
           delivery_project_id, group_id, name, repo_full_name,
-          visibility, created_by, status, provisioned_project_id
+          visibility, created_by, status, provisioned_project_id, origin
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (provisioned_project_id) DO NOTHING
         RETURNING id;
       `,
@@ -263,6 +341,7 @@ export class HierarchyProjectLinkRepository {
         input.createdBy,
         input.projectStatus === 'provisioned' ? 'active' : 'pending',
         input.projectId,
+        input.origin ?? 'attached',
       ],
     );
 
@@ -340,9 +419,9 @@ export class HierarchyProjectLinkRepository {
           `
             INSERT INTO hierarchy.repositories (
               delivery_project_id, group_id, name, repo_full_name,
-              visibility, created_by, status, provisioned_project_id
+              visibility, created_by, status, provisioned_project_id, origin
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (provisioned_project_id) DO NOTHING
             RETURNING id;
           `,
@@ -355,6 +434,7 @@ export class HierarchyProjectLinkRepository {
             input.createdBy,
             input.projectStatus === 'provisioned' ? 'active' : 'pending',
             input.projectId,
+            input.origin ?? 'attached',
           ],
         );
 

@@ -56,6 +56,24 @@ export class CiService implements CiProjectPort {
     return { token, tokenPrefix };
   }
 
+  /**
+   * Cheap pre-check for routes that receive a large body (a multipart upload):
+   * the bearer must at least be an ACTIVE project token. The repository-bound
+   * check, validateRun, still runs once the body fields are parsed; this only
+   * keeps anonymous callers from making the server buffer a file.
+   */
+  async assertActiveToken(token: string): Promise<void> {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      throw new UnauthorizedException('CI token is required');
+    }
+    if (
+      !(await this.ciTokensRepository.hasActiveToken(this.hashToken(trimmed)))
+    ) {
+      throw new ForbiddenException('CI token is not authorized');
+    }
+  }
+
   async validateRun(input: ValidateRunInput): Promise<ValidateRunResult> {
     const token = input.token.trim();
     const repoFullName = input.repoFullName.trim();

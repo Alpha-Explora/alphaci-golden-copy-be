@@ -63,3 +63,17 @@ export function canDispatchAutomation(role: PlatformAppRole): boolean {
 export function canMergeQaPromotion(role: PlatformAppRole): boolean {
   return role === 'lead' || role === 'admin';
 }
+
+/** Attaching screenshot evidence to a run item: the Verification track (qa|lead|admin). */
+export function canAddEvidence(role: PlatformAppRole): boolean {
+  return role === 'qa' || role === 'lead' || role === 'admin';
+}
+
+/**
+ * Deleting a human attachment someone else uploaded: lead|admin only. The
+ * uploader may always delete their own while the run is open (the service
+ * checks the uploader, since a role alone cannot).
+ */
+export function canRemoveAnyAttachment(role: PlatformAppRole): boolean {
+  return role === 'lead' || role === 'admin';
+}

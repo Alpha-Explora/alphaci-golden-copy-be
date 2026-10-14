@@ -48,12 +48,18 @@ function build(overrides: Partial<HierarchyProjectLinkRepository> = {}) {
     ),
   } as unknown as jest.Mocked<DeliveryProjectsRepository>;
 
+  const projectMembers = {
+    grantForNewRepositoryBestEffort: jest.fn(() => Promise.resolve()),
+  };
+
   return {
     service: new HierarchyProjectLinkService(
       repository,
       accessService,
       deliveryProjectsRepository,
+      projectMembers as never,
     ),
+    projectMembers,
     repository,
     accessService,
     deliveryProjectsRepository,
@@ -123,6 +129,61 @@ describe('HierarchyProjectLinkService', () => {
       // No deliveryProjectId given — a brand new chain is created, so the
       // link call must not carry one either.
       expect(link.mock.calls[0]?.[0]).not.toHaveProperty('deliveryProjectId');
+    });
+
+    it('queues the creator and Project members access once a new repository is linked', async () => {
+      const { service, projectMembers } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'new-repository' });
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).toHaveBeenCalledWith({
+        repositoryId: 'repo-1',
+        deliveryProjectId: 'dp-1',
+        creatorUserId: 'u1',
+        assignedBy: 'u1',
+      });
+    });
+
+    it('records origin created for a repository ALPHACI created', async () => {
+      const { service, link } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'new-repository' });
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ origin: 'created' }),
+      );
+    });
+
+    it('ATTACHING an existing repository (no accessGrant) grants nobody and records origin attached', async () => {
+      const { service, link, projectMembers } = build();
+      await service.ensureLink(BASE);
+      expect(link).toHaveBeenCalledWith(
+        expect.objectContaining({ origin: 'attached' }),
+      );
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('accessGrant none is the same as omitting it', async () => {
+      const { service, projectMembers } = build();
+      await service.ensureLink({ ...BASE, accessGrant: 'none' });
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not re-queue access for an already-linked project', async () => {
+      const { service, projectMembers } = build({
+        findLinkedRepositoryAndDeliveryProject: jest.fn(() =>
+          Promise.resolve({
+            repositoryId: 'existing',
+            deliveryProjectId: 'dp-9',
+          }),
+        ),
+      });
+      await service.ensureLink(BASE);
+      expect(
+        projectMembers.grantForNewRepositoryBestEffort,
+      ).not.toHaveBeenCalled();
     });
 
     it('records public visibility rather than forcing private', async () => {
@@ -369,5 +430,89 @@ describe('HierarchyProjectLinkService', () => {
       } as never);
       await expect(service.ensureLink(BASE)).resolves.toBeNull();
     });
+  });
+});
+
+describe('HierarchyProjectLinkService.getOverviewFacts', () => {
+  it('answers every requested Project, with zeros for one that has no members or repositories', async () => {
+    const { service } = build({
+      listMembershipSummaries: jest.fn(() =>
+        Promise.resolve([
+          {
+            delivery_project_id: 'dp-1',
+            developers: '3',
+            qa: '2',
+            viewer_kind: 'developer' as const,
+          },
+          {
+            delivery_project_id: 'dp-2',
+            developers: '0',
+            qa: '1',
+            viewer_kind: null,
+          },
+        ]),
+      ),
+      listLinkedRepositories: jest.fn(() =>
+        Promise.resolve([
+          {
+            delivery_project_id: 'dp-1',
+            project_id: 'p-api',
+            repo_full_name: 'acme/api',
+          },
+          {
+            delivery_project_id: 'dp-1',
+            project_id: 'p-web',
+            repo_full_name: 'acme/web',
+          },
+        ]),
+      ),
+    } as never);
+
+    const facts = await service.getOverviewFacts(
+      ['dp-1', 'dp-2', 'dp-3'],
+      'viewer-1',
+    );
+
+    expect([...facts.keys()]).toEqual(['dp-1', 'dp-2', 'dp-3']);
+    expect(facts.get('dp-1')).toEqual({
+      developers: 3,
+      qa: 2,
+      viewerKind: 'developer',
+      repositories: [
+        { projectId: 'p-api', repoFullName: 'acme/api' },
+        { projectId: 'p-web', repoFullName: 'acme/web' },
+      ],
+    });
+    expect(facts.get('dp-2')).toEqual({
+      developers: 0,
+      qa: 1,
+      viewerKind: null,
+      repositories: [],
+    });
+    expect(facts.get('dp-3')).toEqual({
+      developers: 0,
+      qa: 0,
+      viewerKind: null,
+      repositories: [],
+    });
+  });
+
+  it('reads members and repositories once each, for all Projects and the viewer', async () => {
+    const listMembershipSummaries = jest.fn(() => Promise.resolve([]));
+    const listLinkedRepositories = jest.fn(() => Promise.resolve([]));
+    const { service } = build({
+      listMembershipSummaries,
+      listLinkedRepositories,
+    } as never);
+
+    await service.getOverviewFacts(['dp-1', 'dp-2'], 'viewer-1');
+
+    expect(listMembershipSummaries).toHaveBeenCalledTimes(1);
+    expect(listMembershipSummaries).toHaveBeenCalledWith(
+      ['dp-1', 'dp-2'],
+      'viewer-1',
+    );
+    expect(listLinkedRepositories).toHaveBeenCalledTimes(1);
+    expect(listLinkedRepositories).toHaveBeenCalledWith(['dp-1', 'dp-2']);
   });
 });

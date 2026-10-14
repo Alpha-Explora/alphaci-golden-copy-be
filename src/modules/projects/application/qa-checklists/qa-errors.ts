@@ -2,6 +2,9 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  PayloadTooLargeException,
+  ServiceUnavailableException,
+  UnsupportedMediaTypeException,
 } from '@nestjs/common';
 
 /**
@@ -229,5 +232,70 @@ export const qaProjectRequired = () =>
       'Conflict',
       'QA_PROJECT_REQUIRED',
       'This repository is not filed under a Project; QA requirements belong to Projects.',
+    ),
+  );
+
+// ---------------------------------------------------------------------
+// Attachments (screenshots on a Project run item)
+// ---------------------------------------------------------------------
+
+export const qaRunSignedOff = () =>
+  new ConflictException(
+    body(
+      409,
+      'Conflict',
+      'QA_RUN_SIGNED_OFF',
+      'This run is signed off. Reopen it to make changes.',
+    ),
+  );
+
+export const qaAttachmentLimit = (max: number) =>
+  new ConflictException(
+    body(
+      409,
+      'Conflict',
+      'QA_ATTACHMENT_LIMIT',
+      `An item holds at most ${max} screenshots. Remove one to add another.`,
+      { max },
+    ),
+  );
+
+export const qaAttachmentTooLarge = (message: string) =>
+  new PayloadTooLargeException(
+    body(413, 'Payload Too Large', 'QA_ATTACHMENT_TOO_LARGE', message),
+  );
+
+export const qaAttachmentType = () =>
+  new UnsupportedMediaTypeException(
+    body(
+      415,
+      'Unsupported Media Type',
+      'QA_ATTACHMENT_TYPE',
+      'Only PNG, JPEG and WebP images can be attached.',
+    ),
+  );
+
+export const qaAttachmentForbidden = (message: string) =>
+  new ForbiddenException(
+    body(403, 'Forbidden', 'QA_ATTACHMENT_FORBIDDEN', message),
+  );
+
+export const qaAttachmentKind = () =>
+  new BadRequestException(
+    body(
+      400,
+      'Bad Request',
+      'QA_ATTACHMENT_KIND',
+      'Only kind "evidence" can be attached for now.',
+    ),
+  );
+
+export const qaAttachmentsUnavailable = () =>
+  new ServiceUnavailableException(
+    body(
+      503,
+      'Service Unavailable',
+      'QA_ATTACHMENTS_UNAVAILABLE',
+      'Screenshot storage is not configured.',
     ),
   );

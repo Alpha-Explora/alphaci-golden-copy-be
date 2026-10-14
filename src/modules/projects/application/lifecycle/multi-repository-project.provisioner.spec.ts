@@ -257,11 +257,13 @@ describe('MultiRepositoryProjectProvisioner', () => {
     // Backend row: no deliveryProjectId given on the request, so it auto-
     // creates the chain, named after the base repoName (not the -be suffix).
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       chainName: 'orders',
     });
     // Frontend row: reuses the delivery project the backend row's link just
     // created, instead of creating a second, independent chain.
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-shared',
     });
   });
@@ -300,10 +302,12 @@ describe('MultiRepositoryProjectProvisioner', () => {
     );
 
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       chainName: 'Order Platform',
       enforceUniqueChainName: true,
     });
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-shared',
     });
   });
@@ -341,6 +345,7 @@ describe('MultiRepositoryProjectProvisioner', () => {
     );
 
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-given',
     });
   });
@@ -379,9 +384,11 @@ describe('MultiRepositoryProjectProvisioner', () => {
     );
 
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-given',
     });
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-given',
     });
   });

@@ -31,14 +31,15 @@ import {
 } from '../qa-checklists/qa-project-context.service';
 import { qaProjectRequired } from '../qa-checklists/qa-errors';
 import { buildQaPromotionPullRequestBody } from './qa-promotion.pr-body';
-import type {
-  QaPromotionChecklist,
-  QaPromotionMergeResult,
-  QaPromotionPullRequestRef,
-  QaPromotionStatus,
+import {
+  QA_PROMOTION_MERGED_EVENT,
+  type QaPromotionChecklist,
+  type QaPromotionMergeResult,
+  type QaPromotionPullRequestRef,
+  type QaPromotionStatus,
 } from './qa-promotion.contracts';
 import type { QaHeadStatus, QaRunActorContext } from './qa-runs.contracts';
-import { QaUatHeadsService } from './qa-uat-heads.service';
+import { QaUatHeadsService, type QaWriteVia } from './qa-uat-heads.service';
 
 export type { QaRunActorContext };
 
@@ -55,7 +56,6 @@ type PullRequestResolution =
   | { kind: 'ok'; pr: ResolvedPullRequest }
   | { kind: 'refused'; message: string };
 
-const PROMOTION_MERGED_EVENT = 'qa.promotion.merged';
 const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
 const UNFILED_REASON =
   'This repository is not filed under a Project; QA requirements belong to Projects';
@@ -70,8 +70,10 @@ const UNFILED_REASON =
  * filed under no Project is blocked (QA_PROJECT_REQUIRED on merge): it has no
  * requirements and no run.
  *
- * Reuses ProjectWorkspaceService.mergePullRequest's behaviour (merge with the
- * user's own OAuth token, return GitHub's refusal text as merged:false)
+ * Reuses ProjectWorkspaceService.mergePullRequest's behaviour (return GitHub's
+ * refusal text as merged:false; the write itself uses the GitHub App
+ * installation token after every ALPHACI gate, the user's OAuth token only as
+ * the fallback)
  * without depending on that service directly -- ProjectWorkspaceService
  * lives in a sibling application/workspace/ area with no shared module
  * boundary to this slice, and the flow here also needs the gate recheck and
@@ -142,7 +144,16 @@ export class QaPromotionService {
     // repository's included, was read.
     const headSha = status.headSha as string;
 
-    if (!actor.oauthToken) {
+    // Every gate above has passed. The GitHub writes below (promotion PR,
+    // merge) go out as the ALPHACI GitHub App: the org default permission is
+    // read, so a lead's own OAuth token cannot merge. The person's token is
+    // only the fallback; the audit event keeps naming them via actorUserId.
+    const credential = await this.heads.resolveWriteCredential(
+      project.repo_full_name,
+      actor.userId,
+      actor.oauthToken,
+    );
+    if (!credential) {
       throw new ConflictException({
         code: 'GITHUB_REAUTH',
         message: 'Sign in to GitHub again, then retry.',
@@ -153,7 +164,7 @@ export class QaPromotionService {
       ? ({ kind: 'ok', pr: status.pullRequest } as const)
       : await this.createPromotionPullRequest(
           project,
-          actor.oauthToken,
+          credential.token,
           status,
         );
 
@@ -175,7 +186,7 @@ export class QaPromotionService {
     }
 
     const result = await this.githubService.mergePullRequest(
-      actor.oauthToken,
+      credential.token,
       project.repo_full_name,
       pr.number,
       { method: 'merge', sha: headSha },
@@ -198,6 +209,7 @@ export class QaPromotionService {
       headSha,
       result.sha,
       status,
+      credential.via,
     );
     await this.notifyLeadsExcludingActor(project, actor, pr, headSha);
 
@@ -433,18 +445,20 @@ export class QaPromotionService {
     headSha: string,
     mergeSha: string | null,
     status: QaPromotionStatusCore,
+    via: QaWriteVia,
   ): Promise<void> {
     await this.auditEventsService?.recordProjectEvent({
       workspaceId: project.workspace_id ?? null,
       projectId: project.id,
       actorUserId: actor.userId,
-      eventCode: PROMOTION_MERGED_EVENT,
+      eventCode: QA_PROMOTION_MERGED_EVENT,
       message: `uat (${headSha.slice(0, 7)}) merged to main via pull request #${String(pr.number)}`,
       metadata: {
         pullRequestNumber: pr.number,
         pullRequestUrl: pr.url,
         headSha,
         mergeSha,
+        via,
         deliveryProjectId: status.deliveryProject?.id ?? null,
         runId: status.run?.id ?? null,
       },
@@ -478,7 +492,7 @@ export class QaPromotionService {
         notifications.record({
           userId,
           projectId: project.id,
-          eventCode: PROMOTION_MERGED_EVENT,
+          eventCode: QA_PROMOTION_MERGED_EVENT,
           title: 'QA-approved uat merged to main',
           body,
         }),

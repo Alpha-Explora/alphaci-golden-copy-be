@@ -1,12 +1,17 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 import type {
+  DeliveryProjectOverviewFacts,
+  DeliveryProjectOverviewQuery,
+} from '#kernel/ports/delivery-project-overview.port';
+import type {
   EnsureLinkResult,
   ProjectFolderLink,
   ProjectLinkPort,
 } from '#kernel/ports/project-link.port';
 import { ProjectNameTakenException } from '../../domain/project-name';
 import { DeliveryProjectsRepository } from '../../infrastructure/delivery-projects.repository';
+import { DeliveryProjectMembersService } from '../../application/delivery-project-members.service';
 import { HierarchyAccessService } from '../../application/hierarchy-access.service';
 import { HierarchyProjectLinkRepository } from '../infrastructure/hierarchy-project-link.repository';
 
@@ -25,6 +30,8 @@ export interface EnsureProjectLinkInput {
   projectStatus: string;
   /** Link into this existing delivery project instead of creating a new chain. */
   deliveryProjectId?: string;
+  /** See ProjectLinkPort EnsureProjectLinkInput.accessGrant. Default 'none'. */
+  accessGrant?: 'new-repository' | 'none';
 }
 
 /**
@@ -45,13 +52,16 @@ export interface EnsureProjectLinkInput {
  * backfill and a re-link are the recovery paths.
  */
 @Injectable()
-export class HierarchyProjectLinkService implements ProjectLinkPort {
+export class HierarchyProjectLinkService
+  implements ProjectLinkPort, DeliveryProjectOverviewQuery
+{
   private readonly logger = new Logger(HierarchyProjectLinkService.name);
 
   constructor(
     private readonly repository: HierarchyProjectLinkRepository,
     private readonly accessService: HierarchyAccessService,
     private readonly deliveryProjectsRepository: DeliveryProjectsRepository,
+    private readonly projectMembers: DeliveryProjectMembersService,
   ) {}
 
   /**
@@ -97,6 +107,42 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
   }
 
   /**
+   * See DeliveryProjectOverviewQuery.getOverviewFacts: members and the
+   * viewer's own membership in one query, linked repositories in another,
+   * both for every Project at once. Errors propagate on purpose.
+   */
+  async getOverviewFacts(
+    deliveryProjectIds: readonly string[],
+    viewerUserId: string,
+  ): Promise<Map<string, DeliveryProjectOverviewFacts>> {
+    const facts = new Map<string, DeliveryProjectOverviewFacts>(
+      deliveryProjectIds.map((id) => [
+        id,
+        { developers: 0, qa: 0, viewerKind: null, repositories: [] },
+      ]),
+    );
+    const [memberships, repositories] = await Promise.all([
+      this.repository.listMembershipSummaries(deliveryProjectIds, viewerUserId),
+      this.repository.listLinkedRepositories(deliveryProjectIds),
+    ]);
+    for (const row of memberships) {
+      const entry = facts.get(row.delivery_project_id);
+      if (entry) {
+        entry.developers = Number(row.developers);
+        entry.qa = Number(row.qa);
+        entry.viewerKind = row.viewer_kind;
+      }
+    }
+    for (const row of repositories) {
+      facts.get(row.delivery_project_id)?.repositories.push({
+        projectId: row.project_id,
+        repoFullName: row.repo_full_name,
+      });
+    }
+    return facts;
+  }
+
+  /**
    * Returns the linked repository id and its delivery project id, or null
    * when no link was needed or possible. Never throws — see class doc.
    */
@@ -121,7 +167,7 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
       const name = input.name.trim() || input.repoFullName.split('/').at(-1);
       if (!name) return null;
 
-      return await this.repository.link({
+      const linked = await this.repository.link({
         projectId: input.projectId,
         workspaceId: input.workspaceId,
         name,
@@ -134,7 +180,21 @@ export class HierarchyProjectLinkService implements ProjectLinkPort {
         ...(input.deliveryProjectId !== undefined && {
           deliveryProjectId: input.deliveryProjectId,
         }),
+        origin: input.accessGrant === 'new-repository' ? 'created' : 'attached',
       });
+
+      // ALPHACI just created this repository inside a Project: queue GitHub
+      // Write for its creator (when a Developer) and every Developer member.
+      // Never for an attached, pre-existing repository. Best-effort.
+      if (linked && input.accessGrant === 'new-repository') {
+        await this.projectMembers.grantForNewRepositoryBestEffort({
+          repositoryId: linked.repositoryId,
+          deliveryProjectId: linked.deliveryProjectId,
+          creatorUserId: input.createdBy,
+          assignedBy: input.createdBy,
+        });
+      }
+      return linked;
     } catch (error) {
       // The one loud failure: a Project-name race lost after provisioning
       // started. The caller removes its row and (create paths) the repository.

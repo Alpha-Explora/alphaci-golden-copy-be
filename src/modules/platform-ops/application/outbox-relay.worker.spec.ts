@@ -82,6 +82,125 @@ describe('OutboxRelayService.processPlatformEventsOnce', () => {
   });
 });
 
+describe('OutboxRelayService.processHierarchyEventsOnce', () => {
+  const registerHierarchyHandler = (dispatcher: OutboxDispatcher) => {
+    const handle = jest.fn().mockResolvedValue(undefined);
+    dispatcher.register({
+      topics: [
+        OUTBOX_TOPICS.hierarchyAssignmentGrant,
+        OUTBOX_TOPICS.hierarchyAssignmentRevoke,
+      ],
+      handle,
+    });
+    return handle;
+  };
+
+  it('claims only the hierarchy grant and revoke topics', async () => {
+    const processPending = jest.fn().mockResolvedValue(0);
+    const dispatcher = new OutboxDispatcher();
+    registerHierarchyHandler(dispatcher);
+    const service = new OutboxRelayService(
+      { processPending } as never,
+      dispatcher,
+      {} as never,
+      {} as never,
+    );
+
+    await service.processHierarchyEventsOnce(10);
+
+    const [, limit, topics] = processPending.mock.calls[0] as [
+      unknown,
+      number,
+      string[],
+    ];
+    expect(limit).toBe(10);
+    expect([...topics].sort()).toEqual(
+      [
+        OUTBOX_TOPICS.hierarchyAssignmentGrant,
+        OUTBOX_TOPICS.hierarchyAssignmentRevoke,
+      ].sort(),
+    );
+  });
+
+  it('shares no topic with the platform pass, so one worker tick cannot claim an event twice', async () => {
+    const processPending = jest.fn().mockResolvedValue(0);
+    const dispatcher = new OutboxDispatcher();
+    registerHierarchyHandler(dispatcher);
+    const service = new OutboxRelayService(
+      { processPending } as never,
+      dispatcher,
+      {} as never,
+      {} as never,
+    );
+
+    await service.processPlatformEventsOnce();
+    await service.processHierarchyEventsOnce();
+
+    const platform = processPending.mock.calls[0]?.[2] as string[];
+    const hierarchy = processPending.mock.calls[1]?.[2] as string[];
+    expect(platform.filter((topic) => hierarchy.includes(topic))).toEqual([]);
+  });
+
+  it('claims through the shared lease and SKIP LOCKED path (processPending), so the Render cron can run alongside', async () => {
+    const processPending = jest.fn().mockResolvedValue(0);
+    const dispatcher = new OutboxDispatcher();
+    registerHierarchyHandler(dispatcher);
+    const service = new OutboxRelayService(
+      { processPending } as never,
+      dispatcher,
+      {} as never,
+      {} as never,
+    );
+    await service.processHierarchyEventsOnce();
+    // The cron path (processPendingOnce) goes through the same claim primitive.
+    await service.processPendingOnce();
+    expect(processPending).toHaveBeenCalledTimes(2);
+    expect(processPending.mock.calls[0]?.[3]).toEqual(
+      processPending.mock.calls[1]?.[3],
+    );
+  });
+
+  it('dispatches a claimed job to the registered hierarchy handler', async () => {
+    const dispatcher = new OutboxDispatcher();
+    const handle = registerHierarchyHandler(dispatcher);
+    const event = {
+      id: 'e-1',
+      topic: OUTBOX_TOPICS.hierarchyAssignmentGrant,
+      aggregateType: 'repository_assignment',
+      aggregateId: 'a-1',
+      payload: { assignmentId: 'a-1', actingUserId: 'u-1' },
+      createdAt: '2026-10-08T00:00:00.000Z',
+    };
+    const processPending = jest.fn(
+      async (handler: (e: unknown) => Promise<void>) => {
+        await handler(event);
+        return 1;
+      },
+    );
+    const service = new OutboxRelayService(
+      { processPending } as never,
+      dispatcher,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(service.processHierarchyEventsOnce()).resolves.toBe(1);
+    expect(handle).toHaveBeenCalledWith(event);
+  });
+
+  it('claims nothing when no hierarchy handler is registered', async () => {
+    const processPending = jest.fn().mockResolvedValue(0);
+    const service = new OutboxRelayService(
+      { processPending } as never,
+      new OutboxDispatcher(),
+      {} as never,
+      {} as never,
+    );
+    await expect(service.processHierarchyEventsOnce()).resolves.toBe(0);
+    expect(processPending).not.toHaveBeenCalled();
+  });
+});
+
 describe('OutboxRelayWorker', () => {
   const originalInterval = process.env['OUTBOX_RELAY_INTERVAL_MS'];
 
@@ -147,6 +266,61 @@ describe('OutboxRelayWorker', () => {
     jest.advanceTimersByTime(DEFAULT_OUTBOX_RELAY_INTERVAL_MS * 2);
 
     expect(relay.processPlatformEventsOnce).not.toHaveBeenCalled();
+  });
+
+  describe('hierarchy grant/revoke jobs', () => {
+    const originalMode = process.env['HIERARCHY_GITHUB_SYNC_MODE'];
+    afterEach(() => {
+      if (originalMode === undefined) {
+        delete process.env['HIERARCHY_GITHUB_SYNC_MODE'];
+      } else {
+        process.env['HIERARCHY_GITHUB_SYNC_MODE'] = originalMode;
+      }
+    });
+
+    const makeBoth = (platform = 1, hierarchy = 2) => {
+      const relay = {
+        processPlatformEventsOnce: jest.fn().mockResolvedValue(platform),
+        processHierarchyEventsOnce: jest.fn().mockResolvedValue(hierarchy),
+      };
+      const worker = new OutboxRelayWorker(
+        { isEnabled: () => true } as never,
+        relay as never,
+      );
+      return { worker, relay };
+    };
+
+    it('drains them in-process when HIERARCHY_GITHUB_SYNC_MODE is live', async () => {
+      process.env['HIERARCHY_GITHUB_SYNC_MODE'] = 'live';
+      const { worker, relay } = makeBoth(1, 2);
+      await expect(worker.deliver()).resolves.toBe(3);
+      expect(relay.processHierarchyEventsOnce).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['stub', undefined, 'LIVE', ''])(
+      'leaves them to the manual script / cron when the mode is %p',
+      async (mode) => {
+        if (mode === undefined) {
+          delete process.env['HIERARCHY_GITHUB_SYNC_MODE'];
+        } else {
+          process.env['HIERARCHY_GITHUB_SYNC_MODE'] = mode;
+        }
+        const { worker, relay } = makeBoth();
+        await expect(worker.deliver()).resolves.toBe(1);
+        expect(relay.processHierarchyEventsOnce).not.toHaveBeenCalled();
+      },
+    );
+
+    it('still delivers audit and notifications when the hierarchy pass throws', async () => {
+      process.env['HIERARCHY_GITHUB_SYNC_MODE'] = 'live';
+      const { worker, relay } = makeBoth();
+      relay.processHierarchyEventsOnce.mockRejectedValue(new Error('github'));
+      await expect(worker.deliver()).rejects.toThrow('github');
+      expect(relay.processPlatformEventsOnce).toHaveBeenCalledTimes(1);
+      // The guard is released, so the next tick can run again.
+      relay.processHierarchyEventsOnce.mockResolvedValue(0);
+      await expect(worker.deliver()).resolves.toBe(1);
+    });
   });
 
   it('never runs two passes over each other', async () => {

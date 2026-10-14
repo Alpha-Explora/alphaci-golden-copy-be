@@ -1,11 +1,11 @@
 {
-  "routeCount": 207,
+  "routeCount": 228,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "5b3a8106ec72e483ba4a0877e0dac04b3bd82386ff704f889128e23f88678c3c",
+  "referenceSha256": "e52d7f9b134f328a80110912bdf752fe32988dd51119a38457d94981d06a0b5b",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "5b3a8106ec72e483ba4a0877e0dac04b3bd82386ff704f889128e23f88678c3c",
+  "baselineSha256": "e52d7f9b134f328a80110912bdf752fe32988dd51119a38457d94981d06a0b5b",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -143,6 +143,62 @@
         "POST /api/v1/admin/branch-protection/apply",
         "POST /api/v1/projects/{id}/audit/sync",
         "POST /api/v1/projects/{id}/branch-protection"
+      ]
+    },
+    {
+      "reason": "Visual testing: token-authenticated visual baseline reads and result ingestion for the generated Playwright job, and the Visual tab (latest run, images, approve) under the project workspace.",
+      "routes": [
+        "GET /api/v1/ci/visual-baselines",
+        "GET /api/v1/ci/visual-baselines/file",
+        "GET /api/v1/projects/{projectId}/workspace/visual",
+        "GET /api/v1/projects/{projectId}/workspace/visual/image",
+        "POST /api/v1/ci/visual-results/file",
+        "POST /api/v1/ci/visual-summary",
+        "POST /api/v1/projects/{projectId}/workspace/visual/approve"
+      ]
+    },
+    {
+      "reason": "Add browser tests: report whether the starter browser tests are on a project's dev branch, and open a pull request into dev adding them as the signed-in person.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/workspace/browser-tests",
+        "POST /api/v1/projects/{projectId}/workspace/browser-tests"
+      ]
+    },
+    {
+      "reason": "Live Playwright progress: the generated verify workflow posts test-by-test events with its CI token while Playwright runs, and the studio Playwright tab reads the current stage, finished tests and what is running now.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/workspace/playwright-live",
+        "POST /api/v1/ci/playwright-progress"
+      ]
+    },
+    {
+      "reason": "Project members: a team lead or admin lists, adds and removes the Developers and QA Team people of a Project (Developers get GitHub Write on every repository of it), and re-runs the Developers' grant fan-out after live GitHub sync is enabled.",
+      "routes": [
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/members",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/members",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync",
+        "DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}"
+      ]
+    },
+    {
+      "reason": "CI run report export: one pipeline execution (repository, branch, commit) as a downloadable failures-first report in JSON or Markdown, for the developer who has to fix it. Same session auth and project visibility as GET /ci/runs.",
+      "routes": [
+        "GET /api/v1/ci/runs/report"
+      ]
+    },
+    {
+      "reason": "SonarCloud repair: switch off Automatic Analysis on a provisioned project so SonarCloud accepts its CI scans again. Lead/admin only, same session auth and project visibility as the other project lifecycle routes.",
+      "routes": [
+        "POST /api/v1/projects/{id}/sonar/disable-automatic-analysis"
+      ]
+    },
+    {
+      "reason": "QA screenshots (A1): attach, list and delete evidence images on a Project run item, stored in a private bucket and served by short-lived signed URLs. Same session auth, capability gate and Project visibility as the other Project-run routes.",
+      "routes": [
+        "DELETE /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments/{attachmentId}",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments"
       ]
     }
   ]

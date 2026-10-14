@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import { CiReportsService } from './ci-reports.service';
 import type { DatabaseService } from '#kernel/db/database.service';
@@ -18,6 +18,7 @@ const makeRunReportsRepository = () =>
     upsert: jest.fn(),
     findRecentByRepo: jest.fn(),
     findRecentByRepos: jest.fn(),
+    findByRepoBranchSha: jest.fn(),
   }) as unknown as CiRunReportsRepository;
 
 /** Defaults to visible so tests that never exercise assertOwnership are unaffected. */
@@ -536,5 +537,188 @@ describe('CiReportsService.getRuns, visibility + workspace scoping', () => {
       undefined,
       undefined,
     );
+  });
+});
+
+describe('CiReportsService.getRuns structured results', () => {
+  let runReportsRepository: CiRunReportsRepository;
+  let service: CiReportsService;
+
+  beforeEach(() => {
+    runReportsRepository = makeRunReportsRepository();
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      makeProjectVisibility(),
+    );
+  });
+
+  const stageOf = async (
+    stored: Partial<CiRunReportRow>,
+    stage = 'quality',
+  ) => {
+    (runReportsRepository.findRecentByRepos as jest.Mock).mockResolvedValueOnce(
+      [row({ stage: stage as CiRunReportRow['stage'], ...stored })],
+    );
+    const { runs } = await service.getRuns('user-1');
+    return runs[0]!.stages.find((s) => s.stage === stage)!;
+  };
+
+  it('returns the stored figures so a passing stage can show its numbers', async () => {
+    const stage = await stageOf({
+      results: {
+        tests: { total: 412, passed: 412, failed: 0 },
+        coverage: { pct: 87.5, threshold: 80 },
+        lint: { errors: 0, warnings: 3 },
+        security: { high: 0, critical: 0 },
+        findings: { secrets: 0, sbomComponents: 118 },
+        sonar: { gate: 'OK', measures: { bugs: '0' } },
+        checks: [{ name: 'lint', conclusion: 'success' }],
+      },
+    });
+
+    expect(stage.results).toEqual({
+      tests: { total: 412, passed: 412, failed: 0 },
+      coverage: { pct: 87.5, threshold: 80 },
+      lint: { errors: 0, warnings: 3 },
+      security: { high: 0, critical: 0 },
+      findings: { secrets: 0, sbomComponents: 118 },
+      sonar: { gate: 'OK', measures: { bugs: '0' } },
+    });
+    // The per-tool list keeps its own field and is not duplicated in results.
+    expect(stage.results).not.toHaveProperty('checks');
+    expect(stage.checks).toHaveLength(1);
+  });
+
+  it('returns test failures with their messages', async () => {
+    const stage = await stageOf({
+      status: 'failure',
+      results: {
+        tests: {
+          total: 3,
+          passed: 2,
+          failed: 1,
+          failures: [{ name: 'adds', message: 'expected 2 got 3' }],
+        },
+      },
+    });
+    expect(stage.results?.tests?.failures).toEqual([
+      { name: 'adds', message: 'expected 2 got 3' },
+    ]);
+  });
+
+  it('leaves results out for a stage that stored none', async () => {
+    const stage = await stageOf({ results: {} });
+    expect(stage).not.toHaveProperty('results');
+  });
+
+  it('leaves results out for a stage that never reported', async () => {
+    // Only access reported; quality is inferred, so it has no figures.
+    const stage = await stageOf(
+      { results: { tests: { total: 1, passed: 1, failed: 0 } } },
+      'quality',
+    ).then(async () => {
+      (
+        runReportsRepository.findRecentByRepos as jest.Mock
+      ).mockResolvedValueOnce([row({ stage: 'access' })]);
+      const { runs } = await service.getRuns('user-1');
+      return runs[0]!.stages.find((s) => s.stage === 'quality')!;
+    });
+    expect(stage).not.toHaveProperty('results');
+  });
+
+  it('drops keys that are not objects and caps oversized lists', async () => {
+    const stage = await stageOf({
+      results: {
+        tests: 'not an object',
+        coverage: [1, 2],
+        security: {
+          high: 1,
+          critical: 0,
+          items: Array.from({ length: 200 }, (_, i) => ({ id: String(i) })),
+        },
+      },
+    });
+
+    expect(stage.results).not.toHaveProperty('tests');
+    expect(stage.results).not.toHaveProperty('coverage');
+    expect(stage.results?.security?.items).toHaveLength(50);
+  });
+});
+
+describe('CiReportsService.getRunReport', () => {
+  const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+  let runReportsRepository: CiRunReportsRepository;
+  let isRepoVisibleToUser: jest.Mock;
+  let service: CiReportsService;
+
+  beforeEach(() => {
+    runReportsRepository = makeRunReportsRepository();
+    isRepoVisibleToUser = jest.fn().mockResolvedValue(true);
+    service = new CiReportsService(
+      makeDatabaseService(),
+      runReportsRepository,
+      makeProjectVisibility(isRepoVisibleToUser),
+    );
+  });
+
+  it('builds the report of one repository, branch and commit, failures first', async () => {
+    (
+      runReportsRepository.findByRepoBranchSha as jest.Mock
+    ).mockResolvedValueOnce([
+      row({
+        stage: 'quality',
+        run_id: '200',
+        status: 'failure',
+        commit_sha: SHA,
+        friendly_messages: [
+          { severity: 'error', title: 'Tests failed', detail: 'd', hint: 'h' },
+        ],
+      }),
+      row({ stage: 'access', run_id: '100', commit_sha: SHA }),
+    ]);
+
+    const report = await service.getRunReport(
+      'user-1',
+      'acme/orders-api',
+      'uat',
+      SHA,
+    );
+
+    expect(runReportsRepository.findByRepoBranchSha).toHaveBeenCalledWith(
+      'acme/orders-api',
+      'uat',
+      SHA,
+    );
+    expect(report.schemaVersion).toBe('ci-run-report/v1');
+    expect(report.commitSha).toBe(SHA);
+    expect(report.failures.map((failure) => failure.title)).toEqual([
+      'Tests failed',
+    ]);
+    expect(report.stages.map((stage) => stage.stage)).toEqual([
+      'access',
+      'quality',
+      'package',
+      'verify',
+    ]);
+  });
+
+  it('refuses a caller who cannot see the repository, before reading anything', async () => {
+    isRepoVisibleToUser.mockResolvedValueOnce(false);
+
+    await expect(
+      service.getRunReport('user-1', 'acme/orders-api', 'uat', SHA),
+    ).rejects.toThrow(ForbiddenException);
+    expect(runReportsRepository.findByRepoBranchSha).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when nothing was reported for that commit on that branch', async () => {
+    (
+      runReportsRepository.findByRepoBranchSha as jest.Mock
+    ).mockResolvedValueOnce([]);
+
+    await expect(
+      service.getRunReport('user-1', 'acme/orders-api', 'main', SHA),
+    ).rejects.toThrow(NotFoundException);
   });
 });

@@ -4,6 +4,7 @@ import { DatabaseModule } from '#kernel/db/database.module';
 import { HierarchyModule } from '../hierarchy.module';
 import { HierarchyProjectLinkRepository } from './infrastructure/hierarchy-project-link.repository';
 import { HierarchyProjectLinkService } from './application/hierarchy-project-link.service';
+import { DELIVERY_PROJECT_OVERVIEW_QUERY } from '#kernel/ports/delivery-project-overview.port';
 import { PROJECT_LINK_PORT } from '#kernel/ports/project-link.port';
 
 /**
@@ -22,7 +23,16 @@ import { PROJECT_LINK_PORT } from '#kernel/ports/project-link.port';
     HierarchyProjectLinkRepository,
     HierarchyProjectLinkService,
     { provide: PROJECT_LINK_PORT, useExisting: HierarchyProjectLinkService },
+    // Batched member / repository facts for the projects context's team overview.
+    {
+      provide: DELIVERY_PROJECT_OVERVIEW_QUERY,
+      useExisting: HierarchyProjectLinkService,
+    },
   ],
-  exports: [HierarchyProjectLinkService, PROJECT_LINK_PORT],
+  exports: [
+    HierarchyProjectLinkService,
+    PROJECT_LINK_PORT,
+    DELIVERY_PROJECT_OVERVIEW_QUERY,
+  ],
 })
 export class HierarchyProjectLinkModule {}

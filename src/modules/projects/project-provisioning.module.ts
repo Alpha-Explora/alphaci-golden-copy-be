@@ -1,10 +1,12 @@
 import { Global, Module } from '@nestjs/common';
 
+import { DELIVERY_PROJECT_REPOSITORY_PROVISIONING } from '#kernel/ports/delivery-project-repository-provisioning.port';
 import { DELIVERY_PROJECT_DATA_CLEANUP } from '#kernel/ports/delivery-project-data-cleanup.port';
 import { PROJECT_LIFECYCLE_PORT } from '#kernel/ports/project-lifecycle.port';
 import { PROJECT_LOOKUP } from '#kernel/ports/project-lookup.port';
 import { PROJECT_REQUIREMENTS_READINESS } from '#kernel/ports/project-requirements-readiness.port';
 import { WORKSPACE_DATA_CLEANUP } from '#kernel/ports/workspace-data-cleanup.port';
+import { DeliveryProjectRepositoryProvisioningAdapter } from './application/lifecycle/delivery-project-repository-provisioning.adapter';
 import { ProjectLifecyclePortAdapter } from './application/lifecycle/project-lifecycle-port.adapter';
 import { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
 import { ProjectRequirementsReadinessAdapter } from './application/qa-checklists/project-requirements-readiness.adapter';
@@ -49,6 +51,13 @@ import { ProjectsModule } from './projects.module';
       provide: PROJECT_LIFECYCLE_PORT,
       useExisting: ProjectLifecyclePortAdapter,
     },
+    // "Add repository" inside a Project (identity-access/hierarchy) runs the
+    // wizard's full provisioning for one repository through this port;
+    // projects owns the GitHub, workflow and hosting steps.
+    {
+      provide: DELIVERY_PROJECT_REPOSITORY_PROVISIONING,
+      useExisting: DeliveryProjectRepositoryProvisioningAdapter,
+    },
   ],
   exports: [
     PROJECT_LOOKUP,
@@ -56,6 +65,7 @@ import { ProjectsModule } from './projects.module';
     DELIVERY_PROJECT_DATA_CLEANUP,
     PROJECT_REQUIREMENTS_READINESS,
     PROJECT_LIFECYCLE_PORT,
+    DELIVERY_PROJECT_REPOSITORY_PROVISIONING,
   ],
 })
 export class ProjectProvisioningModule {}

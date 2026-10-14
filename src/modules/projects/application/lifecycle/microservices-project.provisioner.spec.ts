@@ -149,11 +149,13 @@ describe('MicroservicesProjectProvisioner', () => {
     // Backend slot: no deliveryProjectId on the request, so it auto-creates
     // the chain, named after the one shared repo both slots live in.
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       chainName: 'orders',
     });
     // Frontend slot: reuses the delivery project the backend slot's link
     // just created, instead of creating a second, independent chain.
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-shared',
     });
   });
@@ -176,10 +178,12 @@ describe('MicroservicesProjectProvisioner', () => {
     );
 
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       chainName: 'Order Platform',
       enforceUniqueChainName: true,
     });
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-shared',
     });
   });
@@ -202,6 +206,7 @@ describe('MicroservicesProjectProvisioner', () => {
     );
 
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-given',
     });
   });
@@ -224,9 +229,11 @@ describe('MicroservicesProjectProvisioner', () => {
     );
 
     expect(support.createProjectRow.mock.calls[0]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-given',
     });
     expect(support.createProjectRow.mock.calls[1]?.[1]).toEqual({
+      accessGrant: 'new-repository',
       deliveryProjectId: 'dp-given',
     });
   });

@@ -34,6 +34,12 @@ export interface ProviderReleaseHandle {
   serviceUrl?: string | null;
   /** Operator-facing detail for a failure or an unfinished release. */
   message?: string | null;
+  /**
+   * Target `provider_metadata` keys the release changed (e.g. the image the
+   * service now runs). The releaser reports them and the caller persists them,
+   * so a provider never writes the deployment-target table itself.
+   */
+  providerMetadataUpdates?: Record<string, unknown>;
 }
 
 export interface ProviderReleaser {

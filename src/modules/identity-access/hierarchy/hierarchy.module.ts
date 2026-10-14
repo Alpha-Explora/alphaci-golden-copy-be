@@ -20,6 +20,8 @@ import { RepoConfigBrokerService } from './application/repo-config-broker.servic
 import { RepoConfigurationChangesRepository } from './infrastructure/repo-configuration-changes.repository';
 import { GithubSecretsProvider } from './infrastructure/config-broker-providers/github-secrets.provider';
 import { DeliveryProjectsController } from './api/delivery-projects.controller';
+import { DeliveryProjectMembersRepository } from './infrastructure/delivery-project-members.repository';
+import { DeliveryProjectMembersService } from './application/delivery-project-members.service';
 import { DeliveryProjectsRepository } from './infrastructure/delivery-projects.repository';
 import { DeliveryProjectsService } from './application/delivery-projects.service';
 import { GithubSyncOutboxHandler } from './application/github-sync-outbox.handler';
@@ -78,6 +80,8 @@ import { SystemsService } from './application/systems.service';
     SystemsService,
     DeliveryProjectsRepository,
     DeliveryProjectsService,
+    DeliveryProjectMembersRepository,
+    DeliveryProjectMembersService,
     ProjectFoldersRepository,
     ProjectFoldersService,
     RepositoriesRepository,
@@ -117,6 +121,10 @@ import { SystemsService } from './application/systems.service';
   // HierarchyProjectLinkModule (the deliveryProjectId create-time gate),
   // which imports this module rather than re-deriving the same Lead/Admin
   // creator-role and delivery-project-lookup logic.
-  exports: [HierarchyAccessService, DeliveryProjectsRepository],
+  exports: [
+    HierarchyAccessService,
+    DeliveryProjectsRepository,
+    DeliveryProjectMembersService,
+  ],
 })
 export class HierarchyModule {}

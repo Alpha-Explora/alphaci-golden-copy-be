@@ -21,6 +21,7 @@ import {
   HOSTED_BRANCHES,
   PIPELINE_BRANCHES,
 } from '#kernel/config/pipeline-branches';
+import { BROWSER_TEST_DEPENDENCIES } from './browser-test-dependencies';
 import { defaultToolchainRegistry } from './toolchains';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
@@ -129,6 +130,15 @@ export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
  * repository must not carry a hardcoded address of someone else's platform.
  */
 export const ALPHACI_API_URL = PLATFORM_BASE_URL;
+
+/**
+ * The browser-test packages playwright-e2e.yml makes sure resolve before it
+ * runs (`ensure-test-deps`). Defined once in browser-test-dependencies.ts,
+ * which the starter-pack scaffold also reads, so the versions the verify run
+ * installs and the versions a new repository declares can never drift.
+ * Re-exported here for callers that import it from the builder.
+ */
+export { BROWSER_TEST_DEPENDENCIES };
 
 /**
  * Branch promotion model enforced by the generated pipelines:
@@ -324,6 +334,25 @@ function branchIsOneOf(branches: readonly string[]): string {
     .join(' || ');
 
   return `\${{ ${test} }}`;
+}
+
+/**
+ * `branchIsOneOf`, and the deployment this suite points at was located.
+ *
+ * `resolve-targets` publishes `<kind>-skipped` when the variable holding the
+ * address is not set - nothing was deployed there - and a suite aimed at an
+ * address that does not exist reports the absence of an environment as a
+ * failure of the code. The suite is skipped instead, and the stage says why.
+ */
+function branchIsOneOfAndDeployed(
+  branches: readonly string[],
+  kind: 'api' | 'ui',
+): string {
+  const test = branches
+    .map((branch) => `(${BRANCH_EXPR}) == '${branch}'`)
+    .join(' || ');
+
+  return `\${{ (${test}) && needs.${RESOLVE_TARGETS_JOB_ID}.outputs.${kind}-skipped != 'true' }}`;
 }
 
 /** Extra coverage demanded on uat/main on top of the baseline, capped. */
@@ -710,7 +739,7 @@ function buildVerifyWorkflowFile(
 
   const apiTestJob = (branch: 'uat' | 'main') => ({
     needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
-    if: branchIsOneOf([branch]),
+    if: branchIsOneOfAndDeployed([branch], 'api'),
     uses: `${CENTRAL_WORKFLOW_BASE}/bruno-api-test.yml@${ctx.centralWorkflowRef}`,
     with: {
       'working-directory': ctx.servicePath,
@@ -737,7 +766,7 @@ function buildVerifyWorkflowFile(
    */
   const contractTestJob = () => ({
     needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
-    if: branchIsOneOf(['uat']),
+    if: branchIsOneOfAndDeployed(['uat'], 'api'),
     uses: `${CENTRAL_WORKFLOW_BASE}/schemathesis-scan.yml@${ctx.centralWorkflowRef}`,
     with: {
       'working-directory': ctx.servicePath,
@@ -749,7 +778,7 @@ function buildVerifyWorkflowFile(
 
   const uiTestJob = (branch: 'uat' | 'main') => ({
     needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
-    if: branchIsOneOf([branch]),
+    if: branchIsOneOfAndDeployed([branch], 'ui'),
     uses: `${CENTRAL_WORKFLOW_BASE}/playwright-e2e.yml@${ctx.centralWorkflowRef}`,
     with: {
       'working-directory': ctx.servicePath,
@@ -773,6 +802,28 @@ function buildVerifyWorkflowFile(
        */
       'run-only-on-branch': '*',
       'upload-artifacts': true,
+      /*
+       * ALPHACI-stored visual baselines (opt-in input on playwright-e2e.yml).
+       *
+       * With this on, the reusable workflow fetches the branch's approved
+       * baseline screenshots from this platform before the run, compares
+       * against them, and reports the outcome back (`/ci/visual-summary`,
+       * `/ci/visual-results/file`). Baselines therefore never live in the
+       * customer repository: a person approves a changed screenshot in
+       * ALPHACI and the next run compares against it, with no commit.
+       *
+       * `alphaci-api-url` is the platform base, the same value release.yml
+       * receives, and is a literal because a `with:` block cannot read
+       * `secrets.*` (the whole file is rejected at parse time). It is a
+       * public address, not a credential. The branch is passed explicitly for
+       * the reason `run-only-on-branch` is: the reusable workflow sees the
+       * DEFAULT branch in `github.ref_name` under `workflow_run`, and
+       * baselines are per branch (main falls back to uat's approved set).
+       */
+      'ensure-test-deps': BROWSER_TEST_DEPENDENCIES,
+      'visual-baselines': true,
+      'alphaci-api-url': ALPHACI_API_URL,
+      'visual-branch': branch,
     },
     /*
      * A browser suite's target is always the Vercel-deployed frontend slot -
@@ -791,6 +842,12 @@ function buildVerifyWorkflowFile(
      */
     secrets: {
       VERCEL_AUTOMATION_BYPASS_SECRET: `\${{ secrets.${vercelAutomationBypassSecretName('frontend')} }}`,
+      /*
+       * The bearer for the visual-baseline calls: the same per-repository
+       * token the report job authenticates with. A `secrets:` entry, never
+       * inside `with:`, for the parse-time reason above.
+       */
+      ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
     },
   });
 
@@ -817,7 +874,10 @@ function buildVerifyWorkflowFile(
       BRANCH: `\${{ ${BRANCH_EXPR} }}`,
     };
     const lines: string[] = ['set -euo pipefail', '', '{'];
-    const requiredByBranch: Record<string, string[]> = { uat: [], main: [] };
+    const requiredByBranch: Record<string, ['api' | 'ui', string][]> = {
+      uat: [],
+      main: [],
+    };
 
     /*
      * One variable for every branch, because the branch is a prefix on it.
@@ -827,7 +887,12 @@ function buildVerifyWorkflowFile(
      */
     if (verification.ui) {
       env[VERCEL_ALIAS_VARIABLE] = `\${{ vars.${VERCEL_ALIAS_VARIABLE} }}`;
+      outputs['ui-skipped'] = '${{ steps.resolve.outputs.ui-skipped }}';
     }
+    if (verification.api) {
+      outputs['api-skipped'] = '${{ steps.resolve.outputs.api-skipped }}';
+    }
+    outputs['skip-reason'] = '${{ steps.resolve.outputs.skip-reason }}';
 
     for (const branch of ['uat', 'main'] as const) {
       if (verification.api) {
@@ -836,14 +901,14 @@ function buildVerifyWorkflowFile(
           `\${{ steps.resolve.outputs.api-${branch} }}`;
         env[variable] = `\${{ vars.${variable} }}`;
         lines.push(`  echo "api-${branch}=\${${variable}}"`);
-        requiredByBranch[branch]!.push(variable);
+        requiredByBranch[branch]!.push(['api', variable]);
       }
       if (verification.ui) {
         outputs[`ui-${branch}`] = `\${{ steps.resolve.outputs.ui-${branch} }}`;
         lines.push(
           `  echo "ui-${branch}=${vercelBranchAlias(branch, `\${${VERCEL_ALIAS_VARIABLE}}`)}"`,
         );
-        requiredByBranch[branch]!.push(VERCEL_ALIAS_VARIABLE);
+        requiredByBranch[branch]!.push(['ui', VERCEL_ALIAS_VARIABLE]);
       }
     }
 
@@ -862,7 +927,9 @@ function buildVerifyWorkflowFile(
       }
       return [
         `  ${branch})`,
-        ...required.map((variable) => `    require "${variable}"`),
+        ...required.map(
+          ([kind, variable]) => `    require ${kind} "${variable}"`,
+        ),
         '    ;;',
       ];
     });
@@ -870,16 +937,23 @@ function buildVerifyWorkflowFile(
     lines.push(
       '} >> "$GITHUB_OUTPUT"',
       '',
+      '# A missing address is neither a failure of the code nor of this job:',
+      '# nothing was deployed there, so there is nothing to test. It is recorded',
+      '# per kind of suite so those jobs skip, and skip-reason lets the stage say',
+      '# WHY it tested nothing instead of failing a suite aimed at no address.',
+      'missing=""',
       'require() {',
-      // Indirect expansion: $1 is the variable NAME, so ${!1} is its value.
+      // Indirect expansion: $2 is the variable NAME, so ${!2} is its value.
       // `:-` keeps `set -u` from treating an unset one as a fatal error,
       // because an unset variable is exactly what this function reports on.
-      '  value="${!1:-}"',
+      '  value="${!2:-}"',
       '  if [ -z "${value}" ]; then',
-      '    echo "::error::Repository variable $1 is not set, so the ${BRANCH} deployment cannot be located and nothing was tested against it. ALPHACI installs it when the deployment target is provisioned, so an empty one means either this project predates that, or the variable was removed. Add it under Settings > Secrets and variables > Actions > Variables. It is a variable rather than a secret because it is a public address, and because GitHub redacts secrets passed between jobs."',
-      '    exit 1',
+      '    missing="${missing:+${missing}, }$2"',
+      '    echo "$1-skipped=true" >> "$GITHUB_OUTPUT"',
+      '    echo "  $2 is not set"',
+      '  else',
+      '    echo "  $2=${value}"',
       '  fi',
-      '  echo "  $1=${value}"',
       '}',
       '',
       '# A dev run tests no deployed service, so demanding the uat address',
@@ -892,6 +966,14 @@ function buildVerifyWorkflowFile(
       '    exit 0',
       '    ;;',
       'esac',
+      '',
+      'if [ -n "${missing}" ]; then',
+      '  case "${missing}" in *,*) verb="are" ;; *) verb="is" ;; esac',
+      '  # Variables, not secrets: public addresses that ALPHACI installs when the',
+      '  # deployment target is provisioned. Missing means this project was never',
+      '  # given hosting, or the variable was removed.',
+      '  echo "skip-reason=Nothing was deployed for ${BRANCH}: ${missing} ${verb} not set - provision hosting in ALPHACI." >> "$GITHUB_OUTPUT"',
+      'fi',
     );
 
     return {
@@ -922,10 +1004,12 @@ function buildVerifyWorkflowFile(
     }),
   };
 
-  // The resolver is plumbing, not work. Counting it would make a dev run -
-  // where every test job is branch-scoped out - report a successful verify
-  // stage that tested nothing. A failure in it is still reported, because
-  // STAGE_FAILED looks at every job's result.
+  // The resolver is plumbing, not work. Counting it as work would make a dev
+  // run - where every test job is branch-scoped out - report a successful
+  // verify stage that tested nothing. It IS in report-results' `needs`
+  // though, because STAGE_FAILED only reads the jobs the report waits for:
+  // left out, a resolver failure reached nobody (six runs, no reports, and the
+  // product said "Not run").
   const workJobIds = Object.keys(verifyJobs).filter(
     (jobId) => jobId !== RESOLVE_TARGETS_JOB_ID,
   );
@@ -961,8 +1045,14 @@ function buildVerifyWorkflowFile(
         ...verifyJobs,
         'report-results': reportingJob(
           'verify',
-          [VALIDATE_ACCESS_JOB_ID, ...workJobIds],
+          [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID, ...workJobIds],
           {
+            /*
+             * When no suite could run because nothing was deployed, the stage is
+             * reported as skipped with the reason resolve-targets gave, rather
+             * than reporting nothing (which reads as stalled) or failing.
+             */
+            skipReasonJobId: RESOLVE_TARGETS_JOB_ID,
             /*
              * Only the test jobs count as work. Every one is branch-scoped, so
              * some always skip — and on dev they all do, which is what makes
@@ -1051,7 +1141,25 @@ function buildPackageWorkflowFile(
         ),
         'report-results': reportingJob(
           'package',
-          ['validate-access', 'build', ...deploymentPlan.jobIds],
+          [
+            'validate-access',
+            'build',
+            'production-gate',
+            ...deploymentPlan.jobIds,
+            /*
+             * The promotion jobs, so the report goes out AFTER them.
+             *
+             * It did not wait: report-results needed only the build and deploy
+             * jobs, ran as soon as those finished and posted `success` while the
+             * promotion PR was still being created. When that failed
+             * (logistics2cicd-fe run 37031776199, `Create Promotion PR`) GitHub
+             * said failure and ALPHACI kept a success. The report job is
+             * `always()`, so a failed or skipped promotion cannot hold it back,
+             * and STAGE_FAILED and the per-job checks now see the result.
+             */
+            'promote-to-uat',
+            'promote-to-main',
+          ],
           {
             // The deploy jobs are branch-scoped and skip by design, so `build`
             // alone decides whether this stage packaged anything.
@@ -1752,6 +1860,12 @@ function reportingJob(
      * nothing, so the script takes whichever answered.
      */
     uiTestJobIds?: string[];
+    /**
+     * A job whose `skip-reason` output explains why the stage's work was left
+     * out on purpose (verify: nothing was deployed). When the work did not run
+     * and this output is non-empty, the stage is reported as skipped with it.
+     */
+    skipReasonJobId?: string;
   },
 ) {
   // Only the chained stages have a context job to read from.
@@ -1759,6 +1873,7 @@ function reportingJob(
   const isQuality = stage === 'quality';
   const testJobId = opts?.testJobId;
   const uiTestJobIds = opts?.uiTestJobIds ?? [];
+  const skipReasonJobId = opts?.skipReasonJobId;
 
   /*
    * The jobs that ARE the stage, as opposed to the ones that let it start.
@@ -1809,6 +1924,11 @@ function reportingJob(
      */
     STAGE_WORK_RAN: `\${{ ${workRanExpr} }}`,
   };
+
+  if (skipReasonJobId) {
+    stepEnv['SKIP_REASON'] =
+      `\${{ needs.${skipReasonJobId}.outputs.skip-reason }}`;
+  }
 
   if (isQuality && testJobId) {
     stepEnv['COVERAGE_PCT'] =
@@ -1909,6 +2029,12 @@ function reportingJob(
     stepEnv['SONAR_CONDITIONS'] =
       '${{ needs.sonar.outputs.failed-conditions }}';
     stepEnv['SONAR_MEASURES'] = '${{ needs.sonar.outputs.measures }}';
+    /*
+     * The most severe issues on new code (rule, file, line, message), so a
+     * developer gets the place to fix and not only a count. Empty from a
+     * central workflow that does not collect them; the guard leaves it out.
+     */
+    stepEnv['SONAR_ISSUES'] = '${{ needs.sonar.outputs.issues }}';
   }
 
   /*
@@ -1933,6 +2059,21 @@ function reportingJob(
       `\${{ needs.${jobId}.outputs.tests-failed }}`;
     stepEnv[`E2E_FAILURES_${slot}`] =
       `\${{ needs.${jobId}.outputs.tests-failures }}`;
+    /*
+     * The names of the tests that PASSED, as a one-line JSON array. Passed
+     * through env like the other outputs and never interpolated into the
+     * script body, so a long list cannot push the generated run block towards
+     * GitHub's 21,000-character expression limit: the expression is this one
+     * short reference, and the value is read as a shell variable.
+     */
+    stepEnv[`E2E_PASSES_${slot}`] =
+      `\${{ needs.${jobId}.outputs.tests-passes }}`;
+    /*
+     * Every test with what it checks, its steps and its full error, as a
+     * one-line JSON array (failures first, capped by the central workflow).
+     * By reference through env for the same 21,000-character reason.
+     */
+    stepEnv[`E2E_CASES_${slot}`] = `\${{ needs.${jobId}.outputs.tests-cases }}`;
   });
 
   const scriptLines = [
@@ -1973,6 +2114,19 @@ function reportingJob(
     'elif [ "$STAGE_CANCELLED" = "true" ]; then',
     '  CONCLUSION="cancelled"',
     '  post_commit_status "error" "The ${STATUS_CONTEXT#alphaci/} stage was cancelled."',
+    ...(skipReasonJobId
+      ? [
+          'elif [ "$STAGE_WORK_RAN" != "true" ] && [ -n "${SKIP_REASON:-}" ]; then',
+          '  # The work was left out ON PURPOSE and the stage knows why: there was',
+          '  # nothing deployed to test. Reported with the reason, so the product',
+          '  # shows "not run, because..." instead of a stage that stalls.',
+          '  #',
+          '  # No commit status, for the reason given below: a green status would',
+          '  # say this commit cleared a stage that never examined it.',
+          '  CONCLUSION="success"',
+          '  SKIPPED="true"',
+        ]
+      : []),
     'elif [ "$STAGE_WORK_RAN" != "true" ]; then',
     '  # THE WORK OF THIS STAGE NEVER RAN.',
     '  #',
@@ -2066,13 +2220,28 @@ function reportingJob(
     '  # filter kept the one annotation that says nothing and discarded every',
     '  # one that named the actual problem.',
     '  #',
+    '  #',
+    '  # `.github` paths ARE kept when the level is failure. Every `::error::` a',
+    '  # workflow step prints is attributed to `.github` - "AlphaCI refused the',
+    '  # release (HTTP 502)", "Repository variable VERCEL_ALIAS is not set" - and',
+    '  # dropping that path dropped the only place the real reason was written.',
+    '  # The runner\'s own "Process completed with exit code N" arrives the same',
+    '  # way and says nothing, so that one stays filtered (second select).',
+    '  #',
     '  # Deduplicated because a solution built more than once (analyze, then',
     '  # sonar) reports the same diagnostic on each pass.',
-    '  ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.path and (.path | startswith(".github") | not))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
+    '  ANNOTATIONS=$(printf \'%s %s\' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c \'add | map(select(.path and ((.path | startswith(".github") | not) or .annotation_level == "failure"))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]\' || printf \'%s\' "$ANNOTATIONS")',
     'done',
     '',
     '# Build results sub-object (reads from job outputs)',
     'RESULTS="{}"',
+    ...(skipReasonJobId
+      ? [
+          'if [ "${SKIPPED:-}" = "true" ]; then',
+          '  RESULTS=$(jq -n -c --arg reason "$SKIP_REASON" \'{skipped:{reason:$reason}}\')',
+          'fi',
+        ]
+      : []),
     ...(uiTestJobIds.length > 0
       ? [
           '',
@@ -2092,12 +2261,37 @@ function reportingJob(
           '  eval "e2e_passed=\\${E2E_PASSED_${slot}:-0}"',
           '  eval "e2e_failed=\\${E2E_FAILED_${slot}:-0}"',
           '  eval "e2e_failures=\\${E2E_FAILURES_${slot}:-[]}"',
+          '  eval "e2e_passes=\\${E2E_PASSES_${slot}:-}"',
+          '  eval "e2e_cases=\\${E2E_CASES_${slot}:-}"',
+          '  # The passing names are optional and fail-soft: an older central',
+          '  # workflow publishes none, and a malformed value must not cost the',
+          '  # whole report. Anything that is not a JSON array of strings is',
+          '  # dropped, and the list is capped to what ingest accepts (500 names',
+          '  # of at most 500 characters). An empty array is kept - it means',
+          '  # "ran, nothing passed" - while a missing one is left out, so ALPHACI',
+          '  # knows to fall back to inference for that run.',
+          '  if [ -n "$e2e_passes" ] && printf \'%s\' "$e2e_passes" | jq -e \'type == "array" and all(.[]; type == "string")\' >/dev/null 2>&1; then',
+          "    e2e_passes=$(printf '%s' \"$e2e_passes\" | jq -c '[.[:500][] | .[0:500]]')",
+          '  else',
+          '    e2e_passes=',
+          '  fi',
+          '  # The per-test detail is optional and fail-soft like the names: an',
+          '  # older central workflow publishes none, and anything that is not an',
+          '  # array of objects is dropped rather than costing the report. Capped',
+          '  # to what ingest accepts (50).',
+          '  if [ -n "$e2e_cases" ] && printf \'%s\' "$e2e_cases" | jq -e \'type == "array" and all(.[]; type == "object")\' >/dev/null 2>&1; then',
+          "    e2e_cases=$(printf '%s' \"$e2e_cases\" | jq -c '.[:50]')",
+          '  else',
+          '    e2e_cases=',
+          '  fi',
           '  E2E_TESTS=$(jq -n \\',
           '    --argjson total "$e2e_total" \\',
           '    --argjson passed "${e2e_passed:-0}" \\',
           '    --argjson failed "${e2e_failed:-0}" \\',
           '    --argjson failures "${e2e_failures:-[]}" \\',
-          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures}')",
+          '    --argjson passes "${e2e_passes:-null}" \\',
+          '    --argjson cases "${e2e_cases:-null}" \\',
+          "    '{total:$total,passed:$passed,failed:$failed,failures:$failures} + (if $passes == null then {} else {passes:$passes} end) + (if $cases == null then {} else {cases:$cases} end)')",
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson tests "$E2E_TESTS" \'. + {tests:$tests}\')',
           '  break',
           'done',
@@ -2209,6 +2403,9 @@ function reportingJob(
           'fi',
           'if printf \'%s\' "${SONAR_MEASURES:-}" | jq -e \'type == "object" and length > 0\' >/dev/null 2>&1; then',
           '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson m "$SONAR_MEASURES" \'. + {measures:$m}\')',
+          'fi',
+          'if printf \'%s\' "${SONAR_ISSUES:-}" | jq -e \'type == "array" and length > 0 and all(.[]; type == "object")\' >/dev/null 2>&1; then',
+          '  SONAR=$(printf \'%s\' "$SONAR" | jq -c --argjson i "$SONAR_ISSUES" \'. + {issues:$i[:20]}\')',
           'fi',
           'if [ "$SONAR" != "{}" ]; then',
           '  RESULTS=$(printf \'%s\' "$RESULTS" | jq -c --argjson sonar "$SONAR" \'. + {sonar:$sonar}\')',

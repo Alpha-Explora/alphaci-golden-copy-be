@@ -13,6 +13,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { BrowserTestsService } from '../application/workspace/browser-tests.service';
 import { ProjectWorkspaceService } from '../application/workspace/project-workspace.service';
 import { CreatePullRequestDto } from './dto/create-pull-request.dto';
 
@@ -35,7 +36,10 @@ import { CreatePullRequestDto } from './dto/create-pull-request.dto';
 @Controller('projects/:projectId/workspace')
 @UseGuards(SessionAuthGuard)
 export class ProjectWorkspaceController {
-  constructor(private readonly workspaceService: ProjectWorkspaceService) {}
+  constructor(
+    private readonly workspaceService: ProjectWorkspaceService,
+    private readonly browserTests: BrowserTestsService,
+  ) {}
 
   @Get('branches')
   listBranches(@Req() req: Request, @Param('projectId') projectId: string) {
@@ -250,6 +254,35 @@ export class ProjectWorkspaceController {
       this.oauthToken(req),
       this.requireNumericId(pullNumber, 'pull request'),
       method,
+    );
+  }
+
+  /**
+   * Whether the starter browser tests are on the project's dev branch, and
+   * whether the caller may add them. On open only, never polled.
+   */
+  @Get('browser-tests')
+  getBrowserTestsStatus(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+  ) {
+    return this.browserTests.getStatus(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+    );
+  }
+
+  /**
+   * Open a pull request into dev adding the starter browser tests, as the
+   * signed-in person. An already-open one is a 409 carrying its number.
+   */
+  @Post('browser-tests')
+  addBrowserTests(@Req() req: Request, @Param('projectId') projectId: string) {
+    return this.browserTests.addBrowserTests(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
     );
   }
 

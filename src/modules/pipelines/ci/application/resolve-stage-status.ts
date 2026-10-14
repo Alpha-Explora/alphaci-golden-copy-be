@@ -30,6 +30,7 @@ import type { FriendlyMessage } from './translate-results';
  * local binding: `Record<StageId, ...>` is built here, and a bare
  * `export ... from` leaves nothing local for that mapped type to close over.
  */
+import { stageRunsOnBranch } from '#kernel/config/pipeline-branches';
 import { STAGE_ORDER, type StageId } from './stages';
 
 export { STAGE_ORDER, type StageId };
@@ -41,7 +42,13 @@ export type StageStatus =
   | 'cancelled'
   | 'pending'
   | 'blocked'
-  | 'stalled';
+  | 'stalled'
+  /**
+   * The generated pipeline does not run this stage on this branch, by design:
+   * verify on dev, where nothing is hosted. Neither a pass nor a failure, and
+   * never the cause of one.
+   */
+  | 'not_applicable';
 
 /**
  * How long a stage may stay silent after the one before it succeeded.
@@ -119,10 +126,15 @@ const STALLED_MESSAGE: FriendlyMessage = {
  *
  * @param reported  stages that posted a report, keyed by stage id
  * @param now       evaluation time, injected so the rule is testable
+ * @param branch    the branch the run was for. When given, a stage the generated
+ *                  pipeline does not run there (see `stageRunsOnBranch`) is
+ *                  `not_applicable` instead of waiting to become `stalled`.
+ *                  Omitted, every stage is assumed to apply.
  */
 export function resolveStages(
   reported: Partial<Record<StageId, ReportedStage>>,
   now: Date = new Date(),
+  branch?: string,
 ): Record<StageId, ResolvedStage> {
   const resolved = {} as Record<StageId, ResolvedStage>;
   let blockedBy: StageId | undefined;
@@ -137,6 +149,15 @@ export function resolveStages(
         blockedBy = stage;
       }
       previous = { stage, state: report };
+      continue;
+    }
+
+    // No report, and none was ever going to come: the pipeline does not run
+    // this stage on this branch. Checked before everything else so an absent
+    // stage is never blamed on an earlier failure or on silence, and it does
+    // not move `previous` - the next stage still follows the last real one.
+    if (branch !== undefined && !stageRunsOnBranch(stage, branch)) {
+      resolved[stage] = { status: 'not_applicable', friendlyMessages: [] };
       continue;
     }
 
@@ -183,7 +204,10 @@ export function resolveStages(
 export function resolveOverallStatus(
   stages: readonly ResolvedStage[],
 ): 'success' | 'failure' | 'running' | 'cancelled' | 'partial' {
-  const statuses = stages.map((stage) => stage.status);
+  // A stage the pipeline does not run here says nothing about the run.
+  const statuses = stages
+    .map((stage) => stage.status)
+    .filter((status) => status !== 'not_applicable');
 
   if (statuses.some((s) => s === 'failure' || s === 'stalled'))
     return 'failure';

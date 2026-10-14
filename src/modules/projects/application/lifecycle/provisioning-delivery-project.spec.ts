@@ -747,3 +747,69 @@ describe('ProjectProvisioningApplicationService - persona gate on repository cre
     ).resolves.toMatchObject({ id: 'project-1' });
   });
 });
+
+/*
+ * ATTACHING an existing org repository (POST /projects/setup) must never queue
+ * automatic GitHub grants: a Developer with org-base read could otherwise be
+ * handed Write on any repository as its "creator", and the Project's
+ * Developers with them. Only a repository ALPHACI just created asks for them.
+ */
+describe('ProjectProvisioningApplicationService - automatic GitHub grants only for created repositories', () => {
+  const link = (): ProjectLinkPort => ({
+    getLinkedRepositoryId: jest.fn().mockResolvedValue(null),
+    getProjectFolder: jest.fn().mockResolvedValue(null),
+    getDeliveryProject: jest.fn().mockResolvedValue(null),
+    listDeliveryProjectsForGroup: jest.fn().mockResolvedValue([]),
+    ensureLink: jest.fn().mockResolvedValue(null),
+    assertProjectNameAvailableForCreate: jest.fn(),
+    assertDeliveryProjectAvailableForCreate: jest.fn(),
+  });
+
+  it('creating a repository asks the link for the new-repository grants', async () => {
+    const hierarchy = link();
+    const { service } = makeService(hierarchy);
+
+    await service.createProject('user-1', 'octocat', 'gh-token', baseDto);
+
+    expect(hierarchy.ensureLink).toHaveBeenCalledWith(
+      expect.objectContaining({ accessGrant: 'new-repository' }),
+    );
+  });
+
+  it('setupProject (attach) links with accessGrant none, so nobody is granted', async () => {
+    const hierarchy = link();
+    const { service, projectsRepository, githubService } =
+      makeService(hierarchy);
+    (projectsRepository.create as jest.Mock).mockResolvedValue({
+      id: 'project-1',
+      workspace_id: 'w1',
+    });
+    (
+      githubService as unknown as {
+        getInstallationAccessTokenForUserRepo: jest.Mock;
+      }
+    ).getInstallationAccessTokenForUserRepo.mockResolvedValue('install-token');
+    Object.assign(githubService, {
+      branchExists: jest.fn().mockResolvedValue(true),
+      getRepo: jest.fn().mockResolvedValue({ defaultBranch: 'main' }),
+      listBranches: jest
+        .fn()
+        .mockResolvedValue([
+          { name: 'main', protected: false, commitSha: 's' },
+        ]),
+      requiresPullRequestToPush: jest.fn().mockResolvedValue(false),
+    });
+
+    await service.setupProject('user-1', 'gh-token', {
+      templateId: 'be-nestjs',
+      serviceName: 'api',
+      repoFullName: 'owner/repo',
+      workspaceId: 'w1',
+    });
+
+    const input = (hierarchy.ensureLink as jest.Mock).mock.calls[0]?.[0] as {
+      accessGrant?: string;
+    };
+    expect(input.accessGrant).toBe('none');
+  });
+});

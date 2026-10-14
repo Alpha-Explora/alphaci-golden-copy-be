@@ -1,0 +1,169 @@
+[
+  {
+    "title": "a11y.e2e-spec.ts > no critical or serious accessibility violations on /",
+    "status": "failed",
+    "durationMs": 1810,
+    "file": "tests/e2e/a11y.e2e-spec.ts",
+    "line": 11,
+    "project": "chromium",
+    "retries": 1,
+    "description": "Runs the axe accessibility checker on / and fails on any critical or serious violation, such as missing form labels or text that is too low in contrast. Minor and moderate findings are counted but do not fail.",
+    "notes": [
+      {
+        "type": "result",
+        "text": "3 critical or serious and 2 minor or moderate violations; 23 accessibility rules passed"
+      }
+    ],
+    "steps": [
+      {
+        "title": "Open /",
+        "durationMs": 566
+      },
+      {
+        "title": "Run the axe accessibility scan",
+        "durationMs": 903
+      },
+      {
+        "title": "Check for critical or serious violations",
+        "durationMs": 13,
+        "failed": true
+      }
+    ],
+    "error": {
+      "message": "Error: Accessibility violations on /:\ncolor-contrast (serious): Elements must meet minimum color contrast ratio thresholds - button[data-testid=\"tab-intake\"], button[data-testid=\"btn-submit-intake\"], span[data-testid=\"status-shp-sample-01\"]\nlabel (critical): Form elements must have labels - input[data-testid=\"input-description\"], input[data-testid=\"input-min-temp\"], input[data-testid=\"input-max-temp\"]\nselect-name (critical): Select element must have an accessible name - select\n\nexpect(received).toEqual(expected) // deep equality\n\n- Expected  - 1\n+ Received  + 5\n\n- Array []\n+ Array [\n+   \"color-contrast (serious): Elements must meet minimum color contrast ratio thresholds - button[data-testid=\\\"tab-intake\\\"], button[data-testid=\\\"btn-submit-intake\\\"], span[data-testid=\\\"status-shp-sample-01\\\"]\",\n+   \"label (critical): Form elements must have labels - input[data-testid=\\\"input-description\\\"], input[data-testid=\\\"input-min-temp\\\"], input[data-testid=\\\"input-max-temp\\\"]\",\n+   \"select-name (critical): Select element must have an accessible name - select\",\n+ ]\n\n  49 |     });\n  50 |     await test.step('Check for critical or serious violations', () => {\n> 51 |       expect(report, 'Accessibility violations on ' + path + ':\\n' + report.join('\\n')).toEqual([]);\n     |                                                                                         ^\n  52 |     });\n  53 |   });\n  54 | }\n    at tests\\e2e\\a11y.e2e-spec.ts:51:89\n    at tests\\e2e\\a11y.e2e-spec.ts:50:5",
+      "location": "tests/e2e/a11y.e2e-spec.ts:51"
+    }
+  },
+  {
+    "title": "home.e2e-spec.ts > logistics2cicd-frontend deployment > serves its entry page",
+    "status": "passed",
+    "durationMs": 4442,
+    "file": "tests/e2e/home.e2e-spec.ts",
+    "line": 4,
+    "project": "chromium"
+  },
+  {
+    "title": "links.e2e-spec.ts > internal links on the home page resolve",
+    "status": "passed",
+    "durationMs": 4455,
+    "file": "tests/e2e/links.e2e-spec.ts",
+    "line": 10,
+    "project": "chromium",
+    "description": "Collects the links on the home page that stay on this site and requests each one (up to 25); fails if any answers with an HTTP error or cannot be reached.",
+    "notes": [
+      {
+        "type": "result",
+        "text": "0 same-site links found, 0 checked, 0 broken"
+      }
+    ],
+    "steps": [
+      {
+        "title": "Open the home page",
+        "durationMs": 3830
+      },
+      {
+        "title": "Collect the same-site links",
+        "durationMs": 138
+      },
+      {
+        "title": "Request each link",
+        "durationMs": 0
+      },
+      {
+        "title": "Check for broken links",
+        "durationMs": 9
+      }
+    ]
+  },
+  {
+    "title": "pages.e2e-spec.ts > loads / without errors",
+    "status": "passed",
+    "durationMs": 4354,
+    "file": "tests/e2e/pages.e2e-spec.ts",
+    "line": 8,
+    "project": "chromium",
+    "description": "Opens / on the deployed site and fails if it answers with an HTTP error, or logs a console error or an uncaught error while it loads.",
+    "notes": [
+      {
+        "type": "result",
+        "text": "/ answered HTTP 200 with 0 console or page errors"
+      }
+    ],
+    "steps": [
+      {
+        "title": "Open /",
+        "durationMs": 3830
+      },
+      {
+        "title": "Check the HTTP status",
+        "durationMs": 14
+      },
+      {
+        "title": "Wait for the page to finish loading",
+        "durationMs": 5
+      },
+      {
+        "title": "Check for console and page errors",
+        "durationMs": 3
+      }
+    ]
+  },
+  {
+    "title": "visual.e2e-spec.ts > home page at desktop size > matches the approved screenshot",
+    "status": "passed",
+    "durationMs": 4645,
+    "file": "tests/e2e/visual.e2e-spec.ts",
+    "line": 44,
+    "project": "chromium",
+    "description": "Takes a full-page screenshot of the home page at 1280x800 and compares it with the reference approved in ALPHACI. A first run records the screenshot for approval instead of failing.",
+    "notes": [
+      {
+        "type": "visual",
+        "text": "home-desktop.png: new screenshot, waiting for approval in ALPHACI"
+      }
+    ],
+    "steps": [
+      {
+        "title": "Open the home page",
+        "durationMs": 3845
+      },
+      {
+        "title": "Wait for the page to finish loading",
+        "durationMs": 5
+      },
+      {
+        "title": "Compare with the approved screenshot",
+        "durationMs": 321
+      }
+    ]
+  },
+  {
+    "title": "visual.e2e-spec.ts > home page at mobile size > matches the approved screenshot",
+    "status": "passed",
+    "durationMs": 809,
+    "file": "tests/e2e/visual.e2e-spec.ts",
+    "line": 44,
+    "project": "chromium",
+    "description": "Takes a full-page screenshot of the home page at 390x844 and compares it with the reference approved in ALPHACI. A first run records the screenshot for approval instead of failing.",
+    "notes": [
+      {
+        "type": "visual",
+        "text": "home-mobile.png: new screenshot, waiting for approval in ALPHACI"
+      }
+    ],
+    "steps": [
+      {
+        "title": "Open the home page",
+        "durationMs": 522
+      },
+      {
+        "title": "Wait for the page to finish loading",
+        "durationMs": 2
+      },
+      {
+        "title": "Compare with the approved screenshot",
+        "durationMs": 127
+      }
+    ]
+  }
+]

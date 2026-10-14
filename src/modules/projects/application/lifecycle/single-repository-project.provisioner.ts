@@ -151,7 +151,7 @@ export class SingleRepositoryProjectProvisioner {
             workflowFiles: workflowFileMetadata(workflowFiles),
           },
         },
-        newChainLinkOptions(dto),
+        { ...newChainLinkOptions(dto), accessGrant: 'new-repository' },
       ));
 
       const ciToken = await this.support.ciService.issueProjectToken(row.id);

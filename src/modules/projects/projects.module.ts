@@ -43,11 +43,17 @@ import { ProjectPreviewsApplicationService } from './application/dashboard/proje
 import { ProjectWorkflowsService } from './application/workflows/project-workflows.service';
 import { ProjectProvisioningService } from './application/lifecycle/project-provisioning.service';
 import { ProjectReconciliationService } from './application/lifecycle/project-reconciliation.service';
+import { DeliveryProjectRepositoryProvisioningAdapter } from './application/lifecycle/delivery-project-repository-provisioning.adapter';
 import { ProjectProvisioningApplicationService } from './application/lifecycle/project-provisioning-application.service';
 import { ProjectWorkflowSettingsRepository } from './infrastructure/project-workflow-settings.repository';
 import { ProjectWorkflowUpdateRequestsRepository } from './infrastructure/project-workflow-update-requests.repository';
 import { ProjectsRepository } from './infrastructure/projects.repository';
 import { ProjectWorkspaceController } from './api/project-workspace.controller';
+import { BrowserTestsService } from './application/workspace/browser-tests.service';
+import { ProjectVisualController } from './api/project-visual.controller';
+import { ProjectVisualService } from './application/visual/project-visual.service';
+import { ProjectPlaywrightLiveController } from './api/project-playwright-live.controller';
+import { ProjectPlaywrightLiveService } from './application/playwright-live/project-playwright-live.service';
 import { ProjectWorkspaceService } from './application/workspace/project-workspace.service';
 import { ProjectsService } from './application/lifecycle/projects.service';
 import { SonarCloudSetupService } from './application/lifecycle/sonar-cloud-setup.service';
@@ -78,6 +84,8 @@ import { ProjectVisibilityModule } from './project-visibility.module';
   controllers: [
     ProjectsController,
     ProjectWorkspaceController,
+    ProjectVisualController,
+    ProjectPlaywrightLiveController,
     ProjectFolderController,
     ProjectActivityController,
   ],
@@ -89,6 +97,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     },
     ProjectLifecycleService,
     ProjectLifecyclePortAdapter,
+    DeliveryProjectRepositoryProvisioningAdapter,
     SonarCloudSetupService,
     ProjectDashboardService,
     ProjectWorkflowsService,
@@ -98,6 +107,9 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectReconciliationService,
     ProjectProvisioningApplicationService,
     ProjectWorkspaceService,
+    BrowserTestsService,
+    ProjectVisualService,
+    ProjectPlaywrightLiveService,
     ProjectGithubTokenResolver,
     ProjectGithubActivityService,
     ProjectCommitsService,
@@ -119,6 +131,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectProvisioningService,
     ProjectReconciliationService,
     ProjectLifecyclePortAdapter,
+    DeliveryProjectRepositoryProvisioningAdapter,
   ],
 })
 export class ProjectsModule {}

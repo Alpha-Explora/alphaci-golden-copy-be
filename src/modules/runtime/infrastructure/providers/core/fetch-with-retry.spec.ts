@@ -1,4 +1,5 @@
-import { fetchWithRetry } from './fetch-with-retry';
+import { ProviderRateLimitedError } from '../../../core/provider-rate-limited.error';
+import { fetchWithRetry, throwIfRateLimited } from './fetch-with-retry';
 
 describe('fetchWithRetry', () => {
   afterEach(() => {
@@ -62,5 +63,44 @@ describe('fetchWithRetry', () => {
     const response = await fetchWithRetry('https://example.test/logs');
     expect(response.status).toBe(500);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('throwIfRateLimited', () => {
+  const response = (status: number, retryAfter: string | null) =>
+    ({
+      status,
+      headers: {
+        get: (name: string) => (name === 'retry-after' ? retryAfter : null),
+      },
+    }) as unknown as Awaited<ReturnType<typeof fetch>>;
+
+  it('throws a typed error carrying Retry-After seconds on 429', () => {
+    expect(() => throwIfRateLimited(response(429, '12'), 'Render')).toThrow(
+      ProviderRateLimitedError,
+    );
+    try {
+      throwIfRateLimited(response(429, '12'), 'Render');
+    } catch (error) {
+      expect((error as ProviderRateLimitedError).retryAfterMs).toBe(12_000);
+    }
+  });
+
+  it('defaults the wait when Retry-After is absent', () => {
+    try {
+      throwIfRateLimited(response(429, null), 'Vercel');
+      throw new Error('expected a throw');
+    } catch (error) {
+      expect((error as ProviderRateLimitedError).retryAfterMs).toBe(30_000);
+    }
+  });
+
+  it('passes every other status through untouched', () => {
+    expect(() =>
+      throwIfRateLimited(response(200, null), 'Render'),
+    ).not.toThrow();
+    expect(() =>
+      throwIfRateLimited(response(500, null), 'Render'),
+    ).not.toThrow();
   });
 });
