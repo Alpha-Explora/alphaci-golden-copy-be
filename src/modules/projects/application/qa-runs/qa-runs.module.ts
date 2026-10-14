@@ -33,6 +33,7 @@ import { QaRequirementsService } from '../qa-checklists/qa-requirements.service'
 import { QaAutomationDispatchService } from './qa-automation-dispatch.service';
 import { QaAutomationService } from './qa-automation.service';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
+import { ProjectIterationStartService } from './project-iteration-start.service';
 import { QaProjectRunsService } from './qa-project-runs.service';
 import { QaRunAttachmentsService } from './qa-run-attachments.service';
 import { QaProjectDeliveryService } from './qa-project-delivery.service';
@@ -94,6 +95,7 @@ import { QaUatHeadsService } from './qa-uat-heads.service';
     QaRunsService,
     QaReportService,
     QaProjectDeliveryService,
+    ProjectIterationStartService,
     QaPromotionService,
   ],
   exports: [

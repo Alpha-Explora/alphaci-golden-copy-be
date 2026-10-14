@@ -1,11 +1,11 @@
 {
-  "routeCount": 245,
+  "routeCount": 246,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "6eae7a2981f20032d12bc89d589955b920fd5d16d1e23e32486a462cad332ddc",
+  "referenceSha256": "dcc2a6a8e1f9364767c91fc2468fb73669b6e6028d5c0af3a124e700b22fa00a",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "6eae7a2981f20032d12bc89d589955b920fd5d16d1e23e32486a462cad332ddc",
+  "baselineSha256": "dcc2a6a8e1f9364767c91fc2468fb73669b6e6028d5c0af3a124e700b22fa00a",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -231,6 +231,12 @@
       "reason": "Iterations phase 2: merge every covered repository of a Project to main and deliver the Iteration",
       "routes": [
         "POST /api/v1/delivery-projects/{deliveryProjectId}/promotion/merge-all"
+      ]
+    },
+    {
+      "reason": "Iterations phase 3: start the next Iteration with carry-over (ITERATIONS_PLAN.md section 5)",
+      "routes": [
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/iterations"
       ]
     }
   ]

@@ -202,8 +202,12 @@ export class QaProjectDeliveryService {
 
     // A delivered Iteration is a frozen record: what it covered is what it stored.
     if (iteration.status === 'delivered') {
+      const carryOver = base.canStartNext
+        ? await this.iterations.carryOverCandidates(iteration)
+        : null;
       return {
         ...base,
+        ...(carryOver ? { carryOver } : {}),
         coveredRepositories: entries.map((entry) => ({
           projectId: entry.projectId,
           repoFullName: entry.repoFullName,

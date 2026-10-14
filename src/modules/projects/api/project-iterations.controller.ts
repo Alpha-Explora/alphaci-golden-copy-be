@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
 import {
@@ -9,16 +17,20 @@ import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import type {
   ProjectIterationCurrent,
   ProjectIterationList,
+  StartedIteration,
 } from '../application/qa-checklists/project-iterations.contracts';
 import { ProjectIterationsService } from '../application/qa-checklists/project-iterations.service';
+import { StartIterationDto } from '../application/qa-runs/dto/start-iteration.dto';
+import { ProjectIterationStartService } from '../application/qa-runs/project-iteration-start.service';
 import { QaProjectDeliveryService } from '../application/qa-runs/qa-project-delivery.service';
 import { actorContext, requireUserId } from './qa-runs.controller';
 
 /**
  * A Project's Iterations (ITERATIONS_PLAN.md section 5). Visibility is the
  * same as every other Project QA route: an active member of the Project's
- * group; a non-member gets 404. Reads only; the Merge to main routes that
- * deliver an Iteration live with the promotion controllers.
+ * group; a non-member gets 404. Starting the next Iteration is lead/admin only; the
+ * Merge to main routes that deliver an Iteration live with the promotion
+ * controllers.
  */
 @Controller('delivery-projects/:deliveryProjectId/iterations')
 @UseGuards(SessionAuthGuard, CapabilityGuard)
@@ -27,7 +39,23 @@ export class DeliveryProjectIterationsController {
   constructor(
     private readonly iterations: ProjectIterationsService,
     private readonly delivery: QaProjectDeliveryService,
+    private readonly starter: ProjectIterationStartService,
   ) {}
+
+  /**
+   * Starts the next Iteration (lead/admin) and carries over the chosen items of
+   * the last delivered one. 409 ITERATION_ACTIVE while one is active or on a
+   * lost race; 400 ITERATION_CARRY_INVALID for an item that is not the last
+   * delivered Iteration's.
+   */
+  @Post()
+  start(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+    @Body() body: StartIterationDto,
+  ): Promise<StartedIteration> {
+    return this.starter.start(deliveryProjectId, actorContext(req), body);
+  }
 
   /** The Project's Iterations, newest first. */
   @Get()

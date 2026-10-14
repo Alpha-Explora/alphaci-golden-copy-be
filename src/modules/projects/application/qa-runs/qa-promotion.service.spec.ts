@@ -1184,6 +1184,78 @@ describe('QaProjectDeliveryService.current', () => {
     expect(current.deliveredRepositories).toHaveLength(2);
   });
 
+  it('a delivered Iteration offers its items for carry-over, unfinished ones suggested', async () => {
+    const { delivery, iterationRepository } = setup({
+      iteration: deliveredIterationRow({
+        id: 'it-1',
+        number: 2,
+        signoff_run_id: 'run-9',
+      }),
+    });
+    iterationRepository.listCarryOverItems.mockResolvedValue([
+      {
+        requirement_id: 'r1',
+        requirement_name: 'Checkout',
+        requirement_kind: 'functional',
+        item_id: 'i1',
+        title: 'Pay by card',
+        progress: 'done',
+        last_status: 'passed',
+      },
+      {
+        requirement_id: 'r1',
+        requirement_name: 'Checkout',
+        requirement_kind: 'functional',
+        item_id: 'i2',
+        title: 'Pay by wallet',
+        progress: 'done',
+        last_status: 'failed',
+      },
+    ]);
+
+    const current = await delivery.current('dp-1', actor);
+
+    expect(iterationRepository.listCarryOverItems).toHaveBeenCalledWith(
+      'it-1',
+      'run-9',
+    );
+    expect(current.carryOver).toEqual({
+      fromIterationNumber: 2,
+      requirements: [
+        {
+          requirementId: 'r1',
+          name: 'Checkout',
+          kind: 'functional',
+          items: [
+            {
+              id: 'i1',
+              title: 'Pay by card',
+              progress: 'done',
+              lastStatus: 'passed',
+              suggested: false,
+            },
+            {
+              id: 'i2',
+              title: 'Pay by wallet',
+              progress: 'done',
+              lastStatus: 'failed',
+              suggested: true,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('an active Iteration has no carry-over candidates and reads none', async () => {
+    const { delivery, iterationRepository } = setup({});
+
+    const current = await delivery.current('dp-1', actor);
+
+    expect(current.carryOver).toBeUndefined();
+    expect(iterationRepository.listCarryOverItems).not.toHaveBeenCalled();
+  });
+
   it('a repository removed from the Project since the sign-off is not a covered repository', async () => {
     const { delivery } = setup({ projectRepositories: [API] });
 

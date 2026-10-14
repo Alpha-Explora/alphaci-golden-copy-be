@@ -1,8 +1,44 @@
+import { randomUUID } from 'node:crypto';
+
 import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import type { CarryOverLastStatus } from '../application/qa-checklists/project-iterations.contracts';
+import { CARRY_OVER_RESET_STATUSES } from '../domain/project-iteration.rules';
 
 export type ProjectIterationStatus = 'active' | 'delivered';
+
+/** Postgres unique_violation: a concurrent start (one active per Project, or the same number). */
+export const ITERATION_UNIQUE_VIOLATION = '23505';
+
+/** One item of a delivered Iteration, with the context the carry-over needs. */
+export interface CarryOverItemRow {
+  requirement_id: string;
+  requirement_name: string;
+  requirement_kind: 'functional' | 'system';
+  item_id: string;
+  title: string;
+  progress: 'todo' | 'in_progress' | 'done';
+  /** Status in the delivering run; null when the item was not in it. */
+  last_status: CarryOverLastStatus | null;
+}
+
+export interface StartNextIterationInput {
+  deliveryProjectId: string;
+  startedBy: string;
+  startedByLogin: string;
+  goal: string | null;
+  /** Already validated against the source Iteration. */
+  itemIds: readonly string[];
+  /** The delivering run of the source Iteration; null leaves every progress as it is. */
+  signoffRunId: string | null;
+}
+
+export interface StartNextIterationResult {
+  iteration: ProjectIterationRow;
+  carriedRequirements: number;
+  carriedItems: number;
+}
 
 /**
  * A Project's unit of work (projects.project_iterations). Timestamps are typed
@@ -213,5 +249,156 @@ export class ProjectIterationsRepository {
       ],
     );
     return result.rows[0] ?? null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Start the next Iteration (phase 3)
+  // ---------------------------------------------------------------------
+
+  /**
+   * The items of an Iteration's ACTIVE requirements with each item's status in
+   * `signoffRunId` (the delivering run). Requirements in creation order, items
+   * by position.
+   */
+  async listCarryOverItems(
+    iterationId: string,
+    signoffRunId: string | null,
+  ): Promise<CarryOverItemRow[]> {
+    const result = await this.databaseService.query<CarryOverItemRow>(
+      `
+        SELECT c.id AS requirement_id,
+               c.name AS requirement_name,
+               c.kind AS requirement_kind,
+               i.id AS item_id,
+               i.title,
+               i.progress,
+               (
+                 SELECT ri.status FROM projects.qa_run_items ri
+                 WHERE ri.run_id = $2 AND ri.source_item_id = i.id
+                 LIMIT 1
+               ) AS last_status
+        FROM projects.qa_checklists c
+        JOIN projects.qa_checklist_items i ON i.checklist_id = c.id
+        WHERE c.iteration_id = $1 AND c.archived_at IS NULL
+        ORDER BY (c.kind = 'functional') DESC, c.created_at, c.id, i."position", i.id;
+      `,
+      [iterationId, signoffRunId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Creates Iteration N+1 and copies the selected items into it, in ONE
+   * transaction. A concurrent second start, or a start while an Iteration is
+   * active, raises a unique violation (code 23505) from the partial unique
+   * index uq_project_iterations_one_active or the (project, number) key; the
+   * caller maps it to 409 ITERATION_ACTIVE and nothing is left behind.
+   *
+   * The source rows are never written: each carried requirement is a NEW row
+   * (same workspace, kind, name, description, creator, created_at) and each
+   * carried item a NEW row (order renumbered 0..n-1, definition copied). An
+   * item whose status in the delivering run is failed, blocked or
+   * returned_to_dev gets Progress `in_progress` (and no progress author);
+   * every other item keeps its Progress, author and time.
+   */
+  async startNext(
+    input: StartNextIterationInput,
+  ): Promise<StartNextIterationResult> {
+    return this.databaseService.withTransaction(async (client) => {
+      const created = await client.query<ProjectIterationRow>(
+        `
+          INSERT INTO projects.project_iterations
+            (delivery_project_id, number, status, goal, started_by, started_by_login)
+          SELECT $1, COALESCE(MAX(number), 0) + 1, 'active', $2, $3, $4
+          FROM projects.project_iterations
+          WHERE delivery_project_id = $1
+          RETURNING *;
+        `,
+        [
+          input.deliveryProjectId,
+          input.goal,
+          input.startedBy,
+          input.startedByLogin,
+        ],
+      );
+      const iteration = created.rows[0];
+      if (!iteration) {
+        throw new Error('projects.project_iterations INSERT returned no row');
+      }
+      if (input.itemIds.length === 0) {
+        return { iteration, carriedRequirements: 0, carriedItems: 0 };
+      }
+
+      // The source requirements, in their creation order, each with its new id.
+      const sources = await client.query<{ id: string }>(
+        `
+          SELECT c.id
+          FROM projects.qa_checklists c
+          WHERE c.id IN (
+            SELECT checklist_id FROM projects.qa_checklist_items
+            WHERE id = ANY($1::uuid[])
+          )
+          ORDER BY (c.kind = 'functional') DESC, c.created_at, c.id;
+        `,
+        [input.itemIds],
+      );
+      const oldIds = sources.rows.map((row) => row.id);
+      const newIds = oldIds.map(() => randomUUID());
+
+      await client.query(
+        `
+          INSERT INTO projects.qa_checklists
+            (id, workspace_id, name, description, created_by, created_at,
+             kind, delivery_project_id, iteration_id)
+          SELECT m.new_id, c.workspace_id, c.name, c.description, c.created_by,
+                 c.created_at, c.kind, c.delivery_project_id, $3
+          FROM unnest($1::uuid[], $2::uuid[]) AS m(old_id, new_id)
+          JOIN projects.qa_checklists c ON c.id = m.old_id;
+        `,
+        [oldIds, newIds, iteration.id],
+      );
+
+      const items = await client.query(
+        `
+          INSERT INTO projects.qa_checklist_items
+            (checklist_id, "position", title, description, target_persona,
+             verification_type, test_identifier, acceptance_criteria,
+             progress, progress_by, progress_by_login, progress_at)
+          SELECT m.new_id,
+                 (row_number() OVER (
+                   PARTITION BY m.new_id ORDER BY i."position", i.id
+                 ) - 1)::int,
+                 i.title, i.description, i.target_persona, i.verification_type,
+                 i.test_identifier, i.acceptance_criteria,
+                 CASE WHEN r.reset THEN 'in_progress' ELSE i.progress END,
+                 CASE WHEN r.reset THEN NULL ELSE i.progress_by END,
+                 CASE WHEN r.reset THEN NULL ELSE i.progress_by_login END,
+                 CASE WHEN r.reset THEN NULL ELSE i.progress_at END
+          FROM unnest($1::uuid[], $2::uuid[]) AS m(old_id, new_id)
+          JOIN projects.qa_checklist_items i ON i.checklist_id = m.old_id
+          CROSS JOIN LATERAL (
+            SELECT EXISTS (
+              SELECT 1 FROM projects.qa_run_items ri
+              WHERE ri.run_id = $4
+                AND ri.source_item_id = i.id
+                AND ri.status = ANY($5::text[])
+            ) AS reset
+          ) r
+          WHERE i.id = ANY($3::uuid[]);
+        `,
+        [
+          oldIds,
+          newIds,
+          input.itemIds,
+          input.signoffRunId,
+          [...CARRY_OVER_RESET_STATUSES],
+        ],
+      );
+      return {
+        iteration,
+        carriedRequirements: oldIds.length,
+        carriedItems: items.rowCount ?? 0,
+      };
+    });
   }
 }
