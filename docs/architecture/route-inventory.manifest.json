@@ -1,11 +1,11 @@
 {
-  "routeCount": 242,
+  "routeCount": 244,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "729e6a33212779eb5e9b5702e91bc1430798077b6d506bcd90c28433be754741",
+  "referenceSha256": "09e92cee9593bb2ad60ad2e9dd30bd4760d4e82b8689e67a33db496f59e92934",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "729e6a33212779eb5e9b5702e91bc1430798077b6d506bcd90c28433be754741",
+  "baselineSha256": "09e92cee9593bb2ad60ad2e9dd30bd4760d4e82b8689e67a33db496f59e92934",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -218,6 +218,13 @@
         "POST /api/v1/projects/{projectId}/environments/{environmentId}/promotions",
         "PUT /api/v1/ci/releases/{releaseId}/manifest",
         "PUT /api/v1/projects/{projectId}/deployment-targets/{targetId}/environment"
+      ]
+    },
+    {
+      "reason": "Project Iterations phase 1: read the Iterations of a Project and its current one (ITERATIONS_PLAN.md section 5)",
+      "routes": [
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/iterations",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/iterations/current"
       ]
     }
   ]

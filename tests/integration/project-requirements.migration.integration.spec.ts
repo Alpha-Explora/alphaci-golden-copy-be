@@ -5,6 +5,7 @@ import { Client } from 'pg';
 import type { PoolClient } from 'pg';
 
 import type { DatabaseService } from '../../src/kernel/db/database.service';
+import { ProjectIterationsRepository } from '../../src/modules/projects/infrastructure/project-iterations.repository';
 import { QaChecklistsRepository } from '../../src/modules/projects/infrastructure/qa-checklists.repository';
 import { QaProjectRunsRepository } from '../../src/modules/projects/infrastructure/qa-project-runs.repository';
 import { QaRequirementsRepository } from '../../src/modules/projects/infrastructure/qa-requirements.repository';
@@ -286,14 +287,16 @@ describeDatabase('project_requirements migration', () => {
   it('enforces name uniqueness per Project scope and kind', async () => {
     // Same name in another kind of the same scope is fine.
     await client.query(
-      `INSERT INTO projects.qa_checklists (workspace_id, name, created_by, kind, delivery_project_id)
-       VALUES ('${workspaceId}', 'TestChecklist', '${owner}', 'functional', '${projectA}');`,
+      `INSERT INTO projects.qa_checklists (workspace_id, name, created_by, kind, delivery_project_id, iteration_id)
+       VALUES ('${workspaceId}', 'TestChecklist', '${owner}', 'functional', '${projectA}',
+               (SELECT id FROM projects.project_iterations WHERE delivery_project_id = '${projectA}' AND number = 1));`,
     );
     // The same name twice in the same scope and kind is not.
     await expect(
       client.query(
-        `INSERT INTO projects.qa_checklists (workspace_id, name, created_by, kind, delivery_project_id)
-         VALUES ('${workspaceId}', 'testchecklist', '${owner}', 'system', '${projectA}');`,
+        `INSERT INTO projects.qa_checklists (workspace_id, name, created_by, kind, delivery_project_id, iteration_id)
+         VALUES ('${workspaceId}', 'testchecklist', '${owner}', 'system', '${projectA}',
+                 (SELECT id FROM projects.project_iterations WHERE delivery_project_id = '${projectA}' AND number = 1));`,
       ),
     ).rejects.toMatchObject({ code: '23505' });
   });
@@ -312,9 +315,9 @@ describeDatabase('project_requirements migration', () => {
     const insertProjectRun = () =>
       client.query(
         `INSERT INTO projects.qa_verification_runs
-           (scope, delivery_project_id, heads_fingerprint, checklist_version,
+           (scope, delivery_project_id, iteration_id, heads_fingerprint, checklist_version,
             checklist_name, branch, commit_source, created_by, created_by_login)
-         VALUES ('project', '${projectA}', '${fingerprint}', 0, 'Project A', 'uat',
+         VALUES ('project', '${projectA}', (SELECT id FROM projects.project_iterations WHERE delivery_project_id = '${projectA}' AND number = 1), '${fingerprint}', 0, 'Project A', 'uat',
                  'branch_head', '${owner}', 'qa');`,
       );
     await insertProjectRun();
@@ -332,12 +335,264 @@ describeDatabase('project_requirements migration', () => {
     await expect(
       client.query(
         `INSERT INTO projects.qa_verification_runs
-           (scope, project_id, delivery_project_id, heads_fingerprint, checklist_version,
+           (scope, project_id, delivery_project_id, iteration_id, heads_fingerprint, checklist_version,
             checklist_name, branch, commit_source, created_by, created_by_login)
-         VALUES ('project', '${repoA1}', '${projectB}', '${'b'.repeat(64)}', 0, 'x', 'uat',
+         VALUES ('project', '${repoA1}', '${projectB}', (SELECT id FROM projects.project_iterations WHERE delivery_project_id = '${projectB}' AND number = 1), '${'b'.repeat(64)}', 0, 'x', 'uat',
                  'branch_head', '${owner}', 'qa');`,
       ),
     ).rejects.toMatchObject({ code: '23514' });
+  });
+
+  // -------------------------------------------------------------------
+  // 20261015010000_project_iterations.sql: Iteration 1 for every Project
+  // -------------------------------------------------------------------
+
+  describe('project_iterations', () => {
+    const iterationOf = (project: string, number = 1) =>
+      `(SELECT id FROM projects.project_iterations WHERE delivery_project_id = '${project}' AND number = ${number})`;
+    const fingerprint = 'e'.repeat(64);
+    const insertRun = (project: string, number: number) =>
+      client.query(
+        `INSERT INTO projects.qa_verification_runs
+           (scope, delivery_project_id, iteration_id, heads_fingerprint, checklist_version,
+            checklist_name, branch, commit_source, created_by, created_by_login)
+         VALUES ('project', '${project}', ${iterationOf(project, number)}, '${fingerprint}', 0,
+                 'x', 'uat', 'branch_head', '${owner}', 'qa');`,
+      );
+
+    it('gives every Project, whatever its status, one active Iteration 1 started when the Project was created', async () => {
+      const rows = await client.query<{
+        delivery_project_id: string;
+        number: number;
+        status: string;
+      }>(
+        `SELECT delivery_project_id, number, status
+           FROM projects.project_iterations ORDER BY started_at;`,
+      );
+      expect(
+        rows.rows.map((row) => [
+          row.delivery_project_id,
+          row.number,
+          row.status,
+        ]),
+      ).toEqual([
+        [projectA, 1, 'active'],
+        [projectB, 1, 'active'],
+        [projectC, 1, 'active'],
+      ]);
+      // Started when the Project was created, not when the migration ran.
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.project_iterations i
+             JOIN hierarchy.delivery_projects d ON d.id = i.delivery_project_id
+            WHERE i.started_at <> d.created_at;`,
+        ),
+      ).toBe(0);
+    });
+
+    it('assigns every Project requirement to its Project Iteration; unassigned legacy checklists stay without one', async () => {
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.qa_checklists
+            WHERE delivery_project_id IS NOT NULL AND iteration_id IS NULL;`,
+        ),
+      ).toBe(0);
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.qa_checklists c
+             JOIN projects.project_iterations i ON i.id = c.iteration_id
+            WHERE c.delivery_project_id <> i.delivery_project_id;`,
+        ),
+      ).toBe(0);
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.qa_checklists
+            WHERE delivery_project_id IS NULL AND iteration_id IS NOT NULL;`,
+        ),
+      ).toBe(0);
+    });
+
+    it('re-running backfills Project rows that predate it and restores the presence CHECKs', async () => {
+      await client.query(
+        `ALTER TABLE projects.qa_checklists DROP CONSTRAINT qa_checklists_iteration_scope_chk;
+         ALTER TABLE projects.qa_verification_runs DROP CONSTRAINT qa_verification_runs_iteration_scope_chk;`,
+      );
+      await client.query(
+        `INSERT INTO projects.qa_checklists (workspace_id, name, created_by, kind, delivery_project_id)
+         VALUES ('${workspaceId}', 'Predates iterations', '${owner}', 'system', '${projectC}');
+         INSERT INTO projects.qa_verification_runs
+           (scope, delivery_project_id, heads_fingerprint, checklist_version,
+            checklist_name, branch, commit_source, created_by, created_by_login)
+         VALUES ('project', '${projectC}', '${'9'.repeat(64)}', 0, 'x', 'uat',
+                 'branch_head', '${owner}', 'qa');`,
+      );
+
+      await applyFile(
+        client,
+        join('projects', '20261015010000_project_iterations.sql'),
+      );
+
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.qa_checklists c
+             JOIN projects.project_iterations i ON i.id = c.iteration_id AND i.number = 1
+            WHERE c.name = 'Predates iterations' AND i.delivery_project_id = '${projectC}';`,
+        ),
+      ).toBe(1);
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.qa_verification_runs
+            WHERE scope = 'project' AND iteration_id IS NULL;`,
+        ),
+      ).toBe(0);
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.project_iterations;`,
+        ),
+      ).toBe(3);
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM pg_constraint
+            WHERE conname IN ('qa_checklists_iteration_scope_chk', 'qa_verification_runs_iteration_scope_chk');`,
+        ),
+      ).toBe(2);
+    });
+
+    it('enforces presence with a CHECK, only where it applies', async () => {
+      await expect(
+        client.query(
+          `INSERT INTO projects.qa_checklists (workspace_id, name, created_by, kind, delivery_project_id)
+           VALUES ('${workspaceId}', 'No iteration', '${owner}', 'system', '${projectA}');`,
+        ),
+      ).rejects.toMatchObject({ code: '23514' });
+      await expect(
+        client.query(
+          `INSERT INTO projects.qa_verification_runs
+             (scope, delivery_project_id, heads_fingerprint, checklist_version, checklist_name,
+              branch, commit_source, created_by, created_by_login)
+           VALUES ('project', '${projectA}', '${'8'.repeat(64)}', 0, 'x', 'uat',
+                   'branch_head', '${owner}', 'qa');`,
+        ),
+      ).rejects.toMatchObject({ code: '23514' });
+      // An unassigned legacy system checklist has no Iteration and needs none.
+      await client.query(
+        `INSERT INTO projects.qa_checklists (workspace_id, name, created_by)
+         VALUES ('${workspaceId}', 'Legacy without iteration', '${owner}');`,
+      );
+    });
+
+    it('allows one active Iteration per Project, and a delivered one needs its date', async () => {
+      await expect(
+        client.query(
+          `INSERT INTO projects.project_iterations (delivery_project_id, number)
+           VALUES ('${projectA}', 2);`,
+        ),
+      ).rejects.toMatchObject({ code: '23505' });
+      await expect(
+        client.query(
+          `UPDATE projects.project_iterations SET status = 'delivered'
+            WHERE delivery_project_id = '${projectA}';`,
+        ),
+      ).rejects.toMatchObject({ code: '23514' });
+      await expect(
+        client.query(
+          `INSERT INTO projects.project_iterations (delivery_project_id, number, goal)
+           VALUES ('${projectC}', 2, '${'g'.repeat(121)}');`,
+        ),
+      ).rejects.toMatchObject({ code: '23514' });
+    });
+
+    it('swaps the keys: the same heads and the same requirement name are fine in the NEXT Iteration, not twice in one', async () => {
+      await insertRun(projectA, 1);
+      await expect(insertRun(projectA, 1)).rejects.toMatchObject({
+        code: '23505',
+      });
+
+      await client.query(
+        `UPDATE projects.project_iterations
+            SET status = 'delivered', delivered_at = NOW()
+          WHERE delivery_project_id = '${projectA}' AND number = 1;
+         INSERT INTO projects.project_iterations (delivery_project_id, number)
+         VALUES ('${projectA}', 2);`,
+      );
+      await insertRun(projectA, 2);
+      await expect(insertRun(projectA, 2)).rejects.toMatchObject({
+        code: '23505',
+      });
+
+      const insertRequirement = (number: number) =>
+        client.query(
+          `INSERT INTO projects.qa_checklists
+             (workspace_id, name, created_by, kind, delivery_project_id, iteration_id)
+           VALUES ('${workspaceId}', 'Carried over', '${owner}', 'functional', '${projectA}',
+                   ${iterationOf(projectA, number)});`,
+        );
+      await insertRequirement(1);
+      await insertRequirement(2);
+      await expect(insertRequirement(2)).rejects.toMatchObject({
+        code: '23505',
+      });
+
+      // The old keys are gone.
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM pg_indexes
+            WHERE indexname IN ('uq_qa_runs_project_scope_heads', 'uq_qa_requirements_scope_name_active');`,
+        ),
+      ).toBe(0);
+    });
+
+    it('the repository resolves the current Iteration (active, else latest delivered) and creates Iteration 1 once', async () => {
+      const iterations = new ProjectIterationsRepository(asDatabaseService());
+
+      // Project A: Iteration 1 delivered, Iteration 2 active (set up above).
+      expect((await iterations.findCurrent(projectA))?.number).toBe(2);
+      expect(
+        (await iterations.list(projectA)).map((row) => row.number),
+      ).toEqual([2, 1]);
+      const current = await iterations.findCurrentByDeliveryProjects([
+        projectA,
+        projectB,
+      ]);
+      expect(current.get(projectA)?.number).toBe(2);
+      expect(current.get(projectB)?.number).toBe(1);
+
+      // Between delivery and the next start, the latest delivered one is current.
+      await client.query(
+        `UPDATE projects.project_iterations
+            SET status = 'delivered', delivered_at = NOW()
+          WHERE delivery_project_id = '${projectA}' AND number = 2;`,
+      );
+      expect((await iterations.findCurrent(projectA))?.status).toBe(
+        'delivered',
+      );
+      expect((await iterations.findCurrent(projectA))?.number).toBe(2);
+
+      // Lazy creation: only for a Project with none, and exactly once.
+      const fresh = randomUUID();
+      await iterations.insertFirstIfNone([projectA, fresh]);
+      await iterations.insertFirstIfNone([fresh]);
+      expect(await iterations.list(projectA)).toHaveLength(2);
+      const created = await iterations.list(fresh);
+      expect(created).toHaveLength(1);
+      expect(created[0]).toMatchObject({ number: 1, status: 'active' });
+
+      // Leave Project A as the following tests expect it.
+      await client.query(
+        `UPDATE projects.project_iterations
+            SET status = 'active', delivered_at = NULL
+          WHERE delivery_project_id = '${projectA}' AND number = 2;`,
+      );
+    });
   });
 
   // -------------------------------------------------------------------
@@ -372,6 +627,7 @@ describeDatabase('project_requirements migration', () => {
     let requirements: QaRequirementsRepository;
     let projectRuns: QaProjectRunsRepository;
     let runs: QaRunsRepository;
+    let iterationB: string;
     let featureId: string;
     let storyA: string;
     let storyB: string;
@@ -382,6 +638,11 @@ describeDatabase('project_requirements migration', () => {
       requirements = new QaRequirementsRepository(db);
       projectRuns = new QaProjectRunsRepository(db);
       runs = new QaRunsRepository(db);
+      const iteration = await client.query<{ id: string }>(
+        `SELECT id FROM projects.project_iterations WHERE delivery_project_id = $1 AND number = 1;`,
+        [projectB],
+      );
+      iterationB = iteration.rows[0]!.id;
       for (const user of [qa, dev]) {
         await client.query(
           `INSERT INTO identity.app_users (id, login) VALUES ('${user.id}', '${user.login}-${user.id.slice(0, 4)}');`,
@@ -397,6 +658,7 @@ describeDatabase('project_requirements migration', () => {
         createdBy: owner,
         kind: 'functional',
         deliveryProjectId: projectB,
+        iterationId: iterationB,
         items: [
           {
             title: 'Pay by card',
@@ -418,7 +680,7 @@ describeDatabase('project_requirements migration', () => {
         string,
       ];
 
-      const listed = await checklists.listByDeliveryProject(projectB, {
+      const listed = await checklists.listByIteration(iterationB, {
         includeArchived: false,
       });
       expect(listed[0]?.id).toBe(featureId);
@@ -433,7 +695,7 @@ describeDatabase('project_requirements migration', () => {
           'checkout FEATURE',
           undefined,
           {
-            deliveryProjectId: projectB,
+            iterationId: iterationB,
             kind: 'functional',
           },
         ),
@@ -464,9 +726,9 @@ describeDatabase('project_requirements migration', () => {
       const since = new Date().toISOString();
       await client.query(`SELECT pg_sleep(0.05);`);
       await requirements.setProgress(featureId, storyA, 2, 'done', dev);
-      expect(await requirements.requirementsChangedSince(projectB, since)).toBe(
-        false,
-      );
+      expect(
+        await requirements.requirementsChangedSince(iterationB, since),
+      ).toBe(false);
 
       const edited = await requirements.updateItemDefinition(
         featureId,
@@ -483,9 +745,9 @@ describeDatabase('project_requirements migration', () => {
         progress: 'done',
         row_version: 4,
       });
-      expect(await requirements.requirementsChangedSince(projectB, since)).toBe(
-        true,
-      );
+      expect(
+        await requirements.requirementsChangedSince(iterationB, since),
+      ).toBe(true);
       expect(
         await requirements.updateItemDefinition(featureId, storyA, 3, {
           title: 'x',
@@ -539,6 +801,7 @@ describeDatabase('project_requirements migration', () => {
       }));
       const input = {
         deliveryProjectId: projectB,
+        iterationId: iterationB,
         projectName: 'Project B',
         headsFingerprint: 'c'.repeat(64),
         repositories: [
@@ -655,17 +918,20 @@ describeDatabase('project_requirements migration', () => {
       expect(source?.progress).toBe('in_progress');
 
       // The developer finishing again re-queues the returned run item.
-      const open = await projectRuns.findReturnedOpenRunItems(projectB, storyB);
+      const open = await projectRuns.findReturnedOpenRunItems(
+        iterationB,
+        storyB,
+      );
       expect(open.map((row) => row.id)).toEqual([itemId]);
       const reset = await runs.requestRetest(runId, itemId, dev, 'fixed');
       expect(reset).toMatchObject({ status: 'pending', fix_note: 'fixed' });
       expect(
-        await projectRuns.findReturnedOpenRunItems(projectB, storyB),
+        await projectRuns.findReturnedOpenRunItems(iterationB, storyB),
       ).toEqual([]);
     });
 
     it('the latest signed-off Project run is the one with the newest active sign-off; reopening drops it', async () => {
-      expect(await projectRuns.findLatestSignedOff(projectB)).toBeNull();
+      expect(await projectRuns.findLatestSignedOff(iterationB)).toBeNull();
 
       const items = await runs.listItemsByRunId(runId);
       const signedAt = new Date().toISOString();
@@ -686,7 +952,7 @@ describeDatabase('project_requirements migration', () => {
       });
       expect(result?.run.status).toBe('signed_off');
 
-      const latest = await projectRuns.findLatestSignedOff(projectB);
+      const latest = await projectRuns.findLatestSignedOff(iterationB);
       expect(latest?.run.id).toBe(runId);
       expect(latest?.signoff.verdict).toBe('REJECTED');
       expect(latest?.repositories.map((row) => row.head_sha)).toEqual([
@@ -694,7 +960,7 @@ describeDatabase('project_requirements migration', () => {
       ]);
 
       await runs.reopenRun(runId, dev);
-      expect(await projectRuns.findLatestSignedOff(projectB)).toBeNull();
+      expect(await projectRuns.findLatestSignedOff(iterationB)).toBeNull();
 
       const counts = await projectRuns.verificationCountsByRequirement(runId);
       expect(counts.get(featureId)).toEqual({

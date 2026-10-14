@@ -24,6 +24,7 @@ import { evaluateProjectPromotionGate } from '../../domain/qa-promotion.rules';
 import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
+import { ProjectIterationsService } from '../qa-checklists/project-iterations.service';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
 import {
   QaProjectContextService,
@@ -87,6 +88,7 @@ export class QaPromotionService {
     private readonly requirements: QaRequirementsRepository,
     private readonly projectRuns: QaProjectRunsRepository,
     private readonly heads: QaUatHeadsService,
+    private readonly iterations: ProjectIterationsService,
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService: GithubProjectPort,
     // Explicit token: a type alias erases to `Object` in design:paramtypes,
@@ -274,10 +276,15 @@ export class QaPromotionService {
       ? folder.repositories
       : [self, ...folder.repositories];
 
+    // The gate looks at the Project's current Iteration only: its requirements
+    // and its latest signed-off run.
+    const iteration = await this.iterations.ensureActiveIteration(
+      folder.deliveryProjectId,
+    );
     const [readings, requirementRows, latest] = await Promise.all([
       this.heads.readHeads(repositories, actor),
-      this.requirements.listActiveByDeliveryProject(folder.deliveryProjectId),
-      this.projectRuns.findLatestSignedOff(folder.deliveryProjectId),
+      this.requirements.listActiveByIteration(iteration.id),
+      this.projectRuns.findLatestSignedOff(iteration.id),
     ]);
 
     const gate = evaluateProjectPromotionGate({
@@ -302,7 +309,7 @@ export class QaPromotionService {
 
     const requirementsChanged = latest
       ? await this.requirements.requirementsChangedSince(
-          folder.deliveryProjectId,
+          iteration.id,
           latest.signoff.signed_at,
         )
       : false;

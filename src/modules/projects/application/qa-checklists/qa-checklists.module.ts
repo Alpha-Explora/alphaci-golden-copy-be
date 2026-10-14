@@ -6,14 +6,17 @@ import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { HierarchyProjectLinkModule } from '#modules/identity-access/hierarchy/project-link/hierarchy-project-link.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
+import { DeliveryProjectIterationsController } from '../../api/project-iterations.controller';
 import {
   ProjectQaChecklistsController,
   QaChecklistsController,
   WorkspaceQaChecklistsController,
 } from '../../api/qa-checklists.controller';
+import { ProjectIterationsRepository } from '../../infrastructure/project-iterations.repository';
 import { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
 import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import { ProjectsRepository } from '../../infrastructure/projects.repository';
+import { ProjectIterationsService } from './project-iterations.service';
 import { QaAccessService } from './qa-access.service';
 import { QaChecklistsService } from './qa-checklists.service';
 import { ProjectRequirementsReadinessAdapter } from './project-requirements-readiness.adapter';
@@ -32,6 +35,7 @@ import { QaProjectContextService } from './qa-project-context.service';
     WorkspaceQaChecklistsController,
     QaChecklistsController,
     ProjectQaChecklistsController,
+    DeliveryProjectIterationsController,
   ],
   providers: [
     SessionAuthGuard,
@@ -51,6 +55,9 @@ import { QaProjectContextService } from './qa-project-context.service';
     ProjectsRepository,
     QaAccessService,
     QaProjectContextService,
+    // Iterations: resolved once per call by every Project-scoped reader/writer.
+    ProjectIterationsRepository,
+    ProjectIterationsService,
     QaChecklistsService,
     // Feature-before-repository rule; the bridge module exposes it by token.
     ProjectRequirementsReadinessAdapter,
@@ -73,6 +80,7 @@ import { QaProjectContextService } from './qa-project-context.service';
     QaChecklistsRepository,
     QaRequirementsRepository,
     QaProjectContextService,
+    ProjectIterationsService,
     ProjectRequirementsReadinessAdapter,
     PROJECT_REQUIREMENTS_READINESS,
   ],

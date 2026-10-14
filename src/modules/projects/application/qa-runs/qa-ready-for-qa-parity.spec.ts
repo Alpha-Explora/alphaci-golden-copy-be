@@ -1,3 +1,4 @@
+import { fakeIterations } from '../../__fixtures__/project-iterations';
 import type { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
 import type {
   QaProjectRunHeadline,
@@ -66,6 +67,7 @@ const runRow = (status: QaRunStatus): QaProjectRunRow => ({
   project_id: null,
   commit_sha: null,
   delivery_project_id: DP,
+  iteration_id: 'it-1',
   heads_fingerprint: 'f'.repeat(64),
   checklist_id: null,
   checklist_version: 0,
@@ -166,7 +168,7 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
       .mockResolvedValue(new Map([['run-1', coverage]])),
   } as unknown as jest.Mocked<QaProjectRunsRepository>;
   const feedRequirements = {
-    listActiveByDeliveryProject: jest.fn().mockResolvedValue(rows),
+    listActiveByIteration: jest.fn().mockResolvedValue(rows),
     listItemsByIds: jest.fn().mockResolvedValue(new Map()),
     requirementsChangedSince: jest.fn().mockResolvedValue(false),
   } as unknown as jest.Mocked<QaRequirementsRepository>;
@@ -195,6 +197,7 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
     forRun: jest.fn().mockResolvedValue({ verify: null, quality: null }),
   } as unknown as jest.Mocked<QaAutomationService>;
 
+  const { service: iterations } = fakeIterations();
   const feedService = new QaProjectRunsService(
     runs,
     feedProjectRuns,
@@ -215,6 +218,7 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
       referencesForRun: jest.fn().mockResolvedValue(new Map()),
       isEnabled: jest.fn().mockReturnValue(true),
     } as unknown as QaRunAttachmentsService,
+    iterations,
   );
   const feed = await feedService.myItems(DP, {
     userId: 'qa-1',
@@ -267,6 +271,7 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
     {} as unknown as QaRunsRepository,
     access,
     projectContext,
+    iterations,
     { findLatestProjectEventTimes: jest.fn().mockResolvedValue(new Map()) },
   );
   const overview = await overviewService.overview('group-1', 'qa-1', false);

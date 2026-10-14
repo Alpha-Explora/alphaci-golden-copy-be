@@ -17,6 +17,7 @@ import {
   type QaVerificationRunRow,
 } from '../../infrastructure/qa-runs.repository';
 import type { ProvisionedProjectRow } from '../../infrastructure/projects.repository';
+import { ProjectIterationsService } from '../qa-checklists/project-iterations.service';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
 import { QaProjectContextService } from '../qa-checklists/qa-project-context.service';
 import { qaRunLegacyReadonly } from '../qa-checklists/qa-errors';
@@ -95,6 +96,7 @@ export class QaRunsService {
     private readonly projectRunsRepository: QaProjectRunsRepository,
     private readonly requirementsRepository: QaRequirementsRepository,
     private readonly requirementsService: QaRequirementsService,
+    private readonly iterations: ProjectIterationsService,
   ) {}
 
   async listForProject(
@@ -250,6 +252,7 @@ export class QaRunsService {
     ) {
       throw new NotFoundException('QA run not found');
     }
+    await this.iterations.assertRowWritable(found.run);
 
     const role = await this.access.findAppRole(actor.userId);
     if (!canRequestRetest(role)) {

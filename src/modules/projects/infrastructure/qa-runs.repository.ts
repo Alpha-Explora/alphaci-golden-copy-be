@@ -31,6 +31,8 @@ interface QaRunRowBase {
   updated_at: string;
   scope: 'repository' | 'project';
   delivery_project_id: string | null;
+  /** The Iteration of a Project run; null on a repository-scope run. */
+  iteration_id: string | null;
   heads_fingerprint: string | null;
 }
 
@@ -47,6 +49,7 @@ export interface QaProjectRunRow extends QaRunRowBase {
   project_id: null;
   commit_sha: null;
   delivery_project_id: string;
+  iteration_id: string;
   heads_fingerprint: string;
 }
 

@@ -34,6 +34,7 @@ import {
   QaRunsRepository,
   type QaProjectRunRow,
 } from '../../infrastructure/qa-runs.repository';
+import { ProjectIterationsService } from '../qa-checklists/project-iterations.service';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
 import {
   QaProjectContextService,
@@ -92,6 +93,7 @@ export class QaRunAttachmentsService {
     private readonly storage: QaAttachmentStoragePort,
     private readonly access: QaAccessService,
     private readonly projectContext: QaProjectContextService,
+    private readonly iterations: ProjectIterationsService,
     // Explicit token: the sink alias is a type alias, which TypeScript emits as
     // `Object`, so @Optional() alone would silently inject undefined.
     @Optional()
@@ -190,6 +192,7 @@ export class QaRunAttachmentsService {
         'QA, a lead, or an admin may attach screenshots.',
       );
     }
+    await this.iterations.assertRowWritable(run);
     this.requireRunOpen(run);
     this.requireConfigured();
     const image = this.inspect(file);
@@ -271,6 +274,7 @@ export class QaRunAttachmentsService {
         'Only the person who attached a screenshot, a lead, or an admin may delete it.',
       );
     }
+    await this.iterations.assertRowWritable(run);
     this.requireRunOpen(run);
 
     let deleted: QaRunItemAttachmentRow | null;

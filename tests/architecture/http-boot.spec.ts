@@ -100,6 +100,18 @@ const { QaUatHeadsService } =
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { QaPromotionService } =
   require('../../src/modules/projects/application/qa-runs/qa-promotion.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-promotion.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectIterationsService } =
+  require('../../src/modules/projects/application/qa-checklists/project-iterations.service.js') as typeof import('../../src/modules/projects/application/qa-checklists/project-iterations.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectIterationsRepository } =
+  require('../../src/modules/projects/infrastructure/project-iterations.repository.js') as typeof import('../../src/modules/projects/infrastructure/project-iterations.repository.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaRunAttachmentsService } =
+  require('../../src/modules/projects/application/qa-runs/qa-run-attachments.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-run-attachments.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaRunsService } =
+  require('../../src/modules/projects/application/qa-runs/qa-runs.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-runs.service.js');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { APP_ROLE_LOOKUP } =
@@ -491,6 +503,68 @@ describe('HTTP application boot', () => {
       await app.close();
     }
   });
+
+  /*
+   * Every Project-scoped QA reader and writer resolves its Iteration through
+   * ProjectIterationsService, and the P8 guard lives there. All of them take it
+   * as a plain required constructor parameter (a concrete class, no
+   * @Optional()), so a missing provider fails boot; this proves they all got
+   * the ONE real instance, built over the real repository and Project context.
+   */
+  it('wires ProjectIterationsService into every Project-scoped QA service', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const iterations = app.get(ProjectIterationsService, { strict: false });
+      const wired = iterations as unknown as {
+        iterations?: unknown;
+        access?: unknown;
+        projectContext?: unknown;
+      };
+      expect(wired.iterations).toBeInstanceOf(ProjectIterationsRepository);
+      expect(wired.projectContext).toBe(
+        app.get(QaProjectContextService, { strict: false }),
+      );
+      expect(typeof wired.access).toBe('object');
+
+      for (const service of [
+        QaProjectRunsService,
+        QaRequirementsService,
+        QaChecklistsService,
+        QaPromotionService,
+        QaRunAttachmentsService,
+        QaAutomationDispatchService,
+        QaRunsService,
+        ProjectRequirementsReadinessAdapter,
+      ]) {
+        // Private fields are compile-time only; read them through `unknown`.
+        const resolved: unknown = app.get(service, { strict: false });
+        expect((resolved as { iterations?: unknown }).iterations).toBe(
+          iterations,
+        );
+      }
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  it('serves the Iteration routes behind the session guard', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      for (const path of [
+        '/api/v1/delivery-projects/11111111-1111-4111-8111-111111111111/iterations',
+        '/api/v1/delivery-projects/11111111-1111-4111-8111-111111111111/iterations/current',
+      ]) {
+        const response = await request(app.getHttpServer()).get(path);
+        expect(response.status).toBe(401);
+      }
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
 
   it('wires the Project context ports and the Project delete cleanup', async () => {
     const app = await createHttpApplication();
