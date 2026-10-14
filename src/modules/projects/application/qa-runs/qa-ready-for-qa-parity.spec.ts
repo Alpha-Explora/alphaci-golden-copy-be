@@ -5,6 +5,7 @@ import type {
   QaRunItemFact,
 } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
+import type { QaRunAttachmentsRepository } from '../../infrastructure/qa-run-attachments.repository';
 import type {
   QaProjectRunRow,
   QaRunItemRow,
@@ -212,6 +213,9 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
     automation,
     {
       countsByItem: jest.fn().mockResolvedValue(new Map<string, number>()),
+      fixProofCountsByItem: jest
+        .fn()
+        .mockResolvedValue(new Map<string, number>()),
       referencesForRun: jest.fn().mockResolvedValue(new Map()),
       isEnabled: jest.fn().mockReturnValue(true),
     } as unknown as QaRunAttachmentsService,
@@ -265,6 +269,7 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
     } as unknown as QaRequirementsRepository,
     overviewProjectRuns,
     {} as unknown as QaRunsRepository,
+    {} as unknown as QaRunAttachmentsRepository,
     access,
     projectContext,
     { findLatestProjectEventTimes: jest.fn().mockResolvedValue(new Map()) },

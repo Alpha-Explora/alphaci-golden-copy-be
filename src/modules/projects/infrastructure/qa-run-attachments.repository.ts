@@ -6,6 +6,10 @@ import type {
   QaAttachmentKind,
   QaAttachmentSource,
 } from '../application/qa-runs/qa-runs.contracts';
+import {
+  acceptsFixProof,
+  type QaFixProofItemState,
+} from '../domain/qa-fix-proof.rules';
 import { lockOpenRunForItemWrite } from './qa-runs.repository';
 
 export interface QaRunItemAttachmentRow {
@@ -40,15 +44,26 @@ export interface InsertQaAttachmentInput {
   source: QaAttachmentSource;
   createdBy: string;
   createdByLogin: string;
-  /** At most this many human (non-automated) attachments per item, checked under the item lock. */
-  maxHumanPerItem: number;
+  /** At most this many attachments of the SAME kind per item, checked under the item lock. */
+  maxPerKind: number;
 }
 
-/** The item already holds its maximum number of human attachments. Raised inside the insert transaction. */
+/** The item already holds its maximum number of attachments of this kind. Raised inside the insert transaction. */
 export class QaAttachmentLimitReachedError extends Error {
-  constructor(public readonly max: number) {
-    super(`QA run item already holds ${max} human attachments`);
+  constructor(
+    public readonly max: number,
+    public readonly kind: QaAttachmentKind,
+  ) {
+    super(`QA run item already holds ${max} ${kind} attachments`);
     this.name = 'QaAttachmentLimitReachedError';
+  }
+}
+
+/** Proof of a fix was refused: the item is no longer (or not yet) in a state that accepts it. Raised inside the insert transaction. */
+export class QaFixProofNotRequestedError extends Error {
+  constructor(itemId: string) {
+    super(`QA run item ${itemId} does not accept proof of a fix right now`);
+    this.name = 'QaFixProofNotRequestedError';
   }
 }
 
@@ -74,33 +89,39 @@ export class QaRunAttachmentsRepository {
   constructor(private readonly databaseService: DatabaseService) {}
 
   /**
-   * Inserts one attachment. Throws QaRunNotOpenError when the run is signed off
-   * and QaAttachmentLimitReachedError when the item is full; the count is taken
-   * under a lock on the run item row, so two concurrent uploads cannot both
-   * squeeze past the limit.
+   * Inserts one attachment. Throws QaRunNotOpenError when the run is signed off,
+   * QaFixProofNotRequestedError when a `fix_proof` arrives for an item that is
+   * not awaiting a fix, and QaAttachmentLimitReachedError when the item already
+   * holds its maximum of this kind. The state check and the count are both taken
+   * under a lock on the run item row, so a concurrent status change or a second
+   * upload cannot slip past either.
    */
   async insert(
     input: InsertQaAttachmentInput,
   ): Promise<QaRunItemAttachmentRow> {
     return this.databaseService.withTransaction(async (client) => {
       await lockOpenRunForItemWrite(client, input.runId);
-      const item = await client.query(
-        `SELECT 1 FROM projects.qa_run_items WHERE id = $1 AND run_id = $2 FOR UPDATE;`,
+      const item = await client.query<QaFixProofItemState>(
+        `SELECT status, fix_requested_at FROM projects.qa_run_items WHERE id = $1 AND run_id = $2 FOR UPDATE;`,
         [input.runItemId, input.runId],
       );
-      if (item.rowCount === 0) {
+      const locked = item.rows[0];
+      if (!locked) {
         throw new QaAttachmentItemGoneError(input.runItemId);
+      }
+      if (input.kind === 'fix_proof' && !acceptsFixProof(locked)) {
+        throw new QaFixProofNotRequestedError(input.runItemId);
       }
       const counted = await client.query<{ count: string }>(
         `
           SELECT COUNT(*) AS count
           FROM projects.qa_run_item_attachments
-          WHERE run_item_id = $1 AND kind <> 'automated';
+          WHERE run_item_id = $1 AND kind = $2;
         `,
-        [input.runItemId],
+        [input.runItemId, input.kind],
       );
-      if (Number(counted.rows[0]?.count ?? 0) >= input.maxHumanPerItem) {
-        throw new QaAttachmentLimitReachedError(input.maxHumanPerItem);
+      if (Number(counted.rows[0]?.count ?? 0) >= input.maxPerKind) {
+        throw new QaAttachmentLimitReachedError(input.maxPerKind, input.kind);
       }
       const result = await client.query<QaRunItemAttachmentRow>(
         `
@@ -198,6 +219,41 @@ export class QaRunAttachmentsRepository {
       [runId],
     );
     return result.rows;
+  }
+
+  /** run item id -> number of `fix_proof` attachments (items with none are absent), for the run payload. */
+  async fixProofCountsByItem(runId: string): Promise<Map<string, number>> {
+    const result = await this.databaseService.query<{
+      run_item_id: string;
+      count: string;
+    }>(
+      `
+        SELECT run_item_id, COUNT(*) AS count
+        FROM projects.qa_run_item_attachments
+        WHERE run_id = $1 AND kind = 'fix_proof'
+        GROUP BY run_item_id;
+      `,
+      [runId],
+    );
+    return new Map(
+      result.rows.map((row) => [row.run_item_id, Number(row.count)]),
+    );
+  }
+
+  /** How many `fix_proof` attachments the given run items hold in all, for the Ready for QA notification. */
+  async countFixProofs(runItemIds: readonly string[]): Promise<number> {
+    if (runItemIds.length === 0) {
+      return 0;
+    }
+    const result = await this.databaseService.query<{ count: string }>(
+      `
+        SELECT COUNT(*) AS count
+        FROM projects.qa_run_item_attachments
+        WHERE kind = 'fix_proof' AND run_item_id = ANY($1::uuid[]);
+      `,
+      [runItemIds],
+    );
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   /** run item id -> number of attachments, for the run payload. */

@@ -1,5 +1,7 @@
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import {
+  canAddEvidence,
+  canAddFixProof,
   canCreateRun,
   canDispatchAutomation,
   canManageRequirements,
@@ -28,6 +30,8 @@ const EXPECTED: Array<
   ['canReopenRun', canReopenRun, ['admin', 'lead']],
   ['canMergeQaPromotion', canMergeQaPromotion, ['admin', 'lead']],
   ['canRequestRetest', canRequestRetest, ['admin', 'lead', 'member']],
+  ['canAddEvidence', canAddEvidence, ['admin', 'lead', 'qa']],
+  ['canAddFixProof', canAddFixProof, ['admin', 'lead', 'member']],
 ];
 
 describe.each(EXPECTED)('%s', (_name, rule, allowed) => {

@@ -13,9 +13,9 @@ const HUMAN_SOURCES: readonly QaAttachmentSource[] = [
   'upload',
 ];
 
-/** The multipart text fields, validated. `kind` is 'evidence' only in A1. */
+/** The multipart text fields, validated. `kind` is a human kind: never 'automated'. */
 export interface QaAttachmentUploadFields {
-  kind: 'evidence';
+  kind: 'evidence' | 'fix_proof';
   source: 'capture' | 'paste' | 'upload';
   caption: string | null;
 }
@@ -49,7 +49,7 @@ export function parseQaAttachmentFields(
   body: Record<string, unknown> | undefined,
 ): QaAttachmentUploadFields {
   const kind = text(body, 'kind') ?? 'evidence';
-  if (kind !== 'evidence') {
+  if (kind !== 'evidence' && kind !== 'fix_proof') {
     throw qaAttachmentKind();
   }
 

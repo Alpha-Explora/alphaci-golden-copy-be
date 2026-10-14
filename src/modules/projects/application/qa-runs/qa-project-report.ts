@@ -195,17 +195,24 @@ function itemsByRequirement(
   return groups;
 }
 
+const ATTACHMENT_KIND_LABELS: Record<string, string> = {
+  evidence: 'QA evidence',
+  fix_proof: 'Fix proof',
+  automated: 'Automated',
+};
+
 /**
- * One "Screenshot: <caption>" line per attachment, under the item it belongs
- * to. A report frozen before attachments existed has no `attachments` key.
+ * One "<QA evidence | Fix proof>: <caption>" line per attachment, under the
+ * item it belongs to. A report frozen before attachments existed has no
+ * `attachments` key.
  */
 function screenshotLines(items: readonly ProjectQaRunItem[]): string[] {
   const lines = items.flatMap((item) =>
     (item.attachments ?? []).map(
       (attachment) =>
-        `- #${item.position + 1} ${inline(item.title)} - Screenshot: ${
-          attachment.caption ? inline(attachment.caption) : '(no caption)'
-        }`,
+        `- #${item.position + 1} ${inline(item.title)} - ${
+          ATTACHMENT_KIND_LABELS[attachment.kind] ?? 'Screenshot'
+        }: ${attachment.caption ? inline(attachment.caption) : '(no caption)'}`,
     ),
   );
   return lines.length > 0 ? ['', ...lines] : [];

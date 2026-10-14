@@ -9,6 +9,7 @@ import {
 import {
   QaAttachmentItemGoneError,
   QaAttachmentLimitReachedError,
+  QaFixProofNotRequestedError,
   type QaRunAttachmentsRepository,
   type QaRunItemAttachmentRow,
 } from '../../infrastructure/qa-run-attachments.repository';
@@ -53,7 +54,12 @@ const runRow = (status: 'open' | 'signed_off' = 'open'): QaProjectRunRow =>
     status,
   }) as QaProjectRunRow;
 
-const itemRow = { id: 'ri-1', run_id: 'run-1' } as QaRunItemRow;
+const itemRow = {
+  id: 'ri-1',
+  run_id: 'run-1',
+  status: 'pending',
+  fix_requested_at: null,
+} as QaRunItemRow;
 
 const attachmentRow = (
   overrides: Partial<QaRunItemAttachmentRow> = {},
@@ -81,17 +87,19 @@ function setup({
   run = runRow(),
   configured = true,
   existing = [] as QaRunItemAttachmentRow[],
+  item = itemRow,
 }: {
   role?: PlatformAppRole;
   run?: QaProjectRunRow | null;
   configured?: boolean;
   existing?: QaRunItemAttachmentRow[];
+  item?: QaRunItemRow;
 } = {}) {
   const runs = {
     findItemForRun: jest
       .fn()
       .mockImplementation((_runId: string, itemId: string) =>
-        Promise.resolve(itemId === itemRow.id ? itemRow : null),
+        Promise.resolve(itemId === item.id ? item : null),
       ),
   } as unknown as jest.Mocked<QaRunsRepository>;
   const projectRuns = {
@@ -103,6 +111,7 @@ function setup({
       .mockImplementation(
         (input: {
           id: string;
+          kind: 'evidence' | 'fix_proof';
           storagePath: string;
           caption: string | null;
           source: 'upload';
@@ -114,6 +123,7 @@ function setup({
           Promise.resolve(
             attachmentRow({
               id: input.id,
+              kind: input.kind,
               storage_path: input.storagePath,
               caption: input.caption,
               width: input.width,
@@ -223,7 +233,7 @@ describe('QaRunAttachmentsService.add', () => {
           source: 'upload',
           createdBy: 'qa-1',
           createdByLogin: 'qa',
-          maxHumanPerItem: 5,
+          maxPerKind: 5,
         }),
       );
       expect(result).toEqual(
@@ -523,7 +533,7 @@ describe('QaRunAttachmentsService.add', () => {
     it('maps the locked re-check (a concurrent upload won) to 409 and removes the object', async () => {
       const { service, storage, attachments } = setup();
       attachments.insert.mockRejectedValue(
-        new QaAttachmentLimitReachedError(5),
+        new QaAttachmentLimitReachedError(5, 'evidence'),
       );
 
       await expect(
@@ -823,6 +833,265 @@ function thrown(fn: () => unknown): unknown {
   return undefined;
 }
 
+describe('QaRunAttachmentsService.add: kind fix_proof', () => {
+  const FIX_FIELDS = parseQaAttachmentFields({ kind: 'fix_proof' });
+  const FIX_REQUESTED = '2026-10-14T09:00:00.000Z';
+  const item = (
+    status: QaRunItemRow['status'],
+    fix_requested_at: string | null = null,
+  ) => ({ ...itemRow, status, fix_requested_at }) as QaRunItemRow;
+  const fixProofs = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      attachmentRow({
+        id: `fp-${i}`,
+        kind: 'fix_proof',
+        storage_path: `p/fp-${i}.png`,
+      }),
+    );
+
+  describe('who may add', () => {
+    it.each(['member', 'lead', 'admin'] as const)(
+      'lets %s attach proof of a fix to a returned item',
+      async (role) => {
+        const { service, attachments, audit } = setup({
+          role,
+          item: item('returned_to_dev'),
+        });
+
+        const result = await service.add(
+          DP,
+          actor('dev-1', 'dev'),
+          'run-1',
+          'ri-1',
+          PNG(),
+          FIX_FIELDS,
+        );
+
+        expect(attachments.insert).toHaveBeenCalledWith(
+          expect.objectContaining({ kind: 'fix_proof', maxPerKind: 5 }),
+        );
+        expect(result).toMatchObject({ kind: 'fix_proof' });
+        expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventCode: 'qa.item.attachment_added',
+            metadata: expect.objectContaining({ kind: 'fix_proof' }),
+          }),
+        );
+      },
+    );
+
+    it.each(['qa', 'viewer'] as const)(
+      'refuses %s with 403 QA_ATTACHMENT_FORBIDDEN and the developer message',
+      async (role) => {
+        const { service, storage } = setup({
+          role: role as PlatformAppRole,
+          item: item('returned_to_dev'),
+        });
+
+        await expect(
+          service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIX_FIELDS),
+        ).rejects.toMatchObject({
+          status: 403,
+          response: expect.objectContaining({
+            code: 'QA_ATTACHMENT_FORBIDDEN',
+            message:
+              'A developer, a lead, or an admin may attach proof of a fix.',
+          }),
+        });
+        expect(storage.upload).not.toHaveBeenCalled();
+      },
+    );
+
+    it('keeps evidence closed to a developer', async () => {
+      const { service } = setup({
+        role: 'member',
+        item: item('returned_to_dev'),
+      });
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIELDS),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: expect.objectContaining({
+          message: 'QA, a lead, or an admin may attach screenshots.',
+        }),
+      });
+    });
+  });
+
+  describe('when the item accepts it', () => {
+    it.each([
+      ['returned_to_dev', null],
+      ['pending', FIX_REQUESTED],
+    ] as const)('accepts a %s item (fix request: %s)', async (status, at) => {
+      const { service } = setup({ role: 'member', item: item(status, at) });
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIX_FIELDS),
+      ).resolves.toBeDefined();
+    });
+
+    it.each([
+      ['pending', null],
+      ['passed', FIX_REQUESTED],
+      ['failed', null],
+      ['blocked', null],
+      ['in_progress', null],
+    ] as const)(
+      'refuses a %s item (fix request: %s) with 409 QA_FIX_PROOF_NOT_REQUESTED before uploading',
+      async (status, at) => {
+        const { service, storage, attachments } = setup({
+          role: 'member',
+          item: item(status, at),
+        });
+
+        await expect(
+          service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIX_FIELDS),
+        ).rejects.toMatchObject({
+          status: 409,
+          response: expect.objectContaining({
+            code: 'QA_FIX_PROOF_NOT_REQUESTED',
+            message:
+              'Proof of a fix can be attached only while QA has returned this item, or after it is marked done for re-test.',
+          }),
+        });
+        expect(storage.upload).not.toHaveBeenCalled();
+        expect(attachments.insert).not.toHaveBeenCalled();
+      },
+    );
+
+    it('refuses on a signed-off run with QA_RUN_SIGNED_OFF, even for a returned item', async () => {
+      const { service } = setup({
+        role: 'member',
+        run: runRow('signed_off'),
+        item: item('returned_to_dev'),
+      });
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIX_FIELDS),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'QA_RUN_SIGNED_OFF' }),
+      });
+    });
+
+    it('does not apply the state rule to evidence: QA may still add to a passed item', async () => {
+      const { service } = setup({ role: 'qa', item: item('passed') });
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIELDS),
+      ).resolves.toBeDefined();
+    });
+
+    it('maps the locked re-check (the item moved on meanwhile) to 409 and removes the object', async () => {
+      const { service, storage, attachments } = setup({
+        role: 'member',
+        item: item('returned_to_dev'),
+      });
+      attachments.insert.mockRejectedValue(
+        new QaFixProofNotRequestedError('ri-1'),
+      );
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIX_FIELDS),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({
+          code: 'QA_FIX_PROOF_NOT_REQUESTED',
+        }),
+      });
+      expect(storage.remove).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('limit per kind', () => {
+    it('refuses a sixth fix proof with 409 QA_ATTACHMENT_LIMIT, before uploading', async () => {
+      const { service, storage } = setup({
+        role: 'member',
+        item: item('returned_to_dev'),
+        existing: fixProofs(5),
+      });
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIX_FIELDS),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({
+          code: 'QA_ATTACHMENT_LIMIT',
+          message:
+            'An item holds at most 5 screenshots. Remove one to add another.',
+        }),
+      });
+      expect(storage.upload).not.toHaveBeenCalled();
+    });
+
+    it('five evidence do not use up the fix-proof allowance', async () => {
+      const evidence = Array.from({ length: 5 }, (_, i) =>
+        attachmentRow({ id: `ev-${i}`, storage_path: `p/ev-${i}.png` }),
+      );
+      const { service } = setup({
+        role: 'member',
+        item: item('returned_to_dev'),
+        existing: evidence,
+      });
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIX_FIELDS),
+      ).resolves.toBeDefined();
+    });
+
+    it('five fix proofs do not use up the evidence allowance', async () => {
+      const { service } = setup({
+        role: 'qa',
+        item: item('returned_to_dev'),
+        existing: fixProofs(5),
+      });
+
+      await expect(
+        service.add(DP, actor(), 'run-1', 'ri-1', PNG(), FIELDS),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('delete', () => {
+    it('lets a developer delete their own fix proof while the run is open', async () => {
+      const { service, attachments } = setup({
+        role: 'member',
+        existing: [
+          attachmentRow({
+            id: 'fp-1',
+            kind: 'fix_proof',
+            created_by: 'dev-1',
+            created_by_login: 'dev',
+          }),
+        ],
+      });
+
+      await service.remove(DP, actor('dev-1', 'dev'), 'run-1', 'fp-1');
+
+      expect(attachments.deleteById).toHaveBeenCalledWith('run-1', 'fp-1');
+    });
+
+    it('refuses a developer deleting a colleague fix proof; a lead may', async () => {
+      const row = attachmentRow({
+        id: 'fp-1',
+        kind: 'fix_proof',
+        created_by: 'dev-2',
+        created_by_login: 'dev2',
+      });
+      const dev = setup({ role: 'member', existing: [row] });
+      await expect(
+        dev.service.remove(DP, actor('dev-1', 'dev'), 'run-1', 'fp-1'),
+      ).rejects.toMatchObject({ status: 403 });
+
+      const lead = setup({ role: 'lead', existing: [row] });
+      await expect(
+        lead.service.remove(DP, actor('lead-1', 'lead'), 'run-1', 'fp-1'),
+      ).resolves.toBeUndefined();
+    });
+  });
+});
+
 describe('parseQaAttachmentFields', () => {
   it('defaults to an uncaptioned upload of kind evidence', () => {
     expect(parseQaAttachmentFields({})).toEqual({
@@ -861,8 +1130,14 @@ describe('parseQaAttachmentFields', () => {
     });
   });
 
-  it.each(['fix_proof', 'automated', 'nonsense'])(
-    'rejects kind %s with 400 QA_ATTACHMENT_KIND',
+  it('accepts kind fix_proof', () => {
+    expect(parseQaAttachmentFields({ kind: 'fix_proof' }).kind).toBe(
+      'fix_proof',
+    );
+  });
+
+  it.each(['automated', 'nonsense', ''])(
+    'rejects kind %j with 400 QA_ATTACHMENT_KIND',
     (kind) => {
       expect(thrown(() => parseQaAttachmentFields({ kind }))).toMatchObject({
         status: 400,

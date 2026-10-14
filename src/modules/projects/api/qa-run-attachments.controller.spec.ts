@@ -129,16 +129,38 @@ describe('DeliveryProjectQaAttachmentsController (HTTP)', () => {
       });
     });
 
-    it('rejects kind=fix_proof with 400 QA_ATTACHMENT_KIND before calling the service', async () => {
-      const response = await request(http())
+    it('passes kind=fix_proof through to the service', async () => {
+      service.add.mockResolvedValue(attachment);
+
+      await request(http())
         .post(`${BASE}/items/ri-1/attachments`)
         .field('kind', 'fix_proof')
-        .attach('file', pngBytes(10, 10), 'shot.png');
+        .attach('file', pngBytes(10, 10), 'shot.png')
+        .expect(201);
 
-      expect(response.status).toBe(400);
-      expect(response.body).toMatchObject({ code: 'QA_ATTACHMENT_KIND' });
-      expect(service.add).not.toHaveBeenCalled();
+      expect(service.add.mock.calls[0]?.[5]).toEqual({
+        kind: 'fix_proof',
+        source: 'upload',
+        caption: null,
+      });
     });
+
+    it.each(['automated', 'nonsense'])(
+      'rejects kind=%s with 400 QA_ATTACHMENT_KIND before calling the service',
+      async (kind) => {
+        const response = await request(http())
+          .post(`${BASE}/items/ri-1/attachments`)
+          .field('kind', kind)
+          .attach('file', pngBytes(10, 10), 'shot.png');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toMatchObject({
+          code: 'QA_ATTACHMENT_KIND',
+          message: 'Only kinds "evidence" and "fix_proof" can be attached.',
+        });
+        expect(service.add).not.toHaveBeenCalled();
+      },
+    );
 
     it('answers a file over 3 MB with 413 and the coded QA_ATTACHMENT_TOO_LARGE body', async () => {
       const response = await request(http())

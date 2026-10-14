@@ -33,6 +33,8 @@ const item = (overrides: Partial<ProjectQaRunItem> = {}): ProjectQaRunItem =>
     acceptanceCriteria: 'Receipt | shown',
     progress: 'done',
     attachmentCount: 0,
+    fixProofCount: 0,
+    canAttachFixProof: false,
     ...overrides,
   }) as ProjectQaRunItem;
 
@@ -86,7 +88,7 @@ const run = (items: ProjectQaRunItem[]): ProjectQaRun =>
       canReopen: true,
       canDispatch: false,
     },
-    attachments: { enabled: true, canAdd: false },
+    attachments: { enabled: true, canAdd: false, canAddFixProof: false },
     automation: { verify: null, quality: null },
     automationByRepository: [],
   }) as ProjectQaRun;
@@ -178,6 +180,12 @@ describe('qa-report/v2 attachments', () => {
             kind: 'evidence',
             contentType: 'image/jpeg',
           },
+          {
+            id: 'att-3',
+            caption: 'Receipt after the fix',
+            kind: 'fix_proof',
+            contentType: 'image/png',
+          },
         ],
       }),
       item({ id: 'ri-2', position: 1, title: 'Refund', attachments: [] }),
@@ -199,18 +207,27 @@ describe('qa-report/v2 attachments', () => {
         kind: 'evidence',
         contentType: 'image/jpeg',
       },
+      {
+        id: 'att-3',
+        caption: 'Receipt after the fix',
+        kind: 'fix_proof',
+        contentType: 'image/png',
+      },
     ]);
     expect(JSON.stringify(withAttachments)).not.toMatch(/https?:\/\//);
   });
 
-  it('lists a "Screenshot: <caption>" line per attachment under the requirement', () => {
+  it('labels each attachment line by kind: "QA evidence" or "Fix proof"', () => {
     const markdown = renderQaProjectReportMarkdown(withAttachments);
 
     expect(markdown).toContain(
-      '- #1 Pay by card - Screenshot: Receipt | shown',
+      '- #1 Pay by card - QA evidence: Receipt | shown',
     );
-    expect(markdown).toContain('- #1 Pay by card - Screenshot: (no caption)');
-    expect(markdown.match(/Screenshot:/g)).toHaveLength(2);
+    expect(markdown).toContain('- #1 Pay by card - QA evidence: (no caption)');
+    expect(markdown).toContain(
+      '- #1 Pay by card - Fix proof: Receipt after the fix',
+    );
+    expect(markdown.match(/- (QA evidence|Fix proof):/g)).toHaveLength(3);
   });
 
   it('renders a report without attachments (frozen before this existed) unchanged', () => {

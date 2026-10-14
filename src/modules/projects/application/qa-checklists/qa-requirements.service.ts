@@ -33,6 +33,7 @@ import {
   type QaProjectRunHeadline,
 } from '../../infrastructure/qa-project-runs.repository';
 import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
+import { QaRunAttachmentsRepository } from '../../infrastructure/qa-run-attachments.repository';
 import { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
 import { QA_PROMOTION_MERGED_EVENT } from '../qa-runs/qa-promotion.contracts';
 import type { QaVerificationStatusCounts } from '../qa-runs/qa-runs.contracts';
@@ -112,6 +113,9 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     private readonly requirements: QaRequirementsRepository,
     private readonly projectRuns: QaProjectRunsRepository,
     private readonly runs: QaRunsRepository,
+    // A concrete class, so its own type is the token (no @Inject needed); it is
+    // a provider of QaRunsModule, the module that provides this service.
+    private readonly runAttachments: QaRunAttachmentsRepository,
     private readonly access: QaAccessService,
     private readonly projectContext: QaProjectContextService,
     // Required, not @Optional(): the overview reads promotion merges through
@@ -759,6 +763,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       item.id,
     );
     const previousVerifiers: Array<string | null> = [];
+    const resetItemIds: string[] = [];
     for (const runItem of returned) {
       const reset = await this.runs.requestRetest(
         runItem.run_id,
@@ -768,6 +773,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       );
       if (reset) {
         previousVerifiers.push(runItem.verified_by);
+        resetItemIds.push(runItem.id);
       }
     }
 
@@ -792,9 +798,13 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     if (recipients.length === 0) {
       return false;
     }
+    const fixProofs = await this.runAttachments.countFixProofs(resetItemIds);
     const body = [
       `${row.name} in ${project.name}.`,
       note ? this.truncate(note, NOTE_TRUNCATE_LENGTH) : null,
+      fixProofs > 0
+        ? `Proof of the fix attached (${fixProofs} screenshot${fixProofs === 1 ? '' : 's'}).`
+        : null,
     ]
       .filter((part): part is string => Boolean(part))
       .join(' ');

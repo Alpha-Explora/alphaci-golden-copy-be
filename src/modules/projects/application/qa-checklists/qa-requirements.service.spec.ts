@@ -15,6 +15,7 @@ import type {
   QaRunItemFact,
 } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
+import type { QaRunAttachmentsRepository } from '../../infrastructure/qa-run-attachments.repository';
 import type { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
 import type { QaAccessService } from './qa-access.service';
 import type {
@@ -172,6 +173,9 @@ function setup({
   const runs = {
     requestRetest: jest.fn().mockResolvedValue({ id: 'ri-1' }),
   } as unknown as jest.Mocked<QaRunsRepository>;
+  const runAttachments = {
+    countFixProofs: jest.fn().mockResolvedValue(0),
+  } as unknown as jest.Mocked<QaRunAttachmentsRepository>;
   const access = {
     findAppRole: jest.fn().mockResolvedValue(role),
     canAccessWorkspace: jest.fn().mockResolvedValue(member),
@@ -199,6 +203,7 @@ function setup({
     requirements,
     projectRuns,
     runs,
+    runAttachments,
     access,
     projectContext,
     auditQuery,
@@ -211,6 +216,7 @@ function setup({
     requirements,
     projectRuns,
     runs,
+    runAttachments,
     access,
     projectContext,
     auditQuery,
@@ -447,6 +453,101 @@ describe('QaRequirementsService.setProgress', () => {
         title: 'Ready for QA: "Pay by card"',
       }),
     );
+  });
+
+  describe('proof of the fix in the Ready for QA body', () => {
+    const markDone = async (
+      fixture: ReturnType<typeof setup>,
+      note?: string,
+    ) => {
+      fixture.requirements.setProgress.mockResolvedValue(done());
+      return fixture.service.setProgress('req-1', 'item-1', actor, {
+        progress: 'done',
+        expectedRowVersion: 1,
+        ...(note ? { note } : {}),
+      });
+    };
+    const bodies = (fixture: ReturnType<typeof setup>) =>
+      fixture.notifications.record.mock.calls.map(
+        (call) => (call[0] as { body: string }).body,
+      );
+
+    it('adds one sentence with the count, plural, after the note', async () => {
+      const fixture = setup({ role: 'member' });
+      fixture.projectRuns.findReturnedOpenRunItems.mockResolvedValue([
+        { id: 'ri-1', run_id: 'run-1', verified_by: 'qa-9' },
+      ] as never);
+      fixture.runAttachments.countFixProofs.mockResolvedValue(3);
+
+      await markDone(fixture, 'fixed it');
+
+      expect(fixture.runAttachments.countFixProofs).toHaveBeenCalledWith([
+        'ri-1',
+      ]);
+      expect(new Set(bodies(fixture))).toEqual(
+        new Set([
+          'Checkout in Checkout. fixed it Proof of the fix attached (3 screenshots).',
+        ]),
+      );
+    });
+
+    it('says "1 screenshot" in the singular', async () => {
+      const fixture = setup({ role: 'member' });
+      fixture.projectRuns.findReturnedOpenRunItems.mockResolvedValue([
+        { id: 'ri-1', run_id: 'run-1', verified_by: 'qa-9' },
+      ] as never);
+      fixture.runAttachments.countFixProofs.mockResolvedValue(1);
+
+      await markDone(fixture);
+
+      expect(bodies(fixture)[0]).toBe(
+        'Checkout in Checkout. Proof of the fix attached (1 screenshot).',
+      );
+    });
+
+    it('keeps the event code and title, and leaves the body alone when there is no fix proof', async () => {
+      const fixture = setup({ role: 'member' });
+      fixture.projectRuns.findReturnedOpenRunItems.mockResolvedValue([
+        { id: 'ri-1', run_id: 'run-1', verified_by: 'qa-9' },
+      ] as never);
+      fixture.runAttachments.countFixProofs.mockResolvedValue(0);
+
+      await markDone(fixture, 'fixed it');
+
+      expect(fixture.notifications.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'qa.item.retest_requested',
+          title: 'Ready for QA: "Pay by card"',
+          body: 'Checkout in Checkout. fixed it',
+        }),
+      );
+    });
+
+    it('counts only the run items that were actually reset', async () => {
+      const fixture = setup({ role: 'member' });
+      fixture.projectRuns.findReturnedOpenRunItems.mockResolvedValue([
+        { id: 'ri-1', run_id: 'run-1', verified_by: 'qa-9' },
+        { id: 'ri-2', run_id: 'run-2', verified_by: 'qa-9' },
+      ] as never);
+      fixture.runs.requestRetest
+        .mockResolvedValueOnce({ id: 'ri-1' } as never)
+        .mockResolvedValueOnce(null);
+
+      await markDone(fixture);
+
+      expect(fixture.runAttachments.countFixProofs).toHaveBeenCalledWith([
+        'ri-1',
+      ]);
+    });
+
+    it('asks for no count of any run item when none was returned', async () => {
+      const fixture = setup({ role: 'member' });
+
+      await markDone(fixture);
+
+      expect(fixture.runAttachments.countFixProofs).toHaveBeenCalledWith([]);
+      expect(bodies(fixture)[0]).toBe('Checkout in Checkout.');
+    });
   });
 
   it('done notifies QA even when no run item was returned', async () => {

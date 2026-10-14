@@ -2,6 +2,7 @@ import type { DatabaseService } from '#kernel/db/database.service';
 import {
   QaAttachmentItemGoneError,
   QaAttachmentLimitReachedError,
+  QaFixProofNotRequestedError,
   QaRunAttachmentsRepository,
   type InsertQaAttachmentInput,
 } from './qa-run-attachments.repository';
@@ -31,7 +32,7 @@ const input = (
   source: 'upload',
   createdBy: 'qa-1',
   createdByLogin: 'qa',
-  maxHumanPerItem: 5,
+  maxPerKind: 5,
   ...overrides,
 });
 
@@ -44,10 +45,18 @@ describe('QaRunAttachmentsRepository write guards', () => {
     repository = new QaRunAttachmentsRepository(makeDatabaseService(query));
   });
 
-  it('locks the run FOR SHARE, then the item FOR UPDATE, then counts human attachments, then inserts', async () => {
+  const lockedItem = (
+    status = 'returned_to_dev',
+    fixRequestedAt: string | null = null,
+  ) => ({
+    rowCount: 1,
+    rows: [{ status, fix_requested_at: fixRequestedAt }],
+  });
+
+  it('locks the run FOR SHARE, then the item FOR UPDATE, then counts attachments of the same kind, then inserts', async () => {
     query
       .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })
+      .mockResolvedValueOnce(lockedItem())
       .mockResolvedValueOnce({ rows: [{ count: '4' }] })
       .mockResolvedValueOnce({ rows: [{ id: 'att-1' }] });
 
@@ -57,8 +66,69 @@ describe('QaRunAttachmentsRepository write guards', () => {
     const sql = query.mock.calls.map((call) => String(call[0]));
     expect(sql[0]).toMatch(/qa_verification_runs[\s\S]*FOR SHARE/);
     expect(sql[1]).toMatch(/qa_run_items[\s\S]*FOR UPDATE/);
-    expect(sql[2]).toMatch(/kind <> 'automated'/);
+    expect(sql[2]).toMatch(/kind = \$2/);
+    expect(query.mock.calls[2]?.[1]).toEqual(['ri-1', 'evidence']);
     expect(sql[3]).toMatch(/INSERT INTO projects\.qa_run_item_attachments/);
+  });
+
+  it('counts fix proofs against their own cap: evidence does not use it up', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce(lockedItem())
+      .mockResolvedValueOnce({ rows: [{ count: '4' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'att-1' }] });
+
+    await repository.insert(input({ kind: 'fix_proof' }));
+
+    expect(query.mock.calls[2]?.[1]).toEqual(['ri-1', 'fix_proof']);
+  });
+
+  it.each([
+    ['returned_to_dev', null],
+    ['pending', '2026-10-14T10:00:00.000Z'],
+  ])(
+    'accepts a fix proof for a %s item (fix request: %s)',
+    async (status, fixRequestedAt) => {
+      query
+        .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+        .mockResolvedValueOnce(lockedItem(status, fixRequestedAt))
+        .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'att-1' }] });
+
+      await expect(
+        repository.insert(input({ kind: 'fix_proof' })),
+      ).resolves.toEqual({ id: 'att-1' });
+    },
+  );
+
+  it.each([
+    ['pending', null],
+    ['in_progress', null],
+    ['passed', '2026-10-14T10:00:00.000Z'],
+    ['failed', null],
+    ['blocked', null],
+  ])(
+    'refuses a fix proof for a %s item under the lock and inserts nothing',
+    async (status, fixRequestedAt) => {
+      query
+        .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+        .mockResolvedValueOnce(lockedItem(status, fixRequestedAt));
+
+      await expect(
+        repository.insert(input({ kind: 'fix_proof' })),
+      ).rejects.toBeInstanceOf(QaFixProofNotRequestedError);
+      expect(query).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it('does not apply the fix-proof state rule to evidence', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce(lockedItem('passed'))
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'att-1' }] });
+
+    await expect(repository.insert(input())).resolves.toEqual({ id: 'att-1' });
   });
 
   it('throws QaRunNotOpenError without touching the item when the run is signed off', async () => {
@@ -73,7 +143,7 @@ describe('QaRunAttachmentsRepository write guards', () => {
   it('throws QaAttachmentLimitReachedError at the cap and inserts nothing', async () => {
     query
       .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })
+      .mockResolvedValueOnce(lockedItem())
       .mockResolvedValueOnce({ rows: [{ count: '5' }] });
 
     await expect(repository.insert(input())).rejects.toBeInstanceOf(
@@ -119,6 +189,23 @@ describe('QaRunAttachmentsRepository write guards', () => {
       .mockResolvedValueOnce({ rows: [] });
 
     await expect(repository.deleteById('run-1', 'att-1')).resolves.toBeNull();
+  });
+
+  it('counts fix proofs per item and in all', async () => {
+    query.mockResolvedValueOnce({
+      rows: [{ run_item_id: 'ri-1', count: '3' }],
+    });
+    await expect(repository.fixProofCountsByItem('run-1')).resolves.toEqual(
+      new Map([['ri-1', 3]]),
+    );
+    expect(String(query.mock.calls[0]?.[0])).toMatch(/kind = 'fix_proof'/);
+
+    query.mockResolvedValueOnce({ rows: [{ count: '4' }] });
+    await expect(repository.countFixProofs(['ri-1', 'ri-2'])).resolves.toBe(4);
+
+    query.mockClear();
+    await expect(repository.countFixProofs([])).resolves.toBe(0);
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('counts attachments per item', async () => {

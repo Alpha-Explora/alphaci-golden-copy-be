@@ -18,13 +18,16 @@ import {
   inspectQaAttachmentImage,
   type QaAttachmentImageInfo,
 } from '../../domain/qa-attachment-image.rules';
+import { acceptsFixProof } from '../../domain/qa-fix-proof.rules';
 import {
   canAddEvidence,
+  canAddFixProof,
   canRemoveAnyAttachment,
 } from '../../domain/qa-run-access.rules';
 import {
   QaAttachmentItemGoneError,
   QaAttachmentLimitReachedError,
+  QaFixProofNotRequestedError,
   QaRunAttachmentsRepository,
   type QaRunItemAttachmentRow,
 } from '../../infrastructure/qa-run-attachments.repository';
@@ -42,6 +45,7 @@ import {
 import {
   qaAttachmentForbidden,
   qaAttachmentLimit,
+  qaFixProofNotRequested,
   qaAttachmentTooLarge,
   qaAttachmentType,
   qaAttachmentsUnavailable,
@@ -71,12 +75,16 @@ const QA_ATTACHMENT_EVENTS = {
 } as const;
 
 /**
- * Screenshots attached to a Project run item (phase A1: human `evidence`).
+ * Screenshots attached to a Project run item: human `evidence` (A1) and a
+ * developer's `fix_proof` (A2).
  *
  * Rules (QA_ATTACHMENTS_PLAN.md section 4): anyone who can see the run can see
- * its attachments; qa|lead|admin add evidence; the uploader or a lead/admin
- * deletes a human attachment; a signed-off run accepts neither (writes take the
- * run row FOR SHARE in the repository, so they serialize against sign-off).
+ * its attachments; qa|lead|admin add evidence; member|lead|admin add proof of a
+ * fix, but only while the item is returned to the developer or awaiting
+ * re-test; the uploader or a lead/admin deletes a human attachment; a
+ * signed-off run accepts neither (writes take the run row FOR SHARE in the
+ * repository, so they serialize against sign-off). Each item holds at most
+ * QA_ATTACHMENT_MAX_PER_ITEM of each kind.
  * The bytes are inspected here, never trusted: format and size come from the
  * file's own header.
  */
@@ -141,9 +149,14 @@ export class QaRunAttachmentsService {
     return this.storage.isConfigured();
   }
 
-  /** run item id -> number of attachments, for the run payload. */
+  /** run item id -> number of attachments (all kinds), for the run payload. */
   countsByItem(runId: string): Promise<Map<string, number>> {
     return this.attachments.countsByItem(runId);
+  }
+
+  /** run item id -> number of `fix_proof` attachments, for the run payload. */
+  fixProofCountsByItem(runId: string): Promise<Map<string, number>> {
+    return this.attachments.fixProofCountsByItem(runId);
   }
 
   /** The ids and captions the QA report carries (no URLs), grouped by run item. */
@@ -185,12 +198,11 @@ export class QaRunAttachmentsService {
     );
     const item = await this.requireItem(run.id, itemId);
 
-    if (!canAddEvidence(role)) {
-      throw qaAttachmentForbidden(
-        'QA, a lead, or an admin may attach screenshots.',
-      );
-    }
+    this.requireMayAdd(role, fields.kind);
     this.requireRunOpen(run);
+    if (fields.kind === 'fix_proof' && !acceptsFixProof(item)) {
+      throw qaFixProofNotRequested();
+    }
     this.requireConfigured();
     const image = this.inspect(file);
     const bytes = (file as UploadedQaAttachmentFile).buffer;
@@ -198,8 +210,8 @@ export class QaRunAttachmentsService {
     // Cheap early answer before spending an upload; the insert re-checks the
     // limit under the item lock, which is the authoritative one.
     const existing = await this.attachments.listByItem(run.id, item.id);
-    const humans = existing.filter((row) => row.kind !== 'automated').length;
-    if (humans >= QA_ATTACHMENT_MAX_PER_ITEM) {
+    const ofKind = existing.filter((row) => row.kind === fields.kind).length;
+    if (ofKind >= QA_ATTACHMENT_MAX_PER_ITEM) {
       throw qaAttachmentLimit(QA_ATTACHMENT_MAX_PER_ITEM);
     }
 
@@ -223,7 +235,7 @@ export class QaRunAttachmentsService {
         source: fields.source,
         createdBy: actor.userId,
         createdByLogin: actor.userLogin,
-        maxHumanPerItem: QA_ATTACHMENT_MAX_PER_ITEM,
+        maxPerKind: QA_ATTACHMENT_MAX_PER_ITEM,
       });
     } catch (error) {
       // No orphans: the row was not written, so the object must not stay.
@@ -330,6 +342,26 @@ export class QaRunAttachmentsService {
     return item;
   }
 
+  /** The role allow-list of the kind being attached: QA's evidence or a developer's fix proof. */
+  private requireMayAdd(
+    role: PlatformAppRole,
+    kind: QaAttachmentUploadFields['kind'],
+  ): void {
+    if (kind === 'fix_proof') {
+      if (!canAddFixProof(role)) {
+        throw qaAttachmentForbidden(
+          'A developer, a lead, or an admin may attach proof of a fix.',
+        );
+      }
+      return;
+    }
+    if (!canAddEvidence(role)) {
+      throw qaAttachmentForbidden(
+        'QA, a lead, or an admin may attach screenshots.',
+      );
+    }
+  }
+
   private requireRunOpen(run: QaProjectRunRow): void {
     if (run.status === 'signed_off') {
       throw qaRunSignedOff();
@@ -412,6 +444,9 @@ export class QaRunAttachmentsService {
     }
     if (error instanceof QaAttachmentLimitReachedError) {
       return qaAttachmentLimit(error.max);
+    }
+    if (error instanceof QaFixProofNotRequestedError) {
+      return qaFixProofNotRequested();
     }
     if (error instanceof QaAttachmentItemGoneError) {
       return new NotFoundException('QA run item not found');
