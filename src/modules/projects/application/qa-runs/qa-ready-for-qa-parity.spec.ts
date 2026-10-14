@@ -19,6 +19,7 @@ import type {
 import type { QaProgress } from '../qa-checklists/qa-requirements.contracts';
 import { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
 import type { QaAutomationService } from './qa-automation.service';
+import type { QaRunAttachmentsService } from './qa-run-attachments.service';
 import { QaProjectRunsService } from './qa-project-runs.service';
 import type { QaRunItemStatus, QaRunStatus } from './qa-runs.contracts';
 import type { QaUatHeadsService } from './qa-uat-heads.service';
@@ -209,6 +210,11 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
     projectContext,
     heads,
     automation,
+    {
+      countsByItem: jest.fn().mockResolvedValue(new Map<string, number>()),
+      referencesForRun: jest.fn().mockResolvedValue(new Map()),
+      isEnabled: jest.fn().mockReturnValue(true),
+    } as unknown as QaRunAttachmentsService,
   );
   const feed = await feedService.myItems(DP, {
     userId: 'qa-1',

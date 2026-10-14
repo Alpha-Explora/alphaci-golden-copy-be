@@ -318,6 +318,66 @@ export interface ProjectQaRunItem extends QaRunItem {
   acceptanceCriteria: string | null;
   /** The source item's CURRENT Progress (live, not snapshotted); null when the source was deleted. */
   progress: 'todo' | 'in_progress' | 'done' | null;
+  /** How many screenshots (of any kind) are attached to this item. */
+  attachmentCount: number;
+  /**
+   * The attachments' ids and captions, no URLs. Present only in the QA report
+   * (and so in the report frozen at sign-off); never on a plain run payload.
+   */
+  attachments?: QaRunItemAttachmentRef[];
+}
+
+export type QaAttachmentKind = 'evidence' | 'fix_proof' | 'automated';
+
+export type QaAttachmentSource = 'capture' | 'paste' | 'upload' | 'playwright';
+
+export type QaAttachmentContentTypeName =
+  | 'image/png'
+  | 'image/jpeg'
+  | 'image/webp';
+
+/** An attachment as the QA report carries it: stable identity, no URL (signed URLs expire). */
+export interface QaRunItemAttachmentRef {
+  id: string;
+  caption: string | null;
+  kind: QaAttachmentKind;
+  contentType: QaAttachmentContentTypeName;
+}
+
+/** An attachment as the attachment routes return it. */
+export interface QaAttachment {
+  id: string;
+  runId: string;
+  runItemId: string;
+  kind: QaAttachmentKind;
+  contentType: QaAttachmentContentTypeName;
+  byteSize: number;
+  width: number;
+  height: number;
+  caption: string | null;
+  source: QaAttachmentSource;
+  /** Automated attachments: the Playwright test the image came from. */
+  testTitle: string | null;
+  /** Null for automated attachments. */
+  createdByLogin: string | null;
+  createdAt: string;
+  /** Storage signed URL, valid for 5 minutes. */
+  url: string;
+  urlExpiresAt: string;
+  /** The caller may delete it: the uploader, or a lead/admin, of a human attachment on an open run. */
+  canDelete: boolean;
+}
+
+export interface QaAttachmentList {
+  items: QaAttachment[];
+}
+
+/** Run-level switch the UI keys its attach controls on. */
+export interface QaRunAttachmentsState {
+  /** False when screenshot storage is not configured: hide the controls. */
+  enabled: boolean;
+  /** The caller may add evidence (qa, lead or admin) and the run is open. */
+  canAdd: boolean;
 }
 
 export interface ProjectQaRunPermissions {
@@ -350,6 +410,7 @@ export interface ProjectQaRun extends ProjectQaRunListItem {
   requirementsChanged: boolean;
   items: ProjectQaRunItem[];
   permissions: ProjectQaRunPermissions;
+  attachments: QaRunAttachmentsState;
   /** First report per stage across the covered repositories. */
   automation: QaRunAutomation;
   automationByRepository: Array<{

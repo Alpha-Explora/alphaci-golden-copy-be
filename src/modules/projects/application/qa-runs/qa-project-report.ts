@@ -195,6 +195,22 @@ function itemsByRequirement(
   return groups;
 }
 
+/**
+ * One "Screenshot: <caption>" line per attachment, under the item it belongs
+ * to. A report frozen before attachments existed has no `attachments` key.
+ */
+function screenshotLines(items: readonly ProjectQaRunItem[]): string[] {
+  const lines = items.flatMap((item) =>
+    (item.attachments ?? []).map(
+      (attachment) =>
+        `- #${item.position + 1} ${inline(item.title)} - Screenshot: ${
+          attachment.caption ? inline(attachment.caption) : '(no caption)'
+        }`,
+    ),
+  );
+  return lines.length > 0 ? ['', ...lines] : [];
+}
+
 export function renderQaProjectReportMarkdown(report: QaProjectReport): string {
   const { run, summary } = report;
   const sections: string[] = [];
@@ -252,6 +268,7 @@ export function renderQaProjectReportMarkdown(report: QaProjectReport): string {
           cell(item.notes),
         ]),
       ),
+      ...screenshotLines(group.items),
     ].join('\n'),
   );
   sections.push(['## Checklist', '', ...checklist].join('\n'));

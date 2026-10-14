@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 224 current API routes."
+description: "Generated inventory of the 228 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **224 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **228 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -23,6 +23,7 @@ The current compiled API exposes **224 routes** under the global `/api/v1` prefi
 - `DELETE /api/v1/auth/account`
 - `DELETE /api/v1/delivery-projects/{deliveryProjectId}`
 - `DELETE /api/v1/delivery-projects/{deliveryProjectId}/members/{memberUserId}`
+- `DELETE /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments/{attachmentId}`
 - `DELETE /api/v1/groups/{groupId}`
 - `DELETE /api/v1/groups/{groupId}/members/{memberId}`
 - `DELETE /api/v1/projects/{id}`
@@ -61,6 +62,8 @@ The current compiled API exposes **224 routes** under the global `/api/v1` prefi
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/current`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}`
+- `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments`
+- `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/report`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/qa/my-items`
 - `GET /api/v1/delivery-projects/{deliveryProjectId}/repositories`
@@ -176,6 +179,7 @@ The current compiled API exposes **224 routes** under the global `/api/v1` prefi
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/members/sync`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/automation/dispatch`
+- `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/reopen`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/signoff`
 - `POST /api/v1/delivery-projects/{deliveryProjectId}/repositories`
