@@ -1,3 +1,4 @@
+import { parseDeliveryEntries } from '../domain/project-delivery.rules';
 import { ProjectIterationsService } from '../application/qa-checklists/project-iterations.service';
 import type { QaAccessService } from '../application/qa-checklists/qa-access.service';
 import type { QaProjectContextService } from '../application/qa-checklists/qa-project-context.service';
@@ -48,14 +49,75 @@ export function fakeIterations(
   iteration: ProjectIterationRow = iterationRow(),
   options: { canManage?: boolean } = {},
 ) {
+  // The delivery writes behave like their SQL (one row, `active` guard), so a
+  // spec can race two deliveries and see exactly one transition.
+  const state = { row: iteration };
   const repository = {
-    findById: jest.fn().mockResolvedValue(iteration),
-    findCurrent: jest.fn().mockResolvedValue(iteration),
-    list: jest.fn().mockResolvedValue([iteration]),
+    findById: jest.fn().mockImplementation(() => Promise.resolve(state.row)),
+    recordRepositoryDelivery: jest
+      .fn()
+      .mockImplementation(
+        (
+          _id: string,
+          entry: { projectId: string; uatHeadSha: string },
+        ): Promise<ProjectIterationRow | null> => {
+          if (state.row.status !== 'active') {
+            return Promise.resolve(null);
+          }
+          const entries = parseDeliveryEntries(state.row.delivery_json).filter(
+            (existing) =>
+              !(
+                existing.projectId === entry.projectId &&
+                existing.uatHeadSha !== entry.uatHeadSha
+              ),
+          );
+          const present = entries.some(
+            (existing) =>
+              existing.projectId === entry.projectId &&
+              existing.uatHeadSha === entry.uatHeadSha,
+          );
+          state.row = {
+            ...state.row,
+            delivery_json: {
+              repositories: present ? entries : [...entries, entry],
+            },
+          };
+          return Promise.resolve(state.row);
+        },
+      ),
+    markDelivered: jest.fn().mockImplementation(
+      (
+        _id: string,
+        input: {
+          deliveredBy: string;
+          deliveredByLogin: string;
+          signoffRunId: string;
+          deliveryJson: unknown;
+        },
+      ): Promise<ProjectIterationRow | null> => {
+        if (state.row.status !== 'active') {
+          return Promise.resolve(null);
+        }
+        state.row = {
+          ...state.row,
+          status: 'delivered',
+          delivered_at: '2026-10-15T00:00:00.000Z',
+          delivered_by: input.deliveredBy,
+          delivered_by_login: input.deliveredByLogin,
+          signoff_run_id: input.signoffRunId,
+          delivery_json: input.deliveryJson,
+        };
+        return Promise.resolve(state.row);
+      },
+    ),
+    findCurrent: jest.fn().mockImplementation(() => Promise.resolve(state.row)),
+    list: jest.fn().mockImplementation(() => Promise.resolve([state.row])),
     insertFirstIfNone: jest.fn().mockResolvedValue(undefined),
     findCurrentByDeliveryProjects: jest
       .fn()
-      .mockResolvedValue(new Map([[iteration.delivery_project_id, iteration]])),
+      .mockImplementation(() =>
+        Promise.resolve(new Map([[state.row.delivery_project_id, state.row]])),
+      ),
   } as unknown as jest.Mocked<ProjectIterationsRepository>;
   const access = {
     canManage: jest.fn().mockResolvedValue(options.canManage ?? true),
@@ -73,5 +135,5 @@ export function fakeIterations(
     access,
     projectContext,
   );
-  return { service, repository, access, projectContext, iteration };
+  return { service, repository, access, projectContext, iteration, state };
 }

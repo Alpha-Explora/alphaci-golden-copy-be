@@ -272,7 +272,6 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
     access,
     projectContext,
     iterations,
-    { findLatestProjectEventTimes: jest.fn().mockResolvedValue(new Map()) },
   );
   const overview = await overviewService.overview('group-1', 'qa-1', false);
 

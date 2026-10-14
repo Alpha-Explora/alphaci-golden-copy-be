@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import { parseDeliveryEntries } from '../../domain/project-delivery.rules';
 import {
   canStartNextIteration,
   isIterationWritable,
@@ -11,7 +12,7 @@ import {
 import type {
   DeliveredRepository,
   ProjectIteration,
-  ProjectIterationCurrent,
+  ProjectIterationCurrentBase,
   ProjectIterationList,
   ProjectIterationRef,
 } from './project-iterations.contracts';
@@ -153,13 +154,21 @@ export class ProjectIterationsService {
     return { iterations: rows.map((row) => this.toIteration(row)) };
   }
 
-  /** GET /delivery-projects/:id/iterations/current (404 for a non-member). */
+  /** GET /delivery-projects/:id/iterations/current, minus the delivery view (404 for a non-member). */
   async currentForProject(
     deliveryProjectId: string,
     userId: string,
-  ): Promise<ProjectIterationCurrent> {
+  ): Promise<ProjectIterationCurrentBase> {
     await this.projectContext.requireProject(deliveryProjectId, userId);
     const iteration = await this.ensureActiveIteration(deliveryProjectId);
+    return this.describeCurrent(iteration, userId);
+  }
+
+  /** The current Iteration with what only this service knows: start-next and the stored delivery state. */
+  async describeCurrent(
+    iteration: ProjectIterationRow,
+    userId: string,
+  ): Promise<ProjectIterationCurrentBase> {
     return {
       iteration: this.toIteration(iteration),
       canStartNext: canStartNextIteration({
@@ -191,21 +200,51 @@ export class ProjectIterationsService {
     };
   }
 
-  /** `delivery_json` is written by phase 2; anything that is not a list reads as "none". */
-  private toDeliveredRepositories(
-    row: ProjectIterationRow,
-  ): DeliveredRepository[] {
-    if (row.status !== 'delivered' || !Array.isArray(row.delivery_json)) {
-      return [];
-    }
-    return (row.delivery_json as DeliveredRepository[]).map((entry) => ({
-      projectId: entry.projectId,
-      repoFullName: entry.repoFullName,
-      uatHeadSha: entry.uatHeadSha,
-      mergeSha: entry.mergeSha ?? null,
-      prNumber: entry.prNumber ?? null,
-      how: entry.how,
-    }));
+  /** The stored per-repository delivery state, during both active and delivered. */
+  toDeliveredRepositories(row: ProjectIterationRow): DeliveredRepository[] {
+    return parseDeliveryEntries(row.delivery_json);
+  }
+
+  // ---------------------------------------------------------------------
+  // Delivery writes (phase 2)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Records one repository as delivered in the still-active Iteration, atomic
+   * against a concurrent record (see the repository). Null when the Iteration
+   * is no longer active.
+   */
+  recordRepositoryDelivery(
+    iterationId: string,
+    entry: DeliveredRepository,
+  ): Promise<ProjectIterationRow | null> {
+    return this.iterations.recordRepositoryDelivery(iterationId, entry);
+  }
+
+  /**
+   * The atomic Delivered transition: returns the row ONLY to the caller whose
+   * UPDATE changed it, so only that caller audits and notifies.
+   */
+  markDelivered(
+    iterationId: string,
+    input: {
+      deliveredBy: string;
+      deliveredByLogin: string;
+      signoffRunId: string;
+      repositories: DeliveredRepository[];
+    },
+  ): Promise<ProjectIterationRow | null> {
+    return this.iterations.markDelivered(iterationId, {
+      deliveredBy: input.deliveredBy,
+      deliveredByLogin: input.deliveredByLogin,
+      signoffRunId: input.signoffRunId,
+      deliveryJson: { repositories: input.repositories },
+    });
+  }
+
+  /** The Iteration as it is stored right now (null when it is gone). */
+  findRow(iterationId: string): Promise<ProjectIterationRow | null> {
+    return this.iterations.findById(iterationId);
   }
 }
 

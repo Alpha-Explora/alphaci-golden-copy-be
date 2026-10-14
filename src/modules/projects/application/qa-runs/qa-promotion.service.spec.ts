@@ -2,6 +2,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import type { GithubProjectPort } from '#kernel/ports/github.port';
 import {
+  deliveredIterationRow,
   fakeIterations,
   iterationRow,
 } from '../../__fixtures__/project-iterations';
@@ -17,6 +18,7 @@ import type {
   QaProjectContext,
   QaProjectContextService,
 } from '../qa-checklists/qa-project-context.service';
+import { QaProjectDeliveryService } from './qa-project-delivery.service';
 import { QaPromotionService } from './qa-promotion.service';
 import type { QaUatHeadsService } from './qa-uat-heads.service';
 
@@ -50,6 +52,9 @@ function setup({
     { project_id: 'p-web', head_sha: SHA_WEB },
   ],
   pullRequest = null,
+  mainRelation = {},
+  projectRepositories = [API, WEB],
+  iteration = iterationRow(),
 }: {
   role?: PlatformAppRole;
   filed?: boolean;
@@ -60,21 +65,52 @@ function setup({
   verdict?: 'APPROVED' | 'REJECTED' | 'CONDITIONAL' | null;
   covered?: Array<{ project_id: string; head_sha: string }>;
   pullRequest?: { number: number; htmlUrl: string; headSha: string } | null;
+  /** What GitHub says for compare/{uatHead}...main, per repository. Default: main is behind (not contained). */
+  mainRelation?: Record<
+    string,
+    'ahead' | 'behind' | 'diverged' | 'identical' | null
+  >;
+  projectRepositories?: Array<{
+    projectId: string;
+    name: string;
+    repoFullName: string;
+  }>;
+  iteration?: ReturnType<typeof iterationRow>;
 } = {}) {
-  const access = {
-    findVisibleProject: jest.fn().mockResolvedValue({
+  const rows: Record<string, unknown> = {
+    'p-api': {
       id: 'p-api',
       repo_full_name: 'acme/api',
       service_name: 'api',
       workspace_id: 'group-1',
-    }),
+    },
+    'p-web': {
+      id: 'p-web',
+      repo_full_name: 'acme/web',
+      service_name: 'web',
+      workspace_id: 'group-1',
+    },
+  };
+  const access = {
+    findVisibleProject: jest
+      .fn()
+      .mockImplementation((id: string) => Promise.resolve(rows[id] ?? null)),
     findAppRole: jest.fn().mockResolvedValue(role),
     listWorkspaceLeadIds: jest.fn().mockResolvedValue(['lead-1', 'lead-2']),
+    listWorkspaceLeadAndDeveloperIds: jest
+      .fn()
+      .mockResolvedValue(['lead-1', 'lead-2', 'dev-1']),
+    listWorkspaceQaIds: jest.fn().mockResolvedValue(['qa-1']),
+    canManage: jest.fn().mockResolvedValue(role === 'lead' || role === 'admin'),
   } as unknown as jest.Mocked<QaAccessService>;
   const projectContext = {
     findProjectOfRepository: jest
       .fn()
       .mockResolvedValue(filed ? folder() : null),
+    requireProject: jest
+      .fn()
+      .mockResolvedValue({ ...folder(), repositories: projectRepositories }),
+    anchorProjectId: jest.fn().mockResolvedValue('p-api'),
   } as unknown as jest.Mocked<QaProjectContextService>;
   const requirements = {
     listActiveByIteration: jest.fn().mockResolvedValue(
@@ -92,7 +128,12 @@ function setup({
         : {
             run: { id: 'run-1' },
             signoff: { verdict, signed_at: '2026-10-01T00:00:00Z' },
-            repositories: covered.map((row) => ({ run_id: 'run-1', ...row })),
+            repositories: covered.map((row) => ({
+              run_id: 'run-1',
+              repo_full_name:
+                row.project_id === 'p-api' ? 'acme/api' : 'acme/web',
+              ...row,
+            })),
           },
     ),
   } as unknown as jest.Mocked<QaProjectRunsRepository>;
@@ -137,7 +178,12 @@ function setup({
       ),
     getPullRequest: jest
       .fn()
-      .mockResolvedValue({ headSha: pullRequest?.headSha ?? SHA_API }),
+      .mockImplementation((_token: string, repo: string) =>
+        Promise.resolve({
+          headSha:
+            repo === 'acme/web' ? SHA_WEB : (pullRequest?.headSha ?? SHA_API),
+        }),
+      ),
     openPullRequest: jest.fn().mockResolvedValue({
       created: true,
       pullRequest: { number: 7, htmlUrl: 'https://github.com/acme/api/pull/7' },
@@ -145,6 +191,11 @@ function setup({
     mergePullRequest: jest
       .fn()
       .mockResolvedValue({ merged: true, sha: 'merge-sha', message: 'Merged' }),
+    getBranchRelation: jest
+      .fn()
+      .mockImplementation((_token: string, repo: string) =>
+        Promise.resolve(mainRelation[repo] ?? 'behind'),
+      ),
   } as unknown as jest.Mocked<GithubProjectPort>;
   const audit = {
     recordProjectEvent: jest.fn().mockResolvedValue(undefined),
@@ -153,9 +204,12 @@ function setup({
     record: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<NotificationEventPublisher>;
 
-  const { service: iterations, repository: iterationRepository } =
-    fakeIterations();
-  const service = new QaPromotionService(
+  const {
+    service: iterations,
+    repository: iterationRepository,
+    state: iterationState,
+  } = fakeIterations(iteration);
+  const delivery = new QaProjectDeliveryService(
     access,
     projectContext,
     requirements,
@@ -166,8 +220,22 @@ function setup({
     audit,
     notifications,
   );
+  const service = new QaPromotionService(
+    access,
+    projectContext,
+    requirements,
+    headsService,
+    iterations,
+    delivery,
+    github,
+    audit,
+    notifications,
+  );
   return {
     service,
+    delivery,
+    iterationState,
+    projectContext,
     access,
     github,
     audit,
@@ -178,6 +246,21 @@ function setup({
     iterationRepository,
   };
 }
+
+const stored = (
+  projectId: string,
+  repoFullName: string,
+  sha: string,
+  how: 'merged' | 'already_in_main' = 'merged',
+) => ({
+  projectId,
+  repoFullName,
+  uatHeadSha: sha,
+  mergeSha: how === 'merged' ? 'm'.repeat(40) : null,
+  prNumber: how === 'merged' ? 3 : null,
+  how,
+  at: '2026-10-14T00:00:00.000Z',
+});
 
 describe('QaPromotionService.getStatus (per-Project gate)', () => {
   it('is eligible when the latest signed-off run is Approved and current for every repository', async () => {
@@ -348,6 +431,7 @@ describe('QaPromotionService.merge', () => {
 
     expect(result).toEqual({
       merged: true,
+      how: 'merged',
       sha: 'merge-sha',
       message: 'Merged',
       pullRequest: { number: 7, url: 'https://github.com/acme/api/pull/7' },
@@ -498,5 +582,615 @@ describe('end to end: two repositories, one Project', () => {
     expect((await reapproved.service.getStatus('p-api', actor)).eligible).toBe(
       true,
     );
+  });
+});
+
+const DELIVERED_EVENT = 'qa.iteration.delivered';
+
+describe('Merge to main: delivery of the Iteration', () => {
+  it('compares the signed-off uat head against main: base = the head, head = main', async () => {
+    const { service, github } = setup();
+
+    await service.merge('p-api', actor);
+
+    // GitHub reports the status of the HEAD (main) relative to the BASE (the
+    // uat sha): "ahead" or "identical" means main contains the sha.
+    expect(github.getBranchRelation).toHaveBeenCalledWith(
+      'app-token',
+      'acme/api',
+      SHA_API,
+      'main',
+    );
+  });
+
+  it.each([
+    ['ahead', true],
+    ['identical', true],
+    ['behind', false],
+    ['diverged', false],
+    [null, false],
+  ] as const)(
+    'main relation %s means "already in main" = %s',
+    async (relation, contained) => {
+      const { service, github } = setup({
+        mainRelation: { 'acme/api': relation },
+      });
+
+      const result = await service.merge('p-api', actor);
+
+      expect(github.openPullRequest).toHaveBeenCalledTimes(contained ? 0 : 1);
+      expect(result.message === 'main already contains this commit').toBe(
+        contained,
+      );
+    },
+  );
+
+  it('already in main: merged:false with a clear message, never an error, recorded as already_in_main', async () => {
+    const { service, github, iterationState, audit } = setup({
+      mainRelation: { 'acme/api': 'ahead' },
+    });
+
+    const result = await service.merge('p-api', actor);
+
+    expect(result).toEqual({
+      merged: false,
+      sha: null,
+      message: 'main already contains this commit',
+      pullRequest: null,
+      how: 'already_in_main',
+    });
+    expect(github.openPullRequest).not.toHaveBeenCalled();
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+    expect(iterationState.row.delivery_json).toEqual({
+      repositories: [
+        expect.objectContaining({
+          projectId: 'p-api',
+          uatHeadSha: SHA_API,
+          mergeSha: null,
+          prNumber: null,
+          how: 'already_in_main',
+        }),
+      ],
+    });
+    // One of two repositories: not delivered, no iteration event yet.
+    expect(iterationState.row.status).toBe('active');
+    expect(audit.recordProjectEvent).not.toHaveBeenCalled();
+  });
+
+  it('a successful merge records mergeSha and prNumber, then the status shows the repository delivered (survives a reload)', async () => {
+    const { service, iterationState } = setup();
+
+    await service.merge('p-api', actor);
+
+    expect(iterationState.row.delivery_json).toEqual({
+      repositories: [
+        expect.objectContaining({
+          projectId: 'p-api',
+          repoFullName: 'acme/api',
+          uatHeadSha: SHA_API,
+          mergeSha: 'merge-sha',
+          prNumber: 7,
+          how: 'merged',
+        }),
+      ],
+    });
+    const status = await service.getStatus('p-api', actor);
+    expect(status).toMatchObject({
+      repositoryDelivered: true,
+      iterationDelivered: false,
+      iteration: { number: 1, status: 'active', deliveredAt: null },
+      reasonCodes: [],
+    });
+    // The other repository is not.
+    expect(await setup().service.getStatus('p-api', actor)).toMatchObject({
+      repositoryDelivered: false,
+    });
+  });
+
+  it('an entry for an OLDER head does not count as delivered', async () => {
+    const { service } = setup({
+      iteration: iterationRow({
+        delivery_json: {
+          repositories: [stored('p-api', 'acme/api', 'd'.repeat(40))],
+        },
+      }),
+    });
+
+    expect((await service.getStatus('p-api', actor)).repositoryDelivered).toBe(
+      false,
+    );
+  });
+
+  it('the last repository delivers the Iteration once: audit event and notifications to leads, developers and QA, not the actor', async () => {
+    const { service, iterationState, audit, notifications } = setup({
+      iteration: iterationRow({
+        delivery_json: {
+          repositories: [stored('p-web', 'acme/web', SHA_WEB)],
+        },
+      }),
+    });
+
+    await service.merge('p-api', actor);
+
+    expect(iterationState.row).toMatchObject({
+      status: 'delivered',
+      delivered_by: 'lead-1',
+      delivered_by_login: 'lead',
+      signoff_run_id: 'run-1',
+    });
+    const events = audit.recordProjectEvent.mock.calls.filter(
+      ([input]) => input.eventCode === DELIVERED_EVENT,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.[0]).toMatchObject({
+      workspaceId: 'group-1',
+      projectId: 'p-api',
+      actorUserId: 'lead-1',
+      metadata: {
+        deliveryProjectId: 'dp-1',
+        iterationId: 'it-1',
+        number: 1,
+        signoffRunId: 'run-1',
+        repositories: [
+          expect.objectContaining({ repoFullName: 'acme/api', how: 'merged' }),
+          expect.objectContaining({ repoFullName: 'acme/web', how: 'merged' }),
+        ],
+      },
+    });
+    const delivered = notifications.record.mock.calls
+      .map(([input]) => input)
+      .filter((input) => input.eventCode === DELIVERED_EVENT);
+    expect(delivered.map((input) => input.userId).sort()).toEqual([
+      'dev-1',
+      'lead-2',
+      'qa-1',
+    ]);
+    expect(delivered[0]).toMatchObject({
+      title: 'Iteration 1 of Checkout was delivered',
+      projectId: 'p-api',
+    });
+    expect(delivered[0]?.body).toContain('acme/api');
+    expect(delivered[0]?.body).toContain('acme/web');
+  });
+
+  it('merging one repository also notices that the other already has the head in main, and delivers', async () => {
+    const { service, iterationState } = setup({
+      mainRelation: { 'acme/web': 'ahead' },
+    });
+
+    await service.merge('p-api', actor);
+
+    expect(iterationState.row.status).toBe('delivered');
+    expect(iterationState.row.delivery_json).toEqual({
+      repositories: [
+        expect.objectContaining({ repoFullName: 'acme/api', how: 'merged' }),
+        expect.objectContaining({
+          repoFullName: 'acme/web',
+          how: 'already_in_main',
+        }),
+      ],
+    });
+  });
+
+  it('a double click on the final merge delivers and announces exactly once', async () => {
+    const { service, audit, notifications, iterationState } = setup({
+      mainRelation: { 'acme/web': 'identical' },
+    });
+
+    await Promise.all([
+      service.merge('p-api', actor),
+      service.merge('p-api', actor),
+    ]);
+
+    expect(iterationState.row.status).toBe('delivered');
+    expect(
+      audit.recordProjectEvent.mock.calls.filter(
+        ([input]) => input.eventCode === DELIVERED_EVENT,
+      ),
+    ).toHaveLength(1);
+    expect(
+      notifications.record.mock.calls.filter(
+        ([input]) => input.eventCode === DELIVERED_EVENT,
+      ),
+    ).toHaveLength(3);
+  });
+
+  it('refuses Merge on a delivered Iteration with 409 ITERATION_DELIVERED and no GitHub call', async () => {
+    const { service, github, headsService } = setup({
+      iteration: deliveredIterationRow({
+        number: 2,
+        delivery_json: {
+          repositories: [
+            stored('p-api', 'acme/api', SHA_API),
+            stored('p-web', 'acme/web', SHA_WEB),
+          ],
+        },
+      }),
+    });
+
+    await expect(service.merge('p-api', actor)).rejects.toMatchObject({
+      response: { code: 'ITERATION_DELIVERED', iterationNumber: 2 },
+    });
+    expect(headsService.resolveWriteCredential).not.toHaveBeenCalled();
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('the gate on a delivered Iteration is eligible:false with reason code ITERATION_DELIVERED', async () => {
+    const { service } = setup({
+      iteration: deliveredIterationRow({
+        number: 2,
+        delivery_json: {
+          repositories: [stored('p-api', 'acme/api', SHA_API)],
+        },
+      }),
+    });
+
+    const status = await service.getStatus('p-api', actor);
+
+    expect(status).toMatchObject({
+      eligible: false,
+      iterationDelivered: true,
+      repositoryDelivered: true,
+      reasonCodes: ['ITERATION_DELIVERED'],
+      iteration: {
+        id: 'it-1',
+        number: 2,
+        status: 'delivered',
+        deliveredAt: '2026-10-10T00:00:00.000Z',
+      },
+    });
+    expect(status.reasons[0]).toBe(
+      'Iteration 2 was delivered. Start the next iteration to merge again.',
+    );
+  });
+});
+
+describe('QaPromotionService.mergeAll', () => {
+  const MERGE_ALL = 'dp-1';
+
+  it('merges every covered repository in a stable order, delivers, and answers with the per-repository results', async () => {
+    const { service, github, iterationState, audit } = setup();
+
+    const result = await service.mergeAll(MERGE_ALL, actor);
+
+    expect(github.mergePullRequest.mock.calls.map((call) => call[1])).toEqual([
+      'acme/api',
+      'acme/web',
+    ]);
+    expect(result).toEqual({
+      repositories: [
+        {
+          projectId: 'p-api',
+          repoFullName: 'acme/api',
+          merged: true,
+          how: 'merged',
+          message: null,
+        },
+        {
+          projectId: 'p-web',
+          repoFullName: 'acme/web',
+          merged: true,
+          how: 'merged',
+          message: null,
+        },
+      ],
+      delivered: true,
+      iteration: expect.objectContaining({
+        id: 'it-1',
+        number: 1,
+        status: 'delivered',
+        deliveredAt: '2026-10-15T00:00:00.000Z',
+        signoffRunId: 'run-1',
+      }) as unknown,
+    });
+    expect(iterationState.row.status).toBe('delivered');
+    expect(
+      audit.recordProjectEvent.mock.calls.filter(
+        ([input]) => input.eventCode === DELIVERED_EVENT,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('reports a repository whose main already has the head as already_in_main (merged:false)', async () => {
+    const { service, github } = setup({
+      mainRelation: { 'acme/web': 'ahead' },
+    });
+
+    const result = await service.mergeAll(MERGE_ALL, actor);
+
+    expect(result.repositories[1]).toEqual({
+      projectId: 'p-web',
+      repoFullName: 'acme/web',
+      merged: false,
+      how: 'already_in_main',
+      message: 'main already contains this commit',
+    });
+    expect(result.delivered).toBe(true);
+    expect(github.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('a partial failure keeps going and leaves the Iteration active; a retry merges only what remains', async () => {
+    const { service, github, iterationState, audit } = setup();
+    github.mergePullRequest
+      .mockResolvedValueOnce({
+        merged: true,
+        sha: 'merge-api',
+        message: 'Merged',
+      } as never)
+      .mockResolvedValueOnce({
+        merged: false,
+        sha: null,
+        message: 'Required status check missing',
+      } as never);
+
+    const first = await service.mergeAll(MERGE_ALL, actor);
+
+    expect(first.delivered).toBe(false);
+    expect(first.iteration.status).toBe('active');
+    expect(first.repositories).toEqual([
+      expect.objectContaining({ repoFullName: 'acme/api', merged: true }),
+      {
+        projectId: 'p-web',
+        repoFullName: 'acme/web',
+        merged: false,
+        how: null,
+        message: 'Required status check missing',
+      },
+    ]);
+    // api is stored already, web is not.
+    expect(iterationState.row.delivery_json).toEqual({
+      repositories: [expect.objectContaining({ projectId: 'p-api' })],
+    });
+    expect(audit.recordProjectEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventCode: DELIVERED_EVENT }),
+    );
+
+    github.mergePullRequest.mockResolvedValue({
+      merged: true,
+      sha: 'merge-web',
+      message: 'Merged',
+    } as never);
+    const retry = await service.mergeAll(MERGE_ALL, actor);
+
+    expect(retry.delivered).toBe(true);
+    expect(retry.repositories).toEqual([
+      {
+        projectId: 'p-api',
+        repoFullName: 'acme/api',
+        merged: false,
+        how: 'merged',
+        message: 'Already delivered earlier.',
+      },
+      expect.objectContaining({
+        repoFullName: 'acme/web',
+        merged: true,
+        how: 'merged',
+      }),
+    ]);
+    // api was merged exactly once across both calls.
+    expect(
+      github.mergePullRequest.mock.calls.filter(
+        (call) => call[1] === 'acme/api',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('one repository throwing (uat moved) does not stop the others', async () => {
+    const { service, github } = setup();
+    github.getPullRequest.mockResolvedValueOnce({ headSha: MOVED } as never);
+
+    const result = await service.mergeAll(MERGE_ALL, actor);
+
+    expect(result.repositories[0]).toMatchObject({
+      repoFullName: 'acme/api',
+      merged: false,
+      how: null,
+      message: expect.stringContaining('uat moved') as string,
+    });
+    expect(result.repositories[1]).toMatchObject({
+      repoFullName: 'acme/web',
+      merged: true,
+    });
+    expect(result.delivered).toBe(false);
+  });
+
+  it('two concurrent merge-alls deliver once: one audit event, one set of notifications', async () => {
+    const { service, audit, notifications, iterationRepository } = setup();
+
+    const [a, b] = await Promise.all([
+      service.mergeAll(MERGE_ALL, actor),
+      service.mergeAll(MERGE_ALL, actor),
+    ]);
+
+    expect(a.delivered).toBe(true);
+    expect(b.delivered).toBe(true);
+    // Both reached the transition; only one UPDATE changed the row.
+    const results = await Promise.all(
+      iterationRepository.markDelivered.mock.results.map(
+        (r) => r.value as Promise<unknown>,
+      ),
+    );
+    expect(results.filter((row) => row !== null)).toHaveLength(1);
+    expect(
+      audit.recordProjectEvent.mock.calls.filter(
+        ([input]) => input.eventCode === DELIVERED_EVENT,
+      ),
+    ).toHaveLength(1);
+    expect(
+      notifications.record.mock.calls.filter(
+        ([input]) => input.eventCode === DELIVERED_EVENT,
+      ),
+    ).toHaveLength(3);
+  });
+
+  it('403 for a caller who is not lead|admin', async () => {
+    const { service, github } = setup({ role: 'qa' });
+
+    await expect(service.mergeAll(MERGE_ALL, actor)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('409 ITERATION_DELIVERED on a delivered Iteration', async () => {
+    const { service, github } = setup({
+      iteration: deliveredIterationRow({ number: 3 }),
+    });
+
+    await expect(service.mergeAll(MERGE_ALL, actor)).rejects.toMatchObject({
+      response: { code: 'ITERATION_DELIVERED', iterationNumber: 3 },
+    });
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('409 QA_PROMOTION_BLOCKED with the gate reasons (rejected, stale, no requirements)', async () => {
+    const rejected = setup({ verdict: 'REJECTED' });
+    await expect(
+      rejected.service.mergeAll(MERGE_ALL, actor),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'QA_PROMOTION_BLOCKED',
+        reasons: ['Latest sign-off is Rejected'],
+      },
+    });
+
+    const stale = setup({ heads: { 'acme/api': SHA_API, 'acme/web': MOVED } });
+    await expect(
+      stale.service.mergeAll(MERGE_ALL, actor),
+    ).rejects.toMatchObject({ response: { code: 'QA_PROMOTION_BLOCKED' } });
+
+    const none = setup({ requirementCount: 0 });
+    await expect(none.service.mergeAll(MERGE_ALL, actor)).rejects.toMatchObject(
+      { response: { code: 'QA_PROMOTION_BLOCKED' } },
+    );
+    expect(rejected.github.mergePullRequest).not.toHaveBeenCalled();
+    expect(stale.github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('409 PROJECT_HAS_NO_REPOSITORIES for a Project with no linked repository', async () => {
+    const { service } = setup({ projectRepositories: [] });
+
+    await expect(service.mergeAll(MERGE_ALL, actor)).rejects.toMatchObject({
+      response: { code: 'PROJECT_HAS_NO_REPOSITORIES' },
+    });
+  });
+
+  it('404 for a non-member', async () => {
+    const { service, projectContext } = setup();
+    projectContext.requireProject.mockRejectedValue(
+      new NotFoundException('Project not found'),
+    );
+
+    await expect(service.mergeAll(MERGE_ALL, actor)).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+});
+
+describe('QaProjectDeliveryService.current', () => {
+  it('lists the covered repositories with their delivery state and lets a lead Merge all when the gate is eligible', async () => {
+    const { delivery } = setup({
+      iteration: iterationRow({
+        delivery_json: {
+          repositories: [stored('p-api', 'acme/api', SHA_API)],
+        },
+      }),
+    });
+
+    const current = await delivery.current('dp-1', actor);
+
+    expect(current.coveredRepositories).toEqual([
+      {
+        projectId: 'p-api',
+        repoFullName: 'acme/api',
+        delivered: true,
+        how: 'merged',
+      },
+      {
+        projectId: 'p-web',
+        repoFullName: 'acme/web',
+        delivered: false,
+        how: null,
+      },
+    ]);
+    expect(current.deliveredRepositories).toHaveLength(1);
+    expect(current.canMergeAll).toBe(true);
+    expect(current.iteration.status).toBe('active');
+  });
+
+  it('canMergeAll is false for a non lead|admin, without reading GitHub heads', async () => {
+    const { delivery, headsService } = setup({ role: 'qa' });
+
+    const current = await delivery.current('dp-1', actor);
+
+    expect(current.canMergeAll).toBe(false);
+    expect(current.coveredRepositories).toHaveLength(2);
+    expect(headsService.readHeads).not.toHaveBeenCalled();
+  });
+
+  it('canMergeAll is false when the gate is closed (a head moved)', async () => {
+    const { delivery } = setup({
+      heads: { 'acme/api': SHA_API, 'acme/web': MOVED },
+    });
+
+    expect((await delivery.current('dp-1', actor)).canMergeAll).toBe(false);
+  });
+
+  it('no APPROVED sign-off yet: nothing covered and no Merge all', async () => {
+    const rejected = setup({ verdict: 'REJECTED' });
+    expect(await rejected.delivery.current('dp-1', actor)).toMatchObject({
+      coveredRepositories: [],
+      canMergeAll: false,
+    });
+
+    const none = setup({ verdict: null, covered: [] });
+    expect(await none.delivery.current('dp-1', actor)).toMatchObject({
+      coveredRepositories: [],
+      canMergeAll: false,
+    });
+  });
+
+  it('a delivered Iteration reports what it stored, and no Merge all', async () => {
+    const { delivery } = setup({
+      iteration: deliveredIterationRow({
+        number: 2,
+        delivery_json: {
+          repositories: [
+            stored('p-api', 'acme/api', SHA_API),
+            stored('p-web', 'acme/web', SHA_WEB, 'already_in_main'),
+          ],
+        },
+      }),
+    });
+
+    const current = await delivery.current('dp-1', actor);
+
+    expect(current.canMergeAll).toBe(false);
+    expect(current.canStartNext).toBe(true);
+    expect(current.coveredRepositories).toEqual([
+      {
+        projectId: 'p-api',
+        repoFullName: 'acme/api',
+        delivered: true,
+        how: 'merged',
+      },
+      {
+        projectId: 'p-web',
+        repoFullName: 'acme/web',
+        delivered: true,
+        how: 'already_in_main',
+      },
+    ]);
+    expect(current.deliveredRepositories).toHaveLength(2);
+  });
+
+  it('a repository removed from the Project since the sign-off is not a covered repository', async () => {
+    const { delivery } = setup({ projectRepositories: [API] });
+
+    const current = await delivery.current('dp-1', actor);
+
+    expect(current.coveredRepositories.map((r) => r.projectId)).toEqual([
+      'p-api',
+    ]);
   });
 });

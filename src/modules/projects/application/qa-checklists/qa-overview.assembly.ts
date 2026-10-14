@@ -4,9 +4,12 @@ import type {
   QaProjectRunHeadline,
   QaRunItemFact,
 } from '../../infrastructure/qa-project-runs.repository';
+import { parseDeliveryEntries } from '../../domain/project-delivery.rules';
+import type { ProjectIterationRow } from '../../infrastructure/project-iterations.repository';
 import { QA_OPEN_DEFECT_STATUSES } from '../qa-runs/qa-runs.contracts';
 import type {
   OverviewDefectCounts,
+  OverviewIteration,
   OverviewLatestRun,
   OverviewProjectCounts,
   OverviewPromotion,
@@ -34,19 +37,8 @@ export interface ProjectOverviewInput {
   /** Items of the Project's non-archived requirements (the My QA items feed's population). */
   items: readonly OverviewRequirementItem[];
   facts: DeliveryProjectOverviewFacts | undefined;
-  /**
-   * Newest `qa.promotion.merged` time per repository project id, as the audit
-   * port answered for this Project's repositories at the run's sign-off time.
-   * Null when merges could not be read: promotion is then left out.
-   */
-  mergedAtByRepository: ReadonlyMap<string, string> | null;
-}
-
-/** The earliest instant a merge counts toward promoting this signed-off run. */
-export function promotionSince(run: QaProjectRunHeadline): string {
-  // A signed-off run always has an active sign-off; createdAt is only the
-  // conservative bound if that invariant were ever broken.
-  return run.signedAt ?? run.createdAt;
+  /** The Project's current Iteration: its stored delivery state is the promotion state. */
+  iteration: ProjectIterationRow | undefined;
 }
 
 export function summarizeLatestRun(
@@ -111,40 +103,59 @@ export function countReadyForQa(
   return ready;
 }
 
+/**
+ * Promotion read from the STORED per-repository delivery state of the
+ * Project's current Iteration (`delivery_json`), not from audit rows: it is
+ * the same state PO Studio and the Merge to main gate use, and it survives
+ * audit recording being off.
+ */
 export function summarizePromotion(
   run: QaProjectRunHeadline | undefined,
   facts: DeliveryProjectOverviewFacts | undefined,
-  mergedAtByRepository: ReadonlyMap<string, string> | null,
+  iteration: ProjectIterationRow | undefined,
 ): OverviewPromotion | null {
-  if (run?.status !== 'signed_off' || mergedAtByRepository === null) {
+  if (run?.status !== 'signed_off') {
     return null;
   }
   const repositories = facts?.repositories ?? [];
-  let mergedRepositories = 0;
+  const known = new Set(repositories.map((repository) => repository.projectId));
+  const entries = parseDeliveryEntries(iteration?.delivery_json).filter(
+    (entry) => iteration?.status === 'delivered' || known.has(entry.projectId),
+  );
   let lastMergedAt: string | null = null;
-  for (const repository of repositories) {
-    const mergedAt = mergedAtByRepository.get(repository.projectId);
-    if (mergedAt === undefined) {
-      continue;
-    }
-    mergedRepositories += 1;
+  for (const entry of entries) {
     // One fixed-width ISO format, so string order is time order.
-    if (lastMergedAt === null || mergedAt > lastMergedAt) {
-      lastMergedAt = mergedAt;
+    if (entry.at && (lastMergedAt === null || entry.at > lastMergedAt)) {
+      lastMergedAt = entry.at;
     }
   }
   return {
-    mergedRepositories,
-    totalRepositories: repositories.length,
+    mergedRepositories: entries.length,
+    totalRepositories: Math.max(repositories.length, entries.length),
     lastMergedAt,
   };
+}
+
+/** The Project's current Iteration as the overview shows it. */
+export function summarizeIteration(
+  iteration: ProjectIterationRow | undefined,
+): OverviewIteration | null {
+  return iteration
+    ? {
+        number: iteration.number,
+        status: iteration.status,
+        deliveredAt: iteration.delivered_at
+          ? new Date(iteration.delivered_at).toISOString()
+          : null,
+      }
+    : null;
 }
 
 export function buildProjectOverview(
   input: ProjectOverviewInput,
 ): Pick<
   RequirementsOverviewGroup,
-  'latestRun' | 'counts' | 'promotion' | 'viewerMembership'
+  'latestRun' | 'counts' | 'promotion' | 'iteration' | 'viewerMembership'
 > {
   const counts: OverviewProjectCounts = {
     readyForQa: countReadyForQa(input.items, input.runItems),
@@ -157,11 +168,8 @@ export function buildProjectOverview(
   return {
     latestRun: summarizeLatestRun(input.run),
     counts,
-    promotion: summarizePromotion(
-      input.run,
-      input.facts,
-      input.mergedAtByRepository,
-    ),
+    promotion: summarizePromotion(input.run, input.facts, input.iteration),
+    iteration: summarizeIteration(input.iteration),
     viewerMembership: input.facts?.viewerKind ?? null,
   };
 }

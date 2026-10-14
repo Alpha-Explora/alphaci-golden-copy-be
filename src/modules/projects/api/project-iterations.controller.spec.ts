@@ -9,6 +9,7 @@ import request from 'supertest';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { CapabilityGuard } from '#kernel/composition/index.js';
 import { ProjectIterationsService } from '../application/qa-checklists/project-iterations.service';
+import { QaProjectDeliveryService } from '../application/qa-runs/qa-project-delivery.service';
 import { DeliveryProjectIterationsController } from './project-iterations.controller';
 
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -26,19 +27,31 @@ const iteration = {
   signoffRunId: null,
 };
 
-async function createApp(session: unknown = { user: { id: 'user-1' } }) {
+async function createApp(
+  session: unknown = {
+    user: { id: 'user-1', login: 'tone' },
+    githubAccessToken: 'gho',
+  },
+) {
   const iterations = {
     listForProject: jest.fn().mockResolvedValue({ iterations: [iteration] }),
-    currentForProject: jest.fn().mockResolvedValue({
+  };
+  const delivery = {
+    current: jest.fn().mockResolvedValue({
       iteration,
       canStartNext: false,
       deliveredRepositories: [],
+      coveredRepositories: [],
+      canMergeAll: false,
     }),
   };
   const guards = jest.fn().mockReturnValue(true);
   const module = await Test.createTestingModule({
     controllers: [DeliveryProjectIterationsController],
-    providers: [{ provide: ProjectIterationsService, useValue: iterations }],
+    providers: [
+      { provide: ProjectIterationsService, useValue: iterations },
+      { provide: QaProjectDeliveryService, useValue: delivery },
+    ],
   })
     .overrideGuard(SessionAuthGuard)
     .useValue({ canActivate: guards })
@@ -52,7 +65,7 @@ async function createApp(session: unknown = { user: { id: 'user-1' } }) {
     next();
   });
   await app.init();
-  return { app, iterations };
+  return { app, iterations, delivery };
 }
 
 describe('DeliveryProjectIterationsController', () => {
@@ -89,11 +102,14 @@ describe('DeliveryProjectIterationsController', () => {
       iteration,
       canStartNext: false,
       deliveredRepositories: [],
+      coveredRepositories: [],
+      canMergeAll: false,
     });
-    expect(fixture.iterations.currentForProject).toHaveBeenCalledWith(
-      ID,
-      'user-1',
-    );
+    expect(fixture.delivery.current).toHaveBeenCalledWith(ID, {
+      userId: 'user-1',
+      userLogin: 'tone',
+      oauthToken: 'gho',
+    });
     // The literal segment is not captured as an id.
     expect(fixture.iterations.listForProject).not.toHaveBeenCalled();
   });
@@ -115,7 +131,7 @@ describe('DeliveryProjectIterationsController', () => {
     expect(fixture.iterations.listForProject).not.toHaveBeenCalled();
   });
 
-  it('is read-only in phase 1: no write verb is routed', async () => {
+  it('routes no write verb here: merging lives under promotion/merge-all', async () => {
     fixture = await createApp();
 
     await http().post(`/delivery-projects/${ID}/iterations`).expect(404);

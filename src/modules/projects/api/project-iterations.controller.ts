@@ -11,18 +11,23 @@ import type {
   ProjectIterationList,
 } from '../application/qa-checklists/project-iterations.contracts';
 import { ProjectIterationsService } from '../application/qa-checklists/project-iterations.service';
-import { requireUserId } from './qa-runs.controller';
+import { QaProjectDeliveryService } from '../application/qa-runs/qa-project-delivery.service';
+import { actorContext, requireUserId } from './qa-runs.controller';
 
 /**
  * A Project's Iterations (ITERATIONS_PLAN.md section 5). Visibility is the
  * same as every other Project QA route: an active member of the Project's
- * group; a non-member gets 404. Reads only in phase 1.
+ * group; a non-member gets 404. Reads only; the Merge to main routes that
+ * deliver an Iteration live with the promotion controllers.
  */
 @Controller('delivery-projects/:deliveryProjectId/iterations')
 @UseGuards(SessionAuthGuard, CapabilityGuard)
 @RequiresCapability('projects.qa-checklists')
 export class DeliveryProjectIterationsController {
-  constructor(private readonly iterations: ProjectIterationsService) {}
+  constructor(
+    private readonly iterations: ProjectIterationsService,
+    private readonly delivery: QaProjectDeliveryService,
+  ) {}
 
   /** The Project's Iterations, newest first. */
   @Get()
@@ -36,15 +41,16 @@ export class DeliveryProjectIterationsController {
     );
   }
 
-  /** The active Iteration, or the last delivered one when none is active. */
+  /**
+   * The active Iteration, or the last delivered one when none is active, with
+   * its stored per-repository delivery state, the repositories the signed-off
+   * run covers, and whether the caller may Merge all repositories.
+   */
   @Get('current')
   current(
     @Req() req: Request,
     @Param('deliveryProjectId') deliveryProjectId: string,
   ): Promise<ProjectIterationCurrent> {
-    return this.iterations.currentForProject(
-      deliveryProjectId,
-      requireUserId(req),
-    );
+    return this.delivery.current(deliveryProjectId, actorContext(req));
   }
 }

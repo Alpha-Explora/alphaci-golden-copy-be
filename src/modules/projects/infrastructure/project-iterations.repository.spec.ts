@@ -85,4 +85,72 @@ describe('ProjectIterationsRepository', () => {
     expect([...map.keys()]).toEqual(['dp-1', 'dp-2']);
     expect(map.get('dp-2')?.id).toBe('it-9');
   });
+
+  it('recordRepositoryDelivery is ONE guarded UPDATE: active only, same-head entry kept, older-head entry replaced', async () => {
+    const { query, repository } = build([row()]);
+    const entry = {
+      projectId: 'p-api',
+      repoFullName: 'acme/api',
+      uatHeadSha: 'a'.repeat(40),
+      how: 'merged',
+    };
+
+    expect(await repository.recordRepositoryDelivery('it-1', entry)).toEqual(
+      row(),
+    );
+
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('UPDATE projects.project_iterations');
+    expect(sql).toContain("WHERE i.id = $1 AND i.status = 'active'");
+    expect(sql).toContain("e->>'projectId' = $2 AND e->>'uatHeadSha' <> $3");
+    expect(sql).toContain("e->>'projectId' = $2 AND e->>'uatHeadSha' = $3");
+    expect(sql).toContain('RETURNING i.*');
+    expect(params).toEqual([
+      'it-1',
+      'p-api',
+      'a'.repeat(40),
+      JSON.stringify(entry),
+    ]);
+  });
+
+  it('recordRepositoryDelivery is null once the Iteration is no longer active', async () => {
+    const { repository } = build([]);
+
+    expect(
+      await repository.recordRepositoryDelivery('it-1', {
+        projectId: 'p',
+        uatHeadSha: 's',
+      }),
+    ).toBeNull();
+  });
+
+  it('markDelivered is the atomic transition: only an ACTIVE row changes, and only that caller gets it back', async () => {
+    const winner = build([row({ status: 'delivered' })]);
+    const loser = build([]);
+    const input = {
+      deliveredBy: 'lead-1',
+      deliveredByLogin: 'lead',
+      signoffRunId: 'run-1',
+      deliveryJson: { repositories: [] },
+    };
+
+    expect(await winner.repository.markDelivered('it-1', input)).toEqual(
+      row({ status: 'delivered' }),
+    );
+    expect(await loser.repository.markDelivered('it-1', input)).toBeNull();
+
+    const [sql, params] = winner.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("SET status = 'delivered'");
+    expect(sql).toContain('delivered_at = NOW()');
+    expect(sql).toContain("WHERE id = $1 AND status = 'active'");
+    expect(sql).toContain('RETURNING *');
+    expect(params).toEqual([
+      'it-1',
+      'lead-1',
+      'lead',
+      'run-1',
+      JSON.stringify({ repositories: [] }),
+    ]);
+  });
 });

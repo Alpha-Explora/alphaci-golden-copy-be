@@ -152,12 +152,20 @@ export interface OverviewProjectCounts {
  * repository while the run is per Project, hence merged / total.
  */
 export interface OverviewPromotion {
-  /** Repositories with a `qa.promotion.merged` event at or after the sign-off. */
+  /** Repositories recorded as delivered (merged, or already in main) in the current Iteration. */
   mergedRepositories: number;
   /** Repositories of the Project that are linked to an AlphaCI project (the ones that can be promoted). */
   totalRepositories: number;
   /** ISO; newest such merge, null when none. */
   lastMergedAt: string | null;
+}
+
+/** The Project's current Iteration, for the overview and Home. */
+export interface OverviewIteration {
+  number: number;
+  status: 'active' | 'delivered';
+  /** ISO; null until delivered. */
+  deliveredAt: string | null;
 }
 
 export interface RequirementsOverviewGroup {
@@ -167,11 +175,12 @@ export interface RequirementsOverviewGroup {
   latestRun: OverviewLatestRun | null;
   counts: OverviewProjectCounts;
   /**
-   * Null unless `latestRun.status` is `signed_off`. Also null when the merges
-   * cannot be read (audit recording is off, or the read failed): the overview
-   * then says nothing about promotion rather than a misleading 0 merged.
+   * Null unless `latestRun.status` is `signed_off`. Read from the stored
+   * delivery state of the current Iteration (`delivery_json`).
    */
   promotion: OverviewPromotion | null;
+  /** The Project's current Iteration; a delivered one means the Project is not ready for production. */
+  iteration: OverviewIteration | null;
   /** The caller's own ACTIVE membership of this Project; null for leads, admins and non-members. */
   viewerMembership: 'developer' | 'qa' | null;
 }

@@ -28,10 +28,11 @@ export interface ProjectIterationRow {
 }
 
 /**
- * Persistence for Project Iterations. Phase 1 only reads them and creates the
- * first one lazily; the delivered transition (phase 2) and "start the next"
- * (phase 3) add their writes here, next to the same unique keys:
- * (delivery_project_id, number) and at most one `active` per Project.
+ * Persistence for Project Iterations: reads, the lazily created first one, the
+ * incremental per-repository delivery record and the atomic Delivered
+ * transition (phase 2). "Start the next" (phase 3) adds its write here, next to
+ * the same unique keys: (delivery_project_id, number) and at most one `active`
+ * per Project.
  */
 @Injectable()
 export class ProjectIterationsRepository {
@@ -127,5 +128,90 @@ export class ProjectIterationsRepository {
       map.set(row.delivery_project_id, row);
     }
     return map;
+  }
+
+  /**
+   * Records one repository as delivered inside `delivery_json`, in ONE
+   * statement so two merges finishing together cannot lose each other's entry
+   * (the row lock serializes them and the second re-reads the first's json).
+   *
+   * An entry for the same repository and the same uat head is kept as it is
+   * (the first "how" wins: a later "already in main" must not overwrite
+   * "merged"); an entry for an OLDER head of the repository is replaced.
+   * Returns the updated row, or null when the Iteration is no longer active.
+   */
+  async recordRepositoryDelivery(
+    iterationId: string,
+    entry: { projectId: string; uatHeadSha: string },
+  ): Promise<ProjectIterationRow | null> {
+    const result = await this.databaseService.query<ProjectIterationRow>(
+      `
+        UPDATE projects.project_iterations i
+        SET delivery_json = jsonb_build_object(
+          'repositories',
+          COALESCE(
+            (
+              SELECT jsonb_agg(e ORDER BY e->>'repoFullName')
+              FROM jsonb_array_elements(
+                COALESCE(i.delivery_json->'repositories', '[]'::jsonb)
+              ) e
+              WHERE NOT (e->>'projectId' = $2 AND e->>'uatHeadSha' <> $3)
+            ),
+            '[]'::jsonb
+          )
+          || CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(
+                COALESCE(i.delivery_json->'repositories', '[]'::jsonb)
+              ) e
+              WHERE e->>'projectId' = $2 AND e->>'uatHeadSha' = $3
+            ) THEN '[]'::jsonb
+            ELSE jsonb_build_array($4::jsonb)
+          END
+        )
+        WHERE i.id = $1 AND i.status = 'active'
+        RETURNING i.*;
+      `,
+      [iterationId, entry.projectId, entry.uatHeadSha, JSON.stringify(entry)],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * The atomic Delivered transition. `WHERE status = 'active'` makes it
+   * idempotent: of any number of concurrent callers exactly ONE gets the row
+   * back, and only that caller records the audit event and notifies (P7).
+   */
+  async markDelivered(
+    iterationId: string,
+    input: {
+      deliveredBy: string;
+      deliveredByLogin: string;
+      signoffRunId: string;
+      deliveryJson: unknown;
+    },
+  ): Promise<ProjectIterationRow | null> {
+    const result = await this.databaseService.query<ProjectIterationRow>(
+      `
+        UPDATE projects.project_iterations
+        SET status = 'delivered',
+            delivered_at = NOW(),
+            delivered_by = $2,
+            delivered_by_login = $3,
+            signoff_run_id = $4,
+            delivery_json = $5::jsonb
+        WHERE id = $1 AND status = 'active'
+        RETURNING *;
+      `,
+      [
+        iterationId,
+        input.deliveredBy,
+        input.deliveredByLogin,
+        input.signoffRunId,
+        JSON.stringify(input.deliveryJson),
+      ],
+    );
+    return result.rows[0] ?? null;
   }
 }

@@ -17,3 +17,12 @@ export const iterationDelivered = (iterationNumber: number) =>
 
 export const iterationNotFound = () =>
   new NotFoundException('Iteration not found');
+
+/** Merge all repositories on a Project that has no linked repository (P11). */
+export const projectHasNoRepositories = () =>
+  new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: 'PROJECT_HAS_NO_REPOSITORIES',
+    message: 'Add a repository to this Project first.',
+  });

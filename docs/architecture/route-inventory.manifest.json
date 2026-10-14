@@ -1,11 +1,11 @@
 {
-  "routeCount": 244,
+  "routeCount": 245,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "09e92cee9593bb2ad60ad2e9dd30bd4760d4e82b8689e67a33db496f59e92934",
+  "referenceSha256": "6eae7a2981f20032d12bc89d589955b920fd5d16d1e23e32486a462cad332ddc",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "09e92cee9593bb2ad60ad2e9dd30bd4760d4e82b8689e67a33db496f59e92934",
+  "baselineSha256": "6eae7a2981f20032d12bc89d589955b920fd5d16d1e23e32486a462cad332ddc",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -225,6 +225,12 @@
       "routes": [
         "GET /api/v1/delivery-projects/{deliveryProjectId}/iterations",
         "GET /api/v1/delivery-projects/{deliveryProjectId}/iterations/current"
+      ]
+    },
+    {
+      "reason": "Iterations phase 2: merge every covered repository of a Project to main and deliver the Iteration",
+      "routes": [
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/promotion/merge-all"
       ]
     }
   ]

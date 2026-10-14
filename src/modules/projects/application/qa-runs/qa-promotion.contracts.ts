@@ -4,6 +4,11 @@
  * Nest/pg imports, same rule as qa-runs.contracts.ts.
  */
 
+import type {
+  DeliveryHow,
+  ProjectIteration,
+  ProjectIterationStatus,
+} from '../qa-checklists/project-iterations.contracts';
 import type { QaHeadStatus, QaVerdict } from './qa-runs.contracts';
 
 /**
@@ -68,6 +73,19 @@ export interface QaPromotionStatus {
   pullRequest: QaPromotionPullRequestRef | null;
   /** True when the caller may POST .../merge (lead|admin). */
   canMerge: boolean;
+  /** This repository has reached main (merged, or main already held the signed-off head). Stored, so it survives a reload. */
+  repositoryDelivered: boolean;
+  /** The Project's current Iteration is Delivered: Merge is refused (409 ITERATION_DELIVERED). */
+  iterationDelivered: boolean;
+  /** The Project's current Iteration; null for an unfiled repository. */
+  iteration: {
+    id: string;
+    number: number;
+    status: ProjectIterationStatus;
+    deliveredAt: string | null;
+  } | null;
+  /** Machine-readable twin of `reasons` (additive): e.g. ITERATION_DELIVERED. Empty when none applies. */
+  reasonCodes: string[];
 }
 
 export interface QaPromotionMergePullRequestRef {
@@ -82,4 +100,28 @@ export interface QaPromotionMergeResult {
   /** GitHub's own sentence on a refusal, or a success message. */
   message: string;
   pullRequest: QaPromotionMergePullRequestRef | null;
+  /**
+   * How this repository reached main, when it did: 'merged' by this call, or
+   * 'already_in_main' (nothing to merge; recorded as delivered). Absent on a
+   * failed or refused merge.
+   */
+  how?: 'merged' | 'already_in_main';
+}
+
+/** One repository's outcome in POST /delivery-projects/:id/promotion/merge-all. */
+export interface QaPromotionMergeAllRepositoryResult {
+  projectId: string;
+  repoFullName: string;
+  merged: boolean;
+  /** 'merged' when this call merged it; 'already_in_main' when main already held the head; null when it failed. */
+  how: DeliveryHow | null;
+  /** GitHub's or ALPHACI's sentence; null on a plain success. */
+  message: string | null;
+}
+
+export interface QaPromotionMergeAllResult {
+  repositories: QaPromotionMergeAllRepositoryResult[];
+  /** The Iteration is Delivered after this call (by it, or already). */
+  delivered: boolean;
+  iteration: ProjectIteration;
 }

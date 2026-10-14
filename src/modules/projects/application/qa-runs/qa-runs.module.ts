@@ -5,8 +5,8 @@ import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
-import { AuditModule } from '#modules/platform-ops/audit/audit.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
+import { DeliveryProjectIterationsController } from '../../api/project-iterations.controller';
 import { DeliveryProjectQaAttachmentsController } from '../../api/qa-run-attachments.controller';
 import {
   DeliveryProjectQaMyItemsController,
@@ -18,6 +18,7 @@ import {
   WorkspaceQaRequirementsController,
 } from '../../api/qa-requirements.controller';
 import {
+  DeliveryProjectPromotionController,
   ProjectQaMyItemsController,
   ProjectQaPromotionController,
   ProjectQaReturnedItemsController,
@@ -34,6 +35,7 @@ import { QaAutomationService } from './qa-automation.service';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
 import { QaProjectRunsService } from './qa-project-runs.service';
 import { QaRunAttachmentsService } from './qa-run-attachments.service';
+import { QaProjectDeliveryService } from './qa-project-delivery.service';
 import { QaPromotionService } from './qa-promotion.service';
 import { QaReportService } from './qa-report.service';
 import { QaRunsService } from './qa-runs.service';
@@ -56,8 +58,6 @@ import { QaUatHeadsService } from './qa-uat-heads.service';
     GithubModule,
     RuntimeModule,
     CiModule,
-    // AUDIT_LATEST_EVENT_QUERY_PORT (QaRequirementsService.overview: promotion merges).
-    AuditModule,
     // Supplies QaAccessService (project visibility, app-role, workspace-lead
     // lookups) and QaChecklistsRepository (checklist + item snapshot source
     // for POST create) — both exported by this module already.
@@ -68,6 +68,10 @@ import { QaUatHeadsService } from './qa-uat-heads.service';
     ProjectQaReturnedItemsController,
     ProjectQaMyItemsController,
     ProjectQaPromotionController,
+    DeliveryProjectPromotionController,
+    // Moved here from QaChecklistsModule: `current` reads the signed-off run's
+    // coverage and the Merge to main gate, which live in this module.
+    DeliveryProjectIterationsController,
     DeliveryProjectQaRunsController,
     DeliveryProjectQaMyItemsController,
     DeliveryProjectQaAttachmentsController,
@@ -89,6 +93,7 @@ import { QaUatHeadsService } from './qa-uat-heads.service';
     QaAutomationDispatchService,
     QaRunsService,
     QaReportService,
+    QaProjectDeliveryService,
     QaPromotionService,
   ],
   exports: [

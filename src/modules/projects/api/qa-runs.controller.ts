@@ -292,3 +292,28 @@ export class ProjectQaPromotionController {
     return this.qaPromotionService.merge(projectId, actorContext(req));
   }
 }
+
+/**
+ * Merge all repositories of a Project to main (ITERATIONS_PLAN.md P5): the
+ * Project-level twin of POST projects/:projectId/qa/promotion/merge. lead|admin
+ * only, enforced in QaPromotionService (403); the same gate, evaluated for the
+ * Project.
+ */
+@Controller('delivery-projects/:deliveryProjectId/promotion')
+@UseGuards(SessionAuthGuard, CapabilityGuard)
+@RequiresCapability('projects.qa-checklists')
+export class DeliveryProjectPromotionController {
+  constructor(private readonly qaPromotionService: QaPromotionService) {}
+
+  @Post('merge-all')
+  @HttpCode(200)
+  mergeAll(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+  ) {
+    return this.qaPromotionService.mergeAll(
+      deliveryProjectId,
+      actorContext(req),
+    );
+  }
+}
