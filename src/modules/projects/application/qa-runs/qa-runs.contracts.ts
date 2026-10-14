@@ -320,6 +320,15 @@ export interface ProjectQaRunItem extends QaRunItem {
   progress: 'todo' | 'in_progress' | 'done' | null;
   /** How many screenshots (of any kind) are attached to this item. */
   attachmentCount: number;
+  /** How many of them are a developer's proof of a fix. */
+  fixProofCount: number;
+  /**
+   * The caller may attach proof of a fix to this item right now: storage is
+   * configured, the run is open, the caller is member|lead|admin, the item is
+   * returned to the developer (or awaiting re-test after Done), and it holds
+   * fewer than the per-kind maximum.
+   */
+  canAttachFixProof: boolean;
   /**
    * The attachments' ids and captions, no URLs. Present only in the QA report
    * (and so in the report frozen at sign-off); never on a plain run payload.
@@ -378,6 +387,8 @@ export interface QaRunAttachmentsState {
   enabled: boolean;
   /** The caller may add evidence (qa, lead or admin) and the run is open. */
   canAdd: boolean;
+  /** Storage is configured, the run is open and the caller may attach proof of a fix (member, lead or admin). */
+  canAddFixProof: boolean;
 }
 
 export interface ProjectQaRunPermissions {

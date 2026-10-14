@@ -286,7 +286,17 @@ export const qaAttachmentKind = () =>
       400,
       'Bad Request',
       'QA_ATTACHMENT_KIND',
-      'Only kind "evidence" can be attached for now.',
+      'Only kinds "evidence" and "fix_proof" can be attached.',
+    ),
+  );
+
+export const qaFixProofNotRequested = () =>
+  new ConflictException(
+    body(
+      409,
+      'Conflict',
+      'QA_FIX_PROOF_NOT_REQUESTED',
+      'Proof of a fix can be attached only while QA has returned this item, or after it is marked done for re-test.',
     ),
   );
 

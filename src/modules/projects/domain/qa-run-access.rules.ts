@@ -70,6 +70,16 @@ export function canAddEvidence(role: PlatformAppRole): boolean {
 }
 
 /**
+ * Attaching proof of a fix to a run item: the developer track, the same set as
+ * Progress (member|lead|admin). Listed out rather than derived from
+ * canSetProgress so the two can drift on purpose; an unresolved or future role
+ * gets nothing.
+ */
+export function canAddFixProof(role: PlatformAppRole): boolean {
+  return role === 'member' || role === 'lead' || role === 'admin';
+}
+
+/**
  * Deleting a human attachment someone else uploaded: lead|admin only. The
  * uploader may always delete their own while the run is open (the service
  * checks the uploader, since a role alone cannot).

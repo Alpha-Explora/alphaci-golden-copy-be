@@ -16,10 +16,12 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import { acceptsFixProof } from '../../domain/qa-fix-proof.rules';
 import { bucketMyQaItem } from '../../domain/qa-my-items.rules';
 import {
   canCreateRun,
   canAddEvidence,
+  canAddFixProof,
   canDispatchAutomation,
   canReopenRun,
   canSetReturnedToDev,
@@ -61,6 +63,7 @@ import {
 import { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
 import type { QaProgress } from '../qa-checklists/qa-requirements.contracts';
 import { QaAutomationService } from './qa-automation.service';
+import { QA_ATTACHMENT_MAX_PER_ITEM } from './qa-attachments.fields';
 import { QaRunAttachmentsService } from './qa-run-attachments.service';
 import { matchAutomatedResult } from './qa-automation-matching';
 import {
@@ -958,6 +961,7 @@ export class QaProjectRunsService {
       automationByRepository,
       changed,
       attachmentCounts,
+      fixProofCounts,
     ] = await Promise.all([
       this.runs.findPriorItemSummaries(
         items
@@ -971,6 +975,7 @@ export class QaProjectRunsService {
         signoff?.signed_at ?? run.created_at,
       ),
       this.attachments.countsByItem(run.id),
+      this.attachments.fixProofCountsByItem(run.id),
     ]);
 
     const repositories = buildHeadStatuses(
@@ -981,6 +986,9 @@ export class QaProjectRunsService {
     const open = run.status === 'open';
     const mayVerify = open && canSetVerification(role);
     const merged = this.mergeAutomation(automationByRepository);
+    const attachmentsEnabled = this.attachments.isEnabled();
+    const mayAttachFixProof =
+      attachmentsEnabled && open && canAddFixProof(role);
 
     const runItems: ProjectQaRunItem[] = items.map((row) => {
       const previous: QaRunItemPrevious | null = row.prior_run_item_id
@@ -1003,6 +1011,11 @@ export class QaProjectRunsService {
         acceptanceCriteria: row.acceptance_criteria,
         progress,
         attachmentCount: attachmentCounts.get(row.id) ?? 0,
+        fixProofCount: fixProofCounts.get(row.id) ?? 0,
+        canAttachFixProof:
+          mayAttachFixProof &&
+          acceptsFixProof(row) &&
+          (fixProofCounts.get(row.id) ?? 0) < QA_ATTACHMENT_MAX_PER_ITEM,
       };
     });
 
@@ -1019,8 +1032,9 @@ export class QaProjectRunsService {
         canDispatch: open && canDispatchAutomation(role),
       },
       attachments: {
-        enabled: this.attachments.isEnabled(),
+        enabled: attachmentsEnabled,
         canAdd: open && canAddEvidence(role),
+        canAddFixProof: mayAttachFixProof,
       },
       automation: merged,
       automationByRepository,

@@ -84,7 +84,7 @@ export class QaAttachmentFileInterceptor
 export class DeliveryProjectQaAttachmentsController {
   constructor(private readonly attachments: QaRunAttachmentsService) {}
 
-  /** multipart/form-data: file, caption?, source? ('capture' | 'paste' | 'upload'), kind? ('evidence'). */
+  /** multipart/form-data: file, caption?, source? ('capture' | 'paste' | 'upload'), kind? ('evidence' | 'fix_proof', default 'evidence'). */
   @Post('items/:itemId/attachments')
   @UseInterceptors(QaAttachmentFileInterceptor)
   add(

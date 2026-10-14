@@ -24,6 +24,7 @@ import type {
 import type { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
 import type { QaAutomationService } from './qa-automation.service';
 import type { QaRunAttachmentsService } from './qa-run-attachments.service';
+import type { ProjectQaRun } from './qa-runs.contracts';
 import {
   QaProjectRunsService,
   buildHeadStatuses,
@@ -245,6 +246,9 @@ function setup({
   } as unknown as jest.Mocked<QaAutomationService>;
   const attachments = {
     countsByItem: jest.fn().mockResolvedValue(new Map<string, number>()),
+    fixProofCountsByItem: jest
+      .fn()
+      .mockResolvedValue(new Map<string, number>()),
     referencesForRun: jest.fn().mockResolvedValue(new Map()),
     isEnabled: jest.fn().mockReturnValue(true),
   } as unknown as jest.Mocked<QaRunAttachmentsService>;
@@ -802,7 +806,11 @@ describe('QaProjectRunsService attachments in the run payload and report', () =>
     const run = await service.getById(DP, actor(), 'run-1');
 
     expect(run.items.map((item) => item.attachmentCount)).toEqual([3, 0]);
-    expect(run.attachments).toEqual({ enabled: true, canAdd: true });
+    expect(run.attachments).toEqual({
+      enabled: true,
+      canAdd: true,
+      canAddFixProof: false,
+    });
     expect(run.items[0]).not.toHaveProperty('attachments');
   });
 
@@ -811,17 +819,153 @@ describe('QaProjectRunsService attachments in the run payload and report', () =>
     off.attachments.isEnabled.mockReturnValue(false);
     expect(
       (await off.service.getById(DP, actor(), 'run-1')).attachments,
-    ).toEqual({ enabled: false, canAdd: true });
+    ).toEqual({ enabled: false, canAdd: true, canAddFixProof: false });
 
     const dev = setup({ role: 'member' });
     expect(
       (await dev.service.getById(DP, actor(), 'run-1')).attachments,
-    ).toEqual({ enabled: true, canAdd: false });
+    ).toEqual({ enabled: true, canAdd: false, canAddFixProof: true });
 
-    const signed = setup({ run: runRow({ status: 'signed_off' }) });
+    const signed = setup({
+      role: 'lead',
+      run: runRow({ status: 'signed_off' }),
+    });
     expect(
       (await signed.service.getById(DP, actor(), 'run-1')).attachments,
-    ).toEqual({ enabled: true, canAdd: false });
+    ).toEqual({ enabled: true, canAdd: false, canAddFixProof: false });
+  });
+
+  it.each([
+    ['member', true],
+    ['lead', true],
+    ['admin', true],
+    ['qa', false],
+  ] as const)(
+    'canAddFixProof for %s on an open run is %s',
+    async (role, expected) => {
+      const { service } = setup({ role });
+      expect(
+        (await service.getById(DP, actor(), 'run-1')).attachments
+          .canAddFixProof,
+      ).toBe(expected);
+    },
+  );
+
+  describe('fixProofCount and canAttachFixProof per item', () => {
+    const FIX_REQUESTED = '2026-10-14T09:00:00.000Z';
+    const rows = [
+      itemRow({ id: 'ri-returned', position: 0, status: 'returned_to_dev' }),
+      itemRow({
+        id: 'ri-awaiting',
+        position: 1,
+        status: 'pending',
+        fix_requested_at: FIX_REQUESTED,
+      }),
+      itemRow({ id: 'ri-pending', position: 2, status: 'pending' }),
+      itemRow({
+        id: 'ri-passed',
+        position: 3,
+        status: 'passed',
+        fix_requested_at: FIX_REQUESTED,
+      }),
+      itemRow({ id: 'ri-failed', position: 4, status: 'failed' }),
+      itemRow({ id: 'ri-full', position: 5, status: 'returned_to_dev' }),
+    ];
+    const flags = (run: ProjectQaRun) =>
+      Object.fromEntries(
+        run.items.map((item) => [
+          item.id,
+          [item.fixProofCount, item.canAttachFixProof],
+        ]),
+      );
+
+    it('is true only for returned_to_dev, or pending with a fix request, below the per-kind cap', async () => {
+      const { service, attachments } = setup({ role: 'member', items: rows });
+      attachments.fixProofCountsByItem.mockResolvedValue(
+        new Map([
+          ['ri-returned', 2],
+          ['ri-full', 5],
+        ]),
+      );
+
+      const run = await service.getById(DP, actor(), 'run-1');
+
+      expect(flags(run)).toEqual({
+        'ri-returned': [2, true],
+        'ri-awaiting': [0, true],
+        'ri-pending': [0, false],
+        'ri-passed': [0, false],
+        'ri-failed': [0, false],
+        'ri-full': [5, false],
+      });
+    });
+
+    it('keeps attachmentCount as the total of every kind', async () => {
+      const { service, attachments } = setup({ role: 'member', items: rows });
+      attachments.countsByItem.mockResolvedValue(new Map([['ri-returned', 7]]));
+      attachments.fixProofCountsByItem.mockResolvedValue(
+        new Map([['ri-returned', 2]]),
+      );
+
+      const run = await service.getById(DP, actor(), 'run-1');
+
+      expect(run.items[0]).toMatchObject({
+        attachmentCount: 7,
+        fixProofCount: 2,
+      });
+    });
+
+    it('is false for QA, on a signed-off run, and when storage is off', async () => {
+      const qa = setup({ role: 'qa', items: rows });
+      expect(
+        (await qa.service.getById(DP, actor(), 'run-1')).items.some(
+          (item) => item.canAttachFixProof,
+        ),
+      ).toBe(false);
+
+      const signed = setup({
+        role: 'lead',
+        items: rows,
+        run: runRow({ status: 'signed_off' }),
+      });
+      expect(
+        (await signed.service.getById(DP, actor(), 'run-1')).items.some(
+          (item) => item.canAttachFixProof,
+        ),
+      ).toBe(false);
+
+      const off = setup({ role: 'member', items: rows });
+      off.attachments.isEnabled.mockReturnValue(false);
+      expect(
+        (await off.service.getById(DP, actor(), 'run-1')).items.some(
+          (item) => item.canAttachFixProof,
+        ),
+      ).toBe(false);
+    });
+
+    it('reaches the My QA items feed through the same assembly', async () => {
+      const { service, projectRuns, attachments } = setup({
+        role: 'member',
+        items: [
+          itemRow({
+            id: 'ri-1',
+            source_item_id: 'item-1',
+            status: 'returned_to_dev',
+          }),
+        ],
+      });
+      projectRuns.findNewestProjectRun.mockResolvedValue(runRow());
+      attachments.fixProofCountsByItem.mockResolvedValue(
+        new Map([['ri-1', 1]]),
+      );
+
+      const feed = await service.myItems(DP, actor('dev-1'));
+
+      expect(feed.returned[0]?.runItem).toMatchObject({
+        fixProofCount: 1,
+        canAttachFixProof: true,
+      });
+    });
   });
 
   it('also counts on the current-run read', async () => {
