@@ -204,6 +204,12 @@ export interface CreateSignoffInput {
    * mutation bumps row_version, so any change in between alters the sum.
    */
   expectedItems: { count: number; rowVersionSum: number };
+  /**
+   * Project runs only: how many attachments the frozen report lists. Adding or
+   * removing a screenshot does not bump an item's row_version, so this is the
+   * guard that keeps the report from freezing a stale attachment list.
+   */
+  expectedAttachmentCount?: number;
 }
 
 export interface QaReturnedItemRow {
@@ -243,7 +249,7 @@ export class QaRunItemsChangedError extends Error {
  * signoff waits for in-flight item writes (then sees their row versions), and
  * an item write waits for an in-flight signoff (then sees status signed_off).
  */
-async function lockOpenRunForItemWrite(
+export async function lockOpenRunForItemWrite(
   client: PoolClient,
   runId: string,
 ): Promise<void> {
@@ -829,6 +835,18 @@ export class QaRunsRepository {
           input.expectedItems.rowVersionSum
       ) {
         throw new QaRunItemsChangedError(input.runId);
+      }
+      if (input.expectedAttachmentCount !== undefined) {
+        const attachments = await client.query<{ count: string }>(
+          `SELECT COUNT(*) AS count FROM projects.qa_run_item_attachments WHERE run_id = $1;`,
+          [input.runId],
+        );
+        if (
+          Number(attachments.rows[0]?.count ?? 0) !==
+          input.expectedAttachmentCount
+        ) {
+          throw new QaRunItemsChangedError(input.runId);
+        }
       }
 
       const runResult = await client.query<QaAnyRunRow>(

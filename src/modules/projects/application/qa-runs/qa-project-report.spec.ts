@@ -32,6 +32,7 @@ const item = (overrides: Partial<ProjectQaRunItem> = {}): ProjectQaRunItem =>
     requirementKind: 'functional',
     acceptanceCriteria: 'Receipt | shown',
     progress: 'done',
+    attachmentCount: 0,
     ...overrides,
   }) as ProjectQaRunItem;
 
@@ -85,6 +86,7 @@ const run = (items: ProjectQaRunItem[]): ProjectQaRun =>
       canReopen: true,
       canDispatch: false,
     },
+    attachments: { enabled: true, canAdd: false },
     automation: { verify: null, quality: null },
     automationByRepository: [],
   }) as ProjectQaRun;
@@ -154,5 +156,71 @@ describe('qa-report/v2', () => {
     expect(markdown).toContain('Receipt \\| shown');
     expect(markdown).toContain('- **Verdict:** REJECTED');
     expect(markdown).toContain('## Defects');
+  });
+});
+
+describe('qa-report/v2 attachments', () => {
+  const withAttachments = buildQaProjectReport({
+    generatedAt: '2026-10-01T02:00:00.000Z',
+    frozen: true,
+    run: run([
+      item({
+        attachments: [
+          {
+            id: 'att-1',
+            caption: 'Receipt | shown',
+            kind: 'evidence',
+            contentType: 'image/png',
+          },
+          {
+            id: 'att-2',
+            caption: null,
+            kind: 'evidence',
+            contentType: 'image/jpeg',
+          },
+        ],
+      }),
+      item({ id: 'ri-2', position: 1, title: 'Refund', attachments: [] }),
+    ]),
+    signoffHistory: [],
+  });
+
+  it('carries items[].attachments (ids, caption, kind, content type) and no URLs', () => {
+    expect(withAttachments.run.items[0]?.attachments).toEqual([
+      {
+        id: 'att-1',
+        caption: 'Receipt | shown',
+        kind: 'evidence',
+        contentType: 'image/png',
+      },
+      {
+        id: 'att-2',
+        caption: null,
+        kind: 'evidence',
+        contentType: 'image/jpeg',
+      },
+    ]);
+    expect(JSON.stringify(withAttachments)).not.toMatch(/https?:\/\//);
+  });
+
+  it('lists a "Screenshot: <caption>" line per attachment under the requirement', () => {
+    const markdown = renderQaProjectReportMarkdown(withAttachments);
+
+    expect(markdown).toContain(
+      '- #1 Pay by card - Screenshot: Receipt | shown',
+    );
+    expect(markdown).toContain('- #1 Pay by card - Screenshot: (no caption)');
+    expect(markdown.match(/Screenshot:/g)).toHaveLength(2);
+  });
+
+  it('renders a report without attachments (frozen before this existed) unchanged', () => {
+    const before = buildQaProjectReport({
+      generatedAt: '2026-10-01T02:00:00.000Z',
+      frozen: true,
+      run: run([item()]),
+      signoffHistory: [],
+    });
+
+    expect(renderQaProjectReportMarkdown(before)).not.toContain('Screenshot');
   });
 });

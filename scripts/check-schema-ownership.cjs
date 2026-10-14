@@ -175,6 +175,13 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
     pairs(['hierarchy.repositories', 'hierarchy.delivery_projects']),
   ],
   [
+    // Creates the private `qa-attachments` Storage bucket next to the table
+    // that indexes its objects. storage.buckets is Supabase-owned; this is the
+    // only write to it.
+    'projects/20261014010000_qa_run_item_attachments.sql',
+    pairs(['storage.buckets']),
+  ],
+  [
     'runtime/20260608_env_provisioning.sql',
     pairs(['identity.app_users', 'projects.provisioned_projects']),
   ],

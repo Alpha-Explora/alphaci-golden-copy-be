@@ -181,7 +181,8 @@ module.exports = {
           "(^|/)\\.[^/]+\\.(js|cjs|mjs|ts)$",
           "(^|/)tsconfig\\.json$",
           "\\.module\\.ts$",
-          "(^|/)main\\.ts$"
+          "(^|/)main\\.ts$",
+          "(^|/)__fixtures__/"
         ]
       },
       "to": {}

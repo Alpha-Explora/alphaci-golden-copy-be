@@ -1,11 +1,11 @@
 {
-  "routeCount": 224,
+  "routeCount": 228,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "1a40d878f94465c00134762c1372f555bb96dc767d8fc47095ebdcc7f1bd7f4d",
+  "referenceSha256": "e52d7f9b134f328a80110912bdf752fe32988dd51119a38457d94981d06a0b5b",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "1a40d878f94465c00134762c1372f555bb96dc767d8fc47095ebdcc7f1bd7f4d",
+  "baselineSha256": "e52d7f9b134f328a80110912bdf752fe32988dd51119a38457d94981d06a0b5b",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -190,6 +190,15 @@
       "reason": "SonarCloud repair: switch off Automatic Analysis on a provisioned project so SonarCloud accepts its CI scans again. Lead/admin only, same session auth and project visibility as the other project lifecycle routes.",
       "routes": [
         "POST /api/v1/projects/{id}/sonar/disable-automatic-analysis"
+      ]
+    },
+    {
+      "reason": "QA screenshots (A1): attach, list and delete evidence images on a Project run item, stored in a private bucket and served by short-lived signed URLs. Same session auth, capability gate and Project visibility as the other Project-run routes.",
+      "routes": [
+        "DELETE /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments/{attachmentId}",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/attachments",
+        "GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments",
+        "POST /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/attachments"
       ]
     }
   ]

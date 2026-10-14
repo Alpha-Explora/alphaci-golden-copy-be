@@ -59,6 +59,7 @@ These are exact file-to-schema.table allowances required for historical migratio
 | `projects/20260611202529_workflow_update_requests.sql` | `identity.app_users` |
 | `projects/20260613_project_sync_findings.sql` | `env_provisioning.project_deployment_targets` |
 | `projects/20261001010000_project_requirements.sql` | `hierarchy.delivery_projects`, `hierarchy.repositories` |
+| `projects/20261014010000_qa_run_item_attachments.sql` | `storage.buckets` |
 | `runtime/20260608_env_provisioning.sql` | `identity.app_users`, `projects.provisioned_projects` |
 | `runtime/20260701_gcp_runtime_expand_contract.sql` | `billing_lifecycle.runtime_cost_summaries`, `identity.app_users`, `orgs.workspaces`, `projects.provisioned_projects` |
 

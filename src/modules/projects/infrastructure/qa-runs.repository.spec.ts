@@ -162,6 +162,36 @@ describe('QaRunsRepository concurrency guards', () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 
+  it('aborts a Project signoff when an attachment was added or removed after the report was built', async () => {
+    // Attachments do not bump an item's row_version, so the report's own
+    // attachment count is checked under the run lock.
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '2', row_version_sum: '5' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] });
+
+    await expect(
+      repository.createSignoff(signoffInput({ expectedAttachmentCount: 2 })),
+    ).rejects.toBeInstanceOf(QaRunItemsChangedError);
+    expect(String(query.mock.calls[2]?.[0])).toMatch(/qa_run_item_attachments/);
+    expect(query).toHaveBeenCalledTimes(3);
+  });
+
+  it('signs off when the attachment count still matches the report', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '2', row_version_sum: '5' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '2' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'run-1', status: 'signed_off' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'signoff-1' }] });
+
+    const result = await repository.createSignoff(
+      signoffInput({ expectedAttachmentCount: 2 }),
+    );
+
+    expect(result?.signoff).toEqual({ id: 'signoff-1' });
+  });
+
   it('returns null without writing when the run is no longer open', async () => {
     query.mockResolvedValueOnce({ rows: [{ status: 'signed_off' }] });
 
