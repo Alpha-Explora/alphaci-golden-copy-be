@@ -374,6 +374,8 @@ Compose project and agent configuration.
 | Works on the PC but not from other machines | Run `netsh interface portproxy show v4tov4` in PowerShell and confirm the **AlphaCI TCP 443** firewall rule allows the caller's network. |
 | Stops after sign-out or reboot | The startup task runs only while signed in. Re-run step 27 with `-ServiceAccount`. |
 | Enrollment returns 503: "Publish or configure a verified installer release" | On the backend, check `ONPREM_INSTALLER_RELEASE_REPO` and `ONPREM_INSTALLER_VERSION`, and confirm the release `onprem-agent-v<version>` is public and has all three assets. The backend log names the failed check. |
+| Backend log: "The release is not immutable" | No hash is pinned, and the release is not marked immutable. Turn on immutable releases for the repository, or set `ONPREM_INSTALLER_SHA256` to the release's hash. |
+| Backend log: "Installer archive does not match its expected SHA-256" | The archive differs from the pinned hash, or from the hash in `installer-release.json`. Check the release assets, and confirm that the pin matches the release you intend to serve. |
 
 For anything else, run `sudo /opt/alphaci/bin/alphaci-agent support-bundle`. It
 writes an archive of agent logs, Compose state, and the running release to
@@ -452,9 +454,11 @@ npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_on
 
 ### Protect published releases
 
-The backend cannot detect a release that was changed after publication. Protect
-the repository before the first customer enrolls. These are repository settings,
-so an administrator makes them. The pipeline does not:
+Without a pin, the backend trusts the hash in a release's `installer-release.json`,
+so it refuses any release that GitHub does not mark immutable. Immutable releases
+stop a published release from being changed later. Protect the repository before
+the first customer enrolls. These are repository settings, so an administrator
+makes them. The pipeline does not:
 
 1. Turn on immutable releases for the repository, so a published release's
    assets cannot be replaced.
@@ -462,8 +466,9 @@ so an administrator makes them. The pipeline does not:
    tags, so a published tag cannot be moved to another commit.
 3. Pin the hash. Set `ONPREM_INSTALLER_SHA256` on the deployed backend to the
    value in the release's `installer-release.json`, after you have checked the
-   release. A pinned hash is checked against the archive bytes on every lookup
-   and does not depend on release metadata.
+   release. A pinned hash is checked against the archive bytes at most every
+   10 minutes, the cache window, and does not depend on release metadata. If the
+   release changes after you pin it, the check fails and enrollment stops.
 
 ### Cut an installer release
 

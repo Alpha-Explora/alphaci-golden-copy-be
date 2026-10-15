@@ -102,6 +102,9 @@ export class OnpremInstallerReleaseClient implements OnpremInstallerReleasePort 
       );
       return entry.release;
     }
+    // A permanent failure means the archive must not be served again, even
+    // after a later transient failure.
+    this.verified.delete(key);
     this.logger.warn(
       `Installer ${lookup.version} from ${lookup.repo} could not be verified: ${message}`,
     );
@@ -180,7 +183,12 @@ export class OnpremInstallerReleaseClient implements OnpremInstallerReleasePort 
     token?: string,
   ): Promise<T> {
     const response = await this.get(url, accept, token);
-    return (await response.json()) as T;
+    const text = await readBody(() => response.text());
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error('Release response is not valid JSON.');
+    }
   }
 
   private async getBytes(url: string): Promise<Buffer> {
@@ -188,7 +196,7 @@ export class OnpremInstallerReleaseClient implements OnpremInstallerReleasePort 
     const declared = Number(response.headers.get('content-length') ?? 0);
     if (declared > MAX_ARCHIVE_BYTES)
       throw new Error('Installer archive exceeds the size limit.');
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = Buffer.from(await readBody(() => response.arrayBuffer()));
     if (bytes.byteLength > MAX_ARCHIVE_BYTES)
       throw new Error('Installer archive exceeds the size limit.');
     return bytes;
@@ -223,6 +231,17 @@ export class OnpremInstallerReleaseClient implements OnpremInstallerReleasePort 
       response.status === 429 ||
       response.status >= 500;
     throw transient ? new TransientReleaseError(message) : new Error(message);
+  }
+}
+
+/** A body that breaks mid-transfer is a network failure, not a bad release. */
+async function readBody<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    throw new TransientReleaseError(
+      `Release response could not be read: ${error instanceof Error ? error.message : 'network error'}.`,
+    );
   }
 }
 

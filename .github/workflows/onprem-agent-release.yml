@@ -11,8 +11,8 @@ name: On-prem agent release
 # stop someone from editing or deleting a release later. Enable immutable
 # releases and a tag ruleset for onprem-agent-v* in the repository settings;
 # docs/runbooks/runbook-onprem-host-setup.md lists the steps. The backend trusts
-# the hash it pins (ONPREM_INSTALLER_SHA256) or, without a pin, only releases
-# GitHub marks immutable.
+# only the hash the operator pins in ONPREM_INSTALLER_SHA256. Without a pin, it
+# trusts the release's own hash only when GitHub marks the release immutable.
 #
 # Manual dispatch from a branch builds and verifies the archive, then keeps it
 # as a workflow artifact. Dispatch from a tag to publish that tag's release.

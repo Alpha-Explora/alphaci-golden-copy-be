@@ -217,6 +217,63 @@ it('stops serving the last verified archive after a day', async () => {
   fetch.mockResolvedValueOnce(new Response('down', { status: 503 }));
   await expect(client.resolve(lookup)).resolves.toBeUndefined();
 });
+const tagBody = () => ({
+  immutable: true,
+  assets: [
+    { name: 'installer-release.json', browser_download_url: metadataUrl },
+    { name: 'alphaci-agent-0.1.0.tar.gz', browser_download_url: archiveUrl },
+  ],
+});
+const metadataBody = () => ({
+  version: '0.1.0',
+  file: 'alphaci-agent-0.1.0.tar.gz',
+  sha256,
+});
+/** A response whose body breaks mid-transfer, as a reset connection does. */
+const brokenResponse = () =>
+  new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.error(new Error('connection reset'));
+      },
+    }),
+  );
+it('treats a release body that breaks mid-transfer as transient', async () => {
+  const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+  const fetch = serveRelease();
+  const client = new OnpremInstallerReleaseClient();
+  const lookup = { repo, version: '0.1.0' };
+  await client.resolve(lookup);
+  now.mockReturnValue(1_000 + TEN_MINUTES);
+  fetch.mockResolvedValueOnce(brokenResponse());
+  await expect(client.resolve(lookup)).resolves.toEqual(verified);
+});
+it('treats an archive body that breaks mid-transfer as transient', async () => {
+  const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+  const fetch = serveRelease();
+  const client = new OnpremInstallerReleaseClient();
+  const lookup = { repo, version: '0.1.0' };
+  await client.resolve(lookup);
+  now.mockReturnValue(1_000 + TEN_MINUTES);
+  fetch
+    .mockResolvedValueOnce(Response.json(tagBody()))
+    .mockResolvedValueOnce(Response.json(metadataBody()))
+    .mockResolvedValueOnce(brokenResponse());
+  await expect(client.resolve(lookup)).resolves.toEqual(verified);
+});
+it('clears the verified archive on a permanent failure, so a later transient failure issues no code', async () => {
+  const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+  const fetch = serveRelease();
+  const client = new OnpremInstallerReleaseClient();
+  const lookup = { repo, version: '0.1.0' };
+  await client.resolve(lookup);
+  now.mockReturnValue(1_000 + TEN_MINUTES);
+  fetch.mockResolvedValueOnce(new Response('gone', { status: 404 }));
+  await expect(client.resolve(lookup)).resolves.toBeUndefined();
+  now.mockReturnValue(1_000 + TEN_MINUTES + 1);
+  fetch.mockResolvedValueOnce(new Response('forbidden', { status: 403 }));
+  await expect(client.resolve(lookup)).resolves.toBeUndefined();
+});
 it('rejects a malformed repository, version, or pin without any request', async () => {
   const fetch = jest
     .spyOn(globalThis, 'fetch')
