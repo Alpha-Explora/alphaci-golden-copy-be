@@ -421,6 +421,28 @@ describe('buildProjectScaffold', () => {
     );
   });
 
+  // npm and yarn from the node base image carry HIGH findings that fail the
+  // release scan; the runner needs only node, so it drops them after the
+  // production install.
+  it.each(['nextjs', 'nodejs', 'nestjs'])(
+    'removes the bundled package managers from the %s runner',
+    (stack) => {
+      const dockerfile = buildProjectScaffold({
+        serviceName: 'svc',
+        stack,
+        includeDocker: true,
+      }).find((file) => file.path === 'Dockerfile')!.content;
+      const install = dockerfile.lastIndexOf('npm ci --omit=dev');
+      const removal = dockerfile.indexOf(
+        'RUN rm -rf /usr/local/lib/node_modules/npm',
+      );
+      expect(install).toBeGreaterThan(-1);
+      expect(removal).toBeGreaterThan(install);
+      expect(dockerfile).toContain('/opt/yarn-*');
+      expect(dockerfile).toContain('CMD ["node", ');
+    },
+  );
+
   // The Node runner copied dist/, which a Next.js build never writes, so the
   // first image build of every Next.js project failed at that COPY.
   it('serves Next.js images with next start from .next', () => {
