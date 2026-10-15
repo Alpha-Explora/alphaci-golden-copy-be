@@ -61,7 +61,19 @@ export function sonarValueText(metric: string, value: unknown): string {
     const index = Math.round(Number(text)) - 1;
     return RATING_LETTERS[index] ?? text;
   }
-  return PERCENT_METRICS.has(metric) ? `${text}%` : text;
+  return PERCENT_METRICS.has(metric) ? `${roundedPercent(text)}%` : text;
+}
+
+/**
+ * SonarCloud sends some percentages unrounded ("96.27659574468085" for
+ * coverage on new code). Show one decimal, as SonarCloud does; a value it
+ * already rounded ("96.7", "0.0", "80") is kept exactly.
+ */
+function roundedPercent(text: string): string {
+  const value = Number(text);
+  return Number.isFinite(value) && /\.\d{2,}$/.test(text)
+    ? value.toFixed(1)
+    : text;
 }
 
 /** "Coverage on new code 61.2% (needs 80%)". */
