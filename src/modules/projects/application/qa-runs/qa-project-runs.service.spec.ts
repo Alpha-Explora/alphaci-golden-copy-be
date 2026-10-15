@@ -159,6 +159,8 @@ function setup({
     listSupersededSignoffs: jest.fn().mockResolvedValue([]),
   } as unknown as jest.Mocked<QaRunsRepository>;
   const projectRuns = {
+    appendMissingItemsToOpenRuns: jest.fn().mockResolvedValue(0),
+    countIterationItemsNotPassed: jest.fn().mockResolvedValue(0),
     findProjectRun: jest.fn().mockResolvedValue(run),
     findRunByFingerprint: jest.fn().mockResolvedValue(null),
     findNewestProjectRun: jest.fn().mockResolvedValue(null),
@@ -615,6 +617,54 @@ describe('QaProjectRunsService sign-off, reopen, current', () => {
     expect(runs.createSignoff).not.toHaveBeenCalled();
   });
 
+  it('APPROVED also needs every item the Iteration holds now: a story added after the run started is QA_RUN_MISSING_ITEMS', async () => {
+    const { service, runs, projectRuns } = setup({
+      items: [
+        itemRow({
+          status: 'passed',
+          verified_by: 'qa-1',
+          verified_by_login: 'qa',
+        }),
+      ],
+    });
+    projectRuns.countIterationItemsNotPassed.mockResolvedValue(2);
+
+    await expect(
+      service.signoff(DP, actor(), 'run-1', { verdict: 'APPROVED' }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'QA_RUN_MISSING_ITEMS',
+        missingItems: 2,
+        message: expect.stringContaining('They are now in the run as Pending'),
+      }),
+    });
+    expect(projectRuns.countIterationItemsNotPassed).toHaveBeenCalledWith(
+      'it-1',
+      'run-1',
+    );
+    // The missing items join the run, so QA can verify them and sign off.
+    expect(projectRuns.appendMissingItemsToOpenRuns).toHaveBeenCalledWith(
+      'it-1',
+    );
+    expect(runs.createSignoff).not.toHaveBeenCalled();
+  });
+
+  it('a REJECTED sign-off does not need every item of the Iteration', async () => {
+    const { service, runs, projectRuns } = setup({
+      items: [itemRow({ status: 'failed' })],
+    });
+    projectRuns.countIterationItemsNotPassed.mockResolvedValue(3);
+    runs.createSignoff.mockResolvedValue({
+      run: runRow({ status: 'signed_off' }),
+      signoff: { ...signoffRow(), verdict: 'REJECTED' },
+    });
+
+    await service.signoff(DP, actor(), 'run-1', { verdict: 'REJECTED' });
+
+    expect(projectRuns.countIterationItemsNotPassed).not.toHaveBeenCalled();
+    expect(runs.createSignoff).toHaveBeenCalled();
+  });
+
   it('freezes the assembled Project run into the sign-off and notifies creator, owner and leads except the actor', async () => {
     const { service, runs, notifications } = setup({
       items: [
@@ -689,6 +739,13 @@ describe('QaProjectRunsService sign-off, reopen, current', () => {
     const run = await lead.service.reopen(DP, actor('lead-1'), 'run-1');
     expect(run.status).toBe('open');
     expect(run.permissions.canSetVerification).toBe(true);
+    // Stories written since the run started join it, so QA can verify them.
+    expect(lead.projectRuns.appendMissingItemsToOpenRuns).toHaveBeenCalledWith(
+      'it-1',
+    );
+    expect(
+      signed.projectRuns.appendMissingItemsToOpenRuns,
+    ).not.toHaveBeenCalled();
   });
 
   it('current returns the run for the current heads, else compares with the newest run', async () => {

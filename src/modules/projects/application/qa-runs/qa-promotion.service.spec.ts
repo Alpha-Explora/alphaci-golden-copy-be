@@ -122,6 +122,7 @@ function setup({
     requirementsChangedSince: jest.fn().mockResolvedValue(false),
   } as unknown as jest.Mocked<QaRequirementsRepository>;
   const projectRuns = {
+    countIterationItemsNotPassed: jest.fn().mockResolvedValue(0),
     findLatestSignedOff: jest.fn().mockResolvedValue(
       verdict === null && covered.length === 0
         ? null
@@ -300,6 +301,36 @@ describe('QaPromotionService.getStatus (per-Project gate)', () => {
       'it-4',
       expect.any(String),
     );
+  });
+
+  it('blocks when the signed-off run did not pass every item the Iteration holds now', async () => {
+    const { service, projectRuns } = setup();
+    projectRuns.countIterationItemsNotPassed.mockResolvedValue(1);
+
+    const status = await service.getStatus('p-api', actor);
+
+    expect(projectRuns.countIterationItemsNotPassed).toHaveBeenCalledWith(
+      expect.any(String),
+      'run-1',
+    );
+    expect(status.eligible).toBe(false);
+    expect(status.canMerge).toBe(true);
+    expect(status.reasons).toEqual([
+      '1 requirement item is not passed in the signed-off QA run: a Product owner reopens the run so QA verifies them',
+    ]);
+  });
+
+  it('blocks when requirements changed after the sign-off', async () => {
+    const { service, requirements } = setup();
+    requirements.requirementsChangedSince.mockResolvedValue(true);
+
+    const status = await service.getStatus('p-api', actor);
+
+    expect(status.eligible).toBe(false);
+    expect(status.requirementsChanged).toBe(true);
+    expect(status.reasons).toEqual([
+      'Requirements changed after QA signed off: a Product owner reopens the run so QA verifies them',
+    ]);
   });
 
   it('blocks this repository when ANOTHER repository of the Project moved', async () => {

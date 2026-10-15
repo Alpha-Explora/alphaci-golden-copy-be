@@ -141,6 +141,18 @@ export class QaProjectDeliveryService {
       this.requirements.listActiveByIteration(iteration.id),
       this.projectRuns.findLatestSignedOff(iteration.id),
     ]);
+    const [itemsNotPassed, requirementsChangedAfterSignoff] = latest
+      ? await Promise.all([
+          this.projectRuns.countIterationItemsNotPassed(
+            iteration.id,
+            latest.run.id,
+          ),
+          this.requirements.requirementsChangedSince(
+            iteration.id,
+            latest.signoff.signed_at,
+          ),
+        ])
+      : [0, false];
 
     const gate = evaluateProjectPromotionGate({
       repositories: readings.map((reading) => ({
@@ -160,6 +172,8 @@ export class QaProjectDeliveryService {
             })),
           }
         : null,
+      itemsNotPassed,
+      requirementsChangedAfterSignoff,
     });
 
     return {
