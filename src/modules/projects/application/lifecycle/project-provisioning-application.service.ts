@@ -5,6 +5,10 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  ONPREM_ASSIGNMENT,
+  type OnpremAssignmentPort,
+} from '#kernel/ports/onprem-assignment.port';
 
 import {
   AuditEventPublisher,
@@ -117,6 +121,9 @@ export class ProjectProvisioningApplicationService {
     @Optional()
     @Inject(PROJECT_REQUIREMENTS_READINESS)
     requirementsReadiness?: ProjectRequirementsReadinessPort,
+    @Optional()
+    @Inject(ONPREM_ASSIGNMENT)
+    private readonly onpremAssignment?: OnpremAssignmentPort,
   ) {
     this.support = new ProjectProvisioningSupport({
       catalogService,
@@ -240,7 +247,7 @@ export class ProjectProvisioningApplicationService {
       );
     }
 
-    return this.singleRepository.createStandaloneProject(
+    const created = await this.singleRepository.createStandaloneProject(
       userId,
       userLogin,
       repositoryCreationToken,
@@ -248,6 +255,59 @@ export class ProjectProvisioningApplicationService {
       provisioningOwnerLogin,
       dto,
     );
+    const selected = dto.environments?.filter(
+      (environment) => environment.hostAssignment,
+    );
+    if (!selected?.length) return created;
+    const environments = await this.support.projectsRepository
+      .listProjectEnvironments(created.id)
+      .catch(() => null);
+    if (!environments)
+      return {
+        ...created,
+        hostAssignmentError:
+          'Project created. Host assignments could not be read. Open Hosting to assign the existing environments.',
+      };
+    const hostAssignments: NonNullable<
+      CreateProjectResponse['hostAssignments']
+    > = [];
+    for (const definition of selected) {
+      const environment = environments.find(
+        (item) => item.slug === definition.slug,
+      );
+      if (!environment)
+        return {
+          ...created,
+          hostAssignments,
+          hostAssignmentError:
+            'Project created. An environment was unavailable for host assignment. Open Hosting to retry.',
+        };
+      try {
+        if (!this.onpremAssignment)
+          throw new Error('Host assignment is unavailable.');
+        const result = await this.onpremAssignment.assignProvisionedEnvironment(
+          created.id,
+          environment.id,
+          userId,
+          definition.hostAssignment!,
+        );
+        hostAssignments.push({
+          environmentId: environment.id,
+          status: 'assigned',
+          assignmentId: result.assignmentId,
+        });
+      } catch {
+        // The repository already exists. Keep it usable and retry through the
+        // existing environment's explicit assignment endpoint, never create again.
+        hostAssignments.push({
+          environmentId: environment.id,
+          status: 'failed',
+          message:
+            'Project created. Assign or retry the host from this environment in Hosting.',
+        });
+      }
+    }
+    return { ...created, hostAssignments };
   }
 
   async setupProject(

@@ -13,6 +13,13 @@ import type { ProjectDashboardSnapshot } from '../../infrastructure/project-dash
 import type { WorkflowUpdateRequestRecord } from '../../infrastructure/project-workflow-update-requests.repository';
 
 export interface CreateProjectResponse {
+  hostAssignmentError?: string;
+  hostAssignments?: Array<{
+    environmentId: string;
+    status: 'assigned' | 'failed';
+    assignmentId?: string;
+    message?: string;
+  }>;
   id: string;
   repoFullName: string;
   repoUrl: string;

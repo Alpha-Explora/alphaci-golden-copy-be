@@ -4,6 +4,8 @@
 
 ### Added
 
+- Workspace on-prem machine inventory, one-time enrollment, heartbeat, explicit environment assignment with conflict detection and port reservations, protected installer packaging and isolated per-environment workers. Project creation retains the created repository on a host-binding failure and exposes assignment retry status. See the on-prem host runbook for targeted migrations, prerequisites, upgrade and downgrade behavior.
+
 - Added on-prem readiness inspection without automatic migrations, early API-address validation in generated CI jobs, and persisted environment targets in workflow previews and update PRs.
 
 - Runtime provider history sources support on-prem release registry history, scoped to project, environment, and deployment target. Empty history loads normally and database outages remain visible without mock deployment entries.

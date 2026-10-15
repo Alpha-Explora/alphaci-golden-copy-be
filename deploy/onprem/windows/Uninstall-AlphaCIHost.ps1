@@ -15,7 +15,11 @@ $root = Join-Path $env:ProgramData 'AlphaCI'
 $configPath = Join-Path $root 'host.json'
 $ports = @()
 if (Test-Path -LiteralPath $configPath) {
-    $ports = @((Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json).Ports)
+    $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+    $ports = @($config.Ports)
+    if ($PSCmdlet.ShouldProcess($config.Distro, 'disable AlphaCI polling timers, preserving containers and data')) {
+        & wsl.exe -d $config.Distro -u root -- systemctl disable --now alphaci-machine.timer alphaci-agent.timer 2>$null
+    }
 }
 
 foreach ($task in 'AlphaCI Host', 'AlphaCI Port Forward') {
@@ -34,6 +38,7 @@ Get-NetFirewallRule -Name 'AlphaCI TCP *' -ErrorAction SilentlyContinue | ForEac
     if ($PSCmdlet.ShouldProcess($_.Name, 'remove firewall rule')) { Remove-NetFirewallRule -Name $_.Name }
 }
 if ($RemoveLogs -and (Test-Path -LiteralPath $root) -and $PSCmdlet.ShouldProcess($root, 'remove')) {
+    if ([IO.Path]::GetFullPath($root) -ne [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'AlphaCI'))) { throw 'Unexpected uninstall target.' }
     Remove-Item -LiteralPath $root -Recurse -Force
 }
 Write-Output 'AlphaCI host tasks, port forwards, and firewall rules removed. The WSL distro is unchanged.'

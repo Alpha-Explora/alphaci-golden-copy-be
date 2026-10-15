@@ -58,6 +58,15 @@ const HTTP_DECORATORS: Readonly<Record<string, HttpMethod>> = {
 
 const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
   {
+    'src/modules/runtime/api/onprem-enrollment.controller.ts': {
+      reason:
+        'One-time enrollment code and revocable machine credential authentication, gated by on-prem configuration in service.',
+      routes: [
+        { handler: 'enroll', method: 'POST' },
+        { handler: 'heartbeat', method: 'POST' },
+        { handler: 'installer', method: 'GET' },
+      ],
+    },
     'src/app.controller.ts': {
       reason: 'always-on core surface',
       routes: [{ handler: 'getServiceInfo', method: 'GET' }],

@@ -50,4 +50,63 @@ describe('On-prem readiness', () => {
     ).rejects.toMatchObject({ status: 404 });
     expect(query).not.toHaveBeenCalled();
   });
+  it.each([
+    { fresh: true, revoked: false, expected: 'passed' },
+    { fresh: false, revoked: false, expected: 'failed' },
+    { fresh: true, revoked: true, expected: 'failed' },
+  ])(
+    'keeps application health unverified for machine $expected (fresh=$fresh, revoked=$revoked)',
+    async ({ fresh, revoked, expected }) => {
+      projects.findProjectEnvironment.mockResolvedValue({
+        id: 'env',
+        role: 'production',
+      });
+      query
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              releases: 'releases',
+              hosts: 'hosts',
+              active_host_index: true,
+              machine_schema: true,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              machine_id: 'machine',
+              fresh,
+              revoked,
+              checks: [
+                {
+                  id: 'docker',
+                  status: 'passed',
+                  message: 'Docker and Compose available.',
+                },
+              ],
+              assignment_config: {
+                ports: [
+                  { slot: 'frontend', hostPort: 8080, containerPort: 3000 },
+                ],
+                health: [{ slot: 'frontend', path: null }],
+                ingress: { mode: 'direct', publicUrl: null },
+              },
+            },
+          ],
+        });
+      const result = await service().read('project', 'env', 'viewer');
+      expect(result.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'host', status: expected }),
+          expect.objectContaining({ id: 'health-paths', status: 'failed' }),
+          expect.objectContaining({ id: 'ingress', status: 'failed' }),
+          expect.objectContaining({
+            id: 'application-health',
+            status: 'unverified',
+          }),
+        ]),
+      );
+    },
+  );
 });

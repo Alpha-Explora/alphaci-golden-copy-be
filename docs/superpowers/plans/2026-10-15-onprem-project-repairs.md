@@ -10,6 +10,8 @@
 
 **Spec:** [Approved design](../specs/2026-10-15-onprem-host-onboarding-design.md).
 
+**Execution status, 2026-10-15:** History, readiness, URL preflight, and persisted environment regeneration are implemented and tested. Targeted remote schema changes, Enterprise restart, HTTPS health/installer probes, and a read-only eatta workflow preview are complete. Workflow/secret publication and actual runner/release acceptance remain open. Unchecked acceptance steps below retain their full original scope. See [execution evidence](../../operations/onprem-local-acceptance.md).
+
 ## Global Constraints
 
 - "Remote Supabase remains in use."

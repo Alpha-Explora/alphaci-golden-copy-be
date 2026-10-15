@@ -68,6 +68,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
   let databaseService: jest.Mocked<DatabaseService>;
   let directory: jest.Mocked<MemberDirectoryService>;
   let workspaceDataCleanup: { purgeWorkspace: jest.Mock };
+  let runtimeCleanup: { purgeWorkspace: jest.Mock };
   let projectMembersRepository: {
     markRemovedForUserInGroupWithClient: jest.Mock;
   };
@@ -130,6 +131,9 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
     workspaceDataCleanup = {
       purgeWorkspace: jest.fn().mockResolvedValue({ removed: 0 }),
     };
+    runtimeCleanup = {
+      purgeWorkspace: jest.fn().mockResolvedValue({ removed: 0 }),
+    };
     projectMembersRepository = {
       markRemovedForUserInGroupWithClient: jest.fn().mockResolvedValue(0),
     };
@@ -144,6 +148,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       databaseService,
       workspaceDataCleanup,
       projectMembersRepository as never,
+      runtimeCleanup,
     );
   });
 
@@ -168,6 +173,26 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       expect(workspaceDataCleanup.purgeWorkspace).toHaveBeenCalledWith(
         'group-1',
       );
+      expect(runtimeCleanup.purgeWorkspace).toHaveBeenCalledWith('group-1');
+      expect(
+        runtimeCleanup.purgeWorkspace.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        (groupsRepository as unknown as { deleteGroup: jest.Mock }).deleteGroup
+          .mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('retains the workspace if revoking machine access fails', async () => {
+      runtimeCleanup.purgeWorkspace.mockRejectedValue(
+        new Error('Runtime unavailable'),
+      );
+      await expect(service.deleteGroup('group-1', 'lead-1')).rejects.toThrow(
+        'Runtime unavailable',
+      );
+      expect(
+        (groupsRepository as unknown as { deleteGroup: jest.Mock }).deleteGroup,
+      ).not.toHaveBeenCalled();
+      expect(workspaceDataCleanup.purgeWorkspace).not.toHaveBeenCalled();
     });
 
     it('does not purge anything when the workspace delete did not happen', async () => {

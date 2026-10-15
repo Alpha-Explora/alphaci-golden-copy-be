@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 246 current API routes."
+description: "Generated inventory of the 256 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **246 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **256 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -30,6 +30,7 @@ The current compiled API exposes **246 routes** under the global `/api/v1` prefi
 - `DELETE /api/v1/projects/{projectId}/deployment-targets/{targetId}`
 - `DELETE /api/v1/projects/{projectId}/domains/{domainId}`
 - `DELETE /api/v1/projects/{projectId}/env-vars/{metadataId}`
+- `DELETE /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment`
 - `DELETE /api/v1/provider-connections/{id}`
 - `DELETE /api/v1/repositories/{repositoryId}/assignments/{assignmentId}`
 - `DELETE /api/v1/repositories/{repositoryId}/configuration/{configurationType}/{name}`
@@ -92,6 +93,7 @@ The current compiled API exposes **246 routes** under the global `/api/v1` prefi
 - `GET /api/v1/notifications`
 - `GET /api/v1/notifications/preferences`
 - `GET /api/v1/onprem/assignments`
+- `GET /api/v1/onprem/installer/{version}`
 - `GET /api/v1/projects`
 - `GET /api/v1/projects/{id}/audit`
 - `GET /api/v1/projects/{id}/ci-runs`
@@ -111,6 +113,8 @@ The current compiled API exposes **246 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/environments`
 - `GET /api/v1/projects/{projectId}/environments/{environmentId}/deployment-targets/{slot}`
 - `GET /api/v1/projects/{projectId}/environments/{environmentId}/deployments`
+- `GET /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment`
+- `GET /api/v1/projects/{projectId}/environments/{environmentId}/onprem-readiness`
 - `GET /api/v1/projects/{projectId}/folder`
 - `GET /api/v1/projects/{projectId}/qa-checklists`
 - `GET /api/v1/projects/{projectId}/qa-my-items`
@@ -149,6 +153,7 @@ The current compiled API exposes **246 routes** under the global `/api/v1` prefi
 - `GET /api/v1/workflows/history`
 - `GET /api/v1/workspaces/me`
 - `GET /api/v1/workspaces/{workspaceId}/members`
+- `GET /api/v1/workspaces/{workspaceId}/onprem-hosts`
 - `GET /api/v1/workspaces/{workspaceId}/qa-checklists`
 - `GET /api/v1/workspaces/{workspaceId}/qa-requirements/overview`
 - `PATCH /api/v1/admin/feedback/{id}`
@@ -212,6 +217,8 @@ The current compiled API exposes **246 routes** under the global `/api/v1` prefi
 - `POST /api/v1/groups/{groupId}/transfer`
 - `POST /api/v1/notifications/{id}/read`
 - `POST /api/v1/onprem/deployments/{deploymentId}/status`
+- `POST /api/v1/onprem/enroll`
+- `POST /api/v1/onprem/heartbeat`
 - `POST /api/v1/projects`
 - `POST /api/v1/projects/setup`
 - `POST /api/v1/projects/sync`
@@ -232,6 +239,7 @@ The current compiled API exposes **246 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{projectId}/env-vars/provision`
 - `POST /api/v1/projects/{projectId}/env-vars/validate`
 - `POST /api/v1/projects/{projectId}/environments`
+- `POST /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment`
 - `POST /api/v1/projects/{projectId}/environments/{environmentId}/hosts`
 - `POST /api/v1/projects/{projectId}/environments/{environmentId}/promotions`
 - `POST /api/v1/projects/{projectId}/qa-runs`
@@ -257,6 +265,8 @@ The current compiled API exposes **246 routes** under the global `/api/v1` prefi
 - `POST /api/v1/systems/{systemId}/archive`
 - `POST /api/v1/systems/{systemId}/delivery-projects`
 - `POST /api/v1/workflows/generate`
+- `POST /api/v1/workspaces/{workspaceId}/onprem-host-enrollments`
+- `POST /api/v1/workspaces/{workspaceId}/onprem-hosts/{machineId}/revoke`
 - `POST /api/v1/workspaces/{workspaceId}/qa-checklists`
 - `PUT /api/v1/ci/releases/{releaseId}/manifest`
 - `PUT /api/v1/projects/{projectId}/deployment-targets/{targetId}/environment`

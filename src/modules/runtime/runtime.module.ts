@@ -1,4 +1,9 @@
 import { Module } from '@nestjs/common';
+import { OnpremHostsModule } from './onprem-hosts.module';
+import { OnpremAssignmentsService } from './application/onprem/onprem-assignments.service';
+import { OnpremAssignmentsRepository } from './infrastructure/repositories/onprem-assignments.repository';
+import { OnpremAssignmentsController } from './api/onprem-assignments.controller';
+import { ONPREM_ASSIGNMENT } from '#kernel/ports/onprem-assignment.port';
 import { ConfigService } from '@nestjs/config';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
@@ -116,6 +121,7 @@ import {
 
 @Module({
   imports: [
+    OnpremHostsModule,
     AuditModule,
     DatabaseModule,
     EventsModule,
@@ -130,6 +136,7 @@ import {
     GcpDeploymentModule,
   ],
   controllers: [
+    OnpremAssignmentsController,
     ReleasesController,
     ProviderConnectionsController,
     DeploymentTargetsController,
@@ -142,6 +149,9 @@ import {
     CustomDomainsController,
   ],
   providers: [
+    OnpremAssignmentsService,
+    OnpremAssignmentsRepository,
+    { provide: ONPREM_ASSIGNMENT, useExisting: OnpremAssignmentsService },
     ProviderConnectionsRepository,
     DeploymentTargetsRepository,
     EnvVarsRepository,
@@ -399,6 +409,7 @@ import {
     SubscriptionGuard,
   ],
   exports: [
+    ONPREM_ASSIGNMENT,
     DEPLOYMENT_PROVISIONING_FACADE,
     DEPLOYMENT_HISTORY_QUERY,
     DEPLOYMENT_DRIFT_QUERY,

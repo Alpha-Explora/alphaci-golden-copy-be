@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "platforms": ["ubuntu", "windows-wsl2"],
+  "entrypoint": "agent/install.sh",
+  "windowsEntrypoint": "windows/Install-AlphaCIHost.ps1"
+}

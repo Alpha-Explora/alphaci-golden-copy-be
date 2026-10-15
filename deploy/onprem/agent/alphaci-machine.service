@@ -1,0 +1,9 @@
+[Unit]
+Description=AlphaCI enrolled machine supervisor
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/opt/alphaci/bin/alphaci-supervisor --once

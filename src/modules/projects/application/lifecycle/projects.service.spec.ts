@@ -112,6 +112,7 @@ const makeProjectsRepository = () =>
     // so tests unrelated to the role gate do not each need to set it.
     findAppRole: jest.fn().mockResolvedValue('admin'),
     listByUser: jest.fn().mockResolvedValue([]),
+    listProjectEnvironments: jest.fn().mockResolvedValue([]),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>
@@ -2137,6 +2138,7 @@ jobs:
   it('previews the three staged workflow files without writing to GitHub', async () => {
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
+      listProjectEnvironments: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       findByIdAndUser: jest.fn().mockResolvedValue({
         id: 'project-1',
@@ -2295,6 +2297,7 @@ jobs:
   it('creates a workflow update branch, writes all staged files, creates a PR, and stores request metadata', async () => {
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
+      listProjectEnvironments: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       findAppRole: jest.fn().mockResolvedValue('admin'),
       findByIdAndUser: jest.fn().mockResolvedValue({
@@ -2455,6 +2458,7 @@ jobs:
   it('never targets the repository default branch: dev, else uat, else 409', async () => {
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
+      listProjectEnvironments: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       findAppRole: jest.fn().mockResolvedValue('admin'),
       findByIdAndUser: jest.fn().mockResolvedValue({
@@ -2544,6 +2548,7 @@ jobs:
   ) => {
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
+      listProjectEnvironments: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       findAppRole: jest.fn().mockResolvedValue(role),
       findByIdAndUser: jest.fn().mockResolvedValue(project),
@@ -2696,6 +2701,7 @@ jobs:
   it('returns a clean error when GitHub rejects workflow update PR creation', async () => {
     const overviewRepos = makeOverviewReadRepositories();
     const projectsRepository = {
+      listProjectEnvironments: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       findAppRole: jest.fn().mockResolvedValue('admin'),
       findByIdAndUser: jest.fn().mockResolvedValue({

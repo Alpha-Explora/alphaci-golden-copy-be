@@ -1,6 +1,6 @@
 # On-prem host onboarding delivery order
 
-The design was approved on 2026-10-15. These plans await review and execution-method selection. Source code, shared Supabase, workflows, and host installations have not changed as part of planning.
+The design was approved on 2026-10-15 and executed sequentially. Project repairs, enrollment, assignment APIs, installers, and UI are implemented locally. The three targeted migrations are applied to the remote test database. Enterprise runs with normal sign-in and the temporary HTTPS tunnel. Workflow publication, actual host enrollment, Windows restart/startup, and the user's eatta promotion acceptance remain open. See [execution evidence](../../operations/onprem-local-acceptance.md).
 
 Read the [approved design](../specs/2026-10-15-onprem-host-onboarding-design.md), then execute these plans in order:
 

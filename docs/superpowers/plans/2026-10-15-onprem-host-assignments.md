@@ -10,6 +10,8 @@
 
 **Spec:** [Approved design](../specs/2026-10-15-onprem-host-onboarding-design.md). Depends on [host enrollment](2026-10-15-onprem-host-enrollment.md).
 
+**Execution status, 2026-10-15:** Assignment/CAS/port APIs, isolated workers, Hosting selection, and optional setup bindings are implemented. Real PostgreSQL authorization races and a real Docker two-project health failure/rollback test pass. Normal-sign-in browser checks show the assignment forms and factual prerequisites. Actual eatta workflow publication, host enrollment, Test-to-UAT-to-Production acceptance, and reboot recovery remain open. Unchecked acceptance steps below retain their full original scope. See [execution evidence](../../operations/onprem-local-acceptance.md).
+
 ## Global Constraints
 
 - "Retain one active assignment per environment."

@@ -28,6 +28,7 @@ param(
     [Parameter(Mandatory)] [string[]] $ClientSubnets,
     [int[]] $Ports = @(443),
     [string] $ServiceAccount = ($env:USERDOMAIN + '\' + $env:USERNAME),
+    [string] $ApiUrl,
     [switch] $OnlyWhenSignedIn
 )
 
@@ -37,6 +38,51 @@ $startScript = Join-Path $root 'Start-AlphaCIHost.ps1'
 $currentAccount = $env:USERDOMAIN + '\' + $env:USERNAME
 
 New-Item -ItemType Directory -Force -Path $root, (Join-Path $root 'logs') | Out-Null
+if ($ApiUrl) {
+    $apiAddress = $null
+    if (-not [uri]::TryCreate($ApiUrl, [UriKind]::Absolute, [ref]$apiAddress) -or $apiAddress.Scheme -ne 'https' -or $apiAddress.UserInfo) {
+        throw 'ApiUrl must be the public HTTPS AlphaCI API address without credentials.'
+    }
+    $statePath = Join-Path $root 'installation-state.json'
+    $state = if (Test-Path -LiteralPath $statePath) { Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json } else {
+        [pscustomobject]@{ installationId = [guid]::NewGuid().ToString(); distro = $Distro; phase = 'prerequisites' }
+    }
+    if ($state.distro -ne $Distro) { throw 'This installation belongs to another distro. Use its saved distro or uninstall it explicitly.' }
+    function Save-InstallPhase([string]$phase) {
+        $state.phase = $phase
+        $temporaryState = $statePath + '.tmp'
+        $state | ConvertTo-Json | Set-Content -LiteralPath $temporaryState
+        Move-Item -Force -LiteralPath $temporaryState -Destination $statePath
+    }
+    Save-InstallPhase 'prerequisites'
+    $processor = Get-CimInstance Win32_Processor | Select-Object -First 1
+    if (-not $processor.VirtualizationFirmwareEnabled) { throw 'Enable hardware virtualization in firmware, then rerun this installer.' }
+    $restartRequired = $false
+    foreach ($featureName in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')) {
+        $feature = Get-WindowsOptionalFeature -Online -FeatureName $featureName
+        if ($feature.State -ne 'Enabled') {
+            Enable-WindowsOptionalFeature -Online -FeatureName $featureName -All -NoRestart | Out-Null
+            $restartRequired = $true
+        }
+    }
+    if ($restartRequired) {
+        Save-InstallPhase 'restart_required'
+        Write-Output 'Restart Windows, then rerun this command. The saved installation identity will be reused.'
+        return
+    }
+    if ($ServiceAccount -ne $currentAccount) { throw 'Enroll while signed in as the Windows account that owns this WSL distro, then configure its startup task.' }
+    $installedDistros = @((& wsl.exe -l -q) -replace [char]0, '' | Where-Object { $_.Trim() })
+    if ($installedDistros -notcontains $Distro) { throw ('Install an Ubuntu WSL2 distro for this account first: wsl --install -d ' + $Distro) }
+    $distroDetails = (& wsl.exe -l -v) -replace [char]0, ''
+    if (-not ($distroDetails | Where-Object { $_ -match ([regex]::Escape($Distro) + '\s+.*\s+2\s*$') })) { throw 'This host requires WSL2. Convert the selected distro with wsl --set-version before continuing.' }
+    Save-InstallPhase 'enrollment'
+    $linuxInstallerDirectory = (& wsl.exe -d $Distro -- wslpath -u (Join-Path $PSScriptRoot '../agent')).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Could not locate the extracted agent directory inside WSL.' }
+    # Enrollment reads its code interactively. No code or credential is passed in argv or state.
+    & wsl.exe -d $Distro -u root -- bash ($linuxInstallerDirectory + '/install.sh') --enroll $ApiUrl windows
+    if ($LASTEXITCODE -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
+    Save-InstallPhase 'startup'
+}
 Copy-Item -Force -LiteralPath (Join-Path $PSScriptRoot 'Start-AlphaCIHost.ps1') -Destination $startScript
 @{ Distro = $Distro; Ports = $Ports } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'host.json')
 # The service account writes the distro address and its log here; SYSTEM reads them.
@@ -129,3 +175,4 @@ Start-Sleep -Seconds 3
 Write-Output ('Distro address: ' + (Get-Content -LiteralPath (Join-Path $root 'wsl-address.txt') -ErrorAction SilentlyContinue))
 & netsh.exe interface portproxy show v4tov4
 Get-NetFirewallRule -Name 'AlphaCI TCP *' | Format-Table Name, Enabled, Direction, Action -AutoSize
+if ($ApiUrl) { Save-InstallPhase 'complete' }

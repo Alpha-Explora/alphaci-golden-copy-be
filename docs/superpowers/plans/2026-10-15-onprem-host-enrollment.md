@@ -10,6 +10,8 @@
 
 **Spec:** [Approved design](../specs/2026-10-15-onprem-host-onboarding-design.md). Depends on [project repairs](2026-10-15-onprem-project-repairs.md).
 
+**Execution status, 2026-10-15:** API/schema, supervisor, installers, Hosts UI, and focused tests are implemented. Disposable PostgreSQL enrollment races and installer recording tests pass. The signed-in Enterprise Hosts page loads for the project workspace. A real Ubuntu/systemd installation, Windows prerequisite phases, reboot recovery, and unattended startup remain unverified. Unchecked acceptance steps below retain their full original scope. See [execution evidence](../../operations/onprem-local-acceptance.md).
+
 ## Global Constraints
 
 - "Codes expire after 10 minutes and contain 256 bits of cryptographic randomness."

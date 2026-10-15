@@ -2,6 +2,10 @@
 
 ## 2026-10-15
 
+- **Creation**: Recorded local on-prem acceptance, targeted remote schema verification, temporary tunnel/installer checks, the read-only eatta workflow preview, real Docker two-project rollback evidence, and the remaining GitHub permissions and Windows runtime checks in `docs/operations/onprem-local-acceptance.md`.
+
+- **Creation**: Added Runtime-owned workspace machine enrollment, heartbeat, explicit credential replacement/revocation, serialized environment assignment and port reservations, and workspace offboarding cleanup. Added a versioned local installer, resumable Windows setup, isolated assignment workers, Hosts and Hosting contracts, and project-creation assignment failure results. The release registry contract and host runbook distinguish tested code from host/runner/ingress acceptance.
+
 - **Update**: Added read-only on-prem readiness checks, public-runner API URL preflight, and environment/target preservation during workflow regeneration. The shared target summary includes its environment association.
 
 - **Update**: Runtime provider packs now contribute local deployment history sources. On-prem Hosting and previews read target-scoped release registry history without requiring a cloud provider client; empty and unavailable results remain distinct.
