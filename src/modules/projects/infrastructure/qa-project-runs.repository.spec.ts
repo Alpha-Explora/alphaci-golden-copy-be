@@ -283,3 +283,87 @@ describe('QaProjectRunsRepository.createRun (P1: the key is (Iteration, heads))'
     expect(selectParams).toEqual(['it-2', input.headsFingerprint]);
   });
 });
+
+describe('QaProjectRunsRepository.countIterationItemsNotPassed', () => {
+  it("counts the Iteration's active items with no PASSED row in the run", async () => {
+    const { query, repository } = build([{ n: 2 }]);
+
+    await expect(
+      repository.countIterationItemsNotPassed('it-2', 'run-7'),
+    ).resolves.toBe(2);
+
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('c.iteration_id = $1');
+    expect(sql).toContain('c.archived_at IS NULL');
+    expect(sql).toContain('ri.run_id = $2');
+    expect(sql).toContain("ri.status = 'passed'");
+    expect(params).toEqual(['it-2', 'run-7']);
+  });
+
+  it('is 0 when the query returns no row', async () => {
+    const { repository } = build([]);
+
+    await expect(
+      repository.countIterationItemsNotPassed('it-2', 'run-7'),
+    ).resolves.toBe(0);
+  });
+});
+
+describe('QaProjectRunsRepository.appendMissingItemsToOpenRuns', () => {
+  function withClient(openRunIds: string[], rowCounts: number[]) {
+    const clientQuery = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: openRunIds.map((id) => ({ id })) });
+    for (const rowCount of rowCounts) {
+      clientQuery.mockResolvedValueOnce({ rows: [], rowCount });
+    }
+    const withTransaction = jest.fn(
+      (work: (client: { query: typeof clientQuery }) => Promise<unknown>) =>
+        work({ query: clientQuery }),
+    );
+    const repository = new QaProjectRunsRepository({
+      query: jest.fn(),
+      withTransaction,
+    } as unknown as DatabaseService);
+    return { clientQuery, repository };
+  }
+
+  it('locks every open Project run of the Iteration and appends the items it lacks, after its last position', async () => {
+    const { clientQuery, repository } = withClient(['run-1', 'run-2'], [2, 0]);
+
+    await expect(repository.appendMissingItemsToOpenRuns('it-3')).resolves.toBe(
+      2,
+    );
+
+    const [lockSql, lockParams] = clientQuery.mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(lockSql).toContain("status = 'open'");
+    expect(lockSql).toContain('FOR UPDATE');
+    expect(lockParams).toEqual(['it-3']);
+
+    const [insertSql, insertParams] = clientQuery.mock.calls[1] as [
+      string,
+      unknown[],
+    ];
+    expect(insertSql).toContain('INSERT INTO projects.qa_run_items');
+    expect(insertSql).toContain('COALESCE(MAX("position"), -1)');
+    expect(insertSql).toContain('c.archived_at IS NULL');
+    expect(insertSql).toContain('ri.source_item_id = i.id');
+    expect(insertParams).toEqual(['run-1', 'it-3']);
+    expect((clientQuery.mock.calls[2] as [string, unknown[]])[1]).toEqual([
+      'run-2',
+      'it-3',
+    ]);
+  });
+
+  it('does nothing without an open run', async () => {
+    const { clientQuery, repository } = withClient([], []);
+
+    await expect(repository.appendMissingItemsToOpenRuns('it-3')).resolves.toBe(
+      0,
+    );
+    expect(clientQuery).toHaveBeenCalledTimes(1);
+  });
+});

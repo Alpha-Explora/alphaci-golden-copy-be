@@ -173,6 +173,7 @@ function setup({
     listByWorkspace: jest.fn().mockResolvedValue([requirementRow()]),
   } as unknown as jest.Mocked<QaRequirementsRepository>;
   const projectRuns = {
+    appendMissingItemsToOpenRuns: jest.fn().mockResolvedValue(0),
     findReturnedOpenRunItems: jest.fn().mockResolvedValue([]),
     findLatestRunHeadlines: jest.fn().mockResolvedValue(new Map()),
     listItemFactsByRunIds: jest.fn().mockResolvedValue(new Map()),
@@ -1320,6 +1321,36 @@ describe('QaRequirementsService - Iterations', () => {
       expect.objectContaining({ iterationId: 'it-1' }),
       expect.objectContaining({ iterationId: 'it-1' }),
     ]);
+  });
+
+  it('new items join the open QA runs of their Iteration (create, createBatch, addItem)', async () => {
+    const { service, projectRuns, requirements } = setup();
+    requirements.appendItem.mockResolvedValue(itemRow({ id: 'item-9' }));
+
+    await service.create(DP, 'lead-1', { kind: 'system', name: 'API checks' });
+    await service.createBatch(DP, 'lead-1', {
+      kind: 'functional',
+      requirements: [{ name: 'A' }],
+    });
+    await service.addItem('req-1', 'lead-1', { title: 'Can pay' });
+
+    expect(projectRuns.appendMissingItemsToOpenRuns.mock.calls).toEqual([
+      ['it-1'],
+      ['it-1'],
+      ['it-1'],
+    ]);
+  });
+
+  it('an item is saved even when adding it to the open QA runs fails', async () => {
+    const { service, projectRuns, requirements } = setup();
+    requirements.appendItem.mockResolvedValue(itemRow({ id: 'item-9' }));
+    projectRuns.appendMissingItemsToOpenRuns.mockRejectedValue(
+      new Error('db down'),
+    );
+
+    const item = await service.addItem('req-1', 'lead-1', { title: 'Can pay' });
+
+    expect(item.id).toBe('item-9');
   });
 
   it('lists the requirements of the current Iteration only', async () => {
