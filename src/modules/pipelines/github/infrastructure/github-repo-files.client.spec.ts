@@ -133,17 +133,20 @@ describe('GithubRepoFilesClient', () => {
     });
   });
 
-  it('advances an existing branch: head -> commit -> tree on top of it -> commit -> ref', async () => {
+  it('builds on the recorded head without reading the branch first, and makes the commit on that parent', async () => {
     fetchMock
-      .mockResolvedValueOnce(response(200, { object: { sha: 'head' } }))
-      .mockResolvedValueOnce(response(200, { tree: { sha: 'headtree' } }))
+      .mockResolvedValueOnce(response(200, { tree: { sha: 'recordedtree' } }))
+      .mockResolvedValueOnce(response(201, { sha: 'blob1' }))
       .mockResolvedValueOnce(response(201, { sha: 'tree1' }))
       .mockResolvedValueOnce(response(201, { sha: 'commit1' }))
-      .mockResolvedValueOnce(response(200, {}));
+      .mockResolvedValueOnce(response(200, { object: { sha: 'recorded' } }))
+      .mockResolvedValueOnce(response(201, {}));
 
-    const result = await client.commitFilesToBranch('t', 'o/r', {
-      branch: 'uat',
-      message: 'ci: point',
+    const result = await client.commitFilesToNewBranch('t', 'o/r', {
+      fromBranch: 'dev',
+      fromSha: 'recorded',
+      newBranch: 'alphaci/repair-ci-api-url',
+      message: 'm',
       files: [{ path: '.github/workflows/ci.yml', content: 'new' }],
     });
 
@@ -153,74 +156,51 @@ describe('GithubRepoFilesClient', () => {
         `${String(c[1]?.method ?? 'GET')} ${String(c[0]).split('/repos/o/r')[1]}`,
     );
     expect(urls).toEqual([
-      'GET /git/ref/heads/uat',
-      'GET /git/commits/head',
+      'GET /git/commits/recorded',
+      'POST /git/blobs',
       'POST /git/trees',
       'POST /git/commits',
-      'PATCH /git/refs/heads/uat',
+      'GET /git/ref/heads/dev',
+      'POST /git/refs',
     ]);
-    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
-      base_tree: 'headtree',
-      tree: [
-        {
-          path: '.github/workflows/ci.yml',
-          mode: '100644',
-          type: 'blob',
-          content: 'new',
-        },
-      ],
-    });
-    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
-      message: 'ci: point',
-      tree: 'tree1',
-      parents: ['head'],
-    });
-    expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body))).toEqual({
-      sha: 'commit1',
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)),
+    ).toMatchObject({
+      parents: ['recorded'],
     });
   });
 
-  it("returns GitHub's own sentence when it refuses to move the branch", async () => {
+  it('refuses to create the branch when the base branch moved since the recorded head', async () => {
     fetchMock
-      .mockResolvedValueOnce(response(200, { object: { sha: 'head' } }))
-      .mockResolvedValueOnce(response(200, { tree: { sha: 'headtree' } }))
+      .mockResolvedValueOnce(response(200, { tree: { sha: 'recordedtree' } }))
+      .mockResolvedValueOnce(response(201, { sha: 'blob1' }))
       .mockResolvedValueOnce(response(201, { sha: 'tree1' }))
       .mockResolvedValueOnce(response(201, { sha: 'commit1' }))
-      .mockResolvedValueOnce(
-        response(422, {
-          message: 'Changes must be made through a pull request.',
-        }),
-      );
+      .mockResolvedValueOnce(response(200, { object: { sha: 'moved' } }));
 
     await expect(
-      client.commitFilesToBranch('t', 'o/r', {
-        branch: 'dev',
+      client.commitFilesToNewBranch('t', 'o/r', {
+        fromBranch: 'dev',
+        fromSha: 'recorded',
+        newBranch: 'alphaci/repair-ci-api-url',
         message: 'm',
         files: [{ path: 'a.yml', content: 'x' }],
       }),
-    ).resolves.toEqual({
-      committed: false,
-      reason: 'refused',
-      message:
-        'GitHub would not update dev: Changes must be made through a pull request.',
-    });
+    ).resolves.toMatchObject({ committed: false, reason: 'base_moved' });
+    expect(
+      fetchMock.mock.calls.some((c) => String(c[0]).endsWith('/git/refs')),
+    ).toBe(false);
   });
 
-  it('reports a branch that does not exist without writing anything', async () => {
-    fetchMock.mockResolvedValueOnce(response(404));
+  it('reads a branch head, and reports an absent branch as null', async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(200, { object: { sha: 'head1' } }))
+      .mockResolvedValueOnce(response(404));
 
-    await expect(
-      client.commitFilesToBranch('t', 'o/r', {
-        branch: 'uat',
-        message: 'm',
-        files: [{ path: 'a.yml', content: 'x' }],
-      }),
-    ).resolves.toEqual({
-      committed: false,
-      reason: 'base_missing',
-      message: "Branch 'uat' does not exist in o/r.",
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(client.readBranchHead('t', 'o/r', 'dev')).resolves.toBe(
+      'head1',
+    );
+    await expect(client.readBranchHead('t', 'o/r', 'gone')).resolves.toBeNull();
   });
 
   it('maps 401, a missing base and a taken ref', async () => {

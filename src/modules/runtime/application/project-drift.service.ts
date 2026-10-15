@@ -15,6 +15,7 @@ import {
 } from '#kernel/ports/github.port';
 import {
   findStaleCiWorkflowFiles,
+  isReachableFromGithubRunners,
   resolvePlatformBaseUrl,
 } from '#kernel/config/ci-api-base-url';
 import {
@@ -366,6 +367,11 @@ export class ProjectDriftService implements DeploymentDriftQuery {
       return [];
     }
     const expectedBaseUrl = resolvePlatformBaseUrl();
+    // A base GitHub runners cannot reach is not a drift to report: there is
+    // nothing correct to point CI at until PLATFORM_PUBLIC_URL is set.
+    if (!isReachableFromGithubRunners(expectedBaseUrl)) {
+      return [];
+    }
     const files: Array<{ branch: string; path: string }> = [];
     const staleBaseUrls = new Set<string>();
 

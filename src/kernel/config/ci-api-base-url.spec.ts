@@ -2,6 +2,8 @@ import type { GithubProjectPort } from '#kernel/ports/github.port';
 
 import {
   findStaleCiWorkflowFiles,
+  isReachableFromGithubRunners,
+  normalizeOrigin,
   resolvePlatformBaseUrl,
   rewriteCiApiBase,
 } from './ci-api-base-url';
@@ -28,6 +30,32 @@ describe('resolvePlatformBaseUrl', () => {
   });
 });
 
+describe('isReachableFromGithubRunners', () => {
+  it.each([
+    'http://localhost:4000',
+    'https://localhost:4000',
+    'https://127.0.0.1',
+    'https://[::1]',
+    'https://api.localhost',
+    'http://dev-api.alphaci.com.ph',
+  ])('refuses %s', (base) => {
+    expect(isReachableFromGithubRunners(base)).toBe(false);
+  });
+
+  it('accepts a public HTTPS address', () => {
+    expect(isReachableFromGithubRunners(CURRENT)).toBe(true);
+  });
+});
+
+describe('normalizeOrigin', () => {
+  it('lower-cases the origin and drops the default port and any slash', () => {
+    expect(normalizeOrigin('HTTPS://Dev-API.alphaci.com.ph:443/')).toBe(
+      CURRENT,
+    );
+    expect(normalizeOrigin('http://localhost:80')).toBe('http://localhost');
+  });
+});
+
 describe('rewriteCiApiBase', () => {
   it('leaves a file that already names the current base untouched', () => {
     const content = `env:\n  ALPHACI_VALIDATE_URL: ${CURRENT}/api/v1/ci/validate\n`;
@@ -38,11 +66,13 @@ describe('rewriteCiApiBase', () => {
     });
   });
 
-  it('rewrites a stale base in URLs and in the alphaci-api-url input', () => {
+  it('replaces every AlphaCI API base the generator writes: keyed values, URLs and the reusable input', () => {
     const content = [
       "      ALPHACI_VALIDATE_URL: 'http://localhost:4000/api/v1/ci/validate'",
-      '      ALPHACI_REPORT: http://localhost:4000/api/v1/ci/report',
+      '      ALPHACI_REPORT_URL: http://localhost:4000/api/v1/ci/report',
       "        'alphaci-api-url': http://localhost:4000",
+      '          ALPHACI_API_URL: http://localhost:4000',
+      '          api-url: http://localhost:4000',
       '      uses: Alpha-Explora/central@v1',
     ].join('\n');
 
@@ -51,26 +81,32 @@ describe('rewriteCiApiBase', () => {
     expect(result.content).toBe(
       [
         `      ALPHACI_VALIDATE_URL: '${CURRENT}/api/v1/ci/validate'`,
-        `      ALPHACI_REPORT: ${CURRENT}/api/v1/ci/report`,
+        `      ALPHACI_REPORT_URL: ${CURRENT}/api/v1/ci/report`,
         `        'alphaci-api-url': ${CURRENT}`,
+        `          ALPHACI_API_URL: ${CURRENT}`,
+        `          api-url: ${CURRENT}`,
         '      uses: Alpha-Explora/central@v1',
       ].join('\n'),
     );
     expect(result.staleBases).toEqual(['http://localhost:4000']);
   });
 
-  it('handles a trailing slash and a quoted value on the input line', () => {
-    const result = rewriteCiApiBase(
-      'alphaci-api-url: "http://localhost:4000/"  # platform\n',
-      CURRENT,
-    );
+  it('replaces every occurrence of a stale base once the file has shown it is stale', () => {
+    const content = [
+      '          ALPHACI_API_URL: http://localhost:4000',
+      '        run: echo http://localhost:4000 >> out.txt',
+    ].join('\n');
 
-    expect(result.content).toBe(`alphaci-api-url: "${CURRENT}"  # platform\n`);
-    expect(result.staleBases).toEqual(['http://localhost:4000']);
+    expect(rewriteCiApiBase(content, CURRENT).content).toBe(
+      [
+        `          ALPHACI_API_URL: ${CURRENT}`,
+        `        run: echo ${CURRENT} >> out.txt`,
+      ].join('\n'),
+    );
   });
 
-  it('never treats a longer path that merely starts with /api/v1/ci as the API', () => {
-    const content = 'url: https://example.com/api/v1/ci-legacy/hook\n';
+  it('does not flag or rewrite a whole-line comment', () => {
+    const content = '# ALPHACI_API_URL: http://localhost:4000\n';
 
     expect(rewriteCiApiBase(content, CURRENT)).toEqual({
       content,
@@ -78,16 +114,49 @@ describe('rewriteCiApiBase', () => {
     });
   });
 
-  it('leaves unrelated URLs alone, such as GitHub and action sources', () => {
+  it('never hardcodes a base that is an expression', () => {
     const content = [
-      'run: curl -s https://api.github.com/repos/o/r',
-      'uses: https://github.com/Alpha-Explora/central@v1',
+      '          ALPHACI_VALIDATE_URL: https://${{ vars.HOST }}/api/v1/ci/validate',
+      '          api-url: https://${{ vars.HOST }}',
     ].join('\n');
 
     expect(rewriteCiApiBase(content, CURRENT)).toEqual({
       content,
       staleBases: [],
     });
+  });
+
+  it('keeps the first URL on a line when the second is the stale API', () => {
+    const content =
+      'ref: http://a.example/x,https://b.example/api/v1/ci/report\n';
+
+    expect(rewriteCiApiBase(content, CURRENT)).toEqual({
+      content: `ref: http://a.example/x,${CURRENT}/api/v1/ci/report\n`,
+      staleBases: ['https://b.example'],
+    });
+  });
+
+  it('treats a default port as the same base', () => {
+    const content = `          ALPHACI_API_URL: ${CURRENT}:443\n`;
+
+    expect(rewriteCiApiBase(content, CURRENT)).toEqual({
+      content,
+      staleBases: [],
+    });
+  });
+
+  it('does not rewrite a different port that only starts the same way', () => {
+    const content = [
+      '          ALPHACI_API_URL: http://localhost:4000',
+      '        run: curl http://localhost:40001/health',
+    ].join('\n');
+
+    expect(rewriteCiApiBase(content, CURRENT).content).toBe(
+      [
+        `          ALPHACI_API_URL: ${CURRENT}`,
+        '        run: curl http://localhost:40001/health',
+      ].join('\n'),
+    );
   });
 });
 
@@ -121,7 +190,7 @@ describe('findStaleCiWorkflowFiles', () => {
     jest.clearAllMocks();
   });
 
-  it('reads no files on a branch that does not exist', async () => {
+  it('reads no files on a ref that does not exist', async () => {
     github.listRepoContents.mockResolvedValue({
       path: '.github/workflows',
       ref: 'dev',

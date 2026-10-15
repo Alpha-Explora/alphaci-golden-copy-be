@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -221,22 +222,25 @@ describe('ProjectDriftRepairService', () => {
   });
 
   describe('repair_ci_api_url', () => {
-    /** The branch each commit was asked to advance, in call order. */
-    const committedBranches = (): string[] =>
-      github.commitFilesToBranch.mock.calls.map(
-        (call: [string, string, { branch: string }]) => call[2].branch,
-      );
-
     const API = 'https://api.alphaci.test';
     const STALE = 'alphaci-api-url: http://localhost:4000\n';
     const FIXED = `alphaci-api-url: ${API}\n`;
+    const PERMISSIONS = {
+      contents: 'write',
+      workflows: 'write',
+      pull_requests: 'write',
+      secrets: 'write',
+    };
     const github = {
-      getInstallationAccessTokenForUserRepo: jest.fn(),
+      getRepoPermissions: jest.fn(),
       getRepoInstallationAccessToken: jest.fn(),
+      getBranchHeadSha: jest.fn(),
       listRepoContents: jest.fn(),
       getFileContent: jest.fn(),
       setActionsSecretStrict: jest.fn(),
-      commitFilesToBranch: jest.fn(),
+      commitFilesToNewBranch: jest.fn(),
+      findOpenPullRequest: jest.fn(),
+      openPullRequest: jest.fn(),
     };
     const findAppRole = jest.fn();
     const ciFinding = {
@@ -252,32 +256,26 @@ describe('ProjectDriftRepairService', () => {
       detectedAt: '2026-06-13T00:00:00.000Z',
       resolvedAt: null,
     };
-    /** branch -> whether its one workflow file still names the old base. */
-    function branches(stale: Record<string, boolean>) {
-      github.listRepoContents.mockImplementation(
-        (_t: string, _r: string, _p: string, branch: string) =>
-          Promise.resolve({
-            path: '.github/workflows',
-            ref: branch,
-            entries:
-              branch in stale
-                ? [
-                    {
-                      name: 'ci.yml',
-                      path: '.github/workflows/ci.yml',
-                      type: 'file',
-                      size: 1,
-                      sha: 's',
-                    },
-                  ]
-                : [],
-            file: null,
-          }),
-      );
-      github.getFileContent.mockImplementation(
-        (_t: string, _o: string, _r: string, _p: string, branch: string) =>
-          Promise.resolve(stale[branch] ? STALE : FIXED),
-      );
+    const PR_URL = 'https://github.com/tone/orders-api/pull/42';
+    let previousBase: string | undefined;
+
+    /** dev carries one workflow; `stale` decides whether it still names the old base. */
+    function devWorkflow(stale: boolean) {
+      github.listRepoContents.mockResolvedValue({
+        path: '.github/workflows',
+        ref: 'dev-head',
+        entries: [
+          {
+            name: 'ci.yml',
+            path: '.github/workflows/ci.yml',
+            type: 'file',
+            size: 1,
+            sha: 's',
+          },
+        ],
+        file: null,
+      });
+      github.getFileContent.mockResolvedValue(stale ? STALE : FIXED);
     }
     function service() {
       return new ProjectDriftRepairService(
@@ -292,161 +290,211 @@ describe('ProjectDriftRepairService', () => {
         github as never,
       );
     }
-    const repair = (role = 'lead') => {
+    const repair = (
+      role = 'lead',
+      userToken: string | null = 'gh-user-token',
+    ) => {
       findAppRole.mockResolvedValue(role);
       return service().repair(
         'project-1',
         'finding-ci',
         'user-1',
         'repair_ci_api_url',
-        'gh-user-token',
+        userToken,
       );
     };
 
     beforeEach(() => {
+      previousBase = process.env['PLATFORM_PUBLIC_URL'];
       process.env['PLATFORM_PUBLIC_URL'] = API;
       findingsRepository.findByIdForProject.mockResolvedValue(ciFinding);
-      github.getInstallationAccessTokenForUserRepo.mockResolvedValue(
-        'install-token',
-      );
-      github.getRepoInstallationAccessToken.mockResolvedValue(null);
+      github.getRepoPermissions.mockResolvedValue({ push: true, admin: false });
+      github.getRepoInstallationAccessToken.mockResolvedValue('app-token');
+      github.getBranchHeadSha.mockResolvedValue('dev-head');
       github.setActionsSecretStrict.mockResolvedValue(undefined);
-      github.commitFilesToBranch.mockImplementation(
-        (_t: string, _r: string, input: { branch: string }) =>
-          Promise.resolve({
-            committed: true,
-            commitSha: `sha-${input.branch}`,
-          }),
-      );
-      branches({ dev: true, uat: true, main: true });
+      github.commitFilesToNewBranch.mockResolvedValue({
+        committed: true,
+        commitSha: 'commit-1',
+      });
+      github.openPullRequest.mockResolvedValue({
+        created: true,
+        pullRequest: { number: 42, htmlUrl: PR_URL },
+      });
+      github.findOpenPullRequest.mockResolvedValue(null);
+      devWorkflow(true);
     });
     afterEach(() => {
-      delete process.env['PLATFORM_PUBLIC_URL'];
+      if (previousBase === undefined) {
+        delete process.env['PLATFORM_PUBLIC_URL'];
+      } else {
+        process.env['PLATFORM_PUBLIC_URL'] = previousBase;
+      }
     });
 
-    it('sets both secrets before committing, then one commit per branch: dev, uat, main', async () => {
-      await repair();
+    it('resets both secrets, then opens one pull request into dev built on the recorded head', async () => {
+      const response = await repair();
 
       expect(github.setActionsSecretStrict.mock.calls).toEqual([
-        ['install-token', 'tone', 'orders-api', 'ALPHACI_API_URL', API],
+        ['app-token', 'tone', 'orders-api', 'ALPHACI_API_URL', API],
         [
-          'install-token',
+          'app-token',
           'tone',
           'orders-api',
           'ALPHACI_REPORT_URL',
           `${API}/api/v1/ci/report`,
         ],
       ]);
-      expect(committedBranches()).toEqual(['dev', 'uat', 'main']);
+      expect(github.commitFilesToNewBranch).toHaveBeenCalledWith(
+        'app-token',
+        'tone/orders-api',
+        {
+          fromBranch: 'dev',
+          fromSha: 'dev-head',
+          newBranch: 'alphaci/repair-ci-api-url',
+          message: 'ci: point ALPHACI checks at the public API URL',
+          files: [{ path: '.github/workflows/ci.yml', content: FIXED }],
+        },
+      );
+      expect(github.openPullRequest).toHaveBeenCalledWith(
+        'app-token',
+        'tone/orders-api',
+        expect.objectContaining({
+          head: 'alphaci/repair-ci-api-url',
+          base: 'dev',
+        }),
+      );
+      expect(response).toMatchObject({
+        status: 'completed',
+        message: `Opened a pull request into dev: ${PR_URL}`,
+        result: { pullRequestUrl: PR_URL, pullRequestNumber: 42 },
+      });
+      expect(findingsRepository.markStatus).not.toHaveBeenCalled();
+    });
+
+    it('sets the secrets before the branch is written', async () => {
+      await repair();
+
       const lastSecret = Math.max(
         ...github.setActionsSecretStrict.mock.invocationCallOrder,
       );
       expect(
-        Math.min(...github.commitFilesToBranch.mock.invocationCallOrder),
+        github.commitFilesToNewBranch.mock.invocationCallOrder[0],
       ).toBeGreaterThan(lastSecret);
-      expect(github.commitFilesToBranch.mock.calls[0]?.[2]).toEqual({
-        branch: 'dev',
-        message: 'ci: point ALPHACI checks at the public API URL',
-        files: [{ path: '.github/workflows/ci.yml', content: FIXED }],
-      });
     });
 
-    it('commits only to the branches that still name the old base', async () => {
-      branches({ dev: false, uat: true, main: false });
+    it('reports the open pull request when a previous run already opened it', async () => {
+      github.commitFilesToNewBranch.mockResolvedValue({
+        committed: false,
+        reason: 'branch_exists',
+        message: "Branch 'alphaci/repair-ci-api-url' already exists.",
+      });
+      github.findOpenPullRequest.mockResolvedValue({
+        number: 7,
+        htmlUrl: 'https://github.com/tone/orders-api/pull/7',
+      });
 
       const response = await repair();
 
-      expect(github.commitFilesToBranch).toHaveBeenCalledTimes(1);
-      expect(github.commitFilesToBranch.mock.calls[0]?.[2].branch).toBe('uat');
-      expect(response).toMatchObject({
-        status: 'completed',
-        result: {
-          commits: [
-            {
-              branch: 'uat',
-              commitSha: 'sha-uat',
-              files: ['.github/workflows/ci.yml'],
-            },
-          ],
-        },
+      expect(github.findOpenPullRequest).toHaveBeenCalledWith(
+        'app-token',
+        'tone/orders-api',
+        'alphaci/repair-ci-api-url',
+        'dev',
+      );
+      expect(github.openPullRequest).not.toHaveBeenCalled();
+      expect(response.message).toBe(
+        'A pull request into dev is already open: https://github.com/tone/orders-api/pull/7',
+      );
+    });
+
+    it('refuses a leftover branch with no open pull request, rather than overwriting it', async () => {
+      github.commitFilesToNewBranch.mockResolvedValue({
+        committed: false,
+        reason: 'branch_exists',
+        message: 'exists',
       });
+
+      await expect(repair()).rejects.toBeInstanceOf(ConflictException);
+      expect(github.openPullRequest).not.toHaveBeenCalled();
     });
 
-    it('resolves the finding with nothing to commit when the files already name the current base', async () => {
-      branches({ dev: false, uat: false, main: false });
+    it('stops without a pull request when dev moved while the repair was being prepared', async () => {
+      github.commitFilesToNewBranch.mockResolvedValue({
+        committed: false,
+        reason: 'base_moved',
+        message: 'moved',
+      });
 
-      const response = await repair();
-
-      expect(github.commitFilesToBranch).not.toHaveBeenCalled();
-      expect(github.setActionsSecretStrict).toHaveBeenCalledTimes(2);
-      expect(findingsRepository.markStatus).toHaveBeenCalledWith(
-        'finding-ci',
-        'resolved',
-      );
-      expect(response.message).toContain('no workflow file needed a change');
-    });
-
-    it('stops at a refused branch, leaves the finding active, and names what was committed', async () => {
-      github.commitFilesToBranch.mockImplementation(
-        (_t: string, _r: string, input: { branch: string }) =>
-          Promise.resolve(
-            input.branch === 'uat'
-              ? {
-                  committed: false,
-                  reason: 'refused',
-                  message:
-                    'GitHub would not update uat: Changes must be made through a pull request.',
-                }
-              : { committed: true, commitSha: `sha-${input.branch}` },
-          ),
-      );
-
-      await expect(repair()).rejects.toThrow(
-        /Repair stopped at uat: .*Already committed: dev\./,
-      );
-      expect(committedBranches()).toEqual(['dev', 'uat']);
+      await expect(repair()).rejects.toBeInstanceOf(ConflictException);
+      expect(github.openPullRequest).not.toHaveBeenCalled();
       expect(findingsRepository.markStatus).not.toHaveBeenCalled();
     });
 
-    it('uses the stored installation first and does not ask GitHub', async () => {
-      await repair();
+    it('opens no pull request when dev already names the current base, and does not resolve the finding', async () => {
+      devWorkflow(false);
 
-      expect(github.getInstallationAccessTokenForUserRepo).toHaveBeenCalledWith(
-        'user-1',
-        'tone/orders-api',
-      );
-      expect(github.getRepoInstallationAccessToken).not.toHaveBeenCalled();
+      const response = await repair();
+
+      expect(github.setActionsSecretStrict).toHaveBeenCalledTimes(2);
+      expect(github.commitFilesToNewBranch).not.toHaveBeenCalled();
+      expect(response.message).toContain('no workflow change was needed');
+      expect(findingsRepository.markStatus).not.toHaveBeenCalled();
     });
 
-    it("falls back to GitHub's own installation for the repository when no stored one matches", async () => {
-      github.getInstallationAccessTokenForUserRepo.mockResolvedValue(null);
-      github.getRepoInstallationAccessToken.mockResolvedValue('gh-install');
+    it('refuses a caller who cannot push, before any secret or token is touched', async () => {
+      github.getRepoPermissions.mockResolvedValue({
+        push: false,
+        admin: false,
+      });
 
+      await expect(repair()).rejects.toBeInstanceOf(ForbiddenException);
+      expect(github.getRepoInstallationAccessToken).not.toHaveBeenCalled();
+      expect(github.setActionsSecretStrict).not.toHaveBeenCalled();
+    });
+
+    it("checks the push permission with the caller's own token", async () => {
+      await repair();
+
+      expect(github.getRepoPermissions).toHaveBeenCalledWith(
+        'gh-user-token',
+        'tone/orders-api',
+      );
+    });
+
+    it('needs a GitHub session', async () => {
+      await expect(repair('lead', null)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(github.getRepoPermissions).not.toHaveBeenCalled();
+    });
+
+    it('asks GitHub for a token narrowed to this repository and the repair permissions', async () => {
       await repair();
 
       expect(github.getRepoInstallationAccessToken).toHaveBeenCalledWith(
         'tone/orders-api',
+        PERMISSIONS,
       );
-      for (const call of github.setActionsSecretStrict.mock.calls) {
-        expect(call[0]).toBe('gh-install');
-      }
-      for (const call of github.commitFilesToBranch.mock.calls) {
-        expect(call[0]).toBe('gh-install');
-      }
     });
 
     it('refuses with a plain message when the App is not installed on the repository', async () => {
-      github.getInstallationAccessTokenForUserRepo.mockResolvedValue(null);
       github.getRepoInstallationAccessToken.mockResolvedValue(null);
 
       await expect(repair()).rejects.toBeInstanceOf(BadRequestException);
       expect(github.setActionsSecretStrict).not.toHaveBeenCalled();
-      expect(github.commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('refuses a deployment with no public API URL with a 409, before any GitHub call', async () => {
+      process.env['PLATFORM_PUBLIC_URL'] = 'http://localhost:4000';
+
+      await expect(repair()).rejects.toBeInstanceOf(ConflictException);
+      expect(github.getRepoPermissions).not.toHaveBeenCalled();
+      expect(github.setActionsSecretStrict).not.toHaveBeenCalled();
     });
 
     it('is a lead or admin action', async () => {
       await expect(repair('member')).rejects.toBeInstanceOf(ForbiddenException);
-      expect(github.commitFilesToBranch).not.toHaveBeenCalled();
+      expect(github.commitFilesToNewBranch).not.toHaveBeenCalled();
     });
 
     it('refuses a finding of another code', async () => {

@@ -24,8 +24,8 @@ import {
   type GitHubDispatchWorkflowResult,
   type GitHubCommitFilesInput,
   type GitHubCommitFilesResult,
-  type GitHubCommitToBranchInput,
-  type GitHubCommitToBranchResult,
+  type GitHubRepoPermissions,
+  type GitHubTokenPermissions,
   type GitHubRepoFilesResult,
   type GitHubRepoPathsResult,
   type GitHubOpenPullRequestInput,
@@ -546,7 +546,10 @@ export class GithubService
     return `${unsigned}.${signature}`;
   }
 
-  async createInstallationAccessToken(installationId: number): Promise<string> {
+  async createInstallationAccessToken(
+    installationId: number,
+    scope?: { repositories: string[]; permissions: GitHubTokenPermissions },
+  ): Promise<string> {
     const response = await this.http.fetchWithRetry(
       `https://api.github.com/app/installations/${String(installationId)}/access_tokens`,
       {
@@ -555,7 +558,9 @@ export class GithubService
           Authorization: `Bearer ${this.createAppJwt()}`,
           Accept: 'application/vnd.github+json',
           'User-Agent': 'cicd-workflow-product',
+          ...(scope ? { 'Content-Type': 'application/json' } : {}),
         },
+        ...(scope ? { body: JSON.stringify(scope) } : {}),
       },
     );
 
@@ -2381,22 +2386,46 @@ export class GithubService
     );
   }
 
-  commitFilesToBranch(
+  /** The commit a branch points at now; null when the branch does not exist. */
+  getBranchHeadSha(
     accessToken: string,
     repoFullName: string,
-    input: GitHubCommitToBranchInput,
-  ): Promise<GitHubCommitToBranchResult> {
-    return this.repoFiles.commitFilesToBranch(accessToken, repoFullName, input);
+    branch: string,
+  ): Promise<string | null> {
+    return this.repoFiles.readBranchHead(accessToken, repoFullName, branch);
   }
 
   /**
-   * The App installation GitHub reports for one repository. Stored
-   * installation rows can be empty while the App is installed (installed by
-   * someone else, or before linking), so drift repair asks GitHub directly.
-   * A 404 means the App is not installed there: null, never a guess.
+   * What the caller may do on the repository, read with their own token. Any
+   * answer other than a readable repository is null: the answer fails closed.
+   */
+  async getRepoPermissions(
+    accessToken: string,
+    repoFullName: string,
+  ): Promise<GitHubRepoPermissions | null> {
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${repoFullName}`,
+      { headers: this.http.workspaceHeaders(accessToken) },
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      permissions?: { push?: boolean; admin?: boolean };
+    };
+    return {
+      push: payload.permissions?.push === true,
+      admin: payload.permissions?.admin === true,
+    };
+  }
+
+  /**
+   * An installation token for the App's installation on one repository, asked
+   * of GitHub and narrowed to that repository and `permissions`. Stored
+   * installation rows are not used: they can be empty, and a token minted from
+   * them could not be narrowed. Null when the App is not installed there.
    */
   async getRepoInstallationAccessToken(
     repoFullName: string,
+    permissions: GitHubTokenPermissions,
   ): Promise<string | null> {
     const [owner, repo] = repoFullName.split('/');
     if (!owner || !repo) return null;
@@ -2421,7 +2450,10 @@ export class GithubService
 
     const payload = (await response.json()) as { id?: unknown };
     if (typeof payload.id !== 'number') return null;
-    return this.createInstallationAccessToken(payload.id);
+    return this.createInstallationAccessToken(payload.id, {
+      repositories: [repo],
+      permissions,
+    });
   }
 
   /**

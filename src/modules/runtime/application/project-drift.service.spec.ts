@@ -310,12 +310,19 @@ describe('ProjectDriftService', () => {
     const localhost = 'alphaci-api-url: http://localhost:4000\n';
     const current = `alphaci-api-url: ${CURRENT}\n`;
 
+    let previousBase: string | undefined;
+
     beforeEach(() => {
+      previousBase = process.env['PLATFORM_PUBLIC_URL'];
       process.env['PLATFORM_PUBLIC_URL'] = CURRENT;
       github.getBranchProtectionSummary.mockResolvedValue(compliant);
     });
     afterEach(() => {
-      delete process.env['PLATFORM_PUBLIC_URL'];
+      if (previousBase === undefined) {
+        delete process.env['PLATFORM_PUBLIC_URL'];
+      } else {
+        process.env['PLATFORM_PUBLIC_URL'] = previousBase;
+      }
     });
 
     function serviceWithGithub() {
@@ -374,6 +381,14 @@ describe('ProjectDriftService', () => {
       repoFiles({ dev: { 'ci.yml': localhost } });
 
       await expect(ciFindings(null)).resolves.toEqual([]);
+      expect(github.listRepoContents).not.toHaveBeenCalled();
+    });
+
+    it('raises nothing while the expected base is one GitHub runners cannot reach', async () => {
+      process.env['PLATFORM_PUBLIC_URL'] = 'http://localhost:4000';
+      repoFiles({ dev: { 'ci.yml': localhost } });
+
+      await expect(ciFindings()).resolves.toEqual([]);
       expect(github.listRepoContents).not.toHaveBeenCalled();
     });
 

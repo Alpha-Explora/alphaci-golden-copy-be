@@ -356,35 +356,28 @@ export type GitHubRepoPathsResult =
   | { read: true; paths: string[]; truncated: boolean }
   | { read: false; reason: 'unauthorized'; message: string };
 
-/**
- * Files to replace on an existing branch, as one new commit on top of it.
- * Every file not listed is carried over untouched from the branch head.
- */
-export interface GitHubCommitToBranchInput {
-  branch: string;
-  message: string;
-  /** Full UTF-8 contents of each file to replace. */
-  files: { path: string; content: string }[];
+/** What the caller may do on a repository, as GitHub reports it to them. */
+export interface GitHubRepoPermissions {
+  push: boolean;
+  admin: boolean;
 }
 
 /**
- * The outcome of advancing an existing branch.
- *
- *   base_missing  the branch does not exist
- *   refused       GitHub would not move the branch (a protection rule, or a
- *                 head that moved underneath us); `message` is GitHub's own
+ * Permissions an installation token is narrowed to, by GitHub's own names
+ * (`contents`, `workflows`, `secrets`, `pull_requests`). Only what a
+ * repair needs, never the App's full set.
  */
-export type GitHubCommitToBranchResult =
-  | { committed: true; commitSha: string }
-  | {
-      committed: false;
-      reason: 'base_missing' | 'refused';
-      message: string;
-    };
+export type GitHubTokenPermissions = Readonly<Record<string, 'read' | 'write'>>;
 
 export interface GitHubCommitFilesInput {
   /** Existing branch the new one starts from. */
   fromBranch: string;
+  /**
+   * The commit `fromBranch` was read at. When given, the new branch is built on
+   * it, and the commit fails with `base_moved` if the branch has moved since,
+   * rather than building on a head the caller never read.
+   */
+  fromSha?: string;
   /** Branch to create. Created LAST, so a failure leaves nothing behind. */
   newBranch: string;
   message: string;
@@ -404,7 +397,12 @@ export type GitHubCommitFilesResult =
   | { committed: true; commitSha: string }
   | {
       committed: false;
-      reason: 'unauthorized' | 'forbidden' | 'branch_exists' | 'base_missing';
+      reason:
+        | 'unauthorized'
+        | 'forbidden'
+        | 'branch_exists'
+        | 'base_missing'
+        | 'base_moved';
       message: string;
     };
 
@@ -740,22 +738,30 @@ export interface GithubProjectPort {
     repoFullName: string,
     input: GitHubCommitFilesInput,
   ): Promise<GitHubCommitFilesResult>;
-  /**
-   * Replace files on an existing branch in one commit (base tree, commit,
-   * then the branch ref). Used by drift repair; a GitHub refusal is returned,
-   * not thrown, so the caller can stop and say which branch held.
-   */
-  commitFilesToBranch(
+  /** The commit a branch points at now; null when the branch does not exist. */
+  getBranchHeadSha(
     accessToken: string,
     repoFullName: string,
-    input: GitHubCommitToBranchInput,
-  ): Promise<GitHubCommitToBranchResult>;
+    branch: string,
+  ): Promise<string | null>;
   /**
-   * The GitHub App installation that covers `repoFullName`, asked of GitHub
-   * itself rather than read from stored installations. Null when the App is
-   * not installed on the repository.
+   * What the caller may do on the repository, as GitHub reports it to them.
+   * Null when the repository is not visible to them or GitHub will not say:
+   * the answer fails closed.
    */
-  getRepoInstallationAccessToken(repoFullName: string): Promise<string | null>;
+  getRepoPermissions(
+    accessToken: string,
+    repoFullName: string,
+  ): Promise<GitHubRepoPermissions | null>;
+  /**
+   * An installation token for the App's installation on `repoFullName`, asked
+   * of GitHub itself and narrowed to that one repository and `permissions`.
+   * Null when the App is not installed there.
+   */
+  getRepoInstallationAccessToken(
+    repoFullName: string,
+    permissions: GitHubTokenPermissions,
+  ): Promise<string | null>;
   /**
    * Dispatch a `workflow_dispatch` run on a person's behalf — first caller:
    * QA automation's "Run Playwright" (re-dispatches the generated verify

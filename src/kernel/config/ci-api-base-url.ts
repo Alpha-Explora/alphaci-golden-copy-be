@@ -2,6 +2,7 @@ import type {
   GitHubContentEntry,
   GithubProjectPort,
 } from '#kernel/ports/github.port';
+import { validateCiApiConnectivity } from './ci-api-connectivity';
 
 /**
  * The public AlphaCI API base that generated workflows and repository secrets
@@ -9,9 +10,11 @@ import type {
  *
  * Kept in the kernel because two halves of the product agree on it: the
  * workflow generator writes the base into `.github/workflows`, and drift
- * detection and repair read it back out of committed files. It is resolved at
- * call time, never at import: a value read before `.env` loads is how projects
- * came to carry `http://localhost:4000` in their workflows and secrets.
+ * detection and repair read it back out of committed files.
+ *
+ * `resolvePlatformBaseUrl` reads the environment on every call. The workflow
+ * builder captures its own copy once, at import, so drift and repair call this
+ * function themselves rather than reusing the builder's constants.
  */
 
 const DEFAULT_LOCAL_PLATFORM_BASE_URL = 'http://localhost:4000';
@@ -44,59 +47,124 @@ export function resolvePlatformBaseUrl(
 }
 
 /**
- * Where a workflow names the API: the text before `/api/v1/ci` in any URL
- * (`ALPHACI_VALIDATE_URL`, the release and report calls), without matching
- * a longer path such as `/api/v1/ci-legacy`.
+ * Whether GitHub-hosted runners can reach this base. Localhost, loopback,
+ * private and non-HTTPS addresses cannot be reached from them, so a repair
+ * toward one would only swap a broken address for another. Uses the same rule
+ * the generated preflight enforces, so the two cannot disagree.
  */
-const BASE_BEFORE_CI_PATH =
-  /https?:\/\/[^\s'"`<>]*?(?=\/api\/v1\/ci(?![\w-]))/g;
+export function isReachableFromGithubRunners(base: string): boolean {
+  try {
+    validateCiApiConnectivity(base, 'github-hosted');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-/** The `alphaci-api-url:` input of the reusable workflow call, one value per line. */
-const API_URL_INPUT =
-  /^(\s*['"]?alphaci-api-url['"]?\s*:\s*['"]?)(https?:\/\/[^\s'"#]*?)\/?(?=['"]?\s*(?:#.*)?$)/gm;
+/** One `scheme://host[:port]` as written: no path, quote, comma or expression. */
+const ORIGIN = /https?:\/\/[A-Za-z0-9._:[\]-]+/g;
+/** The AlphaCI API paths, straight after an origin. */
+const API_PATH_AFTER = /^\/api\/v1\/ci(?![\w-])/;
+/**
+ * The start of a value under a key AlphaCI writes: `ALPHACI_*_URL`, or any
+ * `*api-url` (the reusable workflow's `alphaci-api-url` input, `api-url`).
+ */
+const KEYED_VALUE_START =
+  /^\s*['"]?(?:ALPHACI_[A-Z0-9_]*_URL|[A-Za-z0-9_-]*api-url)['"]?\s*:\s*['"]?/;
+/** A whole-line YAML comment carries no config: never flagged, never rewritten. */
+const COMMENT_LINE = /^\s*#/;
 
-function withoutTrailingSlashes(value: string): string {
-  return value.replace(/\/+$/, '');
+/**
+ * A base as the comparison sees it: scheme and host lower-cased, default port
+ * dropped (`https://h:443` is `https://h`), no trailing slash.
+ */
+export function normalizeOrigin(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '');
+  try {
+    const url = new URL(trimmed);
+    return `${url.protocol}//${url.host}`.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
+interface Origin {
+  text: string;
+  start: number;
+  end: number;
+}
+
+function originsIn(line: string): Origin[] {
+  return [...line.matchAll(ORIGIN)].map((match) => {
+    const start = match.index ?? 0;
+    return { text: match[0], start, end: start + match[0].length };
+  });
+}
+
+/**
+ * The origins on a line that AlphaCI uses as its API: the value under a key
+ * AlphaCI writes, or an origin that sits before `/api/v1/ci`. A host that
+ * appears anywhere else (GitHub, an action source) is not one of them.
+ */
+function apiOriginsIn(line: string): Origin[] {
+  const keyed = KEYED_VALUE_START.exec(line);
+  const valueStart = keyed ? keyed[0].length : -1;
+  return originsIn(line).filter(
+    (origin) =>
+      origin.start === valueStart ||
+      API_PATH_AFTER.test(line.slice(origin.end)),
+  );
 }
 
 export interface CiApiBaseRewrite {
   /** The file with every stale base replaced. Equal to the input when none was stale. */
   content: string;
-  /** Each base the file named that is not the expected one, once, as written. */
+  /** Each base the file uses as its API that is not the expected one, once, as written. */
   staleBases: string[];
 }
 
 /**
- * Point every AlphaCI API base in one workflow file at `expectedBase`.
+ * Point every stale AlphaCI API base in one workflow file at `expectedBase`.
  *
- * Only the API bases are touched. Other URLs (GitHub's own, action sources,
- * anything else a workflow quotes) stay exactly as written.
+ * A base is stale when the file uses it as its API (see `apiOriginsIn`). Once
+ * a base is stale, every occurrence of it in the file is replaced, so a bare
+ * `ALPHACI_API_URL: <base>` in a job's env and a `<base>/api/v1/ci` URL are
+ * fixed together. Whole-line comments are left alone, `${{ }}` expressions are
+ * never treated as a literal base, and any other URL stays exactly as written.
  */
 export function rewriteCiApiBase(
   content: string,
   expectedBase: string,
 ): CiApiBaseRewrite {
-  const expected = withoutTrailingSlashes(expectedBase.trim());
-  const expectedKey = expected.toLowerCase();
-  const stale = new Set<string>();
+  const expected = expectedBase.trim().replace(/\/+$/, '');
+  const expectedKey = normalizeOrigin(expected);
+  const lines = content.split('\n');
 
-  const swap = (found: string): string => {
-    const base = withoutTrailingSlashes(found);
-    if (base.toLowerCase() === expectedKey) {
-      return found;
+  const stale = new Map<string, string>();
+  for (const line of lines) {
+    if (COMMENT_LINE.test(line)) continue;
+    for (const origin of apiOriginsIn(line)) {
+      const key = normalizeOrigin(origin.text);
+      if (key !== expectedKey && !stale.has(key)) {
+        stale.set(key, origin.text);
+      }
     }
-    stale.add(base);
-    return expected;
-  };
+  }
+  if (stale.size === 0) {
+    return { content, staleBases: [] };
+  }
 
-  const rewritten = content
-    .replace(BASE_BEFORE_CI_PATH, (found) => swap(found))
-    .replace(
-      API_URL_INPUT,
-      (_match, prefix: string, found: string) => prefix + swap(found),
-    );
+  const rewritten = lines.map((line) => {
+    if (COMMENT_LINE.test(line)) return line;
+    return line.replace(ORIGIN, (text: string, offset: number) => {
+      // `https://host${{ ... }}` is an expression, not a base to replace.
+      const next = line.charAt(offset + text.length);
+      if (next === '$' || next === '{') return text;
+      return stale.has(normalizeOrigin(text)) ? expected : text;
+    });
+  });
 
-  return { content: rewritten, staleBases: [...stale] };
+  return { content: rewritten.join('\n'), staleBases: [...stale.values()] };
 }
 
 export interface StaleCiWorkflowFile {
@@ -107,18 +175,18 @@ export interface StaleCiWorkflowFile {
 }
 
 /**
- * The committed workflow files on one branch that name an AlphaCI API other
- * than `expectedBase`.
+ * The committed workflow files at `ref` (a branch name or a commit SHA) that
+ * name an AlphaCI API other than `expectedBase`.
  *
- * A branch that does not exist reads as no files. A read GitHub refuses
- * throws: the caller decides whether "unknown" means "nothing to report" or
- * "stop", and this never guesses.
+ * A ref that does not exist reads as no files. A read GitHub refuses throws:
+ * the caller decides whether "unknown" means "nothing to report" or "stop", and
+ * this never guesses.
  */
 export async function findStaleCiWorkflowFiles(
   github: Pick<GithubProjectPort, 'listRepoContents' | 'getFileContent'>,
   accessToken: string,
   repoFullName: string,
-  branch: string,
+  ref: string,
   expectedBase: string,
 ): Promise<StaleCiWorkflowFile[]> {
   const [owner, repo] = repoFullName.split('/');
@@ -130,7 +198,7 @@ export async function findStaleCiWorkflowFiles(
     accessToken,
     repoFullName,
     WORKFLOW_DIRECTORY,
-    branch,
+    ref,
   );
   const stale: StaleCiWorkflowFile[] = [];
   for (const entry of listing.entries) {
@@ -142,7 +210,7 @@ export async function findStaleCiWorkflowFiles(
       owner,
       repo,
       entry.path,
-      branch,
+      ref,
     );
     if (content === null) {
       continue;
