@@ -76,10 +76,13 @@ if ($ApiUrl) {
     $distroDetails = (& wsl.exe -l -v) -replace [char]0, ''
     if (-not ($distroDetails | Where-Object { $_ -match ([regex]::Escape($Distro) + '\s+.*\s+2\s*$') })) { throw 'This host requires WSL2. Convert the selected distro with wsl --set-version before continuing.' }
     Save-InstallPhase 'enrollment'
-    $linuxInstallerDirectory = (& wsl.exe -d $Distro -- wslpath -u (Join-Path $PSScriptRoot '../agent')).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Could not locate the extracted agent directory inside WSL.' }
+    # -e runs wslpath without the distro's shell, which would strip the backslashes
+    # from a Windows path. Forward slashes keep the path intact either way.
+    $agentDirectory = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\agent')).Path -replace '\\', '/'
+    $linuxInstallerDirectory = ((& wsl.exe -d $Distro -e wslpath -u $agentDirectory) -join '').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $linuxInstallerDirectory) { throw 'Could not locate the extracted agent directory inside WSL.' }
     # Enrollment reads its code interactively. No code or credential is passed in argv or state.
-    & wsl.exe -d $Distro -u root -- bash ($linuxInstallerDirectory + '/install.sh') --enroll $ApiUrl windows
+    & wsl.exe -d $Distro -u root -e bash ($linuxInstallerDirectory + '/install.sh') --enroll $ApiUrl windows
     if ($LASTEXITCODE -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
     Save-InstallPhase 'startup'
 }
