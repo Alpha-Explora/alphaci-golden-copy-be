@@ -168,9 +168,14 @@ const SCAFFOLD_DEV_DEPENDENCIES: Record<string, string> = {
   typescript: '^5.6.3',
   eslint: '^9.17.0',
   'typescript-eslint': '^8.18.0',
-  jest: '^29.7.0',
-  'ts-jest': '^29.2.5',
-  '@types/jest': '^29.5.14',
+  // Jest 30: 29 pulls a braces release with a HIGH advisory (GHSA-vfj7-8cjw-p6xm),
+  // which fails the generated dependency audit on day one.
+  jest: '^30.0.0',
+  'ts-jest': '^29.4.0',
+  '@types/jest': '^30.0.0',
+  // Every stack ships jest.config.ts, and Jest loads a TypeScript config
+  // through ts-node; without it the unit-test job cannot start.
+  'ts-node': '^10.9.2',
   '@types/node': '^22.10.0',
 };
 
@@ -218,6 +223,7 @@ function buildPackageJson(packageName: string, stack: string): string {
     scripts,
     dependencies: {} as Record<string, string>,
     devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
+    overrides: undefined as Record<string, string> | undefined,
   };
 
   if (isNestJs) {
@@ -229,7 +235,6 @@ function buildPackageJson(packageName: string, stack: string): string {
     pkg.dependencies['reflect-metadata'] = '^0.2.2';
     pkg.dependencies['rxjs'] = '^7.8.1';
     pkg.devDependencies['@nestjs/testing'] = '^11.0.0';
-    pkg.devDependencies['ts-node'] = '^10.9.2';
   }
 
   if (isNextJs) {
@@ -238,6 +243,10 @@ function buildPackageJson(packageName: string, stack: string): string {
     pkg.dependencies['react-dom'] = '^19.0.0';
     pkg.devDependencies['@types/react'] = '^19.0.0';
     pkg.devDependencies['@types/react-dom'] = '^19.0.0';
+    // Next 15 pins postcss 8.4.31, which carries HIGH advisories and fails the
+    // generated audit; npm's only offered fix is a major Next upgrade. The
+    // patched 8.5 line is compatible, and `next build` passes with it.
+    pkg.overrides = { postcss: '^8.5.30' };
   }
 
   if (stack === 'react') {
@@ -249,10 +258,6 @@ function buildPackageJson(packageName: string, stack: string): string {
     pkg.devDependencies['@types/react'] = '^19.0.0';
     pkg.devDependencies['@types/react-dom'] = '^19.0.0';
     pkg.devDependencies['vite'] = '8.3.0';
-  }
-
-  if (!isNextJs && !isNestJs) {
-    pkg.devDependencies['ts-node'] = '^10.9.2';
   }
 
   /*
@@ -416,6 +421,16 @@ function buildEslintConfig(): string {
     'export default tseslint.config(',
     "  { ignores: ['dist/', 'coverage/', '.next/', 'out/', 'node_modules/'] },",
     '  ...tseslint.configs.recommended,',
+    '  {',
+    '    // A leading underscore marks a parameter kept for its signature, like',
+    '    // the mask(_page) hook in the visual browser test.',
+    '    rules: {',
+    "      '@typescript-eslint/no-unused-vars': [",
+    "        'error',",
+    "        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },",
+    '      ],',
+    '    },',
+    '  },',
     ');',
     '',
   ].join('\n');
