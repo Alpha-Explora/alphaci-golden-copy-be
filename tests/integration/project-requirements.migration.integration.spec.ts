@@ -723,7 +723,13 @@ describeDatabase('project_requirements migration', () => {
         await requirements.setProgress(featureId, storyA, 1, 'done', dev),
       ).toBeNull();
 
-      const since = new Date().toISOString();
+      // Read `since` from the database clock: updated_at is stamped by NOW()
+      // there, and a host clock a few ms off makes this comparison flaky.
+      const since = (
+        await client.query<{ now: string }>(
+          `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS now;`,
+        )
+      ).rows[0]!.now;
       await client.query(`SELECT pg_sleep(0.05);`);
       await requirements.setProgress(featureId, storyA, 2, 'done', dev);
       expect(
@@ -992,6 +998,320 @@ describeDatabase('project_requirements migration', () => {
       );
       expect(kept.rows.length).toBeGreaterThan(0);
       expect(kept.rows.every((row) => row.requirement_id === null)).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Iterations phase 3: Start the next iteration, real SQL, no mocks.
+  // -------------------------------------------------------------------
+
+  describe('start the next iteration', () => {
+    const projectD = randomUUID();
+    const lead = { id: randomUUID(), login: 'lead' };
+    let iterations: ProjectIterationsRepository;
+    let checklists: QaChecklistsRepository;
+    let iteration1: string;
+    let runId: string;
+    let featureId: string;
+    let systemId: string;
+    let items: Record<string, string> = {};
+
+    const one = async <T extends object>(sql: string): Promise<T> => {
+      const result = await client.query<T>(sql);
+      return result.rows[0] as T;
+    };
+    const sourceSnapshot = async () =>
+      (
+        await client.query<Record<string, unknown>>(
+          `SELECT i.id, i.checklist_id, i."position", i.title, i.progress, i.progress_by,
+                  i.progress_at, i.row_version, i.updated_at, c.iteration_id, c.updated_at AS c_updated
+             FROM projects.qa_checklist_items i
+             JOIN projects.qa_checklists c ON c.id = i.checklist_id
+            WHERE c.iteration_id = '${iteration1}'
+            ORDER BY i.id;`,
+        )
+      ).rows;
+
+    beforeAll(async () => {
+      const db = asDatabaseService();
+      iterations = new ProjectIterationsRepository(db);
+      checklists = new QaChecklistsRepository(db);
+      const system = randomUUID();
+      await client.query(
+        `INSERT INTO hierarchy.systems (id, group_id, name) VALUES ($1, $2, 'D');`,
+        [system, workspaceId],
+      );
+      await client.query(
+        `INSERT INTO hierarchy.delivery_projects (id, system_id, group_id, name, status)
+         VALUES ($1, $2, $3, 'Project D', 'active');`,
+        [projectD, system, workspaceId],
+      );
+      await iterations.insertFirstIfNone([projectD]);
+      iteration1 = (await iterations.findCurrent(projectD))!.id;
+
+      const feature = await checklists.createWithItems({
+        workspaceId,
+        name: 'Checkout feature',
+        description: 'Pay for a cart',
+        createdBy: owner,
+        kind: 'functional',
+        deliveryProjectId: projectD,
+        iterationId: iteration1,
+        items: ['Pay by card', 'Pay by wallet', 'Pay by voucher'].map(
+          (title) => ({
+            title,
+            acceptanceCriteria: `Given ${title}`,
+            targetPersona: 'all' as const,
+            verificationType: 'manual' as const,
+            testIdentifier: `t-${title}`,
+          }),
+        ),
+      });
+      const system1 = await checklists.createWithItems({
+        workspaceId,
+        name: 'Hardening',
+        description: null,
+        createdBy: owner,
+        kind: 'system',
+        deliveryProjectId: projectD,
+        iterationId: iteration1,
+        items: [
+          {
+            title: 'Rate limit',
+            targetPersona: 'all' as const,
+            verificationType: 'manual' as const,
+          },
+        ],
+      });
+      featureId = feature.checklist.id;
+      systemId = system1.checklist.id;
+      items = {
+        card: feature.items[0]!.id,
+        wallet: feature.items[1]!.id,
+        voucher: feature.items[2]!.id,
+        rate: system1.items[0]!.id,
+      };
+      // Progress: card done+passed, wallet done+failed, voucher todo (not in
+      // the run), rate-limit done+blocked.
+      await client.query(
+        `UPDATE projects.qa_checklist_items
+            SET progress = 'done', progress_by = $2, progress_by_login = 'dev', progress_at = NOW()
+          WHERE id = ANY($1::uuid[]);`,
+        [[items.card, items.wallet, items.rate], lead.id],
+      );
+
+      runId = (
+        await one<{ id: string }>(
+          `INSERT INTO projects.qa_verification_runs
+             (scope, delivery_project_id, iteration_id, heads_fingerprint, checklist_version,
+              checklist_name, branch, commit_source, created_by, created_by_login)
+           VALUES ('project', '${projectD}', '${iteration1}', '${'d'.repeat(64)}', 0,
+                   'x', 'uat', 'branch_head', '${owner}', 'qa')
+           RETURNING id;`,
+        )
+      ).id;
+      const runItem = (
+        position: number,
+        source: string,
+        title: string,
+        status: string,
+      ) =>
+        client.query(
+          `INSERT INTO projects.qa_run_items
+             (run_id, source_item_id, "position", title, target_persona, verification_type,
+              status, defect_severity, verified_by, verified_by_login, verified_at)
+           VALUES ($1, $2, $3, $4, 'all', 'manual', $5,
+                   CASE WHEN $5 = 'failed' THEN 'major' END,
+                   CASE WHEN $5 = 'pending' THEN NULL ELSE $6::uuid END,
+                   CASE WHEN $5 = 'pending' THEN NULL ELSE 'qa' END,
+                   CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() END);`,
+          [runId, source, position, title, status, lead.id],
+        );
+      await runItem(0, items.card!, 'Pay by card', 'passed');
+      await runItem(1, items.wallet!, 'Pay by wallet', 'failed');
+      await runItem(2, items.rate!, 'Rate limit', 'blocked');
+      await client.query(
+        `UPDATE projects.project_iterations
+            SET status = 'delivered', delivered_at = NOW(), signoff_run_id = '${runId}'
+          WHERE id = '${iteration1}';`,
+      );
+    }, 60_000);
+
+    it('lists the delivered items with the delivering run status', async () => {
+      const rows = await iterations.listCarryOverItems(iteration1, runId);
+      expect(
+        rows.map((row) => [row.title, row.progress, row.last_status]),
+      ).toEqual([
+        ['Pay by card', 'done', 'passed'],
+        ['Pay by wallet', 'done', 'failed'],
+        ['Pay by voucher', 'todo', null],
+        ['Rate limit', 'done', 'blocked'],
+      ]);
+    });
+
+    it('creates Iteration 2 and copies the selected items; failed/blocked go back to in_progress, delivered rows stay frozen', async () => {
+      const before = await sourceSnapshot();
+
+      const result = await iterations.startNext({
+        deliveryProjectId: projectD,
+        startedBy: lead.id,
+        startedByLogin: lead.login,
+        goal: 'Loyalty points',
+        // Out of source order on purpose: order follows the source position.
+        itemIds: [items.rate!, items.voucher!, items.wallet!, items.card!],
+        signoffRunId: runId,
+      });
+
+      expect(result).toMatchObject({
+        iteration: {
+          number: 2,
+          status: 'active',
+          goal: 'Loyalty points',
+          started_by: lead.id,
+          started_by_login: 'lead',
+        },
+        carriedRequirements: 2,
+        carriedItems: 4,
+      });
+      const iteration2 = result.iteration.id;
+
+      const requirements = await client.query<{
+        name: string;
+        kind: string;
+        description: string | null;
+        delivery_project_id: string;
+        archived_at: string | null;
+        created_by: string;
+        id: string;
+      }>(
+        `SELECT * FROM projects.qa_checklists WHERE iteration_id = '${iteration2}'
+          ORDER BY (kind = 'functional') DESC, created_at, id;`,
+      );
+      // The same names are allowed again in the new Iteration.
+      expect(
+        requirements.rows.map((row) => [row.name, row.kind, row.description]),
+      ).toEqual([
+        ['Checkout feature', 'functional', 'Pay for a cart'],
+        ['Hardening', 'system', null],
+      ]);
+      expect(
+        requirements.rows.every(
+          (row) =>
+            row.delivery_project_id === projectD &&
+            row.archived_at === null &&
+            row.created_by === owner &&
+            row.id !== featureId &&
+            row.id !== systemId,
+        ),
+      ).toBe(true);
+
+      const copied = await client.query<{
+        title: string;
+        position: number;
+        progress: string;
+        progress_by: string | null;
+        acceptance_criteria: string | null;
+        test_identifier: string | null;
+        requirement: string;
+      }>(
+        `SELECT i.title, i."position", i.progress, i.progress_by, i.acceptance_criteria,
+                i.test_identifier, c.name AS requirement
+           FROM projects.qa_checklist_items i
+           JOIN projects.qa_checklists c ON c.id = i.checklist_id
+          WHERE c.iteration_id = '${iteration2}'
+          ORDER BY (c.kind = 'functional') DESC, c.created_at, i."position";`,
+      );
+      expect(
+        copied.rows.map((row) => [
+          row.requirement,
+          row.position,
+          row.title,
+          row.progress,
+          row.progress_by === null ? null : 'kept',
+        ]),
+      ).toEqual([
+        // card passed: progress copied unchanged (with its author)
+        ['Checkout feature', 0, 'Pay by card', 'done', 'kept'],
+        // wallet failed: back to in_progress, no author
+        ['Checkout feature', 1, 'Pay by wallet', 'in_progress', null],
+        // voucher was not in the run: progress copied unchanged
+        ['Checkout feature', 2, 'Pay by voucher', 'todo', null],
+        // rate limit blocked: back to in_progress
+        ['Hardening', 0, 'Rate limit', 'in_progress', null],
+      ]);
+      expect(copied.rows[0]).toMatchObject({
+        acceptance_criteria: 'Given Pay by card',
+        test_identifier: 't-Pay by card',
+      });
+
+      // Delivered rows are never modified.
+      expect(await sourceSnapshot()).toEqual(before);
+      expect((await iterations.findById(iteration1))?.status).toBe('delivered');
+    });
+
+    it('a second start loses to the one-active index (409 in the service) and writes nothing', async () => {
+      const requirementsBefore = await count(
+        client,
+        `SELECT COUNT(*) AS n FROM projects.qa_checklists WHERE delivery_project_id = '${projectD}';`,
+      );
+
+      await expect(
+        iterations.startNext({
+          deliveryProjectId: projectD,
+          startedBy: lead.id,
+          startedByLogin: lead.login,
+          goal: null,
+          itemIds: [items.card!],
+          signoffRunId: runId,
+        }),
+      ).rejects.toMatchObject({ code: '23505' });
+
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.project_iterations WHERE delivery_project_id = '${projectD}';`,
+        ),
+      ).toBe(2);
+      expect(
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.qa_checklists WHERE delivery_project_id = '${projectD}';`,
+        ),
+      ).toBe(requirementsBefore);
+    });
+
+    it('a new QA run starts in Iteration 2 on unchanged heads', async () => {
+      const iteration2 = (await iterations.findCurrent(projectD))!.id;
+      await expect(
+        client.query(
+          `INSERT INTO projects.qa_verification_runs
+             (scope, delivery_project_id, iteration_id, heads_fingerprint, checklist_version,
+              checklist_name, branch, commit_source, created_by, created_by_login)
+           VALUES ('project', '${projectD}', '${iteration2}', '${'d'.repeat(64)}', 0,
+                   'x', 'uat', 'branch_head', '${owner}', 'qa');`,
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('a start with nothing selected creates an empty Iteration', async () => {
+      await client.query(
+        `UPDATE projects.project_iterations
+            SET status = 'delivered', delivered_at = NOW()
+          WHERE delivery_project_id = '${projectD}' AND number = 2;`,
+      );
+      const result = await iterations.startNext({
+        deliveryProjectId: projectD,
+        startedBy: lead.id,
+        startedByLogin: lead.login,
+        goal: null,
+        itemIds: [],
+        signoffRunId: null,
+      });
+      expect(result).toMatchObject({
+        iteration: { number: 3, goal: null },
+        carriedRequirements: 0,
+        carriedItems: 0,
+      });
     });
   });
 });

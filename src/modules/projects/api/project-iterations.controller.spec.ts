@@ -9,8 +9,11 @@ import request from 'supertest';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { CapabilityGuard } from '#kernel/composition/index.js';
 import { ProjectIterationsService } from '../application/qa-checklists/project-iterations.service';
+import { ProjectIterationStartService } from '../application/qa-runs/project-iteration-start.service';
+import { QaProjectDeliveryService } from '../application/qa-runs/qa-project-delivery.service';
 import { DeliveryProjectIterationsController } from './project-iterations.controller';
 
+const U = '/delivery-projects/11111111-1111-4111-8111-111111111111/iterations';
 const ID = '11111111-1111-4111-8111-111111111111';
 
 const iteration = {
@@ -26,19 +29,39 @@ const iteration = {
   signoffRunId: null,
 };
 
-async function createApp(session: unknown = { user: { id: 'user-1' } }) {
+async function createApp(
+  session: unknown = {
+    user: { id: 'user-1', login: 'tone' },
+    githubAccessToken: 'gho',
+  },
+) {
   const iterations = {
     listForProject: jest.fn().mockResolvedValue({ iterations: [iteration] }),
-    currentForProject: jest.fn().mockResolvedValue({
+  };
+  const delivery = {
+    current: jest.fn().mockResolvedValue({
       iteration,
       canStartNext: false,
       deliveredRepositories: [],
+      coveredRepositories: [],
+      canMergeAll: false,
+    }),
+  };
+  const starter = {
+    start: jest.fn().mockResolvedValue({
+      iteration: { ...iteration, id: 'it-2', number: 2 },
+      carriedRequirements: 1,
+      carriedItems: 2,
     }),
   };
   const guards = jest.fn().mockReturnValue(true);
   const module = await Test.createTestingModule({
     controllers: [DeliveryProjectIterationsController],
-    providers: [{ provide: ProjectIterationsService, useValue: iterations }],
+    providers: [
+      { provide: ProjectIterationsService, useValue: iterations },
+      { provide: QaProjectDeliveryService, useValue: delivery },
+      { provide: ProjectIterationStartService, useValue: starter },
+    ],
   })
     .overrideGuard(SessionAuthGuard)
     .useValue({ canActivate: guards })
@@ -52,7 +75,7 @@ async function createApp(session: unknown = { user: { id: 'user-1' } }) {
     next();
   });
   await app.init();
-  return { app, iterations };
+  return { app, iterations, delivery, starter };
 }
 
 describe('DeliveryProjectIterationsController', () => {
@@ -89,11 +112,14 @@ describe('DeliveryProjectIterationsController', () => {
       iteration,
       canStartNext: false,
       deliveredRepositories: [],
+      coveredRepositories: [],
+      canMergeAll: false,
     });
-    expect(fixture.iterations.currentForProject).toHaveBeenCalledWith(
-      ID,
-      'user-1',
-    );
+    expect(fixture.delivery.current).toHaveBeenCalledWith(ID, {
+      userId: 'user-1',
+      userLogin: 'tone',
+      oauthToken: 'gho',
+    });
     // The literal segment is not captured as an id.
     expect(fixture.iterations.listForProject).not.toHaveBeenCalled();
   });
@@ -115,10 +141,36 @@ describe('DeliveryProjectIterationsController', () => {
     expect(fixture.iterations.listForProject).not.toHaveBeenCalled();
   });
 
-  it('is read-only in phase 1: no write verb is routed', async () => {
+  it('POST /delivery-projects/:id/iterations starts the next Iteration for the signed-in user', async () => {
     fixture = await createApp();
 
-    await http().post(`/delivery-projects/${ID}/iterations`).expect(404);
-    await http().delete(`/delivery-projects/${ID}/iterations`).expect(404);
+    const response = await http()
+      .post(U)
+      .send({
+        goal: 'Loyalty points',
+        carryOver: { requirementItemIds: ['i-1'] },
+      })
+      .expect(201);
+
+    expect(response.body).toMatchObject({
+      iteration: { number: 2 },
+      carriedRequirements: 1,
+      carriedItems: 2,
+    });
+    expect(fixture.starter.start).toHaveBeenCalledWith(
+      ID,
+      { userId: 'user-1', userLogin: 'tone', oauthToken: 'gho' },
+      { goal: 'Loyalty points', carryOver: { requirementItemIds: ['i-1'] } },
+    );
+  });
+
+  it('POST answers 401 without a user and has no other write verb', async () => {
+    fixture = await createApp({});
+    await http().post(U).send({}).expect(401);
+    expect(fixture.starter.start).not.toHaveBeenCalled();
+    await fixture.app.close();
+
+    fixture = await createApp();
+    await http().delete(U).expect(404);
   });
 });

@@ -187,19 +187,13 @@ describe('AppModule boot smoke', () => {
         'runs',
         'access',
         'projectContext',
-        'auditQuery',
+        'iterations',
       ]) {
         expect([dependency, requirements[dependency]]).toEqual([
           dependency,
           expect.anything(),
         ]);
       }
-      expect(
-        typeof requirements['auditQuery']?.['findLatestProjectEventTimes'],
-      ).toBe('function');
-      expect(requirements['auditQuery']).toBe(
-        app.get(AuditEventsService, { strict: false }),
-      );
 
       const context = internals(
         app.get(QaProjectContextService, { strict: false }),

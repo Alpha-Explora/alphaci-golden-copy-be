@@ -1,21 +1,28 @@
 import { Injectable } from '@nestjs/common';
 
+import { parseDeliveryEntries } from '../../domain/project-delivery.rules';
 import {
   canStartNextIteration,
   isIterationWritable,
+  isUnfinishedForCarryOver,
 } from '../../domain/project-iteration.rules';
 import {
+  ITERATION_UNIQUE_VIOLATION,
   ProjectIterationsRepository,
   type ProjectIterationRow,
+  type StartNextIterationResult,
 } from '../../infrastructure/project-iterations.repository';
 import type {
+  CarryOverCandidates,
+  CarryOverRequirement,
   DeliveredRepository,
   ProjectIteration,
-  ProjectIterationCurrent,
+  ProjectIterationCurrentBase,
   ProjectIterationList,
   ProjectIterationRef,
 } from './project-iterations.contracts';
 import {
+  iterationActive,
   iterationDelivered,
   iterationNotFound,
 } from './project-iterations.errors';
@@ -153,13 +160,21 @@ export class ProjectIterationsService {
     return { iterations: rows.map((row) => this.toIteration(row)) };
   }
 
-  /** GET /delivery-projects/:id/iterations/current (404 for a non-member). */
+  /** GET /delivery-projects/:id/iterations/current, minus the delivery view (404 for a non-member). */
   async currentForProject(
     deliveryProjectId: string,
     userId: string,
-  ): Promise<ProjectIterationCurrent> {
+  ): Promise<ProjectIterationCurrentBase> {
     await this.projectContext.requireProject(deliveryProjectId, userId);
     const iteration = await this.ensureActiveIteration(deliveryProjectId);
+    return this.describeCurrent(iteration, userId);
+  }
+
+  /** The current Iteration with what only this service knows: start-next and the stored delivery state. */
+  async describeCurrent(
+    iteration: ProjectIterationRow,
+    userId: string,
+  ): Promise<ProjectIterationCurrentBase> {
     return {
       iteration: this.toIteration(iteration),
       canStartNext: canStartNextIteration({
@@ -191,21 +206,137 @@ export class ProjectIterationsService {
     };
   }
 
-  /** `delivery_json` is written by phase 2; anything that is not a list reads as "none". */
-  private toDeliveredRepositories(
-    row: ProjectIterationRow,
-  ): DeliveredRepository[] {
-    if (row.status !== 'delivered' || !Array.isArray(row.delivery_json)) {
-      return [];
+  /** The stored per-repository delivery state, during both active and delivered. */
+  toDeliveredRepositories(row: ProjectIterationRow): DeliveredRepository[] {
+    return parseDeliveryEntries(row.delivery_json);
+  }
+
+  // ---------------------------------------------------------------------
+  // Delivery writes (phase 2)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Records one repository as delivered in the still-active Iteration, atomic
+   * against a concurrent record (see the repository). Null when the Iteration
+   * is no longer active.
+   */
+  recordRepositoryDelivery(
+    iterationId: string,
+    entry: DeliveredRepository,
+  ): Promise<ProjectIterationRow | null> {
+    return this.iterations.recordRepositoryDelivery(iterationId, entry);
+  }
+
+  /**
+   * The atomic Delivered transition: returns the row ONLY to the caller whose
+   * UPDATE changed it, so only that caller audits and notifies.
+   */
+  markDelivered(
+    iterationId: string,
+    input: {
+      deliveredBy: string;
+      deliveredByLogin: string;
+      signoffRunId: string;
+      repositories: DeliveredRepository[];
+    },
+  ): Promise<ProjectIterationRow | null> {
+    return this.iterations.markDelivered(iterationId, {
+      deliveredBy: input.deliveredBy,
+      deliveredByLogin: input.deliveredByLogin,
+      signoffRunId: input.signoffRunId,
+      deliveryJson: { repositories: input.repositories },
+    });
+  }
+
+  /** The Iteration as it is stored right now (null when it is gone). */
+  findRow(iterationId: string): Promise<ProjectIterationRow | null> {
+    return this.iterations.findById(iterationId);
+  }
+
+  // ---------------------------------------------------------------------
+  // Carry-over (phase 3)
+  // ---------------------------------------------------------------------
+
+  /**
+   * The delivered Iteration's items, grouped by requirement, with `suggested`
+   * on the unfinished ones. Null unless the Iteration is delivered (only then
+   * can a next one start).
+   */
+  async carryOverCandidates(
+    iteration: ProjectIterationRow,
+  ): Promise<CarryOverCandidates | null> {
+    if (iteration.status !== 'delivered') {
+      return null;
     }
-    return (row.delivery_json as DeliveredRepository[]).map((entry) => ({
-      projectId: entry.projectId,
-      repoFullName: entry.repoFullName,
-      uatHeadSha: entry.uatHeadSha,
-      mergeSha: entry.mergeSha ?? null,
-      prNumber: entry.prNumber ?? null,
-      how: entry.how,
-    }));
+    const rows = await this.iterations.listCarryOverItems(
+      iteration.id,
+      iteration.signoff_run_id,
+    );
+    const byRequirement = new Map<string, CarryOverRequirement>();
+    for (const row of rows) {
+      let requirement = byRequirement.get(row.requirement_id);
+      if (!requirement) {
+        requirement = {
+          requirementId: row.requirement_id,
+          name: row.requirement_name,
+          kind: row.requirement_kind,
+          items: [],
+        };
+        byRequirement.set(row.requirement_id, requirement);
+      }
+      requirement.items.push({
+        id: row.item_id,
+        title: row.title,
+        progress: row.progress,
+        lastStatus: row.last_status,
+        suggested: isUnfinishedForCarryOver({
+          progress: row.progress,
+          lastStatus: row.last_status,
+        }),
+      });
+    }
+    return {
+      fromIterationNumber: iteration.number,
+      requirements: [...byRequirement.values()],
+    };
+  }
+
+  /**
+   * Creates the next Iteration with its carried items in one transaction. The
+   * caller has checked access and that `source` is the latest delivered
+   * Iteration. A unique violation (a concurrent start) becomes 409
+   * ITERATION_ACTIVE.
+   */
+  async startNext(input: {
+    source: ProjectIterationRow;
+    startedBy: string;
+    startedByLogin: string;
+    goal: string | null;
+    itemIds: readonly string[];
+  }): Promise<StartNextIterationResult> {
+    try {
+      return await this.iterations.startNext({
+        deliveryProjectId: input.source.delivery_project_id,
+        startedBy: input.startedBy,
+        startedByLogin: input.startedByLogin,
+        goal: input.goal,
+        itemIds: input.itemIds,
+        signoffRunId: input.source.signoff_run_id,
+      });
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        (error as { code?: unknown }).code === ITERATION_UNIQUE_VIOLATION
+      ) {
+        // Lost the race: the winner's Iteration is the active one now.
+        const winner = await this.iterations.findCurrent(
+          input.source.delivery_project_id,
+        );
+        throw iterationActive(winner?.number ?? input.source.number + 1);
+      }
+      throw error;
+    }
   }
 }
 

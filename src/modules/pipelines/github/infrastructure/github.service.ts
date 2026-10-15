@@ -18,6 +18,7 @@ import type { AppConfig } from '#kernel/config/app.config';
 import {
   GithubRepoDeleteError,
   type GitHubBranchComparison,
+  type GitHubBranchRelation,
   type GitHubCommitAuthor,
   type GitHubJobLogResult,
   type GitHubDispatchWorkflowResult,
@@ -2195,6 +2196,31 @@ export class GithubService
     );
 
     return payload ? toBranchComparison(payload) : null;
+  }
+
+  /**
+   * Just the status of `compare/{base}...{head}`: `per_page=1` keeps the
+   * payload to one commit, and the file list is never read. Used where only
+   * "does A contain B" matters (Iteration delivery), not the diff itself.
+   */
+  async getBranchRelation(
+    accessToken: string,
+    repoFullName: string,
+    base: string,
+    head: string,
+  ): Promise<GitHubBranchRelation | null> {
+    const payload = await this.http.workspaceGet<GitHubCompareRow>(
+      `https://api.github.com/repos/${repoFullName}/compare/${encodeRef(base)}...${encodeRef(head)}?per_page=1`,
+      accessToken,
+      'branch relation',
+    );
+    const status = payload?.status;
+    return status === 'ahead' ||
+      status === 'behind' ||
+      status === 'diverged' ||
+      status === 'identical'
+      ? status
+      : null;
   }
 
   /**

@@ -80,8 +80,14 @@ type: Index
 
   try {
     const errors = validateBundle(root);
-    assert.equal(errors.some((error) => error.includes('missing.md')), true);
-    assert.equal(errors.some((error) => error.includes('nested/index.md')), true);
+    assert.equal(
+      errors.some((error) => error.includes('missing.md')),
+      true,
+    );
+    assert.equal(
+      errors.some((error) => error.includes('nested/index.md')),
+      true,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

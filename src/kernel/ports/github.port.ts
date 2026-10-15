@@ -306,6 +306,9 @@ export interface GitHubBranchComparison {
   filesTruncated: boolean;
 }
 
+/** The status GitHub reports for `compare/{base}...{head}`, from the HEAD's side. */
+export type GitHubBranchRelation = GitHubBranchComparison['status'];
+
 export interface GitHubOpenPullRequestInput {
   title: string;
   head: string;
@@ -643,6 +646,18 @@ export interface GithubProjectPort {
     base: string,
     head: string,
   ): Promise<GitHubBranchComparison | null>;
+  /**
+   * How `head` relates to `base` (GET compare/{base}...{head}, `per_page=1`, no
+   * commits or files read): `ahead` = `head` has commits `base` lacks and
+   * contains `base`; `behind` = `head` is an ancestor of `base`. Null when
+   * either ref does not exist or the histories are unrelated.
+   */
+  getBranchRelation(
+    accessToken: string,
+    repoFullName: string,
+    base: string,
+    head: string,
+  ): Promise<GitHubBranchRelation | null>;
   /** The open pull request from `head` into `base`, if there is one. */
   findOpenPullRequest(
     accessToken: string,

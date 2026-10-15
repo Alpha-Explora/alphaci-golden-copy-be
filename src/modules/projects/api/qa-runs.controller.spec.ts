@@ -16,6 +16,7 @@ import {
 } from './qa-runs.controller';
 import { QaRunsService } from '../application/qa-runs/qa-runs.service';
 import { QaPromotionService } from '../application/qa-runs/qa-promotion.service';
+import { DeliveryProjectPromotionController } from './qa-runs.controller';
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { QA_REPORT_SCHEMA_VERSION } from '../application/qa-runs/qa-report.contracts';
 import type { QaReport } from '../application/qa-runs/qa-report.contracts';
@@ -138,6 +139,10 @@ const promotionStatusFixture = (
   checklists: [],
   eligible: false,
   reasons: ['No QA checklist is shared to this project'],
+  repositoryDelivered: false,
+  iterationDelivered: false,
+  iteration: null,
+  reasonCodes: [],
   pullRequest: null,
   canMerge: false,
   ...overrides,
@@ -478,5 +483,47 @@ describe('ProjectQaPromotionController.merge', () => {
     await expect(controller.merge(makeRequest(), 'project-1')).rejects.toThrow(
       ConflictException,
     );
+  });
+});
+
+describe('DeliveryProjectPromotionController.mergeAll', () => {
+  it('passes the full actor context and returns the result verbatim', async () => {
+    const result = {
+      repositories: [
+        {
+          projectId: 'p-api',
+          repoFullName: 'acme/api',
+          merged: true,
+          how: 'merged',
+          message: null,
+        },
+      ],
+      delivered: true,
+      iteration: { id: 'it-1', number: 1, status: 'delivered' },
+    };
+    const promotionService = makePromotionService({
+      mergeAll: jest.fn().mockResolvedValue(result),
+    });
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [DeliveryProjectPromotionController],
+      providers: [{ provide: QaPromotionService, useValue: promotionService }],
+    })
+      .overrideGuard(
+        require('#kernel/auth/session-auth.guard.js').SessionAuthGuard,
+      )
+      .useValue({ canActivate: () => true })
+      .overrideGuard(require('#kernel/composition/index.js').CapabilityGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    const controller = module.get(DeliveryProjectPromotionController);
+
+    const answer = await controller.mergeAll(makeRequest(), 'dp-1');
+
+    expect(promotionService.mergeAll).toHaveBeenCalledWith('dp-1', {
+      userId: 'user-1',
+      userLogin: 'tone',
+      oauthToken: 'token-1',
+    });
+    expect(answer).toBe(result);
   });
 });
