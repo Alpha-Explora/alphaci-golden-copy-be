@@ -1,0 +1,98 @@
+name: On-prem agent release
+
+# Publishes the on-prem host installer as a GitHub Release.
+#
+# Push a tag named onprem-agent-v<version>, for example onprem-agent-v0.1.0.
+# The <version> must equal deploy/onprem/agent/release-manifest.json. Each
+# release attaches the archive, its .sha256 file, and installer-release.json.
+# The backend resolves ONPREM_INSTALLER_VERSION from these assets.
+#
+# Releases are immutable: publishing a tag whose release already exists fails,
+# because the backend pins each version's archive hash. Publish a new version
+# instead of replacing assets.
+#
+# Manual dispatch from a branch builds and verifies the archive, then keeps it
+# as a workflow artifact. Dispatch from a tag to publish that tag's release.
+
+on:
+  push:
+    tags:
+      - 'onprem-agent-v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onprem-agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package and verify the installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check the tag matches the installer manifest
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(node -p "require('./deploy/onprem/agent/release-manifest.json').version")
+          if [ "$TAG" != "onprem-agent-v$VERSION" ]; then
+            echo "Tag $TAG does not match release-manifest.json version $VERSION." >&2
+            exit 1
+          fi
+
+      - name: Package the installer
+        run: node scripts/package-onprem-agent.mjs
+
+      - name: Verify the archive checksum
+        working-directory: artifacts/onprem
+        run: sha256sum -c alphaci-agent-*.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onprem-agent-installer
+          path: |
+            artifacts/onprem/alphaci-agent-*.tar.gz
+            artifacts/onprem/alphaci-agent-*.tar.gz.sha256
+            artifacts/onprem/installer-release.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish the GitHub Release
+    needs: package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: onprem-agent-installer
+          path: artifacts/onprem
+
+      - name: Create the release with the installer assets
+        working-directory: artifacts/onprem
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Published installers are immutable." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "AlphaCI on-prem agent ${TAG#onprem-agent-v}" \
+            --notes "Installer for the AlphaCI on-prem agent. Verify the archive with the attached .sha256 file." \
+            alphaci-agent-*.tar.gz \
+            alphaci-agent-*.tar.gz.sha256 \
+            installer-release.json

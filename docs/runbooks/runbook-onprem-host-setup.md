@@ -73,6 +73,9 @@ containers, credentials, and data remain until explicitly removed. Revoke access
 in AlphaCI too. Unassign/revoke cannot cancel Docker commands already executing.
 Separate machines are required for mutually untrusted workloads.
 
+A hosted backend that is not on a developer PC needs the settings in
+[Point customer machines at the deployed API](#point-customer-machines-at-the-deployed-api).
+
 The remainder of this runbook describes the retained legacy registration path.
 
 This runbook takes a fresh Windows PC to a running AlphaCI production host. The
@@ -370,6 +373,7 @@ Compose project and agent configuration.
 | Previous release restored but deployment reports failed | The restored Compose services or the configured `ALPHACI_HEALTH_URL` failed the health check. Check the application logs and endpoint. |
 | Works on the PC but not from other machines | Run `netsh interface portproxy show v4tov4` in PowerShell and confirm the **AlphaCI TCP 443** firewall rule allows the caller's network. |
 | Stops after sign-out or reboot | The startup task runs only while signed in. Re-run step 27 with `-ServiceAccount`. |
+| Enrollment returns 503: "Publish or configure a verified installer release" | On the backend, check `ONPREM_INSTALLER_RELEASE_REPO` and `ONPREM_INSTALLER_VERSION`, and confirm the release `onprem-agent-v<version>` is public and has all three assets. The backend log names the failed check. |
 
 For anything else, run `sudo /opt/alphaci/bin/alphaci-agent support-bundle`. It
 writes an archive of agent logs, Compose state, and the running release to
@@ -400,3 +404,114 @@ from a new workflow run.
    sudo docker compose -p alphaci -f /opt/alphaci/compose/compose.yaml down
    ```
 3. Back up application data before deleting anything. `wsl --unregister Ubuntu-24.04` deletes the whole distro and everything in it.
+
+## Point customer machines at the deployed API
+
+Enrolled machines keep the API address in `/opt/alphaci/machine.json` (`apiUrl`)
+and call it on every check-in. A backend running on a developer PC stops
+answering when that PC is off, so host the API where it stays running and keep
+its public address stable.
+
+### Environment on the deployed backend
+
+Set these in the hosting service's environment, such as Render's Environment
+page, then redeploy. Do not commit values to the repository.
+
+| Variable | Value |
+|---|---|
+| `PLATFORM_PUBLIC_URL` | Public HTTPS origin, for example `https://api.example.com`, with no path, query, or credentials. |
+| `ONPREM_RELEASES_ENABLED` | `true` |
+| `ALPHACI_RELEASE_TRUST_KEYS_JSON` | The one-line JSON from Part 5, step 13. |
+| `ONPREM_INSTALLER_RELEASE_REPO` | The repository that publishes installer releases, as `owner/repo`. |
+| `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.1.0`. |
+
+Leave `ONPREM_INSTALLER_URL`, `ONPREM_INSTALLER_SHA256`, and
+`ONPREM_INSTALLER_PATH` empty. When the explicit URL and hash are set, they take
+priority over the release lookup. Setting only one of them refuses enrollment.
+`ONPREM_INSTALLER_PATH` serves a local archive from the same machine and has no
+use on a hosted backend. Set `ENV_PROVISIONING_ENABLED=true` as well when hosts
+also back project environments (Part 5).
+
+The release repository must be public. The backend looks up the release without
+credentials, and customer machines download the archive without credentials. A
+private repository fails the lookup, so enrollment returns 503 and issues no code.
+
+### Apply the migrations
+
+If Part 5 has not run against this database, apply its migrations first. Then
+apply the four on-prem migrations in this order. Each one is idempotent, so
+running it again is a safe recovery step.
+
+```bash
+npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_one_active_onprem_host.sql 20261015020000_onprem_machines.sql 20261015030000_onprem_machine_assignments.sql
+```
+
+### Cut an installer release
+
+1. Merge a change that sets `version` in `deploy/onprem/agent/release-manifest.json`
+   to the new version. The tag must match this value, or the workflow fails.
+2. On the merged commit, create an annotated tag and push it. This example
+   publishes `0.1.1`:
+
+   ```bash
+   git tag -a onprem-agent-v0.1.1 -m "On-prem agent 0.1.1"
+   git push origin onprem-agent-v0.1.1
+   ```
+3. The **On-prem agent release** workflow packages the archive, checks its
+   checksum, and creates the GitHub Release. Confirm that the release has
+   `alphaci-agent-<version>.tar.gz`, `alphaci-agent-<version>.tar.gz.sha256`,
+   and `installer-release.json`. Manual dispatch from a branch only builds the
+   archive as a workflow artifact. Dispatch from the tag to publish it.
+4. Set `ONPREM_INSTALLER_VERSION` to the new version on the deployed backend and
+   redeploy. Codes issued afterwards carry the new archive. A code issued earlier
+   still points at the release it was issued for, because releases are immutable.
+
+Releases cannot be replaced. If a release is wrong, publish the next version. A
+tag whose release already exists makes the workflow fail. The release is not
+signed; its trust comes from the repository's release permissions and the
+SHA-256 in `installer-release.json`.
+
+### Move an enrolled machine
+
+These commands run on Ubuntu. The Windows installer runs the same enrollment
+inside its WSL distro. `enroll.sh` checks the saved state before it changes
+anything:
+
+- The saved API address matches: it keeps the existing enrollment and changes
+  nothing.
+- The address differs: it refuses with "enrolled with a different API". The
+  script has no replace option, so the steps below move the machine by hand.
+- A saved pending enrollment response for another address is refused as well.
+
+**Same address and same database.** Nothing changes on the machine. The
+credential is stored by hash in the database, so the machine keeps connecting.
+Confirm that it shows Connected under Hosts after its next check-in.
+
+**New address, or a new database.** Re-enroll:
+
+1. In the deployed AlphaCI workspace, create a new enrollment for the machine.
+   If the deployed backend uses the same database as the old one, pass the old
+   machine's ID as `replacesMachineId` in `POST /workspaces/:workspaceId/onprem-host-enrollments`.
+   Consuming the code then revokes the old record. A different database has no
+   old record, so omit the field.
+2. On the machine, stop the timer and move the saved enrollment aside. The
+   assignment directories and application data are not touched:
+
+   ```bash
+   sudo systemctl disable --now alphaci-machine.timer
+   sudo install -d -m 0700 /opt/alphaci/enrollment-backup
+   for file in machine.json trust.json secrets/machine-token secrets/enrollment-response.json; do
+     [ -e "/opt/alphaci/$file" ] && sudo mv "/opt/alphaci/$file" /opt/alphaci/enrollment-backup/
+   done
+   ```
+3. Enroll with the new code. Paste it at the hidden prompt:
+
+   ```bash
+   sudo bash ~/onprem/agent/install.sh --enroll https://YOUR-BACKEND ubuntu
+   ```
+4. Wait for Connected under Hosts. Reassign any environment that does not show
+   the new machine. Then delete the backup, which holds the old credential:
+
+   ```bash
+   sudo rm -rf /opt/alphaci/enrollment-backup
+   ```
