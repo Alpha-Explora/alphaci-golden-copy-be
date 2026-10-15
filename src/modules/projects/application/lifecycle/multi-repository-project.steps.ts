@@ -7,6 +7,7 @@ import { workflowFileMetadata } from '../dashboard/project-overview.view';
 import {
   combineDeploymentProvisioningResults,
   extractDeploymentProvider,
+  filterDeploymentProvisioningRequest,
 } from '../../domain/deployment-provisioning.policy';
 import { normalizeRepoShape } from '../../scaffold.builder';
 import type {
@@ -21,6 +22,10 @@ import {
   newChainLinkOptions,
   type ProjectProvisioningSupport,
 } from './project-provisioning.support';
+import {
+  configureReleaseSigning,
+  withReleaseSigningWarning,
+} from './release-signing.provisioning';
 import {
   BRANCHES_CREATED_ON_PROVISION,
   PROVISIONED_BRANCHES,
@@ -44,12 +49,14 @@ export type MultiRepoBackendProvision = {
   commitUrl: string | null;
   /** The hierarchy delivery project the backend row was linked under, if any. */
   deliveryProjectId: string | null;
+  releaseSigningWarning: string | undefined;
 };
 
 export type MultiRepoFrontendProvision = {
   feRepoFullName: string | undefined;
   feRepoUrl: string | undefined;
   feRow: ProvisionedProjectRow | undefined;
+  releaseSigningWarning: string | undefined;
 };
 
 export function deriveMultiRepoNames(repoName: string): {
@@ -278,13 +285,19 @@ export async function persistMultiRepoStandaloneRow(input: {
   );
 }
 
+/**
+ * Installs one repository's ALPHACI_* secrets and signing configuration. `request`
+ * is the deployment request limited to the slots this repository hosts. Returns
+ * the release-signing warning, if any.
+ */
 export async function installMultiRepoCiSecrets(input: {
   support: ProjectProvisioningSupport;
   provisioningToken: string;
   ownerLogin: string;
   repoName: string;
   projectId: string;
-}): Promise<void> {
+  request: DeploymentProvisioningRequestDto | undefined;
+}): Promise<string | undefined> {
   const ciToken = await input.support.ciService.issueProjectToken(
     input.projectId,
   );
@@ -314,6 +327,12 @@ export async function installMultiRepoCiSecrets(input: {
     input.ownerLogin,
     input.repoName,
   );
+  return configureReleaseSigning(input.support, {
+    accessToken: input.provisioningToken,
+    owner: input.ownerLogin,
+    repo: input.repoName,
+    request: input.request,
+  });
 }
 
 export async function createAndProtectDefaultBranches(input: {
@@ -370,15 +389,25 @@ export async function provisionMultiRepoBackend(input: {
   backend: MicroserviceSlotDto;
   repo: CreatedGithubRepo;
   bundle: MultiRepoWorkflowBundle;
+  effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
 }): Promise<MultiRepoBackendProvision> {
-  const { support, userId, provisioningToken, dto, backend, repo, bundle } =
-    input;
+  const {
+    support,
+    userId,
+    provisioningToken,
+    dto,
+    backend,
+    repo,
+    bundle,
+    effectiveDeploymentProvisioning,
+  } = input;
   const repoFullName = `${repo.ownerLogin}/${repo.repoName}`;
 
   let backendRow: ProvisionedProjectRow | undefined;
   let backendDeliveryProjectId: string | null = null;
   let backendCommitSha = '';
   let backendCommitUrl: string | null = null;
+  let releaseSigningWarning: string | undefined;
   let backendProvisioningComplete = false;
   try {
     await support.pushStarterFiles(
@@ -413,12 +442,16 @@ export async function provisionMultiRepoBackend(input: {
         ...newChainLinkOptions(dto, dto.repoName),
       }));
 
-    await installMultiRepoCiSecrets({
+    releaseSigningWarning = await installMultiRepoCiSecrets({
       support,
       provisioningToken,
       ownerLogin: repo.ownerLogin,
       repoName: repo.repoName,
       projectId: backendRow.id,
+      request: filterDeploymentProvisioningRequest(
+        effectiveDeploymentProvisioning,
+        ['backend'],
+      ),
     });
 
     ({ commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
@@ -471,6 +504,7 @@ export async function provisionMultiRepoBackend(input: {
     commitSha: backendCommitSha,
     commitUrl: backendCommitUrl,
     deliveryProjectId: backendDeliveryProjectId,
+    releaseSigningWarning,
   };
 }
 
@@ -515,6 +549,7 @@ export async function provisionMultiRepoFrontend(input: {
   let feRepoCreated: { owner: string; repo: string } | undefined;
   let feRow: ProvisionedProjectRow | undefined;
   let feProvisioningComplete = false;
+  let releaseSigningWarning: string | undefined;
 
   try {
     const bundle = await buildMultiRepoFrontendBundle({
@@ -570,12 +605,16 @@ export async function provisionMultiRepoFrontend(input: {
         : { chainName: dto.projectName?.trim() || dto.repoName }),
     }));
 
-    await installMultiRepoCiSecrets({
+    releaseSigningWarning = await installMultiRepoCiSecrets({
       support,
       provisioningToken,
       ownerLogin: repo.ownerLogin,
       repoName: repo.repoName,
       projectId: feRow.id,
+      request: filterDeploymentProvisioningRequest(
+        effectiveDeploymentProvisioning,
+        ['frontend'],
+      ),
     });
 
     const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
@@ -619,10 +658,11 @@ export async function provisionMultiRepoFrontend(input: {
       });
       feRepoFullName = undefined;
       feRepoUrl = undefined;
+      releaseSigningWarning = undefined;
     }
   }
 
-  return { feRepoFullName, feRepoUrl, feRow };
+  return { feRepoFullName, feRepoUrl, feRow, releaseSigningWarning };
 }
 
 export async function provisionMultiRepoDeployments(input: {
@@ -707,26 +747,30 @@ export function buildMultiRepoCreateResponse(input: {
   backendCommitUrl: string | null;
   frontend: MultiRepoFrontendProvision;
   deploymentProvisioning: DeploymentProvisioningResult;
+  releaseSigningWarning: string | undefined;
 }): CreateProjectResponse {
-  return {
-    id: input.backendRow.id,
-    repoFullName: input.beRepoFullName,
-    repoUrl: input.beRepoUrl,
-    status: 'provisioned',
-    branchesCreated: [...PROVISIONED_BRANCHES],
-    workflowPath: input.backendWorkflowPath,
-    workflowFiles: workflowFileMetadata(input.backendWorkflowFiles),
-    githubCommitSha: input.backendCommitSha,
-    githubCommitUrl: input.backendCommitUrl,
-    projectTypeId: input.backend.projectTypeId,
-    workflowRecipeId: input.backend.workflowRecipeId ?? '',
-    additionalWorkflowPaths: [],
-    ...(input.frontend.feRepoFullName !== undefined && {
-      secondaryRepoFullName: input.frontend.feRepoFullName,
-    }),
-    ...(input.frontend.feRepoUrl !== undefined && {
-      secondaryRepoUrl: input.frontend.feRepoUrl,
-    }),
-    deploymentProvisioning: input.deploymentProvisioning,
-  };
+  return withReleaseSigningWarning<CreateProjectResponse>(
+    {
+      id: input.backendRow.id,
+      repoFullName: input.beRepoFullName,
+      repoUrl: input.beRepoUrl,
+      status: 'provisioned',
+      branchesCreated: [...PROVISIONED_BRANCHES],
+      workflowPath: input.backendWorkflowPath,
+      workflowFiles: workflowFileMetadata(input.backendWorkflowFiles),
+      githubCommitSha: input.backendCommitSha,
+      githubCommitUrl: input.backendCommitUrl,
+      projectTypeId: input.backend.projectTypeId,
+      workflowRecipeId: input.backend.workflowRecipeId ?? '',
+      additionalWorkflowPaths: [],
+      ...(input.frontend.feRepoFullName !== undefined && {
+        secondaryRepoFullName: input.frontend.feRepoFullName,
+      }),
+      ...(input.frontend.feRepoUrl !== undefined && {
+        secondaryRepoUrl: input.frontend.feRepoUrl,
+      }),
+      deploymentProvisioning: input.deploymentProvisioning,
+    },
+    input.releaseSigningWarning,
+  );
 }

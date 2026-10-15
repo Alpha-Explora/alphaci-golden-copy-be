@@ -124,12 +124,13 @@ export class MicroservicesProjectProvisioner {
         ...newChainLinkOptions(dto, dto.repoName),
       });
       backendRow = backendLink.row;
-      await installPackedRepoSecrets({
+      const releaseSigningWarning = await installPackedRepoSecrets({
         support: this.support,
         provisioningToken,
         ownerLogin,
         repoName,
         projectId: backendRow.id,
+        effectiveDeploymentProvisioning,
       });
 
       const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
@@ -211,6 +212,7 @@ export class MicroservicesProjectProvisioner {
         backendCommitUrl,
         additionalWorkflowPaths,
         deploymentProvisioning,
+        releaseSigningWarning,
       });
     } catch (error) {
       if (!provisioningComplete) {

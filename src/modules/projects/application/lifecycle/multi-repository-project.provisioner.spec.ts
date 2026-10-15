@@ -6,6 +6,7 @@ import { DeploymentProviderPolicyRegistry } from '#modules/runtime/domain/deploy
 import { RenderDeploymentPolicy } from '#modules/runtime/infrastructure/providers/render/render-deployment.policy';
 import type { RenderCostPolicyService } from '#modules/runtime/infrastructure/providers/render/render-cost-policy.service';
 import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
+import { onpremComposeWorkflowFragment } from '#modules/runtime/infrastructure/providers/onprem/onprem-compose-workflow.fragment';
 import { VercelDeploymentPolicy } from '#modules/runtime/infrastructure/providers/vercel/vercel-deployment.policy';
 import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
 
@@ -23,6 +24,7 @@ function fakeSupport() {
     githubService: {
       createRepo: jest.fn(),
       setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
+      setActionsVariableStrict: jest.fn().mockResolvedValue(undefined),
       createBranch: jest.fn().mockResolvedValue(undefined),
       ensurePullRequestProtection: jest
         .fn()
@@ -530,5 +532,81 @@ describe('MultiRepositoryProjectProvisioner', () => {
     for (const [call] of support.buildWorkflowBundle.mock.calls) {
       expect(call).not.toHaveProperty('siblingRepoFullName');
     }
+  });
+
+  it('configures release signing only on the repository that hosts the on-prem target', async () => {
+    const support = {
+      ...fakeSupport(),
+      workflowFragmentRegistry: new WorkflowFragmentRegistry([
+        renderWorkflowFragment,
+        vercelWorkflowFragment,
+        onpremComposeWorkflowFragment,
+      ]),
+      configService: {
+        get: (key: string) =>
+          key === 'ALPHACI_RELEASE_KMS_KEY_VERSION'
+            ? 'projects/alphaci-prod/locations/europe-west1/keyRings/release/cryptoKeys/release-signing/cryptoKeyVersions/3'
+            : undefined,
+      },
+    };
+    support.githubService.createRepo
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-be',
+        ownerLogin: 'org',
+        repoName: 'orders-be',
+      })
+      .mockResolvedValueOnce({
+        repoUrl: 'https://github.com/org/orders-fe',
+        ownerLogin: 'org',
+        repoName: 'orders-fe',
+      });
+    support.createProjectRow
+      .mockResolvedValueOnce({
+        row: { id: 'proj-be' },
+        deliveryProjectId: null,
+      })
+      .mockResolvedValueOnce({
+        row: { id: 'proj-fe' },
+        deliveryProjectId: null,
+      });
+    const provisioner = new MultiRepositoryProjectProvisioner(support as never);
+
+    const result = await provisioner.createMultiRepoProject(
+      'user-1',
+      'tone',
+      'token',
+      'prov-token',
+      'org',
+      {
+        ...multiRepoDto,
+        deploymentProvisioning: {
+          enabled: true,
+          targets: [
+            {
+              slot: 'backend',
+              provider: 'onprem-compose',
+              ownershipMode: 'byo',
+            },
+            {
+              slot: 'frontend',
+              provider: 'vercel',
+              ownershipMode: 'flowci_managed',
+            },
+          ],
+        },
+      } as never,
+    );
+
+    expect(
+      support.githubService.setActionsVariableStrict,
+    ).toHaveBeenCalledTimes(1);
+    expect(support.githubService.setActionsVariableStrict).toHaveBeenCalledWith(
+      'prov-token',
+      'org',
+      'orders-be',
+      'ALPHACI_RELEASE_KMS_KEY_VERSION',
+      expect.stringMatching(/cryptoKeyVersions\/3$/),
+    );
+    expect(result).not.toHaveProperty('releaseSigningWarning');
   });
 });

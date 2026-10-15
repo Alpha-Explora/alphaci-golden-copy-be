@@ -16,6 +16,10 @@ import type { ProvisionedProjectRow } from '../../infrastructure/projects.reposi
 import type { StagedWorkflowFile } from '../workflows/index';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 import {
+  configureReleaseSigning,
+  withReleaseSigningWarning,
+} from './release-signing.provisioning';
+import {
   BRANCHES_CREATED_ON_PROVISION,
   PROVISIONED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
@@ -272,13 +276,18 @@ export async function persistPackedBackendRow(input: {
   );
 }
 
+/**
+ * Installs the shared repo secrets and signing configuration for a packed repo.
+ * Returns the release-signing warning, if any, for the create response.
+ */
 export async function installPackedRepoSecrets(input: {
   support: ProjectProvisioningSupport;
   provisioningToken: string;
   ownerLogin: string;
   repoName: string;
   projectId: string;
-}): Promise<void> {
+  effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
+}): Promise<string | undefined> {
   const ciToken = await input.support.ciService.issueProjectToken(
     input.projectId,
   );
@@ -308,6 +317,12 @@ export async function installPackedRepoSecrets(input: {
     input.ownerLogin,
     input.repoName,
   );
+  return configureReleaseSigning(input.support, {
+    accessToken: input.provisioningToken,
+    owner: input.ownerLogin,
+    repo: input.repoName,
+    request: input.effectiveDeploymentProvisioning,
+  });
 }
 
 export async function pushPackedBackendWorkflow(input: {
@@ -498,20 +513,24 @@ export function buildPackedCreateResponse(input: {
   backendCommitUrl: string | null;
   additionalWorkflowPaths: string[];
   deploymentProvisioning: DeploymentProvisioningResult;
+  releaseSigningWarning: string | undefined;
 }): CreateProjectResponse {
-  return {
-    id: input.backendRow.id,
-    repoFullName: input.repoFullName,
-    repoUrl: input.repoUrl,
-    status: 'provisioned',
-    branchesCreated: [...PROVISIONED_BRANCHES],
-    workflowPath: input.backendWorkflowPath,
-    workflowFiles: workflowFileMetadata(input.backendWorkflowFiles),
-    githubCommitSha: input.backendCommitSha,
-    githubCommitUrl: input.backendCommitUrl,
-    projectTypeId: input.backend.projectTypeId,
-    workflowRecipeId: input.backend.workflowRecipeId ?? '',
-    additionalWorkflowPaths: input.additionalWorkflowPaths,
-    deploymentProvisioning: input.deploymentProvisioning,
-  };
+  return withReleaseSigningWarning<CreateProjectResponse>(
+    {
+      id: input.backendRow.id,
+      repoFullName: input.repoFullName,
+      repoUrl: input.repoUrl,
+      status: 'provisioned',
+      branchesCreated: [...PROVISIONED_BRANCHES],
+      workflowPath: input.backendWorkflowPath,
+      workflowFiles: workflowFileMetadata(input.backendWorkflowFiles),
+      githubCommitSha: input.backendCommitSha,
+      githubCommitUrl: input.backendCommitUrl,
+      projectTypeId: input.backend.projectTypeId,
+      workflowRecipeId: input.backend.workflowRecipeId ?? '',
+      additionalWorkflowPaths: input.additionalWorkflowPaths,
+      deploymentProvisioning: input.deploymentProvisioning,
+    },
+    input.releaseSigningWarning,
+  );
 }

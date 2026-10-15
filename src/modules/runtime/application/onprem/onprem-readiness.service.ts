@@ -7,6 +7,10 @@ import {
   type DeploymentProjectReferenceLookup,
 } from '#kernel/ports/deployment-runtime.port';
 import { validateCiApiConnectivity } from '#kernel/config/ci-api-connectivity';
+import {
+  resolveReleaseSigningSource,
+  type ReleaseSigningSource,
+} from '#kernel/config/release-signing.config';
 import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
 
 export interface ReadinessCheck {
@@ -16,6 +20,19 @@ export interface ReadinessCheck {
 }
 export interface OnpremReadiness {
   checks: ReadinessCheck[];
+}
+
+function releaseSigningMessage(source: ReleaseSigningSource): string {
+  switch (source.kind) {
+    case 'kms':
+      return 'Releases are signed with the Cloud KMS key version in ALPHACI_RELEASE_KMS_KEY_VERSION.';
+    case 'lab':
+      return 'Releases are signed with a lab key (ONPREM_LAB_SIGNING_KEY_PATH). Lab hosts only; client hosts must use Cloud KMS.';
+    case 'invalid-kms':
+      return 'ALPHACI_RELEASE_KMS_KEY_VERSION is not a full Cloud KMS key version name (projects/.../cryptoKeyVersions/N). Releases cannot be signed until it is corrected.';
+    case 'none':
+      return 'Releases cannot be signed: set ALPHACI_RELEASE_KMS_KEY_VERSION to the Cloud KMS key version that signs releases.';
+  }
 }
 
 @Injectable()
@@ -166,6 +183,14 @@ export class OnpremReadinessService {
         'Configure valid P-256 release verification public keys.',
       );
     }
+    const signing = resolveReleaseSigningSource((key) =>
+      this.config.get<string>(key),
+    );
+    check(
+      'release-signing',
+      signing.kind === 'kms' || signing.kind === 'lab' ? 'passed' : 'failed',
+      releaseSigningMessage(signing),
+    );
     check(
       'ci-signing-secret',
       'unverified',

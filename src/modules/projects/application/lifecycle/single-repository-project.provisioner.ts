@@ -27,6 +27,10 @@ import {
   BRANCHES_CREATED_ON_PROVISION,
   PROVISIONED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
+import {
+  configureReleaseSigning,
+  withReleaseSigningWarning,
+} from './release-signing.provisioning';
 
 export class SingleRepositoryProjectProvisioner {
   private readonly logger = new Logger(SingleRepositoryProjectProvisioner.name);
@@ -198,25 +202,39 @@ export class SingleRepositoryProjectProvisioner {
         ownerLogin,
         repoName,
       );
+      // Signing config goes in with the other repository configuration, before
+      // any workflow exists, so the first signed release finds its key.
+      const releaseSigningWarning = await configureReleaseSigning(
+        this.support,
+        {
+          accessToken: provisioningToken,
+          owner: ownerLogin,
+          repo: repoName,
+          request: effectiveDeploymentProvisioning,
+        },
+      );
 
       if (dto.environments) {
-        return await this.completeEnvironmentProject({
-          userId,
-          dto,
-          row,
-          templateId,
-          repoShape,
-          provisioningToken,
-          ownerLogin,
-          repoName,
-          repoUrl,
-          repoFullName,
-          workflowPath,
-          deploymentProvisioning: effectiveDeploymentProvisioning,
-          markComplete: () => {
-            provisioningComplete = true;
-          },
-        });
+        return withReleaseSigningWarning(
+          await this.completeEnvironmentProject({
+            userId,
+            dto,
+            row,
+            templateId,
+            repoShape,
+            provisioningToken,
+            ownerLogin,
+            repoName,
+            repoUrl,
+            repoFullName,
+            workflowPath,
+            deploymentProvisioning: effectiveDeploymentProvisioning,
+            markComplete: () => {
+              provisioningComplete = true;
+            },
+          }),
+          releaseSigningWarning,
+        );
       }
 
       // 5. Push workflow YAML to main now that the secrets exist, then record
@@ -282,20 +300,23 @@ export class SingleRepositoryProjectProvisioner {
         metadata: { repoShape, projectTypeId: dto.projectTypeId },
       });
 
-      return {
-        id: row.id,
-        repoFullName,
-        repoUrl,
-        status: 'provisioned',
-        branchesCreated: [...PROVISIONED_BRANCHES],
-        workflowPath,
-        workflowFiles: workflowFileMetadata(workflowFiles),
-        githubCommitSha: commitSha,
-        githubCommitUrl: commitUrl,
-        projectTypeId: dto.projectTypeId,
-        workflowRecipeId: dto.workflowRecipeId ?? '',
-        deploymentProvisioning,
-      };
+      return withReleaseSigningWarning(
+        {
+          id: row.id,
+          repoFullName,
+          repoUrl,
+          status: 'provisioned',
+          branchesCreated: [...PROVISIONED_BRANCHES],
+          workflowPath,
+          workflowFiles: workflowFileMetadata(workflowFiles),
+          githubCommitSha: commitSha,
+          githubCommitUrl: commitUrl,
+          projectTypeId: dto.projectTypeId,
+          workflowRecipeId: dto.workflowRecipeId ?? '',
+          deploymentProvisioning,
+        },
+        releaseSigningWarning,
+      );
     } catch (error) {
       if (!provisioningComplete) {
         await this.support.compensateFailedProvision(
@@ -603,6 +624,7 @@ export class SingleRepositoryProjectProvisioner {
 
     let commitSha = '';
     let commitUrl: string | null = null;
+    let releaseSigningWarning: string | undefined;
     try {
       const ciToken = await this.support.ciService.issueProjectToken(row.id);
       await this.support.githubService.setActionsSecretStrict(
@@ -622,6 +644,12 @@ export class SingleRepositoryProjectProvisioner {
       // preserveExisting: this is somebody's existing repository, and it may
       // already be wired to its own SonarCloud project.
       await this.support.sonar.installSecrets(accessToken, owner, repo, true);
+      releaseSigningWarning = await configureReleaseSigning(this.support, {
+        accessToken,
+        owner,
+        repo,
+        request: dto.deploymentProvisioning,
+      });
 
       // 4. Push the workflow files to the repository's OWN default branch now
       // that the secrets exist, then record the commit.
@@ -715,16 +743,19 @@ export class SingleRepositoryProjectProvisioner {
       metadata: { repoShape: 'existing', templateId: dto.templateId },
     });
 
-    return {
-      id: row.id,
-      repoFullName: dto.repoFullName,
-      status: 'provisioned',
-      workflowPath,
-      workflowFiles: workflowFileMetadata(workflowFiles),
-      githubCommitSha: commitSha,
-      githubCommitUrl: commitUrl,
-      deploymentProvisioning,
-    };
+    return withReleaseSigningWarning(
+      {
+        id: row.id,
+        repoFullName: dto.repoFullName,
+        status: 'provisioned',
+        workflowPath,
+        workflowFiles: workflowFileMetadata(workflowFiles),
+        githubCommitSha: commitSha,
+        githubCommitUrl: commitUrl,
+        deploymentProvisioning,
+      },
+      releaseSigningWarning,
+    );
   }
 
   private async resolveCreatorLogin(userId: string): Promise<string> {

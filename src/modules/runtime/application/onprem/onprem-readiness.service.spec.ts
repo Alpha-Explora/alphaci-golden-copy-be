@@ -109,4 +109,63 @@ describe('On-prem readiness', () => {
       );
     },
   );
+
+  describe('release-signing check', () => {
+    const KEY_VERSION =
+      'projects/alphaci-prod/locations/europe-west1/keyRings/release/cryptoKeys/release-signing/cryptoKeyVersions/3';
+    const signingCheck = async (env: Record<string, string>) => {
+      const withEnv = new OnpremReadinessService(
+        { query } as unknown as DatabaseService,
+        projects as unknown as DeploymentProjectReferenceLookup,
+        new ConfigService({
+          PLATFORM_PUBLIC_URL: 'https://api.example.com',
+          ONPREM_RELEASES_ENABLED: 'true',
+          ...env,
+        }),
+      );
+      const result = await withEnv.read('project', 'env', 'viewer');
+      return result.checks.find((item) => item.id === 'release-signing');
+    };
+
+    it('fails in plain language when neither Cloud KMS nor a lab key is configured', async () => {
+      await expect(signingCheck({})).resolves.toMatchObject({
+        status: 'failed',
+        message: expect.stringContaining(
+          'Releases cannot be signed: set ALPHACI_RELEASE_KMS_KEY_VERSION',
+        ),
+      });
+    });
+
+    it('passes with the Cloud KMS key version', async () => {
+      await expect(
+        signingCheck({ ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION }),
+      ).resolves.toMatchObject({
+        status: 'passed',
+        message: expect.stringContaining('Cloud KMS'),
+      });
+    });
+
+    it('passes with the lab key but says it is for lab hosts only', async () => {
+      await expect(
+        signingCheck({ ONPREM_LAB_SIGNING_KEY_PATH: '/run/keys/lab.pem' }),
+      ).resolves.toMatchObject({
+        status: 'passed',
+        message: expect.stringContaining('Lab hosts only'),
+      });
+    });
+
+    it('fails when the Cloud KMS value is not a full key-version name', async () => {
+      await expect(
+        signingCheck({
+          ALPHACI_RELEASE_KMS_KEY_VERSION: 'release-signing',
+          ONPREM_LAB_SIGNING_KEY_PATH: '/run/keys/lab.pem',
+        }),
+      ).resolves.toMatchObject({
+        status: 'failed',
+        message: expect.stringContaining(
+          'not a full Cloud KMS key version name',
+        ),
+      });
+    });
+  });
 });

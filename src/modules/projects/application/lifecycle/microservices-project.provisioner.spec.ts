@@ -19,6 +19,7 @@ function fakeSupport() {
         repoName: 'orders',
       }),
       setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
+      setActionsVariableStrict: jest.fn().mockResolvedValue(undefined),
       createBranch: jest.fn().mockResolvedValue(undefined),
       ensurePullRequestProtection: jest
         .fn()
@@ -280,5 +281,84 @@ describe('MicroservicesProjectProvisioner', () => {
     ).rejects.toThrow('GitHub 500');
 
     expect(support.notifyProjectCreated).not.toHaveBeenCalled();
+  });
+
+  describe('release signing configuration', () => {
+    const onpremDto = {
+      ...packedShapeDto,
+      deploymentProvisioning: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'onprem-compose',
+            ownershipMode: 'byo',
+            environmentSlug: 'main',
+          },
+        ],
+      },
+    };
+    const KEY_VERSION =
+      'projects/alphaci-prod/locations/europe-west1/keyRings/release/cryptoKeys/release-signing/cryptoKeyVersions/3';
+
+    function withOnpremSigning(env: Record<string, string | undefined>) {
+      return {
+        ...fakeSupport(),
+        workflowFragmentRegistry: {
+          deliveredByHost: (provider: string) => provider === 'onprem-compose',
+          expandTargets: () => [],
+        },
+        configService: { get: (key: string) => env[key] },
+      };
+    }
+
+    it('sets the Cloud KMS key version on the repository and reports no warning', async () => {
+      const support = withOnpremSigning({
+        ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+      });
+      const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+      const result = await provisioner.createMicroservicesProject(
+        'user-1',
+        'tone',
+        'token',
+        'prov-token',
+        'org',
+        onpremDto as never,
+      );
+
+      expect(
+        support.githubService.setActionsVariableStrict,
+      ).toHaveBeenCalledWith(
+        'prov-token',
+        'org',
+        'orders',
+        'ALPHACI_RELEASE_KMS_KEY_VERSION',
+        KEY_VERSION,
+      );
+      expect(result).not.toHaveProperty('releaseSigningWarning');
+    });
+
+    it('returns a releaseSigningWarning on the create response when no signing is configured', async () => {
+      const support = withOnpremSigning({});
+      const provisioner = new MicroservicesProjectProvisioner(support as never);
+
+      const result = await provisioner.createMicroservicesProject(
+        'user-1',
+        'tone',
+        'token',
+        'prov-token',
+        'org',
+        onpremDto as never,
+      );
+
+      expect(
+        support.githubService.setActionsVariableStrict,
+      ).not.toHaveBeenCalled();
+      expect(result.releaseSigningWarning).toContain(
+        'Releases cannot be signed yet',
+      );
+      expect(result.id).toBe('proj-be');
+    });
   });
 });

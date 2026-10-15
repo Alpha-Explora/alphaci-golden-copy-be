@@ -29,8 +29,8 @@ Use the workspace **Hosts** screen for the machine workflow. Set a public HTTPS
 `PLATFORM_PUBLIC_URL`, enable `ONPREM_RELEASES_ENABLED`, configure P-256 public
 `ALPHACI_RELEASE_TRUST_KEYS_JSON`, apply the three `20261015` Runtime migrations,
 and configure the installer version, URL, hash, and local archive path described
-in the release registry contract. Keep the signing private key in CI's secret
-store. It never belongs on an enrolled machine.
+in the release registry contract. Keep the signing key in Cloud KMS (or, for lab
+hosts only, in CI's secret store). It never belongs on an enrolled machine.
 
 1. Build the preview package with `node scripts/package-onprem-agent.mjs`.
 2. Choose Add host and copy the checksum-verifying installation command for the
@@ -157,9 +157,45 @@ On an Ubuntu machine without Windows, skip steps 1–5 and Part 8.
 
     The agent logs errors every 30 seconds until Part 7 is complete.
 
-## Part 4: Create the release signing key
+## Part 4: Set up release signing
 
-Do this once for the whole AlphaCI deployment. Later hosts reuse the same public key.
+Do this once for the whole AlphaCi deployment. Client hosts sign with Cloud KMS.
+The local lab key in steps 12–15 is for lab hosts only. Either way, AlphaCi
+configures each new on-prem project's signing itself (step 20).
+
+### Cloud KMS (client hosts)
+
+Use the AlphaCi release signing key in the client's Google Cloud project, as the
+client setup guide describes. It is an ECDSA P-256 key that signs with
+`EC_SIGN_P256_SHA256`. Its private key never leaves Cloud KMS, and no workflow
+holds it.
+
+Name the key version. This exact resource name is also the release key ID:
+
+```text
+projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY/cryptoKeyVersions/VERSION
+```
+
+Export that version's public key:
+
+```bash
+gcloud kms keys versions get-public-key VERSION --key=KEY --keyring=RING --location=LOCATION --project=PROJECT --output-file=alphaci.pub
+```
+
+Build the backend trust setting. The key ID must be the resource name, exactly:
+
+```bash
+KMS_KEY_VERSION='projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY/cryptoKeyVersions/VERSION'
+jq -nc --arg id "$KMS_KEY_VERSION" --rawfile pem alphaci.pub '{($id):$pem}'
+```
+
+Keep the output and the resource name for step 17. Pin the same PEM on every
+host, as step 14 does: copy `alphaci.pub` to `/opt/alphaci/trust/release-signing.pub.pem`.
+
+Provisioning then sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION`
+on each new on-prem project (step 20). No secret is copied.
+
+### Lab key (lab hosts only)
 
 12. **Ubuntu:** create the key pair:
 
@@ -179,7 +215,7 @@ Do this once for the whole AlphaCI deployment. Later hosts reuse the same public
     ```bash
     sudo cp ~/alphaci-keys/release-signing.pub.pem /opt/alphaci/trust/release-signing.pub.pem
     ```
-15. Store `release-signing.key` in the team password manager. It goes only into project repository secrets (step 20). This lab key is for test hosts; client hosts should use the Cloud KMS signer described in the client setup guide.
+15. Store `release-signing.key` in the team password manager. Lab only: make the PEM readable by the backend process (on Render, a secret file mounts under `/etc/secrets/`), and set `ONPREM_LAB_SIGNING_KEY_PATH` to that path (step 17). Provisioning copies the key into the project secret `ALPHACI_RELEASE_SIGNING_KEY` (step 20). Cloud KMS wins when `ALPHACI_RELEASE_KMS_KEY_VERSION` is also set. Client hosts must not use this key.
 
 ## Part 5: Enable on-prem in AlphaCI
 
@@ -196,7 +232,11 @@ Do this once per AlphaCI deployment.
     ```text
     ENV_PROVISIONING_ENABLED=true
     ONPREM_RELEASES_ENABLED=true
-    ALPHACI_RELEASE_TRUST_KEYS_JSON=<the one-line JSON from step 13>
+    ALPHACI_RELEASE_TRUST_KEYS_JSON=<the one-line trust JSON from Part 4>
+    # Choose one signing source. Cloud KMS for client hosts:
+    ALPHACI_RELEASE_KMS_KEY_VERSION=<the Cloud KMS key version from Part 4>
+    # Lab hosts only, instead of the line above:
+    # ONPREM_LAB_SIGNING_KEY_PATH=<path to release-signing.key from step 15>
     ```
 
 ## Part 6: Create the project
@@ -237,7 +277,7 @@ step uses the API from the browser console while signed in.
     ```
 
     Status `201` means the repository, environments, targets, and pipeline were created.
-20. **GitHub:** in the new repository, open **Settings**, **Secrets and variables**, **Actions**, and add the secret `ALPHACI_RELEASE_SIGNING_KEY` with the full contents of `release-signing.key`, including the BEGIN and END lines.
+20. **AlphaCI configures signing for you.** The project gets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION` (Cloud KMS), or, lab only, the secret `ALPHACI_RELEASE_SIGNING_KEY`. Nothing to add by hand. Check the step 19 response: a `releaseSigningWarning` means signing is not configured. Fix the backend setting from step 17. Then, in the new repository, open **Settings**, **Secrets and variables**, **Actions**, and add the variable or secret that the warning names.
 21. **AlphaCI:** open the project's **Hosting** tab. In the **Production** card, enter a host name such as `lab-pc` and choose **Register host**. Copy the token; it is shown once.
 
 ## Part 7: Configure the agent
@@ -350,9 +390,8 @@ register the host in the environment's card (step 21), then follow Parts 7–9.
 
 ## Adding another project
 
-Repeat steps 18–21 with the new repository name, and add the same
-`ALPHACI_RELEASE_SIGNING_KEY` secret to the new repository. A host serves one
-environment; a second project's production needs its own host or its own
+Repeat steps 18–21 with the new repository name. Signing is configured
+automatically (step 20). A host serves one environment; a second project's production needs its own host or its own
 Compose project and agent configuration.
 
 ## Troubleshooting
@@ -361,7 +400,8 @@ Compose project and agent configuration.
 |---|---|
 | Step 24 returns 401 | The token was copied incompletely, or the host was registered on another environment. Register a new host. |
 | Step 24 returns 503 | `ONPREM_RELEASES_ENABLED` or `ENV_PROVISIONING_ENABLED` is not `true` on the deployed backend. |
-| The sign-release job fails | The repository has no `ALPHACI_RELEASE_SIGNING_KEY` secret, or the backend's trust JSON does not contain the key ID from step 13. |
+| Readiness shows `release-signing` failed | The backend has neither `ALPHACI_RELEASE_KMS_KEY_VERSION` nor, for lab hosts, `ONPREM_LAB_SIGNING_KEY_PATH`. Set one (step 17). |
+| The sign-release job fails | The repository has no `ALPHACI_RELEASE_KMS_KEY_VERSION` variable (or, lab only, `ALPHACI_RELEASE_SIGNING_KEY` secret). The step 19 response would have said so in `releaseSigningWarning`. Or the backend's trust JSON lacks the key ID: for Cloud KMS that is the exact `ALPHACI_RELEASE_KMS_KEY_VERSION` value; for the lab key, the ID from step 13. |
 | No **Promote** button on Production | Test has not reported a healthy release yet, or the account is not an admin or lead. |
 | Promotion stays pending | The agent is not polling. Run `systemctl list-timers alphaci-agent.timer` and `journalctl -u alphaci-agent.service -n 50`. |
 | Deployment failed: signature, hash, or project rejected | The host's `release-signing.pub.pem` does not match the key that signed the release. |
