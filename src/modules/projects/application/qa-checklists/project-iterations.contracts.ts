@@ -1,8 +1,3 @@
-import type {
-  QaProgress,
-  QaRequirementKind,
-} from './qa-requirements.contracts';
-
 export type ProjectIterationStatus = 'active' | 'delivered';
 
 /** The slice of an Iteration that rides along on run payloads. */
@@ -81,46 +76,12 @@ export interface ProjectIterationCurrent extends ProjectIterationCurrentBase {
   coveredRepositories: CoveredRepository[];
   /** Lead or admin, the Iteration is active and the Merge to main gate is eligible. */
   canMergeAll: boolean;
-  /** Only when `canStartNext`: the delivered Iteration's items, unfinished ones suggested. */
-  carryOver?: CarryOverCandidates;
 }
 
-/** The Verification status a run item can hold (qa_run_items.status). */
-export type CarryOverLastStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'passed'
-  | 'failed'
-  | 'blocked'
-  | 'returned_to_dev';
-
-/** One delivered item that can be carried into the next Iteration. */
-export interface CarryOverItem {
-  id: string;
-  title: string;
-  progress: QaProgress;
-  /** Its Verification status in the delivering run; null when it was not in that run. */
-  lastStatus: CarryOverLastStatus | null;
-  /** Unfinished: pre-selected in the Start dialog. */
-  suggested: boolean;
-}
-
-export interface CarryOverRequirement {
-  requirementId: string;
-  name: string;
-  kind: QaRequirementKind;
-  items: CarryOverItem[];
-}
-
-/** What the Start dialog offers: the latest delivered Iteration's items. */
-export interface CarryOverCandidates {
-  fromIterationNumber: number;
-  requirements: CarryOverRequirement[];
-}
-
-/** POST /delivery-projects/:id/iterations */
+/**
+ * POST /delivery-projects/:id/iterations. The new Iteration always starts
+ * empty: nothing is carried over (ITERATIONS_PLAN.md 6a).
+ */
 export interface StartedIteration {
   iteration: ProjectIteration;
-  carriedRequirements: number;
-  carriedItems: number;
 }

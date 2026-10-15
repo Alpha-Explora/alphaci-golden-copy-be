@@ -113,7 +113,6 @@ export function fakeIterations(
     findCurrent: jest.fn().mockImplementation(() => Promise.resolve(state.row)),
     list: jest.fn().mockImplementation(() => Promise.resolve([state.row])),
     insertFirstIfNone: jest.fn().mockResolvedValue(undefined),
-    listCarryOverItems: jest.fn().mockResolvedValue([]),
     startNext: jest.fn(),
     findCurrentByDeliveryProjects: jest
       .fn()

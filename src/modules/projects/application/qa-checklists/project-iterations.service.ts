@@ -4,17 +4,13 @@ import { parseDeliveryEntries } from '../../domain/project-delivery.rules';
 import {
   canStartNextIteration,
   isIterationWritable,
-  isUnfinishedForCarryOver,
 } from '../../domain/project-iteration.rules';
 import {
   ITERATION_UNIQUE_VIOLATION,
   ProjectIterationsRepository,
   type ProjectIterationRow,
-  type StartNextIterationResult,
 } from '../../infrastructure/project-iterations.repository';
 import type {
-  CarryOverCandidates,
-  CarryOverRequirement,
   DeliveredRepository,
   ProjectIteration,
   ProjectIterationCurrentBase,
@@ -254,74 +250,26 @@ export class ProjectIterationsService {
   }
 
   // ---------------------------------------------------------------------
-  // Carry-over (phase 3)
+  // Start the next Iteration
   // ---------------------------------------------------------------------
 
   /**
-   * The delivered Iteration's items, grouped by requirement, with `suggested`
-   * on the unfinished ones. Null unless the Iteration is delivered (only then
-   * can a next one start).
-   */
-  async carryOverCandidates(
-    iteration: ProjectIterationRow,
-  ): Promise<CarryOverCandidates | null> {
-    if (iteration.status !== 'delivered') {
-      return null;
-    }
-    const rows = await this.iterations.listCarryOverItems(
-      iteration.id,
-      iteration.signoff_run_id,
-    );
-    const byRequirement = new Map<string, CarryOverRequirement>();
-    for (const row of rows) {
-      let requirement = byRequirement.get(row.requirement_id);
-      if (!requirement) {
-        requirement = {
-          requirementId: row.requirement_id,
-          name: row.requirement_name,
-          kind: row.requirement_kind,
-          items: [],
-        };
-        byRequirement.set(row.requirement_id, requirement);
-      }
-      requirement.items.push({
-        id: row.item_id,
-        title: row.title,
-        progress: row.progress,
-        lastStatus: row.last_status,
-        suggested: isUnfinishedForCarryOver({
-          progress: row.progress,
-          lastStatus: row.last_status,
-        }),
-      });
-    }
-    return {
-      fromIterationNumber: iteration.number,
-      requirements: [...byRequirement.values()],
-    };
-  }
-
-  /**
-   * Creates the next Iteration with its carried items in one transaction. The
-   * caller has checked access and that `source` is the latest delivered
-   * Iteration. A unique violation (a concurrent start) becomes 409
-   * ITERATION_ACTIVE.
+   * Creates the next Iteration, empty. The caller has checked access and that
+   * `source` is the latest delivered Iteration. A unique violation (a
+   * concurrent start) becomes 409 ITERATION_ACTIVE.
    */
   async startNext(input: {
     source: ProjectIterationRow;
     startedBy: string;
     startedByLogin: string;
     goal: string | null;
-    itemIds: readonly string[];
-  }): Promise<StartNextIterationResult> {
+  }): Promise<ProjectIterationRow> {
     try {
       return await this.iterations.startNext({
         deliveryProjectId: input.source.delivery_project_id,
         startedBy: input.startedBy,
         startedByLogin: input.startedByLogin,
         goal: input.goal,
-        itemIds: input.itemIds,
-        signoffRunId: input.source.signoff_run_id,
       });
     } catch (error) {
       if (

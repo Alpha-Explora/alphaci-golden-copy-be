@@ -5,10 +5,7 @@ import {
   fakeIterations,
   iterationRow,
 } from '../../__fixtures__/project-iterations';
-import type {
-  CarryOverItemRow,
-  ProjectIterationRow,
-} from '../../infrastructure/project-iterations.repository';
+import type { ProjectIterationRow } from '../../infrastructure/project-iterations.repository';
 import type { QaProjectContextService } from '../qa-checklists/qa-project-context.service';
 import {
   ProjectIterationStartService,
@@ -18,23 +15,7 @@ import {
 const DP = 'dp-1';
 const actor = { userId: 'lead-1', userLogin: 'lead', oauthToken: null };
 
-const item = (
-  requirement: string,
-  id: string,
-  overrides: Partial<CarryOverItemRow> = {},
-): CarryOverItemRow => ({
-  requirement_id: requirement,
-  requirement_name: `Req ${requirement}`,
-  requirement_kind: 'functional',
-  item_id: id,
-  title: `Story ${id}`,
-  progress: 'done',
-  last_status: 'passed',
-  ...overrides,
-});
-
 interface Fixture {
-  carryable?: CarryOverItemRow[];
   delivered?: ProjectIterationRow;
   canManage?: boolean;
   withPublishers?: boolean;
@@ -51,7 +32,6 @@ function build(options: Fixture = {}) {
     projectContext,
     state,
   } = fakeIterations(delivered, { canManage: options.canManage ?? true });
-  repository.listCarryOverItems.mockResolvedValue(options.carryable ?? []);
   repository.startNext.mockImplementation((input) => {
     const row = iterationRow({
       id: 'it-2',
@@ -61,15 +41,7 @@ function build(options: Fixture = {}) {
       started_by_login: input.startedByLogin,
     });
     state.row = row;
-    return Promise.resolve({
-      iteration: row,
-      carriedRequirements: new Set(
-        (options.carryable ?? [])
-          .filter((row) => input.itemIds.includes(row.item_id))
-          .map((row) => row.requirement_id),
-      ).size,
-      carriedItems: input.itemIds.length,
-    });
+    return Promise.resolve(row);
   });
   Object.assign(projectContext, {
     anchorProjectId: jest.fn().mockResolvedValue('p-api'),
@@ -100,15 +72,9 @@ function build(options: Fixture = {}) {
   };
 }
 
-const carryable = [
-  item('r1', 'a', { progress: 'in_progress', last_status: 'failed' }),
-  item('r1', 'b'),
-  item('r2', 'c', { requirement_kind: 'system', progress: 'todo' }),
-];
-
 describe('ProjectIterationStartService.start', () => {
   it('a non-member gets the 404 and nothing is written', async () => {
-    const f = build({ carryable });
+    const f = build();
     f.projectContext.requireProject.mockRejectedValue(
       new NotFoundException('Project not found'),
     );
@@ -145,7 +111,7 @@ describe('ProjectIterationStartService.start', () => {
   });
 
   it('two starts racing: one creates Iteration 2, the loser gets 409 ITERATION_ACTIVE', async () => {
-    const f = build({ carryable });
+    const f = build();
     // Behave like the partial unique index: the first caller to reach the
     // write wins, the second is refused with unique_violation.
     let taken = false;
@@ -157,7 +123,7 @@ describe('ProjectIterationStartService.start', () => {
       taken = true;
       const row = iterationRow({ id: 'it-2', number: 2, goal: input.goal });
       f.state.row = row;
-      return { iteration: row, carriedRequirements: 0, carriedItems: 0 };
+      return row;
     });
 
     const results = await Promise.allSettled([
@@ -177,37 +143,30 @@ describe('ProjectIterationStartService.start', () => {
     expect(f.audit.recordProjectEvent).toHaveBeenCalledTimes(1);
   });
 
-  it('400 ITERATION_CARRY_INVALID lists every id that is not an item of the latest delivered Iteration', async () => {
-    const f = build({ carryable });
+  it('400 ITERATION_CARRY_INVALID when items are named to carry over: nothing is carried any more', async () => {
+    const f = build();
 
     await expect(
       f.service.start(DP, actor, {
-        carryOver: {
-          requirementItemIds: ['a', 'other-project-item', 'older-iteration'],
-        },
+        carryOver: { requirementItemIds: ['a', 'b', 'a'] },
       }),
     ).rejects.toMatchObject({
       status: 400,
       response: {
         code: 'ITERATION_CARRY_INVALID',
-        invalidIds: ['other-project-item', 'older-iteration'],
+        invalidIds: ['a', 'b'],
+        message:
+          'Items are no longer carried over: a new iteration starts with an empty checklist.',
       },
     });
-    // All or nothing: the valid id was not carried.
     expect(f.repository.startNext).not.toHaveBeenCalled();
-    // Candidates are read from the delivered Iteration only.
-    expect(f.repository.listCarryOverItems).toHaveBeenCalledWith(
-      'it-1',
-      'run-1',
-    );
   });
 
-  it('starts N+1 carrying the chosen items, once each, with the delivering run for the progress reset', async () => {
-    const f = build({ carryable });
+  it('starts N+1 empty, with the trimmed goal', async () => {
+    const f = build();
 
     const result = await f.service.start(DP, actor, {
       goal: '  Loyalty points  ',
-      carryOver: { requirementItemIds: ['a', 'c', 'a'] },
     });
 
     expect(f.repository.startNext).toHaveBeenCalledWith({
@@ -215,40 +174,27 @@ describe('ProjectIterationStartService.start', () => {
       startedBy: 'lead-1',
       startedByLogin: 'lead',
       goal: 'Loyalty points',
-      itemIds: ['a', 'c'],
-      signoffRunId: 'run-1',
     });
-    expect(result).toMatchObject({
-      iteration: {
+    expect(result).toEqual({
+      iteration: expect.objectContaining({
         id: 'it-2',
         number: 2,
         status: 'active',
         goal: 'Loyalty points',
         startedBy: { id: 'lead-1', login: 'lead' },
-      },
-      carriedRequirements: 2,
-      carriedItems: 2,
+      }),
     });
   });
 
-  it('a start with nothing carried over is allowed: the new Iteration begins empty', async () => {
-    const f = build({ carryable });
+  it('still accepts an empty carry-over list from an older client', async () => {
+    const f = build();
 
-    for (const body of [{}, { carryOver: { requirementItemIds: [] } }]) {
-      f.state.row = deliveredIterationRow({
-        id: 'it-1',
-        number: 1,
-        signoff_run_id: 'run-1',
-      });
-      await expect(f.service.start(DP, actor, body)).resolves.toMatchObject({
-        carriedItems: 0,
-      });
-    }
+    await expect(
+      f.service.start(DP, actor, { carryOver: { requirementItemIds: [] } }),
+    ).resolves.toMatchObject({ iteration: { number: 2 } });
     expect(f.repository.startNext).toHaveBeenCalledWith(
-      expect.objectContaining({ itemIds: [], goal: null }),
+      expect.objectContaining({ goal: null }),
     );
-    // No candidates needed when nothing is requested.
-    expect(f.repository.listCarryOverItems).not.toHaveBeenCalled();
   });
 
   it('an empty goal becomes null and one over 120 characters is a 400', async () => {
@@ -272,12 +218,9 @@ describe('ProjectIterationStartService.start', () => {
   });
 
   it('records qa.iteration.started and notifies Developers and QA, not the actor', async () => {
-    const f = build({ carryable });
+    const f = build();
 
-    await f.service.start(DP, actor, {
-      goal: 'Loyalty points',
-      carryOver: { requirementItemIds: ['a', 'b', 'c'] },
-    });
+    await f.service.start(DP, actor, { goal: 'Loyalty points' });
 
     expect(f.audit.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -288,8 +231,6 @@ describe('ProjectIterationStartService.start', () => {
           deliveryProjectId: DP,
           iterationId: 'it-2',
           number: 2,
-          carriedItems: 3,
-          carriedRequirements: 2,
         },
       }),
     );
@@ -301,25 +242,23 @@ describe('ProjectIterationStartService.start', () => {
       expect.objectContaining({
         eventCode: QA_ITERATION_STARTED_EVENT,
         title: 'Iteration 2 of Checkout started',
-        body: 'Goal: Loyalty points. 3 items carried over.',
+        body: 'Goal: Loyalty points. It starts with an empty checklist.',
       }),
     );
   });
 
-  it('names a single carried item and omits a missing goal', async () => {
-    const f = build({ carryable });
+  it('omits a missing goal from the notification', async () => {
+    const f = build();
 
-    await f.service.start(DP, actor, {
-      carryOver: { requirementItemIds: ['a'] },
-    });
+    await f.service.start(DP, actor, {});
 
     expect(f.notifications.record).toHaveBeenCalledWith(
-      expect.objectContaining({ body: '1 item carried over.' }),
+      expect.objectContaining({ body: 'It starts with an empty checklist.' }),
     );
   });
 
   it('a failing audit or notification does not undo the start', async () => {
-    const f = build({ carryable });
+    const f = build();
     f.audit.recordProjectEvent.mockRejectedValue(new Error('outbox down'));
 
     await expect(f.service.start(DP, actor, {})).resolves.toMatchObject({
@@ -336,11 +275,9 @@ describe('ProjectIterationStartService.start', () => {
   });
 
   it('does not write the delivered Iteration or its rows', async () => {
-    const f = build({ carryable });
+    const f = build();
 
-    await f.service.start(DP, actor, {
-      carryOver: { requirementItemIds: ['a'] },
-    });
+    await f.service.start(DP, actor, {});
 
     expect(f.repository.markDelivered).not.toHaveBeenCalled();
     expect(f.repository.recordRepositoryDelivery).not.toHaveBeenCalled();
