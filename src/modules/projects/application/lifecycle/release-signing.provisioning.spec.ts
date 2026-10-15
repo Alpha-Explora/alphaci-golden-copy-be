@@ -6,11 +6,10 @@ import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
-import type { DeploymentProvisioningRequestDto } from '../../api/dto/create-project.dto';
+import { labSigningKeyId } from '#kernel/config/release-signing-key';
 import {
   configureReleaseSigning,
-  joinReleaseSigningWarnings,
-  readLabSigningKey,
+  firstEnvironmentTargets,
   RELEASE_SIGNING_SECRET,
   RELEASE_SIGNING_VARIABLE,
   withReleaseSigningWarning,
@@ -18,32 +17,28 @@ import {
 
 const KEY_VERSION =
   'projects/alphaci-prod/locations/europe-west1/keyRings/release/cryptoKeys/release-signing/cryptoKeyVersions/3';
+const SIGNER_PROVIDER =
+  'projects/123456789/locations/global/workloadIdentityPools/alphaci-release/providers/github';
+const SIGNER_ACCOUNT = 'release-signer@alphaci-prod.iam.gserviceaccount.com';
 
-const onpremRequest = {
-  enabled: true,
-  targets: [
-    {
-      slot: 'backend',
-      provider: 'onprem-compose',
-      ownershipMode: 'byo',
-      environmentSlug: 'main',
-    },
-  ],
-} as unknown as DeploymentProvisioningRequestDto;
+const onprem = [{ slot: 'backend', provider: 'onprem-compose' }];
+const render = [{ slot: 'backend', provider: 'render' }];
 
-const renderRequest = {
-  enabled: true,
-  targets: [
-    { slot: 'backend', provider: 'render', ownershipMode: 'flowci_managed' },
-  ],
-} as unknown as DeploymentProvisioningRequestDto;
-
-function ecPrivateKeyPem(namedCurve = 'prime256v1'): string {
+function keyPair(namedCurve = 'prime256v1') {
   return generateKeyPairSync('ec', {
     namedCurve,
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
     publicKeyEncoding: { type: 'spki', format: 'pem' },
-  }).privateKey;
+  });
+}
+
+function kmsEnv(trustKeys: Record<string, string> = {}) {
+  return {
+    ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+    ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER: SIGNER_PROVIDER,
+    ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT: SIGNER_ACCOUNT,
+    ALPHACI_RELEASE_TRUST_KEYS_JSON: JSON.stringify(trustKeys),
+  };
 }
 
 function fakeSupport(env: Record<string, string | undefined> = {}) {
@@ -65,61 +60,83 @@ type FakeSupport = ReturnType<typeof fakeSupport>;
 
 function configure(
   support: FakeSupport,
-  request: DeploymentProvisioningRequestDto | undefined,
+  firstEnvironmentTargets: readonly { provider: string }[],
 ) {
   return configureReleaseSigning(support as never, {
     accessToken: 'provisioning-token',
     owner: 'acme',
     repo: 'orders',
-    request,
+    firstEnvironmentTargets,
   });
 }
 
+function expectNoWrites(support: FakeSupport) {
+  expect(support.githubService.setActionsVariableStrict).not.toHaveBeenCalled();
+  expect(support.githubService.setActionsSecretStrict).not.toHaveBeenCalled();
+}
+
+describe('firstEnvironmentTargets', () => {
+  const environments = [{ slug: 'dev' }, { slug: 'main' }];
+
+  it('returns the first environment’s own and shared targets only', () => {
+    const targets = [
+      { slot: 'backend', provider: 'onprem-compose', environmentSlug: 'dev' },
+      { slot: 'backend', provider: 'render', environmentSlug: 'main' },
+      { slot: 'frontend', provider: 'vercel' },
+    ];
+
+    expect(firstEnvironmentTargets(environments, targets)).toEqual([
+      { slot: 'backend', provider: 'onprem-compose', environmentSlug: 'dev' },
+      { slot: 'frontend', provider: 'vercel' },
+    ]);
+  });
+
+  it('returns nothing without environments', () => {
+    expect(firstEnvironmentTargets(undefined, onprem)).toEqual([]);
+    expect(firstEnvironmentTargets([], onprem)).toEqual([]);
+  });
+});
+
 describe('configureReleaseSigning', () => {
-  let tempDir: string;
   let warn: jest.SpyInstance;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'release-signing-'));
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
     warn.mockRestore();
-    rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe('when the request has no on-prem target', () => {
+  describe('when the first environment is not host-delivered', () => {
     it.each([
-      { name: 'no deployment request', request: undefined },
-      {
-        name: 'deployment disabled',
-        request: { ...onpremRequest, enabled: false },
-      },
-      { name: 'only a Render target', request: renderRequest },
-    ])('writes nothing for $name', async ({ request }) => {
-      const support = fakeSupport({
-        ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
-      });
+      { name: 'no targets', targets: [] },
+      { name: 'only a Render target', targets: render },
+    ])('writes nothing for $name', async ({ targets }) => {
+      const support = fakeSupport(kmsEnv());
 
-      await expect(configure(support, request)).resolves.toBeUndefined();
+      await expect(configure(support, targets)).resolves.toBeUndefined();
 
-      expect(
-        support.githubService.setActionsVariableStrict,
-      ).not.toHaveBeenCalled();
-      expect(
-        support.githubService.setActionsSecretStrict,
-      ).not.toHaveBeenCalled();
+      expectNoWrites(support);
+    });
+
+    it('writes nothing when the first environment mixes hosted and on-prem targets', async () => {
+      const support = fakeSupport(kmsEnv());
+
+      await expect(
+        configure(support, [...onprem, ...render]),
+      ).resolves.toBeUndefined();
+
+      expectNoWrites(support);
     });
   });
 
-  describe('when the request has an on-prem target', () => {
-    it('branch 1: sets the Cloud KMS key version as a repository variable', async () => {
-      const support = fakeSupport({
-        ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
-      });
+  describe('Cloud KMS', () => {
+    it('sets the key version variable and reports nothing when the key version is trusted', async () => {
+      const pair = keyPair();
+      const support = fakeSupport(kmsEnv({ [KEY_VERSION]: pair.publicKey }));
 
-      await expect(configure(support, onpremRequest)).resolves.toBeUndefined();
+      await expect(configure(support, onprem)).resolves.toBeUndefined();
 
       expect(
         support.githubService.setActionsVariableStrict,
@@ -135,69 +152,60 @@ describe('configureReleaseSigning', () => {
       ).not.toHaveBeenCalled();
     });
 
-    it('branch 2: sets the lab key as a repository secret when only the lab key path is configured', async () => {
-      const pem = ecPrivateKeyPem();
-      const keyPath = join(tempDir, 'release-signing.key');
-      writeFileSync(keyPath, pem);
-      const support = fakeSupport({ ONPREM_LAB_SIGNING_KEY_PATH: keyPath });
+    it('still sets the variable but warns when the key version is not in the trust setting', async () => {
+      const support = fakeSupport(kmsEnv({}));
 
-      await expect(configure(support, onpremRequest)).resolves.toBeUndefined();
+      const warning = await configure(support, onprem);
 
-      expect(support.githubService.setActionsSecretStrict).toHaveBeenCalledWith(
-        'provisioning-token',
-        'acme',
-        'orders',
-        RELEASE_SIGNING_SECRET,
-        pem,
-      );
       expect(
         support.githubService.setActionsVariableStrict,
-      ).not.toHaveBeenCalled();
+      ).toHaveBeenCalledTimes(1);
+      expect(warning).toContain('will not verify on their hosts yet');
+      expect(warning).toContain(KEY_VERSION);
     });
 
-    it('branch 3: returns a warning and writes nothing when no signing is configured', async () => {
-      const support = fakeSupport();
-
-      const warning = await configure(support, onpremRequest);
-
-      expect(warning).toContain('Releases cannot be signed yet');
-      expect(warning).toContain('ALPHACI_RELEASE_KMS_KEY_VERSION');
-      expect(
-        support.githubService.setActionsVariableStrict,
-      ).not.toHaveBeenCalled();
-      expect(
-        support.githubService.setActionsSecretStrict,
-      ).not.toHaveBeenCalled();
-    });
-
-    it('warns, and does not fall back to the lab key, when the KMS value is malformed', async () => {
-      const keyPath = join(tempDir, 'release-signing.key');
-      writeFileSync(keyPath, ecPrivateKeyPem());
-      const support = fakeSupport({
-        ALPHACI_RELEASE_KMS_KEY_VERSION: 'release-signing',
-        ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
-      });
-
-      const warning = await configure(support, onpremRequest);
-
-      expect(warning).toContain('not a full Cloud KMS key version name');
-      expect(
-        support.githubService.setActionsVariableStrict,
-      ).not.toHaveBeenCalled();
-      expect(
-        support.githubService.setActionsSecretStrict,
-      ).not.toHaveBeenCalled();
-    });
-
-    it('returns a warning, without throwing, when GitHub refuses the variable', async () => {
+    it('warns and writes nothing when the signer identity is incomplete', async () => {
       const support = fakeSupport({
         ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+        ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT: SIGNER_ACCOUNT,
+        ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER: undefined,
+        ONPREM_LAB_SIGNING_KEY_PATH: '/run/keys/lab.pem',
       });
+
+      const warning = await configure(support, onprem);
+
+      expect(warning).toContain(
+        'ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER must be set',
+      );
+      expectNoWrites(support);
+    });
+
+    it.each(['latest', 'v3', '1 2'])(
+      'rejects a key version ending in %s and does not fall back to the lab key',
+      async (version) => {
+        const keyPath = join(tmpdir(), 'unused-lab.pem');
+        const support = fakeSupport({
+          ...kmsEnv(),
+          ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION.replace(/3$/, version),
+          ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+        });
+
+        const warning = await configure(support, onprem);
+
+        expect(warning).toContain('must be a full Cloud KMS key version name');
+        expectNoWrites(support);
+      },
+    );
+
+    it('warns, without throwing, when GitHub refuses the variable', async () => {
+      const support = fakeSupport(
+        kmsEnv({ [KEY_VERSION]: keyPair().publicKey }),
+      );
       support.githubService.setActionsVariableStrict.mockRejectedValueOnce(
         new Error('Resource not accessible by integration'),
       );
 
-      const warning = await configure(support, onpremRequest);
+      const warning = await configure(support, onprem);
 
       expect(warning).toContain('acme/orders');
       expect(warning).toContain('Resource not accessible by integration');
@@ -205,24 +213,74 @@ describe('configureReleaseSigning', () => {
         `the repository variable ${RELEASE_SIGNING_VARIABLE}`,
       );
     });
+  });
 
-    it('never puts the lab key into a warning or a log line', async () => {
-      const pem = ecPrivateKeyPem();
+  describe('lab key (lab only)', () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = mkdtempSync(join(tmpdir(), 'release-signing-'));
+    });
+
+    afterEach(() => {
+      rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('sets the lab key as a repository secret and reports nothing when its key ID is trusted', async () => {
+      const pair = keyPair();
       const keyPath = join(tempDir, 'release-signing.key');
-      writeFileSync(keyPath, pem);
-      const support = fakeSupport({ ONPREM_LAB_SIGNING_KEY_PATH: keyPath });
-      support.githubService.setActionsSecretStrict.mockRejectedValueOnce(
-        new Error('GitHub 502'),
+      writeFileSync(keyPath, pair.privateKey);
+      const support = fakeSupport({
+        ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+        ALPHACI_RELEASE_TRUST_KEYS_JSON: JSON.stringify({
+          [labSigningKeyId(pair.privateKey)]: pair.publicKey,
+        }),
+      });
+
+      await expect(configure(support, onprem)).resolves.toBeUndefined();
+
+      expect(support.githubService.setActionsSecretStrict).toHaveBeenCalledWith(
+        'provisioning-token',
+        'acme',
+        'orders',
+        RELEASE_SIGNING_SECRET,
+        pair.privateKey,
       );
-      const keyBody = pem.split('\n')[1] ?? pem;
+      expect(
+        support.githubService.setActionsVariableStrict,
+      ).not.toHaveBeenCalled();
+    });
 
-      const warning = await configure(support, onpremRequest);
+    it('still sets the secret but warns when the lab key ID is not trusted', async () => {
+      const pair = keyPair();
+      const keyPath = join(tempDir, 'release-signing.key');
+      writeFileSync(keyPath, pair.privateKey);
+      const support = fakeSupport({ ONPREM_LAB_SIGNING_KEY_PATH: keyPath });
 
-      expect(warning).toContain('GitHub 502');
-      expect(warning).not.toContain(keyBody);
-      const logged = warn.mock.calls.flat().map(String).join('\n');
-      expect(logged).toContain('GitHub 502');
-      expect(logged).not.toContain(keyBody);
+      const warning = await configure(support, onprem);
+
+      expect(
+        support.githubService.setActionsSecretStrict,
+      ).toHaveBeenCalledTimes(1);
+      expect(warning).toContain('will not verify on their hosts yet');
+      expect(warning).toContain(labSigningKeyId(pair.privateKey));
+    });
+
+    it('warns when the trusted PEM for the lab key ID is a different key', async () => {
+      const pair = keyPair();
+      const other = keyPair();
+      const keyPath = join(tempDir, 'release-signing.key');
+      writeFileSync(keyPath, pair.privateKey);
+      const support = fakeSupport({
+        ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+        ALPHACI_RELEASE_TRUST_KEYS_JSON: JSON.stringify({
+          [labSigningKeyId(pair.privateKey)]: other.publicKey,
+        }),
+      });
+
+      const warning = await configure(support, onprem);
+
+      expect(warning).toContain('is not the public key of');
     });
 
     it('warns with the setting name when the lab key file is missing', async () => {
@@ -230,7 +288,7 @@ describe('configureReleaseSigning', () => {
         ONPREM_LAB_SIGNING_KEY_PATH: join(tempDir, 'absent.key'),
       });
 
-      const warning = await configure(support, onpremRequest);
+      const warning = await configure(support, onprem);
 
       expect(warning).toContain(
         'ONPREM_LAB_SIGNING_KEY_PATH points to a file that cannot be read',
@@ -239,54 +297,42 @@ describe('configureReleaseSigning', () => {
         support.githubService.setActionsSecretStrict,
       ).not.toHaveBeenCalled();
     });
+
+    it('never puts the lab key into a warning or a log line', async () => {
+      const pair = keyPair();
+      const keyPath = join(tempDir, 'release-signing.key');
+      writeFileSync(keyPath, pair.privateKey);
+      const support = fakeSupport({ ONPREM_LAB_SIGNING_KEY_PATH: keyPath });
+      support.githubService.setActionsSecretStrict.mockRejectedValueOnce(
+        new Error('GitHub 502'),
+      );
+      const keyBody = pair.privateKey.split('\n')[1] ?? pair.privateKey;
+
+      const warning = await configure(support, onprem);
+
+      expect(warning).toContain('GitHub 502');
+      expect(warning).not.toContain(keyBody);
+      const logged = warn.mock.calls.flat().map(String).join('\n');
+      expect(logged).toContain('GitHub 502');
+      expect(logged).not.toContain(keyBody);
+    });
+  });
+
+  describe('no signing configured', () => {
+    it('warns, naming the settings to configure, and writes nothing', async () => {
+      const support = fakeSupport();
+
+      const warning = await configure(support, onprem);
+
+      expect(warning).toContain('Releases cannot be signed yet');
+      expect(warning).toContain('ALPHACI_RELEASE_KMS_KEY_VERSION');
+      expect(warning).toContain('regenerate this project');
+      expectNoWrites(support);
+    });
   });
 });
 
-describe('readLabSigningKey', () => {
-  let tempDir: string;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'lab-signing-key-'));
-  });
-
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it('returns the PEM of a P-256 private key unchanged', async () => {
-    const pem = ecPrivateKeyPem();
-    const keyPath = join(tempDir, 'key.pem');
-    writeFileSync(keyPath, pem);
-
-    await expect(readLabSigningKey(keyPath)).resolves.toBe(pem);
-  });
-
-  it('rejects a private key on another curve, naming the setting only', async () => {
-    const keyPath = join(tempDir, 'p384.pem');
-    writeFileSync(keyPath, ecPrivateKeyPem('secp384r1'));
-
-    await expect(readLabSigningKey(keyPath)).rejects.toThrow(
-      'ONPREM_LAB_SIGNING_KEY_PATH must contain a P-256 private key',
-    );
-  });
-
-  it('rejects content that is not a PEM private key without echoing it', async () => {
-    const keyPath = join(tempDir, 'garbage.pem');
-    writeFileSync(keyPath, 'not-a-key-SECRET-MATERIAL');
-
-    const error = await readLabSigningKey(keyPath).catch(
-      (caught: unknown) => caught,
-    );
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain(
-      'does not contain a PEM private key',
-    );
-    expect((error as Error).message).not.toContain('SECRET-MATERIAL');
-  });
-});
-
-describe('warning helpers', () => {
+describe('withReleaseSigningWarning', () => {
   it('adds releaseSigningWarning only when there is a warning', () => {
     expect(withReleaseSigningWarning({ id: 'p1' }, undefined)).toEqual({
       id: 'p1',
@@ -295,15 +341,5 @@ describe('warning helpers', () => {
       id: 'p1',
       releaseSigningWarning: 'Set it.',
     });
-  });
-
-  it('joins per-repository warnings and drops absent ones', () => {
-    expect(joinReleaseSigningWarnings(undefined, undefined)).toBeUndefined();
-    expect(joinReleaseSigningWarnings(undefined, 'Frontend.')).toBe(
-      'Frontend.',
-    );
-    expect(joinReleaseSigningWarnings('Backend.', 'Frontend.')).toBe(
-      'Backend. Frontend.',
-    );
   });
 });

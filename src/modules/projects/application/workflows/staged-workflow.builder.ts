@@ -1,5 +1,6 @@
 import yaml from 'js-yaml';
 import { validateCiApiConnectivity } from '#kernel/config/ci-api-connectivity';
+import type { ReleaseSigner } from '#kernel/config/release-signing.config';
 
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
@@ -401,6 +402,11 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   environments?: StagedWorkflowEnvironment[];
   /** The deployment target of each environment and slot, for environments mode. */
   environmentTargets?: StagedEnvironmentTarget[];
+  /**
+   * Cloud KMS signer identity for the sign-release job of a host-delivered
+   * first environment. Undefined keeps the reusable workflow's own inputs.
+   */
+  releaseSigner?: ReleaseSigner;
 }
 
 export interface StagedWorkflowEnvironment {
@@ -1387,6 +1393,7 @@ function buildEnvironmentWorkflowBundle(
       registry,
       environments,
       targets,
+      dto.releaseSigner,
     ),
   ];
   if (dto.workflowVariant !== 'frontend') {
@@ -1479,6 +1486,7 @@ function buildEnvironmentPackageWorkflowFile(
   registry: WorkflowFragmentRegistry,
   environments: StagedWorkflowEnvironment[],
   targets: StagedEnvironmentTarget[],
+  releaseSigner: ReleaseSigner | undefined,
 ): StagedWorkflowFile {
   const { packageName, qualityName, fileSuffix } = ctx.names;
   const first = environments[0]!;
@@ -1627,6 +1635,11 @@ function buildEnvironmentPackageWorkflowFile(
           with: {
             'release-id': '${{ needs.register-release.outputs.release-id }}',
             'api-url': ALPHACI_API_URL,
+            ...(releaseSigner && {
+              'workload-identity-provider':
+                releaseSigner.workloadIdentityProvider,
+              'service-account': releaseSigner.serviceAccount,
+            }),
           },
           // Named, not `inherit`: inheriting only works between repositories
           // of one organization, and the central workflows live in another.

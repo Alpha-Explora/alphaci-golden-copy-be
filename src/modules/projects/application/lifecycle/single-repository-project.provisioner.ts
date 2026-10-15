@@ -29,6 +29,7 @@ import {
 } from '#kernel/config/pipeline-branches';
 import {
   configureReleaseSigning,
+  firstEnvironmentTargets,
   withReleaseSigningWarning,
 } from './release-signing.provisioning';
 
@@ -202,17 +203,20 @@ export class SingleRepositoryProjectProvisioner {
         ownerLogin,
         repoName,
       );
-      // Signing config goes in with the other repository configuration, before
-      // any workflow exists, so the first signed release finds its key.
-      const releaseSigningWarning = await configureReleaseSigning(
-        this.support,
-        {
-          accessToken: provisioningToken,
-          owner: ownerLogin,
-          repo: repoName,
-          request: effectiveDeploymentProvisioning,
-        },
-      );
+      // Only an environment pipeline whose first environment deploys to a host
+      // has a sign-release job, so only that project needs signing configured.
+      // It goes in before any workflow exists, so the first release finds its key.
+      const releaseSigningWarning = dto.environments
+        ? await configureReleaseSigning(this.support, {
+            accessToken: provisioningToken,
+            owner: ownerLogin,
+            repo: repoName,
+            firstEnvironmentTargets: firstEnvironmentTargets(
+              dto.environments,
+              effectiveDeploymentProvisioning?.targets ?? [],
+            ),
+          })
+        : undefined;
 
       if (dto.environments) {
         return withReleaseSigningWarning(
@@ -624,7 +628,6 @@ export class SingleRepositoryProjectProvisioner {
 
     let commitSha = '';
     let commitUrl: string | null = null;
-    let releaseSigningWarning: string | undefined;
     try {
       const ciToken = await this.support.ciService.issueProjectToken(row.id);
       await this.support.githubService.setActionsSecretStrict(
@@ -644,12 +647,6 @@ export class SingleRepositoryProjectProvisioner {
       // preserveExisting: this is somebody's existing repository, and it may
       // already be wired to its own SonarCloud project.
       await this.support.sonar.installSecrets(accessToken, owner, repo, true);
-      releaseSigningWarning = await configureReleaseSigning(this.support, {
-        accessToken,
-        owner,
-        repo,
-        request: dto.deploymentProvisioning,
-      });
 
       // 4. Push the workflow files to the repository's OWN default branch now
       // that the secrets exist, then record the commit.
@@ -743,19 +740,16 @@ export class SingleRepositoryProjectProvisioner {
       metadata: { repoShape: 'existing', templateId: dto.templateId },
     });
 
-    return withReleaseSigningWarning(
-      {
-        id: row.id,
-        repoFullName: dto.repoFullName,
-        status: 'provisioned',
-        workflowPath,
-        workflowFiles: workflowFileMetadata(workflowFiles),
-        githubCommitSha: commitSha,
-        githubCommitUrl: commitUrl,
-        deploymentProvisioning,
-      },
-      releaseSigningWarning,
-    );
+    return {
+      id: row.id,
+      repoFullName: dto.repoFullName,
+      status: 'provisioned',
+      workflowPath,
+      workflowFiles: workflowFileMetadata(workflowFiles),
+      githubCommitSha: commitSha,
+      githubCommitUrl: commitUrl,
+      deploymentProvisioning,
+    };
   }
 
   private async resolveCreatorLogin(userId: string): Promise<string> {

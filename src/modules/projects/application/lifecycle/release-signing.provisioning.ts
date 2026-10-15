@@ -1,13 +1,18 @@
-import { createPrivateKey } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-
 import { Logger } from '@nestjs/common';
 
 import {
-  RELEASE_SIGNING_LAB_KEY_PATH_ENV,
+  RELEASE_TRUST_KEYS_ENV,
   resolveReleaseSigningSource,
 } from '#kernel/config/release-signing.config';
-import type { DeploymentProvisioningRequestDto } from '../../api/dto/create-project.dto';
+import {
+  kmsTrustProblem,
+  labTrustProblem,
+  readLabSigningKey,
+} from '#kernel/config/release-signing-key';
+import {
+  targetsForEnvironment,
+  type EnvironmentScopedTarget,
+} from '../../domain/environment-deployment-targets.policy';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
 
 /** Repository variable the release-signing job reads for Cloud KMS signing. */
@@ -18,21 +23,31 @@ export const RELEASE_SIGNING_SECRET = 'ALPHACI_RELEASE_SIGNING_KEY';
 const logger = new Logger('ReleaseSigningProvisioning');
 
 const NOT_CONFIGURED_WARNING =
-  'Releases cannot be signed yet: AlphaCI has no release signing configured. Set ALPHACI_RELEASE_KMS_KEY_VERSION on the AlphaCI backend, then add the repository variable ALPHACI_RELEASE_KMS_KEY_VERSION with the same value.';
-
-const INVALID_KMS_WARNING =
-  'Releases cannot be signed: ALPHACI_RELEASE_KMS_KEY_VERSION on the AlphaCI backend is not a full Cloud KMS key version name (projects/.../cryptoKeyVersions/N). Correct it, then add the repository variable with the same value.';
+  "Releases cannot be signed yet: AlphaCI has no complete Cloud KMS signing configuration. Set ALPHACI_RELEASE_KMS_KEY_VERSION, ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER and ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT on the AlphaCI backend, regenerate this project's workflows, then add the repository variable ALPHACI_RELEASE_KMS_KEY_VERSION.";
 
 /**
- * Configures how this repository's release-signing job gets its key. Runs next
- * to the ALPHACI_* secrets, for requests that include a host-delivered target
- * (the on-prem Compose provider today): an on-prem host only runs releases that
- * carry a signature it can verify.
+ * The environment's targets that decide whether this project's pipeline has a
+ * sign-release job: the first environment's own and shared targets. Later
+ * environments never get that job.
+ */
+export function firstEnvironmentTargets<Target extends EnvironmentScopedTarget>(
+  environments: readonly { slug: string }[] | undefined,
+  targets: readonly Target[],
+): Target[] {
+  const first = environments?.[0];
+  return first ? targetsForEnvironment(targets, first.slug) : [];
+}
+
+/**
+ * Configures release signing for a repository whose pipeline signs releases.
  *
- * Returns a warning for the create response when releases from the repository
- * cannot be signed. It never throws: a signing gap must not roll back a
- * repository that is otherwise usable, and the warning tells the caller what
- * to fix. Key material is never logged or returned.
+ * The generated sign-release job exists only when every first-environment
+ * target is host-delivered, so nothing is configured otherwise. Writes the
+ * Cloud KMS key version as a repository variable, or, lab only, the lab key as a
+ * repository secret. Returns a warning for the create response when releases
+ * cannot be signed, or when the trust setting would not verify them. It never
+ * throws: a signing gap must not roll back a repository that is otherwise
+ * usable. Key material is never logged or returned.
  */
 export async function configureReleaseSigning(
   support: Pick<
@@ -43,27 +58,32 @@ export async function configureReleaseSigning(
     accessToken: string;
     owner: string;
     repo: string;
-    request: DeploymentProvisioningRequestDto | undefined;
+    firstEnvironmentTargets: readonly { provider: string }[];
   },
 ): Promise<string | undefined> {
   const registry = support.workflowFragmentRegistry;
-  const { request } = input;
+  const targets = input.firstEnvironmentTargets;
   if (
-    !request?.enabled ||
-    !request.targets.some(
+    targets.length === 0 ||
+    !targets.every(
       (target) => registry?.deliveredByHost(target.provider) ?? false,
     )
   ) {
     return undefined;
   }
 
-  const source = resolveReleaseSigningSource((key) =>
-    support.configService?.get<string>(key),
-  );
-  if (source.kind === 'invalid-kms') return warn(INVALID_KMS_WARNING);
+  const read = (key: string) => support.configService?.get<string>(key);
+  const source = resolveReleaseSigningSource(read);
+  if (source.kind === 'invalid') {
+    return warn(
+      `Releases cannot be signed: ${source.problem} Correct it, regenerate this project's workflows, then add the repository variable ALPHACI_RELEASE_KMS_KEY_VERSION.`,
+    );
+  }
   if (source.kind === 'none') return warn(NOT_CONFIGURED_WARNING);
 
   const where = `${input.owner}/${input.repo}`;
+  const trustKeys = read(RELEASE_TRUST_KEYS_ENV);
+  let trustProblem: string | undefined;
   try {
     if (source.kind === 'kms') {
       await support.githubService.setActionsVariableStrict(
@@ -73,17 +93,18 @@ export async function configureReleaseSigning(
         RELEASE_SIGNING_VARIABLE,
         source.keyVersion,
       );
-      return undefined;
+      trustProblem = kmsTrustProblem(source.keyVersion, trustKeys);
+    } else {
+      const pem = await readLabSigningKey(source.keyPath);
+      await support.githubService.setActionsSecretStrict(
+        input.accessToken,
+        input.owner,
+        input.repo,
+        RELEASE_SIGNING_SECRET,
+        pem,
+      );
+      trustProblem = labTrustProblem(pem, trustKeys);
     }
-    const pem = await readLabSigningKey(source.keyPath);
-    await support.githubService.setActionsSecretStrict(
-      input.accessToken,
-      input.owner,
-      input.repo,
-      RELEASE_SIGNING_SECRET,
-      pem,
-    );
-    return undefined;
   } catch (error) {
     const needed =
       source.kind === 'kms'
@@ -93,42 +114,14 @@ export async function configureReleaseSigning(
       `Release signing could not be configured on ${where}: ${describeError(error)}. Releases cannot be signed until ${needed} is set.`,
     );
   }
+  return trustProblem === undefined
+    ? undefined
+    : warn(
+        `Releases from ${where} will not verify on their hosts yet. ${trustProblem}`,
+      );
 }
 
-/**
- * Reads the lab signing key and checks that it is a P-256 private key. Lab only:
- * client hosts sign with Cloud KMS. Errors name the setting, never the file's
- * contents.
- */
-export async function readLabSigningKey(keyPath: string): Promise<string> {
-  let pem: string;
-  try {
-    pem = await readFile(keyPath, 'utf8');
-  } catch {
-    throw new Error(
-      `${RELEASE_SIGNING_LAB_KEY_PATH_ENV} points to a file that cannot be read`,
-    );
-  }
-  let namedCurve: string | undefined;
-  let keyType: string;
-  try {
-    const key = createPrivateKey(pem);
-    keyType = key.asymmetricKeyType ?? '';
-    namedCurve = key.asymmetricKeyDetails?.namedCurve;
-  } catch {
-    throw new Error(
-      `${RELEASE_SIGNING_LAB_KEY_PATH_ENV} does not contain a PEM private key`,
-    );
-  }
-  if (keyType !== 'ec' || namedCurve !== 'prime256v1') {
-    throw new Error(
-      `${RELEASE_SIGNING_LAB_KEY_PATH_ENV} must contain a P-256 private key`,
-    );
-  }
-  return pem;
-}
-
-/** Adds the warning to a create or setup response, leaving it untouched otherwise. */
+/** Adds the warning to a create response, leaving it untouched otherwise. */
 export function withReleaseSigningWarning<T extends object>(
   response: T,
   warning: string | undefined,
@@ -136,16 +129,6 @@ export function withReleaseSigningWarning<T extends object>(
   return warning === undefined
     ? response
     : { ...response, releaseSigningWarning: warning };
-}
-
-/** Combines per-repository warnings into the one a multi-repository response carries. */
-export function joinReleaseSigningWarnings(
-  ...warnings: Array<string | undefined>
-): string | undefined {
-  const present = warnings.filter((warning): warning is string =>
-    Boolean(warning),
-  );
-  return present.length > 0 ? present.join(' ') : undefined;
 }
 
 function warn(message: string): string {

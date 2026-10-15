@@ -1,3 +1,8 @@
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { labSigningKeyId } from '#kernel/config/release-signing-key';
 import { ConfigService } from '@nestjs/config';
 import type { DatabaseService } from '#kernel/db/database.service';
 import type { DeploymentProjectReferenceLookup } from '#kernel/ports/deployment-runtime.port';
@@ -113,6 +118,29 @@ describe('On-prem readiness', () => {
   describe('release-signing check', () => {
     const KEY_VERSION =
       'projects/alphaci-prod/locations/europe-west1/keyRings/release/cryptoKeys/release-signing/cryptoKeyVersions/3';
+    const SIGNER_ENV = {
+      ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER:
+        'projects/123456789/locations/global/workloadIdentityPools/alphaci-release/providers/github',
+      ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT:
+        'release-signer@alphaci-prod.iam.gserviceaccount.com',
+    };
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = mkdtempSync(join(tmpdir(), 'readiness-signing-'));
+    });
+
+    afterEach(() => {
+      rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    const keyPair = () =>
+      generateKeyPairSync('ec', {
+        namedCurve: 'prime256v1',
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+      });
+
     const signingCheck = async (env: Record<string, string>) => {
       const withEnv = new OnpremReadinessService(
         { query } as unknown as DatabaseService,
@@ -131,26 +159,57 @@ describe('On-prem readiness', () => {
       await expect(signingCheck({})).resolves.toMatchObject({
         status: 'failed',
         message: expect.stringContaining(
-          'Releases cannot be signed: set ALPHACI_RELEASE_KMS_KEY_VERSION',
+          'Releases cannot be signed: configure Cloud KMS',
         ),
       });
     });
 
-    it('passes with the Cloud KMS key version', async () => {
+    it('passes with Cloud KMS when the signer is complete and the key version is trusted', async () => {
+      const { publicKey } = keyPair();
+
       await expect(
-        signingCheck({ ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION }),
+        signingCheck({
+          ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+          ...SIGNER_ENV,
+          ALPHACI_RELEASE_TRUST_KEYS_JSON: JSON.stringify({
+            [KEY_VERSION]: publicKey,
+          }),
+        }),
       ).resolves.toMatchObject({
         status: 'passed',
         message: expect.stringContaining('Cloud KMS'),
       });
     });
 
-    it('passes with the lab key but says it is for lab hosts only', async () => {
+    it('fails when the Cloud KMS key version is not in the trust setting', async () => {
       await expect(
-        signingCheck({ ONPREM_LAB_SIGNING_KEY_PATH: '/run/keys/lab.pem' }),
+        signingCheck({
+          ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+          ...SIGNER_ENV,
+          ALPHACI_RELEASE_TRUST_KEYS_JSON: '{}',
+        }),
       ).resolves.toMatchObject({
-        status: 'passed',
-        message: expect.stringContaining('Lab hosts only'),
+        status: 'failed',
+        message: expect.stringContaining(KEY_VERSION),
+      });
+    });
+
+    it('fails when the Cloud KMS signer is incomplete, without a lab fallback', async () => {
+      const keyPath = join(tempDir, 'release-signing.key');
+      writeFileSync(keyPath, keyPair().privateKey);
+
+      await expect(
+        signingCheck({
+          ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+          ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+          ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER:
+            SIGNER_ENV.ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER,
+        }),
+      ).resolves.toMatchObject({
+        status: 'failed',
+        message: expect.stringContaining(
+          'ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT must be set',
+        ),
       });
     });
 
@@ -158,13 +217,55 @@ describe('On-prem readiness', () => {
       await expect(
         signingCheck({
           ALPHACI_RELEASE_KMS_KEY_VERSION: 'release-signing',
-          ONPREM_LAB_SIGNING_KEY_PATH: '/run/keys/lab.pem',
+          ...SIGNER_ENV,
         }),
       ).resolves.toMatchObject({
         status: 'failed',
         message: expect.stringContaining(
-          'not a full Cloud KMS key version name',
+          'must be a full Cloud KMS key version name',
         ),
+      });
+    });
+
+    it('passes with the lab key when its key ID is trusted, and says it is lab-only', async () => {
+      const pair = keyPair();
+      const keyPath = join(tempDir, 'release-signing.key');
+      writeFileSync(keyPath, pair.privateKey);
+
+      await expect(
+        signingCheck({
+          ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+          ALPHACI_RELEASE_TRUST_KEYS_JSON: JSON.stringify({
+            [labSigningKeyId(pair.privateKey)]: pair.publicKey,
+          }),
+        }),
+      ).resolves.toMatchObject({
+        status: 'passed',
+        message: expect.stringContaining('Lab hosts only'),
+      });
+    });
+
+    it('fails with the lab key ID when the lab key is not trusted', async () => {
+      const pair = keyPair();
+      const keyPath = join(tempDir, 'release-signing.key');
+      writeFileSync(keyPath, pair.privateKey);
+
+      await expect(
+        signingCheck({ ONPREM_LAB_SIGNING_KEY_PATH: keyPath }),
+      ).resolves.toMatchObject({
+        status: 'failed',
+        message: expect.stringContaining(labSigningKeyId(pair.privateKey)),
+      });
+    });
+
+    it('fails when the lab key file cannot be read', async () => {
+      await expect(
+        signingCheck({
+          ONPREM_LAB_SIGNING_KEY_PATH: join(tempDir, 'absent.key'),
+        }),
+      ).resolves.toMatchObject({
+        status: 'failed',
+        message: expect.stringContaining('The lab signing key cannot be used'),
       });
     });
   });

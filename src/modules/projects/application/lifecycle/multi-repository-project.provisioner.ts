@@ -8,7 +8,6 @@ import {
 import type { CreateProjectDto } from '../../api/dto/create-project.dto';
 import type { CreateProjectResponse } from './projects.service.types';
 import type { ProjectProvisioningSupport } from './project-provisioning.support';
-import { joinReleaseSigningWarnings } from './release-signing.provisioning';
 import {
   buildMultiRepoBackendBundle,
   buildMultiRepoCreateResponse,
@@ -117,7 +116,6 @@ export class MultiRepositoryProjectProvisioner {
       backend,
       repo: beRepo,
       bundle: backendBundle,
-      effectiveDeploymentProvisioning,
     });
 
     const frontendProvision = await provisionMultiRepoFrontend({
@@ -180,10 +178,6 @@ export class MultiRepositoryProjectProvisioner {
       backendCommitUrl: backendProvision.commitUrl,
       frontend: frontendProvision,
       deploymentProvisioning,
-      releaseSigningWarning: joinReleaseSigningWarnings(
-        backendProvision.releaseSigningWarning,
-        frontendProvision.releaseSigningWarning,
-      ),
     });
   }
 }

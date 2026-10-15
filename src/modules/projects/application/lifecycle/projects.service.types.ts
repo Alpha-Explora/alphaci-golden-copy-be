@@ -49,8 +49,6 @@ export interface SetupProjectResponse {
   githubCommitSha: string;
   githubCommitUrl: string | null;
   deploymentProvisioning: DeploymentProvisioningResult;
-  /** Set when releases from this repository cannot be signed yet; says what to configure. */
-  releaseSigningWarning?: string;
 }
 
 export type { DeploymentProvisioningResult } from '#kernel/ports/deployment-runtime.port';
