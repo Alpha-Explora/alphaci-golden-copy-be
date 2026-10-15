@@ -2,6 +2,8 @@
 
 ## 2026-10-15
 
+- **Update**: Added read-only on-prem readiness checks, public-runner API URL preflight, and environment/target preservation during workflow regeneration. The shared target summary includes its environment association.
+
 - **Update**: Runtime provider packs now contribute local deployment history sources. On-prem Hosting and previews read target-scoped release registry history without requiring a cloud provider client; empty and unavailable results remain distinct.
 
 - **Update**: Documented unsigned on-prem signing-failure cleanup, serialization against late signing, one active host token per environment, replacement and migration revocation rules, and restored-release health checks in the release registry contract and host setup runbook. Generated architecture maps retain the same routes and ownership; the documentation gate verifies their current output.

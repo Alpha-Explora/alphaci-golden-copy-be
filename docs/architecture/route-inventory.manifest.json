@@ -1,11 +1,11 @@
 {
-  "routeCount": 246,
+  "routeCount": 247,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "dcc2a6a8e1f9364767c91fc2468fb73669b6e6028d5c0af3a124e700b22fa00a",
+  "referenceSha256": "11853f63e4253d62bffbaabb304f34fb890e60f4c810a5784253c081d08703c9",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "dcc2a6a8e1f9364767c91fc2468fb73669b6e6028d5c0af3a124e700b22fa00a",
+  "baselineSha256": "11853f63e4253d62bffbaabb304f34fb890e60f4c810a5784253c081d08703c9",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -237,6 +237,12 @@
       "reason": "Iterations phase 3: start the next Iteration with carry-over (ITERATIONS_PLAN.md section 5)",
       "routes": [
         "POST /api/v1/delivery-projects/{deliveryProjectId}/iterations"
+      ]
+    },
+    {
+      "reason": "Read on-prem deployment prerequisites without modifying schema or claiming runner and host health.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/environments/{environmentId}/onprem-readiness"
       ]
     }
   ]

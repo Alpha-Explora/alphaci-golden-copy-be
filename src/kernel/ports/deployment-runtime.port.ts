@@ -40,6 +40,7 @@ export type EnvVarProvisionStatus = 'provisioned' | 'failed';
 export interface DeploymentTargetSummary {
   id: string;
   projectId: string;
+  environmentId?: string | null;
   slot: DeploymentSlot;
   ownershipMode: DeploymentOwnershipMode;
   provider: DeploymentProvider;

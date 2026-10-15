@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { validateCiApiConnectivity } from '#kernel/config/ci-api-connectivity';
 
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
@@ -2142,6 +2143,15 @@ function validationJob(stage: WorkflowStage) {
   return {
     runs_on: 'ubuntu-latest',
     steps: [
+      {
+        name: 'Check ALPHACI API connectivity configuration',
+        run: [
+          "node <<'ALPHACI_PREFLIGHT'",
+          `const validate = ${validateCiApiConnectivity.toString()};`,
+          "validate(process.env.ALPHACI_VALIDATE_URL, 'github-hosted');",
+          'ALPHACI_PREFLIGHT',
+        ].join('\n'),
+      },
       {
         name: 'Validate ALPHACI access',
         run: [

@@ -17,6 +17,8 @@ import { DeploymentTargetsController } from './api/deployment-targets.controller
 import { EnvironmentDeploymentTargetsController } from './api/environment-deployment-targets.controller';
 import { EnvironmentReleasesController } from './api/environment-releases.controller';
 import { OnpremAgentController } from './api/onprem-agent.controller';
+import { OnpremReadinessController } from './api/onprem-readiness.controller';
+import { OnpremReadinessService } from './application/onprem/onprem-readiness.service';
 import { ProjectReleasesController } from './api/project-releases.controller';
 import { ReleaseRegistryService } from './application/release-registry.service';
 import { ReleaseRegistryRepository } from './infrastructure/repositories/release-registry.repository';
@@ -134,6 +136,7 @@ import {
     EnvironmentDeploymentTargetsController,
     EnvironmentReleasesController,
     OnpremAgentController,
+    OnpremReadinessController,
     ProjectReleasesController,
     EnvVarsController,
     CustomDomainsController,
@@ -163,6 +166,7 @@ import {
     DeploymentTargetsService,
     ReleaseRegistryRepository,
     ReleaseRegistryService,
+    OnpremReadinessService,
     OnpremDeploymentHistorySource,
     DeploymentHistorySourceRegistry,
     {

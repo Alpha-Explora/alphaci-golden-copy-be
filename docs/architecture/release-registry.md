@@ -156,6 +156,21 @@ it does not verify an application HTTP endpoint.
 
 ## Deployment history
 
+`GET /projects/:projectId/environments/:environmentId/onprem-readiness`
+requires normal session authentication, subscription/capability access, and
+project visibility. It returns separate `checks[{id,status,message}]`, with
+status `passed`, `failed`, or `unverified`. It inspects schema objects and
+the validity/uniqueness of the active-host index without applying migrations.
+API URL configuration, actual runner reachability, public signing trust,
+CI signing-secret access, registry pull access, and host state have separate
+results. Unavailable secret inspection remains unverified.
+
+Generated GitHub-hosted jobs reject loopback/private API addresses before
+authorization. Configure `PLATFORM_PUBLIC_URL` with the reachable HTTPS base
+URL and regenerate workflows when it changes. Workflow previews restore
+persisted environments and targets, including host delivery and image signing.
+Local browser OAuth callback settings remain independent.
+
 Runtime provider packs may contribute an AlphaCI-owned history source. The
 on-prem source reads environment deployments joined to their immutable
 release identity, restricted by project, the target's environment, and the

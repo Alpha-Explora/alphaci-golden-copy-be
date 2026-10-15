@@ -90,6 +90,7 @@ GET /api/v1/projects/{projectId}/env-vars
 GET /api/v1/projects/{projectId}/environments
 GET /api/v1/projects/{projectId}/environments/{environmentId}/deployment-targets/{slot}
 GET /api/v1/projects/{projectId}/environments/{environmentId}/deployments
+GET /api/v1/projects/{projectId}/environments/{environmentId}/onprem-readiness
 GET /api/v1/projects/{projectId}/folder
 GET /api/v1/projects/{projectId}/qa-checklists
 GET /api/v1/projects/{projectId}/qa-my-items

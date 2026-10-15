@@ -40,6 +40,10 @@ import {
 } from './index';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import {
+  DEPLOYMENT_TARGETS_QUERY,
+  type DeploymentTargetsQuery,
+} from '#kernel/ports/deployment-runtime.port';
+import {
   ProjectsRepository,
   type ProvisionedProjectRow,
 } from '../../infrastructure/projects.repository';
@@ -148,6 +152,9 @@ export class ProjectWorkflowsService {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    @Inject(DEPLOYMENT_TARGETS_QUERY)
+    private readonly deploymentTargets?: DeploymentTargetsQuery,
   ) {}
 
   async getWorkflowSettings(
@@ -435,6 +442,14 @@ export class ProjectWorkflowsService {
         `Template '${settings.templateId}' not found`,
       );
     }
+    const environments = this.deploymentTargets
+      ? await this.projectsRepository.listProjectEnvironments(
+          settings.projectId,
+        )
+      : [];
+    const targets = this.deploymentTargets
+      ? await this.deploymentTargets.listDeploymentTargets(settings.projectId)
+      : [];
     const bundle = buildStagedWorkflowBundle(
       template,
       {
@@ -444,6 +459,19 @@ export class ProjectWorkflowsService {
         nodeVersion: settings.nodeVersion,
         coverageThreshold: settings.coverageThreshold,
         centralWorkflowRef: settings.centralWorkflowRef,
+        ...(environments.length
+          ? {
+              environments,
+              environmentTargets: targets
+                .filter((target) => target.environmentId)
+                .map((target) => ({
+                  environmentId: target.environmentId!,
+                  targetId: target.id,
+                  slot: target.slot,
+                  provider: target.provider,
+                })),
+            }
+          : {}),
       },
       this.workflowFragmentRegistry,
     );
