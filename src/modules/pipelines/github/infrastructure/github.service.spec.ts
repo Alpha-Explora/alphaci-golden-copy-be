@@ -2414,6 +2414,36 @@ describe('GithubService', () => {
       expect(result?.aheadBy).toBe(1);
     });
 
+    it('getBranchRelation reads only the status of compare/{base}...{head} with per_page=1', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(200, { status: 'ahead', commits: [], files: [{}] }),
+      );
+
+      const relation = await service.getBranchRelation(
+        'token',
+        'o/r',
+        'a'.repeat(40),
+        'main',
+      );
+
+      expect(relation).toBe('ahead');
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        `https://api.github.com/repos/o/r/compare/${'a'.repeat(40)}...main?per_page=1`,
+      );
+    });
+
+    it('getBranchRelation is null for a missing ref or an unknown status', async () => {
+      fetchMock.mockResolvedValueOnce(respond(404, { message: 'Not Found' }));
+      await expect(
+        service.getBranchRelation('token', 'o/r', 'gone', 'main'),
+      ).resolves.toBeNull();
+
+      fetchMock.mockResolvedValueOnce(respond(200, { status: 'weird' }));
+      await expect(
+        service.getBranchRelation('token', 'o/r', 'a', 'main'),
+      ).resolves.toBeNull();
+    });
+
     it('reports a missing branch as null rather than a gateway error', async () => {
       fetchMock.mockResolvedValueOnce(respond(404, { message: 'Not Found' }));
       await expect(

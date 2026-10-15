@@ -107,6 +107,12 @@ const { ProjectIterationsService } =
 const { ProjectIterationsRepository } =
   require('../../src/modules/projects/infrastructure/project-iterations.repository.js') as typeof import('../../src/modules/projects/infrastructure/project-iterations.repository.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { QaProjectDeliveryService } =
+  require('../../src/modules/projects/application/qa-runs/qa-project-delivery.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-project-delivery.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ProjectIterationStartService } =
+  require('../../src/modules/projects/application/qa-runs/project-iteration-start.service.js') as typeof import('../../src/modules/projects/application/qa-runs/project-iteration-start.service.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { QaRunAttachmentsService } =
   require('../../src/modules/projects/application/qa-runs/qa-run-attachments.service.js') as typeof import('../../src/modules/projects/application/qa-runs/qa-run-attachments.service.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -549,6 +555,90 @@ describe('HTTP application boot', () => {
     }
   }, 60_000);
 
+  it('wires the start-iteration service with its real collaborators (no undefined optional publishers)', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const starter = app.get(ProjectIterationStartService, { strict: false });
+      const wired = starter as unknown as Record<string, unknown>;
+      for (const dependency of [
+        'access',
+        'projectContext',
+        'iterations',
+        // @Optional() without @Inject injects undefined: assert they are real.
+        'auditEventsService',
+        'notificationEventsService',
+      ]) {
+        expect([dependency, wired[dependency]]).toEqual([
+          dependency,
+          expect.anything(),
+        ]);
+      }
+      expect(wired['iterations']).toBe(
+        app.get(ProjectIterationsService, { strict: false }),
+      );
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  it('wires the delivery service with its real collaborators and gives the promotion service the same one', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const delivery = app.get(QaProjectDeliveryService, { strict: false });
+      const wired = delivery as unknown as Record<string, unknown>;
+      for (const dependency of [
+        'access',
+        'projectContext',
+        'requirements',
+        'projectRuns',
+        'heads',
+        'iterations',
+        'githubService',
+        // @Optional() without @Inject injects undefined: assert they are real.
+        'auditEventsService',
+        'notificationEventsService',
+      ]) {
+        expect([dependency, wired[dependency]]).toEqual([
+          dependency,
+          expect.anything(),
+        ]);
+      }
+      expect(
+        typeof (wired['githubService'] as Record<string, unknown>)[
+          'getBranchRelation'
+        ],
+      ).toBe('function');
+      expect(wired['iterations']).toBe(
+        app.get(ProjectIterationsService, { strict: false }),
+      );
+
+      const promotion = app.get(QaPromotionService, { strict: false });
+      expect((promotion as unknown as { delivery?: unknown }).delivery).toBe(
+        delivery,
+      );
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
+  it('serves Merge all behind the session guard', async () => {
+    const app = await createHttpApplication();
+    await app.init();
+
+    try {
+      const response = await request(app.getHttpServer()).post(
+        '/api/v1/delivery-projects/11111111-1111-4111-8111-111111111111/promotion/merge-all',
+      );
+      expect(response.status).toBe(401);
+    } finally {
+      await app.close();
+    }
+  }, 60_000);
+
   it('serves the Iteration routes behind the session guard', async () => {
     const app = await createHttpApplication();
     await app.init();
@@ -561,6 +651,10 @@ describe('HTTP application boot', () => {
         const response = await request(app.getHttpServer()).get(path);
         expect(response.status).toBe(401);
       }
+      const start = await request(app.getHttpServer()).post(
+        '/api/v1/delivery-projects/11111111-1111-4111-8111-111111111111/iterations',
+      );
+      expect(start.status).toBe(401);
     } finally {
       await app.close();
     }

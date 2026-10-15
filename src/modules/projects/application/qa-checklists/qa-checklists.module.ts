@@ -6,7 +6,6 @@ import { DatabaseModule } from '#kernel/db/database.module';
 import { EventsModule } from '#kernel/events/events.module';
 import { HierarchyProjectLinkModule } from '#modules/identity-access/hierarchy/project-link/hierarchy-project-link.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
-import { DeliveryProjectIterationsController } from '../../api/project-iterations.controller';
 import {
   ProjectQaChecklistsController,
   QaChecklistsController,
@@ -35,7 +34,6 @@ import { QaProjectContextService } from './qa-project-context.service';
     WorkspaceQaChecklistsController,
     QaChecklistsController,
     ProjectQaChecklistsController,
-    DeliveryProjectIterationsController,
   ],
   providers: [
     SessionAuthGuard,

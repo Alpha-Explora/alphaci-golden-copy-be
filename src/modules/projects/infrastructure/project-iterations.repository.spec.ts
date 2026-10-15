@@ -85,4 +85,215 @@ describe('ProjectIterationsRepository', () => {
     expect([...map.keys()]).toEqual(['dp-1', 'dp-2']);
     expect(map.get('dp-2')?.id).toBe('it-9');
   });
+
+  it('recordRepositoryDelivery is ONE guarded UPDATE: active only, same-head entry kept, older-head entry replaced', async () => {
+    const { query, repository } = build([row()]);
+    const entry = {
+      projectId: 'p-api',
+      repoFullName: 'acme/api',
+      uatHeadSha: 'a'.repeat(40),
+      how: 'merged',
+    };
+
+    expect(await repository.recordRepositoryDelivery('it-1', entry)).toEqual(
+      row(),
+    );
+
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('UPDATE projects.project_iterations');
+    expect(sql).toContain("WHERE i.id = $1 AND i.status = 'active'");
+    expect(sql).toContain("e->>'projectId' = $2 AND e->>'uatHeadSha' <> $3");
+    expect(sql).toContain("e->>'projectId' = $2 AND e->>'uatHeadSha' = $3");
+    expect(sql).toContain('RETURNING i.*');
+    expect(params).toEqual([
+      'it-1',
+      'p-api',
+      'a'.repeat(40),
+      JSON.stringify(entry),
+    ]);
+  });
+
+  it('recordRepositoryDelivery is null once the Iteration is no longer active', async () => {
+    const { repository } = build([]);
+
+    expect(
+      await repository.recordRepositoryDelivery('it-1', {
+        projectId: 'p',
+        uatHeadSha: 's',
+      }),
+    ).toBeNull();
+  });
+
+  it('markDelivered is the atomic transition: only an ACTIVE row changes, and only that caller gets it back', async () => {
+    const winner = build([row({ status: 'delivered' })]);
+    const loser = build([]);
+    const input = {
+      deliveredBy: 'lead-1',
+      deliveredByLogin: 'lead',
+      signoffRunId: 'run-1',
+      deliveryJson: { repositories: [] },
+    };
+
+    expect(await winner.repository.markDelivered('it-1', input)).toEqual(
+      row({ status: 'delivered' }),
+    );
+    expect(await loser.repository.markDelivered('it-1', input)).toBeNull();
+
+    const [sql, params] = winner.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("SET status = 'delivered'");
+    expect(sql).toContain('delivered_at = NOW()');
+    expect(sql).toContain("WHERE id = $1 AND status = 'active'");
+    expect(sql).toContain('RETURNING *');
+    expect(params).toEqual([
+      'it-1',
+      'lead-1',
+      'lead',
+      'run-1',
+      JSON.stringify({ repositories: [] }),
+    ]);
+  });
+});
+
+describe('ProjectIterationsRepository.startNext', () => {
+  function transaction(
+    responses: Array<{ rows?: unknown[]; rowCount?: number } | Error>,
+  ) {
+    const query = jest.fn();
+    for (const response of responses) {
+      if (response instanceof Error) {
+        query.mockRejectedValueOnce(response);
+      } else {
+        query.mockResolvedValueOnce({ rows: [], ...response });
+      }
+    }
+    const withTransaction = jest.fn(
+      async (fn: (client: { query: jest.Mock }) => Promise<unknown>) =>
+        fn({ query }),
+    );
+    const repository = new ProjectIterationsRepository({
+      withTransaction,
+    } as unknown as DatabaseService);
+    return { query, repository, withTransaction };
+  }
+
+  const input = {
+    deliveryProjectId: 'dp-1',
+    startedBy: 'lead-1',
+    startedByLogin: 'lead',
+    goal: 'Loyalty',
+    itemIds: ['i-1', 'i-2', 'i-3'],
+    signoffRunId: 'run-1',
+  };
+
+  it('creates the Iteration and copies the items in ONE transaction', async () => {
+    const { query, repository, withTransaction } = transaction([
+      { rows: [row({ id: 'it-2', number: 2 })] },
+      { rows: [{ id: 'req-a' }, { id: 'req-b' }] },
+      {},
+      { rowCount: 3 },
+    ]);
+
+    const result = await repository.startNext(input);
+
+    expect(withTransaction).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(result).toMatchObject({
+      iteration: { id: 'it-2', number: 2 },
+      carriedRequirements: 2,
+      carriedItems: 3,
+    });
+
+    const [iterationSql, iterationParams] = query.mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(iterationSql).toContain('COALESCE(MAX(number), 0) + 1');
+    expect(iterationSql).toContain("'active'");
+    expect(iterationParams).toEqual(['dp-1', 'Loyalty', 'lead-1', 'lead']);
+  });
+
+  it('copies by INSERT ... SELECT only: no source row is updated or deleted', async () => {
+    const { query, repository } = transaction([
+      { rows: [row({ id: 'it-2', number: 2 })] },
+      { rows: [{ id: 'req-a' }] },
+      {},
+      { rowCount: 3 },
+    ]);
+
+    await repository.startNext(input);
+
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    for (const sql of statements) {
+      expect(sql).not.toContain('UPDATE ');
+      expect(sql).not.toContain('DELETE ');
+    }
+    expect(statements[2]).toContain('INSERT INTO projects.qa_checklists');
+    expect(statements[2]).toContain('c.kind');
+    expect(statements[2]).toContain('c.name');
+    expect(statements[3]).toContain('INSERT INTO projects.qa_checklist_items');
+    // Order is kept, renumbered 0..n-1 per new requirement.
+    expect(statements[3]).toContain('row_number() OVER');
+    expect(statements[3]).toContain('ORDER BY i."position", i.id');
+  });
+
+  it('resets progress to in_progress only for failed, blocked and returned_to_dev items of the delivering run', async () => {
+    const { query, repository } = transaction([
+      { rows: [row({ id: 'it-2', number: 2 })] },
+      { rows: [{ id: 'req-a' }] },
+      {},
+      { rowCount: 3 },
+    ]);
+
+    await repository.startNext(input);
+
+    const [sql, params] = query.mock.calls[3] as [string, unknown[]];
+    expect(sql).toContain(
+      "CASE WHEN r.reset THEN 'in_progress' ELSE i.progress END",
+    );
+    expect(sql).toContain('ri.run_id = $4');
+    expect(sql).toContain('ri.source_item_id = i.id');
+    expect(sql).toContain('ri.status = ANY($5::text[])');
+    expect(params[2]).toEqual(['i-1', 'i-2', 'i-3']);
+    expect(params[3]).toBe('run-1');
+    expect(params[4]).toEqual(['failed', 'blocked', 'returned_to_dev']);
+    // Every new requirement id is distinct and paired with its source.
+    const [oldIds, newIds] = params as [string[], string[]];
+    expect(oldIds).toEqual(['req-a']);
+    expect(new Set(newIds).size).toBe(newIds.length);
+    expect(newIds).not.toContain('req-a');
+  });
+
+  it('a start with no items writes only the Iteration', async () => {
+    const { query, repository } = transaction([
+      { rows: [row({ id: 'it-2', number: 2 })] },
+    ]);
+
+    const result = await repository.startNext({ ...input, itemIds: [] });
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ carriedRequirements: 0, carriedItems: 0 });
+  });
+
+  it('a unique violation from the one-active index surfaces untouched, so the transaction rolls back', async () => {
+    const violation = Object.assign(new Error('duplicate key'), {
+      code: '23505',
+    });
+    const { query, repository } = transaction([violation]);
+
+    await expect(repository.startNext(input)).rejects.toBe(violation);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('listCarryOverItems reads the active requirements of ONE Iteration with the delivering run status', async () => {
+    const { query, repository } = build([]);
+
+    await repository.listCarryOverItems('it-1', 'run-1');
+
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('c.iteration_id = $1');
+    expect(sql).toContain('c.archived_at IS NULL');
+    expect(sql).toContain('ri.run_id = $2');
+    expect(params).toEqual(['it-1', 'run-1']);
+  });
 });

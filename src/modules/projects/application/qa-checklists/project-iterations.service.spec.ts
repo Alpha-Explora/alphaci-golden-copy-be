@@ -247,7 +247,7 @@ describe('ProjectIterationsService API reads', () => {
     ).toBe(false);
   });
 
-  it('current: deliveredRepositories reads the stored delivery state, and is empty when not delivered or malformed', async () => {
+  it('current: deliveredRepositories reads the stored delivery state in every status, and is empty when absent or malformed', async () => {
     const stored = [
       {
         projectId: 'p-api',
@@ -256,6 +256,7 @@ describe('ProjectIterationsService API reads', () => {
         mergeSha: 'b'.repeat(40),
         prNumber: 7,
         how: 'merged',
+        at: '2026-10-10T00:00:00.000Z',
       },
       {
         projectId: 'p-web',
@@ -264,14 +265,7 @@ describe('ProjectIterationsService API reads', () => {
         how: 'already_in_main',
       },
     ];
-
-    const delivered = fakeIterations(
-      deliveredIterationRow({ delivery_json: stored }),
-    );
-    expect(
-      (await delivered.service.currentForProject(DP, 'u'))
-        .deliveredRepositories,
-    ).toEqual([
+    const expected = [
       expect.objectContaining({ repoFullName: 'acme/api', prNumber: 7 }),
       {
         projectId: 'p-web',
@@ -280,13 +274,29 @@ describe('ProjectIterationsService API reads', () => {
         mergeSha: null,
         prNumber: null,
         how: 'already_in_main',
+        at: '',
       },
-    ]);
+    ];
 
-    const active = fakeIterations(iterationRow({ delivery_json: stored }));
+    // The stored shape is { repositories: [...] }; the phase 1 bare list still reads.
+    for (const json of [{ repositories: stored }, stored]) {
+      const delivered = fakeIterations(
+        deliveredIterationRow({ delivery_json: json }),
+      );
+      expect(
+        (await delivered.service.currentForProject(DP, 'u'))
+          .deliveredRepositories,
+      ).toEqual(expected);
+    }
+
+    // While still active, the incremental state is visible too (P9).
+    const active = fakeIterations(
+      iterationRow({ delivery_json: { repositories: stored } }),
+    );
     expect(
       (await active.service.currentForProject(DP, 'u')).deliveredRepositories,
-    ).toEqual([]);
+    ).toEqual(expected);
+
     const malformed = fakeIterations(
       deliveredIterationRow({ delivery_json: { not: 'a list' } }),
     );
@@ -306,5 +316,58 @@ describe('ProjectIterationsService API reads', () => {
     expect((await service.currentForProject(DP, 'u')).iteration.startedAt).toBe(
       '2026-10-02T03:04:05.000Z',
     );
+  });
+});
+
+describe('ProjectIterationsService.carryOverCandidates', () => {
+  it('is null for an active Iteration: there is nothing to carry yet', async () => {
+    const { service, repository } = fakeIterations();
+
+    expect(await service.carryOverCandidates(iterationRow())).toBeNull();
+    expect(repository.listCarryOverItems).not.toHaveBeenCalled();
+  });
+
+  it('groups items by requirement in order and suggests only the unfinished ones', async () => {
+    const delivered = deliveredIterationRow({
+      number: 4,
+      signoff_run_id: 'run',
+    });
+    const { service, repository } = fakeIterations(delivered);
+    const base = {
+      requirement_id: 'r1',
+      requirement_name: 'Feature',
+      requirement_kind: 'functional' as const,
+      title: 't',
+    };
+    repository.listCarryOverItems.mockResolvedValue([
+      { ...base, item_id: 'a', progress: 'done', last_status: 'passed' },
+      { ...base, item_id: 'b', progress: 'done', last_status: null },
+      {
+        ...base,
+        requirement_id: 'r2',
+        requirement_name: 'System',
+        requirement_kind: 'system',
+        item_id: 'c',
+        progress: 'in_progress',
+        last_status: 'passed',
+      },
+    ]);
+
+    const candidates = await service.carryOverCandidates(delivered);
+
+    expect(candidates?.fromIterationNumber).toBe(4);
+    expect(candidates?.requirements.map((r) => r.requirementId)).toEqual([
+      'r1',
+      'r2',
+    ]);
+    expect(
+      candidates?.requirements.flatMap((r) =>
+        r.items.map((i) => [i.id, i.suggested]),
+      ),
+    ).toEqual([
+      ['a', false],
+      ['b', true],
+      ['c', true],
+    ]);
   });
 });
