@@ -7,9 +7,12 @@ name: On-prem agent release
 # release attaches the archive, its .sha256 file, and installer-release.json.
 # The backend resolves ONPREM_INSTALLER_VERSION from these assets.
 #
-# Releases are immutable: publishing a tag whose release already exists fails,
-# because the backend pins each version's archive hash. Publish a new version
-# instead of replacing assets.
+# This workflow refuses to publish over an existing release, but it cannot
+# stop someone from editing or deleting a release later. Enable immutable
+# releases and a tag ruleset for onprem-agent-v* in the repository settings;
+# docs/runbooks/runbook-onprem-host-setup.md lists the steps. The backend trusts
+# the hash it pins (ONPREM_INSTALLER_SHA256) or, without a pin, only releases
+# GitHub marks immutable.
 #
 # Manual dispatch from a branch builds and verifies the archive, then keeps it
 # as a workflow artifact. Dispatch from a tag to publish that tag's release.
@@ -42,12 +45,7 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           TAG: ${{ github.ref_name }}
-        run: |
-          VERSION=$(node -p "require('./deploy/onprem/agent/release-manifest.json').version")
-          if [ "$TAG" != "onprem-agent-v$VERSION" ]; then
-            echo "Tag $TAG does not match release-manifest.json version $VERSION." >&2
-            exit 1
-          fi
+        run: node scripts/check-onprem-agent-tag.mjs "$TAG"
 
       - name: Package the installer
         run: node scripts/package-onprem-agent.mjs

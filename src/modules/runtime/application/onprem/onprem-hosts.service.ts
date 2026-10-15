@@ -133,9 +133,10 @@ export class OnpremHostsService {
       throw new ForbiddenException('On-prem delivery is disabled.');
   }
   /**
-   * Explicit URL and SHA-256 win and are validated as before. Only when both
-   * are unset does ONPREM_INSTALLER_RELEASE_REPO supply a verified archive.
-   * Every other case refuses, so no enrollment code is issued unverified.
+   * A complete explicit URL and SHA-256 win. Without an explicit URL,
+   * ONPREM_INSTALLER_RELEASE_REPO supplies the archive, and a configured
+   * SHA-256 pins its hash. Every other case refuses, so no enrollment code is
+   * issued for an installer that is not verified.
    */
   private async installerRelease(): Promise<InstallerRelease> {
     const version =
@@ -144,14 +145,23 @@ export class OnpremHostsService {
     const sha256 = this.config.get<string>('ONPREM_INSTALLER_SHA256') || '';
     const releaseRepo =
       this.config.get<string>('ONPREM_INSTALLER_RELEASE_REPO') || '';
-    if (!url && !sha256 && releaseRepo) {
-      const release = await this.installerReleases.resolve(
-        releaseRepo,
+    const token =
+      this.config.get<string>('ONPREM_INSTALLER_RELEASE_TOKEN') || undefined;
+    if (url && sha256) {
+      if (/^https:\/\//.test(url) && /^[0-9a-f]{64}$/.test(sha256))
+        return { version, url, sha256 };
+    } else if (
+      !url &&
+      releaseRepo &&
+      (!sha256 || /^[0-9a-f]{64}$/.test(sha256))
+    ) {
+      const release = await this.installerReleases.resolve({
+        repo: releaseRepo,
         version,
-      );
+        pinnedSha256: sha256 || undefined,
+        token,
+      });
       if (release) return release;
-    } else if (/^https:\/\//.test(url) && /^[0-9a-f]{64}$/.test(sha256)) {
-      return { version, url, sha256 };
     }
     throw new ServiceUnavailableException(
       'Publish or configure a verified installer release before enrolling a host.',

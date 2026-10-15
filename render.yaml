@@ -63,10 +63,12 @@ services:
       - key: GITHUB_APP_PRIVATE_KEY
         sync: false
       # Hosted on-prem delivery, mirrored from the web service like the keys
-      # above. Keep the installer URL, SHA-256, and path empty on the hosted
-      # backend: ONPREM_INSTALLER_RELEASE_REPO resolves the verified release
-      # archive, and ONPREM_INSTALLER_VERSION names the release to serve.
-      # docs/runbooks/runbook-onprem-host-setup.md describes each value.
+      # above. Leave ONPREM_INSTALLER_URL and ONPREM_INSTALLER_PATH empty on the
+      # hosted backend. ONPREM_INSTALLER_RELEASE_REPO resolves the release
+      # archive. Set ONPREM_INSTALLER_SHA256 to the release's hash to pin it,
+      # which is recommended. ONPREM_INSTALLER_RELEASE_TOKEN is optional and
+      # only raises the GitHub API rate limit. docs/runbooks/runbook-onprem-host-setup.md
+      # describes each value.
       - key: ONPREM_RELEASES_ENABLED
         sync: false
       - key: PLATFORM_PUBLIC_URL
@@ -78,6 +80,8 @@ services:
       - key: ONPREM_INSTALLER_URL
         sync: false
       - key: ONPREM_INSTALLER_SHA256
+        sync: false
+      - key: ONPREM_INSTALLER_RELEASE_TOKEN
         sync: false
       - key: ALPHACI_RELEASE_TRUST_KEYS_JSON
         sync: false

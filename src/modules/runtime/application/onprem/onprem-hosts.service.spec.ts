@@ -145,10 +145,10 @@ describe('installer release resolution', () => {
       'user',
       enrollmentInput,
     );
-    expect(installerReleases.resolve).toHaveBeenCalledWith(
-      'Alpha-Explora/alphaci',
-      '0.1.0',
-    );
+    expect(installerReleases.resolve).toHaveBeenCalledWith({
+      repo: 'Alpha-Explora/alphaci',
+      version: '0.1.0',
+    });
     expect(receipt.installer).toEqual(resolvedInstaller);
     expect(repository.createEnrollment).toHaveBeenCalledTimes(1);
   });
@@ -170,6 +170,45 @@ describe('installer release resolution', () => {
     ).rejects.toThrow(ServiceUnavailableException);
     expect(installerReleases.resolve).not.toHaveBeenCalled();
     expect(repository.createEnrollment).not.toHaveBeenCalled();
+  });
+  it('passes a configured SHA-256 pin and API token to the release lookup', async () => {
+    const { service, installerReleases } = fixture({
+      ...releaseRepo,
+      ONPREM_INSTALLER_SHA256: 'c'.repeat(64),
+      ONPREM_INSTALLER_RELEASE_TOKEN: 'release-token',
+    });
+    installerReleases.resolve.mockResolvedValue({
+      version: '0.1.0',
+      url: resolvedInstaller.url,
+      sha256: 'c'.repeat(64),
+    });
+    await service.createEnrollment('workspace', 'user', enrollmentInput);
+    expect(installerReleases.resolve).toHaveBeenCalledWith({
+      repo: 'Alpha-Explora/alphaci',
+      version: '0.1.0',
+      pinnedSha256: 'c'.repeat(64),
+      token: 'release-token',
+    });
+  });
+  it('refuses a malformed SHA-256 pin without consulting the release', async () => {
+    const { service, repository, installerReleases } = fixture({
+      ...releaseRepo,
+      ONPREM_INSTALLER_SHA256: 'not-a-hash',
+    });
+    await expect(
+      service.createEnrollment('workspace', 'user', enrollmentInput),
+    ).rejects.toThrow(ServiceUnavailableException);
+    expect(installerReleases.resolve).not.toHaveBeenCalled();
+    expect(repository.createEnrollment).not.toHaveBeenCalled();
+  });
+  it('refuses a SHA-256 without a release repository or URL', async () => {
+    const { service, installerReleases } = fixture({
+      ONPREM_INSTALLER_SHA256: 'c'.repeat(64),
+    });
+    await expect(
+      service.createEnrollment('workspace', 'user', enrollmentInput),
+    ).rejects.toThrow(ServiceUnavailableException);
+    expect(installerReleases.resolve).not.toHaveBeenCalled();
   });
   it('refuses to issue a code when no installer is configured', async () => {
     const { service, repository, installerReleases } = fixture({});

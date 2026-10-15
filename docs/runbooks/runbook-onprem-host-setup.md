@@ -424,17 +424,21 @@ page, then redeploy. Do not commit values to the repository.
 | `ALPHACI_RELEASE_TRUST_KEYS_JSON` | The one-line JSON from Part 5, step 13. |
 | `ONPREM_INSTALLER_RELEASE_REPO` | The repository that publishes installer releases, as `owner/repo`. |
 | `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.1.0`. |
+| `ONPREM_INSTALLER_SHA256` | Recommended. The SHA-256 of `alphaci-agent-<version>.tar.gz`, copied from that release's `installer-release.json` after you have checked the release yourself. Enrollment then trusts this value rather than the release contents. |
+| `ONPREM_INSTALLER_RELEASE_TOKEN` | Optional. A GitHub token used only for API calls, to avoid the shared unauthenticated rate limit. Keep it secret. |
 
-Leave `ONPREM_INSTALLER_URL`, `ONPREM_INSTALLER_SHA256`, and
-`ONPREM_INSTALLER_PATH` empty. When the explicit URL and hash are set, they take
-priority over the release lookup. Setting only one of them refuses enrollment.
-`ONPREM_INSTALLER_PATH` serves a local archive from the same machine and has no
-use on a hosted backend. Set `ENV_PROVISIONING_ENABLED=true` as well when hosts
-also back project environments (Part 5).
+Leave `ONPREM_INSTALLER_URL` and `ONPREM_INSTALLER_PATH` empty. A complete
+explicit URL and SHA-256 pair takes priority over the release lookup, and a URL
+without its hash refuses enrollment. `ONPREM_INSTALLER_PATH` serves a local
+archive from the same machine and has no use on a hosted backend. Set
+`ENV_PROVISIONING_ENABLED=true` as well when hosts also back project environments
+(Part 5).
 
-The release repository must be public. The backend looks up the release without
-credentials, and customer machines download the archive without credentials. A
-private repository fails the lookup, so enrollment returns 503 and issues no code.
+The release repository must be public. Customer machines download the archive
+without credentials, so a private repository breaks enrollment even when the
+backend can read the release with a token. Without a pin, the backend also
+requires the release to be immutable (see below). Otherwise enrollment returns
+503 and issues no code.
 
 ### Apply the migrations
 
@@ -445,6 +449,21 @@ running it again is a safe recovery step.
 ```bash
 npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_one_active_onprem_host.sql 20261015020000_onprem_machines.sql 20261015030000_onprem_machine_assignments.sql
 ```
+
+### Protect published releases
+
+The backend cannot detect a release that was changed after publication. Protect
+the repository before the first customer enrolls. These are repository settings,
+so an administrator makes them. The pipeline does not:
+
+1. Turn on immutable releases for the repository, so a published release's
+   assets cannot be replaced.
+2. Add a tag ruleset for `onprem-agent-v*` that blocks updating and deleting
+   tags, so a published tag cannot be moved to another commit.
+3. Pin the hash. Set `ONPREM_INSTALLER_SHA256` on the deployed backend to the
+   value in the release's `installer-release.json`, after you have checked the
+   release. A pinned hash is checked against the archive bytes on every lookup
+   and does not depend on release metadata.
 
 ### Cut an installer release
 
@@ -462,14 +481,17 @@ npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_on
    `alphaci-agent-<version>.tar.gz`, `alphaci-agent-<version>.tar.gz.sha256`,
    and `installer-release.json`. Manual dispatch from a branch only builds the
    archive as a workflow artifact. Dispatch from the tag to publish it.
-4. Set `ONPREM_INSTALLER_VERSION` to the new version on the deployed backend and
-   redeploy. Codes issued afterwards carry the new archive. A code issued earlier
-   still points at the release it was issued for, because releases are immutable.
+4. Check the new release, then set `ONPREM_INSTALLER_VERSION` to the new version
+   and `ONPREM_INSTALLER_SHA256` to its hash, and redeploy. Codes issued
+   afterwards carry the new archive. A code issued earlier still points at the
+   release it was issued for, which stays unchanged while the release is
+   immutable.
 
-Releases cannot be replaced. If a release is wrong, publish the next version. A
-tag whose release already exists makes the workflow fail. The release is not
-signed; its trust comes from the repository's release permissions and the
-SHA-256 in `installer-release.json`.
+If a release is wrong, publish the next version. The workflow fails for a tag
+whose release already exists, but only the repository settings above stop an
+existing release from being edited. The archive is not signed. Its trust comes
+from the pinned SHA-256, or, without a pin, from an immutable release's
+`installer-release.json`.
 
 ### Move an enrolled machine
 
@@ -495,14 +517,16 @@ Confirm that it shows Connected under Hosts after its next check-in.
    Consuming the code then revokes the old record. A different database has no
    old record, so omit the field.
 2. On the machine, stop the timer and move the saved enrollment aside. The
+   files are root-only, so the loop runs under `sudo`. A saved pending response
+   for the old address would make `enroll.sh` refuse, so it is moved too. The
    assignment directories and application data are not touched:
 
    ```bash
    sudo systemctl disable --now alphaci-machine.timer
-   sudo install -d -m 0700 /opt/alphaci/enrollment-backup
+   sudo sh -c 'install -d -m 0700 /opt/alphaci/enrollment-backup
    for file in machine.json trust.json secrets/machine-token secrets/enrollment-response.json; do
-     [ -e "/opt/alphaci/$file" ] && sudo mv "/opt/alphaci/$file" /opt/alphaci/enrollment-backup/
-   done
+     if [ -e "/opt/alphaci/$file" ]; then mv "/opt/alphaci/$file" /opt/alphaci/enrollment-backup/; fi
+   done'
    ```
 3. Enroll with the new code. Paste it at the hidden prompt:
 
@@ -510,7 +534,8 @@ Confirm that it shows Connected under Hosts after its next check-in.
    sudo bash ~/onprem/agent/install.sh --enroll https://YOUR-BACKEND ubuntu
    ```
 4. Wait for Connected under Hosts. Reassign any environment that does not show
-   the new machine. Then delete the backup, which holds the old credential:
+   the new machine. Then delete the backup, which holds the old machine token
+   and trust file:
 
    ```bash
    sudo rm -rf /opt/alphaci/enrollment-backup

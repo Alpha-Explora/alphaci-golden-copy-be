@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
@@ -8,6 +9,13 @@ const workflowPath = join(
   '.github',
   'workflows',
   'onprem-agent-release.yml',
+);
+const manifestPath = join(
+  root,
+  'deploy',
+  'onprem',
+  'agent',
+  'release-manifest.json',
 );
 
 interface WorkflowStep {
@@ -35,6 +43,10 @@ const allRuns = () =>
     .flatMap((job) => job.steps)
     .map((step) => step.run ?? '')
     .join('\n');
+const checkTag = (tag: string) =>
+  spawnSync(process.execPath, [script('check-onprem-agent-tag.mjs'), tag], {
+    encoding: 'utf8',
+  });
 
 describe('on-prem agent release workflow', () => {
   it('runs on onprem-agent tags and on manual dispatch', () => {
@@ -47,13 +59,34 @@ describe('on-prem agent release workflow', () => {
     expect(allRuns()).toContain('node scripts/package-onprem-agent.mjs');
   });
 
-  it('fails a tag whose version differs from the installer manifest', () => {
+  it('checks a tag against the installer manifest only on tag builds', () => {
     const check = Object.values(workflow.jobs)
       .flatMap((job) => job.steps)
-      .find((step) => step.run?.includes('release-manifest.json'));
+      .find((step) => step.run?.includes('check-onprem-agent-tag.mjs'));
     expect(check?.if).toBe("github.ref_type == 'tag'");
-    expect(check?.run).toContain('"onprem-agent-v$VERSION"');
-    expect(check?.run).toContain('exit 1');
+    expect(check?.run).toBe('node scripts/check-onprem-agent-tag.mjs "$TAG"');
+    expect(existsSync(script('check-onprem-agent-tag.mjs'))).toBe(true);
+  });
+
+  it('accepts the tag that matches the manifest and rejects any other', () => {
+    const { version } = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      version: string;
+    };
+    expect(checkTag(`onprem-agent-v${version}`).status).toBe(0);
+    expect(checkTag('onprem-agent-v9.9.9').status).toBe(1);
+    expect(checkTag(`onprem-agent-v${version}-rc.1`).status).toBe(1);
+    expect(checkTag(`v${version}`).status).toBe(1);
+  });
+
+  it('rejects a run with no tag argument', () => {
+    const result = spawnSync(
+      process.execPath,
+      [script('check-onprem-agent-tag.mjs')],
+      {
+        encoding: 'utf8',
+      },
+    );
+    expect(result.status).toBe(2);
   });
 
   it('attaches the archive, its checksum, and installer-release.json to the release', () => {
