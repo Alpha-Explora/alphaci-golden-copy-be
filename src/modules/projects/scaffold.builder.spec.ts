@@ -421,6 +421,33 @@ describe('buildProjectScaffold', () => {
     );
   });
 
+  // The Node runner copied dist/, which a Next.js build never writes, so the
+  // first image build of every Next.js project failed at that COPY.
+  it('serves Next.js images with next start from .next', () => {
+    const files = buildProjectScaffold({
+      serviceName: 'storefront',
+      stack: 'nextjs',
+      includeDocker: true,
+    });
+    const dockerfile = files.find(
+      (file) => file.path === 'Dockerfile',
+    )!.content;
+
+    expect(dockerfile).not.toContain('/app/dist');
+    expect(dockerfile).toContain(
+      'COPY --from=builder --chown=flowci:nodejs /app/.next ./.next',
+    );
+    expect(dockerfile).toContain(
+      'COPY --from=builder /app/node_modules/typescript ./node_modules/typescript',
+    );
+    expect(dockerfile).toContain(
+      'CMD ["node", "node_modules/next/dist/bin/next", "start"]',
+    );
+    expect(
+      files.find((file) => file.path === '.dockerignore')!.content,
+    ).toContain('.next');
+  });
+
   it('renders a real React scaffold for the react stack', () => {
     const files = buildProjectScaffold({
       serviceName: 'orders-web',
