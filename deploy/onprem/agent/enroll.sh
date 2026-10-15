@@ -17,8 +17,11 @@ WORK=$(mktemp -d "$ROOT/secrets/enroll.XXXXXX")
 PENDING="$ROOT/secrets/enrollment-response.json"
 trap 'unset CODE; rm -rf "$WORK"' EXIT
 if [ ! -s "$PENDING" ]; then
-read -r -s -p 'One-time enrollment code: ' CODE
-printf '\n' >&2
+# End the prompt with a newline so it shows even where output is line-buffered.
+printf '\nPaste the one-time enrollment code from AlphaCI, then press Enter (input is hidden):\n' >&2
+read -r -s CODE
+CODE="${CODE//[[:space:]]/}"
+printf 'Code received. Enrolling this machine...\n' >&2
 [[ "$CODE" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo 'Invalid code format.' >&2; exit 1; }
 printf '%s' "$CODE" | jq -Rs '{code:.,agentVersion:"0.1.0",checks:[]}' > "$WORK/request.json"
 unset CODE

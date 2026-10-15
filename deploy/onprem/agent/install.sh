@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 
 if [ "${1:-}" = --enroll ]; then
   [ "$EUID" -eq 0 ] || { echo 'Run this installer with sudo.' >&2; exit 1; }
+  echo 'Checking Ubuntu prerequisites...'
   . /etc/os-release
   [ "$ID" = ubuntu ] || { echo 'The machine installer requires Ubuntu.' >&2; exit 1; }
   for tool in curl jq openssl flock sha256sum docker systemctl ss; do
