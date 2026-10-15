@@ -209,6 +209,20 @@ const BRANCH_EXPR = `needs.${PIPELINE_CONTEXT_JOB_ID}.outputs.branch`;
 const HEAD_SHA_EXPR = `\${{ needs.${PIPELINE_CONTEXT_JOB_ID}.outputs.sha }}`;
 
 /**
+ * True unless this run was chained off a run of another repository's code.
+ *
+ * A pull request from a fork runs the FORK's copy of the access workflow, and
+ * `workflow_run` then starts the next stage here, in this repository, with its
+ * secrets. That upstream run can publish any pipeline context it likes (say
+ * `branch=uat`), and its head_branch / head_sha name the fork's commit, so
+ * trusting either builds, pushes and deploys code nobody here reviewed.
+ * GitHub compares strings case-insensitively, as repository names are.
+ */
+const SAME_REPOSITORY_RUN =
+  "github.event_name != 'workflow_run' || " +
+  'github.event.workflow_run.head_repository.full_name == github.repository';
+
+/**
  * Resolves the originating branch and commit, and republishes them for the
  * stage after this one.
  *
@@ -257,6 +271,12 @@ function pipelineContextJob() {
   ];
 
   return {
+    /*
+     * Skipped, not failed, for a fork's run: every other job needs this one,
+     * so the whole stage skips with it, and a fork pull request does not
+     * leave a red run on whatever branch name the fork happened to use.
+     */
+    if: `\${{ ${SAME_REPOSITORY_RUN} }}`,
     runs_on: 'ubuntu-latest',
     permissions: {
       contents: 'read',
@@ -680,9 +700,9 @@ function buildQualityWorkflowFile(
         },
         workflow_dispatch: {},
       },
+      // Nothing in this stage uploads SARIF or writes anywhere: read-only.
       permissions: {
         contents: 'read',
-        'security-events': 'write',
       },
       env: {
         ALPHACI_VALIDATE_URL,
@@ -1162,9 +1182,13 @@ function buildPackageWorkflowFile(
         },
         workflow_dispatch: {},
       },
+      /*
+       * Read-only for the whole workflow. The jobs that write (the image
+       * builds: packages, SARIF upload) grant it to themselves, so a job that
+       * only reads cannot push to the registry.
+       */
       permissions: {
         contents: 'read',
-        packages: 'write',
       },
       env: {
         ALPHACI_VALIDATE_URL,
@@ -1572,7 +1596,12 @@ function buildEnvironmentPackageWorkflowFile(
         workflow_run: { workflows: [qualityName], types: ['completed'] },
         workflow_dispatch: {},
       },
-      permissions: { contents: 'read', packages: 'write' },
+      /*
+       * Read-only for the whole workflow. The jobs that write (the image
+       * builds: packages, SARIF upload) grant it to themselves, so a job that
+       * only reads cannot push to the registry.
+       */
+      permissions: { contents: 'read' },
       env: {
         ALPHACI_VALIDATE_URL,
         ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
@@ -1918,8 +1947,7 @@ export function buildEnvGuardWorkflowFile(
         pull_request: { branches: [...branches] },
       },
       permissions: {
-        contents: 'write',
-        issues: 'write',
+        contents: 'read',
       },
       // Serialize runs per ref so two rapid pushes cannot race each other
       // with conflicting rollback commits.
@@ -1930,6 +1958,12 @@ export function buildEnvGuardWorkflowFile(
       jobs: {
         [ENV_GUARD_CHECK_CONTEXT]: {
           runs_on: 'ubuntu-latest',
+          // On the job, not the workflow: the rollback commit and the warning
+          // issue are this job's, and a job added later starts read-only.
+          permissions: {
+            contents: 'write',
+            issues: 'write',
+          },
           steps: [
             { uses: 'actions/checkout@v6' },
             {
@@ -3026,7 +3060,9 @@ function reportingJob(
   ];
 
   return {
-    if: '${{ always() }}',
+    // `always()` would otherwise run it, with ALPHACI_TOKEN, after a fork's
+    // run skipped the whole stage (see SAME_REPOSITORY_RUN).
+    if: `\${{ always() && (${SAME_REPOSITORY_RUN}) }}`,
     needs,
     runs_on: 'ubuntu-latest',
     /*
