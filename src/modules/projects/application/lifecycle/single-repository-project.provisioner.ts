@@ -29,7 +29,6 @@ import {
 } from '#kernel/config/pipeline-branches';
 import {
   configureReleaseSigning,
-  firstEnvironmentTargets,
   withReleaseSigningWarning,
 } from './release-signing.provisioning';
 
@@ -203,18 +202,15 @@ export class SingleRepositoryProjectProvisioner {
         ownerLogin,
         repoName,
       );
-      // Only an environment pipeline whose first environment deploys to a host
-      // has a sign-release job, so only that project needs signing configured.
+      // Release signing matters to environment projects only, the only ones that
+      // have a release pipeline. Any host-delivered target in any environment needs it.
       // It goes in before any workflow exists, so the first release finds its key.
       const releaseSigningWarning = dto.environments
         ? await configureReleaseSigning(this.support, {
             accessToken: provisioningToken,
             owner: ownerLogin,
             repo: repoName,
-            firstEnvironmentTargets: firstEnvironmentTargets(
-              dto.environments,
-              effectiveDeploymentProvisioning?.targets ?? [],
-            ),
+            targets: effectiveDeploymentProvisioning?.targets ?? [],
           })
         : undefined;
 

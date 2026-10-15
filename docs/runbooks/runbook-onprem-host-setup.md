@@ -210,7 +210,7 @@ the same PEM on every host, as step 14 does: copy `alphaci.pub` to
 `/opt/alphaci/trust/release-signing.pub.pem`.
 
 Provisioning then sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION`
-on each new project whose first environment deploys to the host (step 20), and
+on each new project with an on-prem target in any environment (step 20), and
 writes the signer identity into that project's sign-release job. Set the backend
 values before the project is created. If they change later, regenerate the
 project's workflows so the sign job carries the new identity.
@@ -299,7 +299,7 @@ step uses the API from the browser console while signed in.
     ```
 
     Status `201` means the repository, environments, targets, and pipeline were created.
-20. **AlphaCI configures signing when it creates the project, if the first environment deploys to the host.** It sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION` (Cloud KMS) and writes the signer identity into the sign-release job. Two things stay manual: the identity-pool grant for this repository (Part 4), and any fix named in the step 19 response. A `releaseSigningWarning` there means releases cannot be signed yet, or will not verify on the host. Fix the backend setting from step 17, regenerate this project's workflows, and then add the repository variable named in the warning under **Settings**, **Secrets and variables**, **Actions**, **Variables**.
+20. **AlphaCI configures signing when it creates the project, if any environment deploys to the host.** It sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION` (Cloud KMS) and writes the signer identity into the sign-release job. Two things stay manual: the identity-pool grant for this repository (Part 4), and any fix named in the step 19 response. A `releaseSigningWarning` there means releases cannot be signed yet, or will not verify on the host. Fix the backend setting from step 17, regenerate this project's workflows, and then add the repository variable named in the warning under **Settings**, **Secrets and variables**, **Actions**, **Variables**.
 21. **AlphaCI:** open the project's **Hosting** tab. In the **Production** card, enter a host name such as `lab-pc` and choose **Register host**. Copy the token; it is shown once.
 
 ## Part 7: Configure the agent
@@ -417,11 +417,12 @@ to the signer identity first (Part 4). Signing is then configured automatically
 (step 20). A host serves one environment; a second project's production needs its own host or its own
 Compose project and agent configuration.
 
-Targets added after a project is created do not change its generated pipeline.
-The sign-release job exists only in a pipeline generated with a host-delivered
-first environment, and it is generated at creation. So an on-prem target added
-later gets no signing and nothing is signed for it. Create the project with the
-on-prem target on its first environment, which is the supported path.
+An on-prem target added to a project that already exists is refused until its
+repository can sign releases. Set the Cloud KMS settings on the backend (step 17),
+regenerate the project's workflows so the sign-release job carries the signer
+identity, and then add the target again. AlphaCI writes the repository variable
+when it accepts the target. It cannot see the pipeline's contents from there, so
+the regeneration step is yours to do.
 
 ## Rotate the Cloud KMS signing key
 

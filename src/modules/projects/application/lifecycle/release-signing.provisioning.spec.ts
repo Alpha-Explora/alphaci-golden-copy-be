@@ -8,10 +8,11 @@ import type { ConfigService } from '@nestjs/config';
 
 import { labSigningKeyId } from '#kernel/config/release-signing-key';
 import {
-  configureReleaseSigning,
-  firstEnvironmentTargets,
   RELEASE_SIGNING_SECRET,
   RELEASE_SIGNING_VARIABLE,
+} from '#kernel/config/release-signing-provisioning';
+import {
+  configureReleaseSigning,
   withReleaseSigningWarning,
 } from './release-signing.provisioning';
 
@@ -60,13 +61,13 @@ type FakeSupport = ReturnType<typeof fakeSupport>;
 
 function configure(
   support: FakeSupport,
-  firstEnvironmentTargets: readonly { provider: string }[],
+  targets: readonly { provider: string }[],
 ) {
   return configureReleaseSigning(support as never, {
     accessToken: 'provisioning-token',
     owner: 'acme',
     repo: 'orders',
-    firstEnvironmentTargets,
+    targets,
   });
 }
 
@@ -74,28 +75,6 @@ function expectNoWrites(support: FakeSupport) {
   expect(support.githubService.setActionsVariableStrict).not.toHaveBeenCalled();
   expect(support.githubService.setActionsSecretStrict).not.toHaveBeenCalled();
 }
-
-describe('firstEnvironmentTargets', () => {
-  const environments = [{ slug: 'dev' }, { slug: 'main' }];
-
-  it('returns the first environment’s own and shared targets only', () => {
-    const targets = [
-      { slot: 'backend', provider: 'onprem-compose', environmentSlug: 'dev' },
-      { slot: 'backend', provider: 'render', environmentSlug: 'main' },
-      { slot: 'frontend', provider: 'vercel' },
-    ];
-
-    expect(firstEnvironmentTargets(environments, targets)).toEqual([
-      { slot: 'backend', provider: 'onprem-compose', environmentSlug: 'dev' },
-      { slot: 'frontend', provider: 'vercel' },
-    ]);
-  });
-
-  it('returns nothing without environments', () => {
-    expect(firstEnvironmentTargets(undefined, onprem)).toEqual([]);
-    expect(firstEnvironmentTargets([], onprem)).toEqual([]);
-  });
-});
 
 describe('configureReleaseSigning', () => {
   let warn: jest.SpyInstance;
@@ -108,7 +87,7 @@ describe('configureReleaseSigning', () => {
     warn.mockRestore();
   });
 
-  describe('when the first environment is not host-delivered', () => {
+  describe('when no target is host-delivered', () => {
     it.each([
       { name: 'no targets', targets: [] },
       { name: 'only a Render target', targets: render },
@@ -119,15 +98,17 @@ describe('configureReleaseSigning', () => {
 
       expectNoWrites(support);
     });
+  });
 
-    it('writes nothing when the first environment mixes hosted and on-prem targets', async () => {
+  describe('when any target is host-delivered', () => {
+    it('configures when on-prem sits alongside hosted targets, because a host consumes the release every environment shares', async () => {
       const support = fakeSupport(kmsEnv());
 
-      await expect(
-        configure(support, [...onprem, ...render]),
-      ).resolves.toBeUndefined();
+      await configure(support, [...render, ...onprem]);
 
-      expectNoWrites(support);
+      expect(
+        support.githubService.setActionsVariableStrict,
+      ).toHaveBeenCalledTimes(1);
     });
   });
 

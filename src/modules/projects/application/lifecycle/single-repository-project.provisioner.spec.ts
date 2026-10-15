@@ -160,7 +160,7 @@ describe('SingleRepositoryProjectProvisioner.createStandaloneProject (environmen
     warn.mockRestore();
   });
 
-  it('sets the Cloud KMS key version as a repository variable when the first environment is on-prem and KMS is trusted', async () => {
+  it('sets the Cloud KMS key version as a repository variable when an environment is on-prem and KMS is trusted', async () => {
     const support = fakeSupport(trustedKmsEnv());
 
     const result = await createWith(support, onpremFirstEnvironment);
@@ -198,7 +198,7 @@ describe('SingleRepositoryProjectProvisioner.createStandaloneProject (environmen
     );
   });
 
-  it('configures nothing when the first environment deploys to a hosted provider, even with a later on-prem environment', async () => {
+  it('configures signing when only a later environment is on-prem, because the release it signs is the one that environment consumes', async () => {
     const support = fakeSupport(trustedKmsEnv());
 
     const result = await createWith(support, [
@@ -216,9 +216,13 @@ describe('SingleRepositoryProjectProvisioner.createStandaloneProject (environmen
       },
     ]);
 
-    expect(
-      support.githubService.setActionsVariableStrict,
-    ).not.toHaveBeenCalled();
+    expect(support.githubService.setActionsVariableStrict).toHaveBeenCalledWith(
+      'prov-token',
+      'org',
+      'orders',
+      'ALPHACI_RELEASE_KMS_KEY_VERSION',
+      KEY_VERSION,
+    );
     expect(result).not.toHaveProperty('releaseSigningWarning');
   });
 });
