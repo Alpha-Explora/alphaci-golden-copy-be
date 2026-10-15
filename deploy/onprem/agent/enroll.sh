@@ -1,21 +1,42 @@
 #!/usr/bin/env bash
 # Run locally as root. Codes arrive through the terminal, never command arguments.
+# --replace consumes a replacement code: the current credential is set aside and
+# restored only if the new code is never accepted.
 set -euo pipefail
 umask 077
 ROOT="${ALPHACI_HOME:-/opt/alphaci}"
-API="${1:?Usage: enroll.sh https://api.example.com [ubuntu|windows]}"
-PLATFORM="${2:-ubuntu}"
+REPLACE=0; ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = --replace ]; then REPLACE=1; else ARGS+=("$arg"); fi
+done
+API="${ARGS[0]:?Usage: enroll.sh https://api.example.com [ubuntu|windows] [--replace]}"
+PLATFORM="${ARGS[1]:-ubuntu}"
 [[ "$API" =~ ^https://[^[:space:]]+$ ]] || { echo 'Use the public HTTPS API address.' >&2; exit 1; }
 API="${API%/}"; API="${API%/api/v1}"
 install -d -m 0700 "$ROOT/secrets"
+PENDING="$ROOT/secrets/enrollment-response.json"
+RETIRED=""
 if [ -s "$ROOT/secrets/machine-token" ] && [ -s "$ROOT/machine.json" ]; then
-  jq -e --arg api "$API" '.apiUrl|rtrimstr("/")|rtrimstr("/api/v1")==$api' "$ROOT/machine.json" >/dev/null || { echo 'This machine is enrolled with a different API. Use explicit credential replacement before changing servers.' >&2; exit 1; }
-  echo 'Existing machine enrollment retained.'
-  exit 0
+  if [ "$REPLACE" = 1 ] && [ ! -s "$PENDING" ]; then
+    RETIRED=$(mktemp -d "$ROOT/secrets/replaced.XXXXXX")
+    mv "$ROOT/secrets/machine-token" "$ROOT/machine.json" "$RETIRED/"
+  else
+    jq -e --arg api "$API" '.apiUrl|rtrimstr("/")|rtrimstr("/api/v1")==$api' "$ROOT/machine.json" >/dev/null || { echo 'This machine is enrolled with a different API. Rerun with --replace and a replacement code before changing servers.' >&2; exit 1; }
+    echo 'Existing machine enrollment retained. Rerun with --replace to use a replacement code.'
+    exit 0
+  fi
 fi
 WORK=$(mktemp -d "$ROOT/secrets/enroll.XXXXXX")
-PENDING="$ROOT/secrets/enrollment-response.json"
-trap 'unset CODE; rm -rf "$WORK"' EXIT
+# The old credential stays valid until the server accepts the replacement code,
+# so put it back whenever no response was received.
+restore_retired() {
+  [ -n "$RETIRED" ] && [ ! -s "$PENDING" ] && [ ! -e "$ROOT/machine.json" ] || return 0
+  mv "$RETIRED/machine-token" "$ROOT/secrets/machine-token"
+  mv "$RETIRED/machine.json" "$ROOT/machine.json"
+  rmdir "$RETIRED"
+  echo 'Replacement failed; the existing credential was restored.' >&2
+}
+trap 'unset CODE; rm -rf "$WORK"; restore_retired' EXIT
 if [ ! -s "$PENDING" ]; then
 read -r -s -p 'One-time enrollment code: ' CODE
 printf '\n' >&2
@@ -38,4 +59,6 @@ install -m 0600 "$WORK/machine-token" "$ROOT/secrets/machine-token"
 install -m 0600 "$WORK/trust.json" "$ROOT/trust.json"
 mv "$WORK/machine.json" "$ROOT/machine.json"
 rm -f "$PENDING"
+# The server revoked any replaced credential when it accepted this code.
+rm -rf "$ROOT"/secrets/replaced.*
 echo 'Machine enrolled. No application has been deployed yet.'

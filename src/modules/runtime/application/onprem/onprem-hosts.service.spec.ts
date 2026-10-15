@@ -52,6 +52,17 @@ it('uses 256-bit one-time code and passes only its hash to storage', async () =>
   expect(JSON.stringify(repository.createEnrollment.mock.calls)).not.toContain(
     receipt.code,
   );
+  expect(receipt.replacesMachineId).toBeNull();
+});
+it('marks a replacement receipt so the installer retires the old credential', async () => {
+  const { service } = fixture();
+  const receipt = await service.createEnrollment('workspace', 'user', {
+    name: 'host',
+    platform: 'windows',
+    requestId: 'request',
+    replacesMachineId: 'machine',
+  });
+  expect(receipt.replacesMachineId).toBe('machine');
 });
 it('denies viewer and other-workspace management before generating a code', async () => {
   const { service, access, repository } = fixture();

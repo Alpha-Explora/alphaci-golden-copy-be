@@ -29,7 +29,12 @@ foreach ($task in 'AlphaCI Host', 'AlphaCI Port Forward') {
         Unregister-ScheduledTask -TaskName $task -Confirm:$false
     }
 }
-foreach ($port in $ports) {
+$forwardedPath = Join-Path $root 'forwarded-ports.json'
+if (Test-Path -LiteralPath $forwardedPath) {
+    # Assigned ports the port forward task added; ConvertFrom-Json may return one array item.
+    $ports += @(Get-Content -Raw -LiteralPath $forwardedPath | ConvertFrom-Json | ForEach-Object { $_ })
+}
+foreach ($port in ($ports | Sort-Object -Unique)) {
     if ($PSCmdlet.ShouldProcess('0.0.0.0:' + $port, 'remove port forward')) {
         & netsh.exe interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 2>$null | Out-Null
     }

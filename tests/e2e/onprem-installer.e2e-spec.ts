@@ -35,6 +35,50 @@ describe('Machine enrollment shell installer', () => {
       readFileSync(join(f.work, 'requests.log'), 'utf8').trim().split('\n'),
     ).toEqual(['enroll']);
   });
+  it('consumes a replacement code only with --replace and restores the old credential when it fails', () => {
+    const f = shellFixture();
+    const receipt = JSON.parse(
+      readFileSync(join(f.work, 'receipt.json'), 'utf8'),
+    ) as { credential: string; machine: { id: string } };
+    receipt.credential = 'onprem_machine_' + 'z'.repeat(43);
+    writeFileSync(join(f.work, 'receipt.json'), JSON.stringify(receipt));
+    const token = () =>
+      readFileSync(join(f.work, 'host/secrets/machine-token'), 'utf8').trim();
+    const machine = () =>
+      readFileSync(join(f.work, 'host/machine.json'), 'utf8');
+    const original = machine();
+
+    expect(
+      f.run(
+        'bash /work/host/bin/enroll https://fixture.invalid',
+        f.code + '\n',
+      ),
+    ).toContain('--replace');
+    expect(existsSync(join(f.work, 'requests.log'))).toBe(false);
+
+    writeFileSync(join(f.work, 'fail-enroll'), '1');
+    expect(() =>
+      f.run(
+        'bash /work/host/bin/enroll https://fixture.invalid windows --replace',
+        f.code + '\n',
+      ),
+    ).toThrow();
+    expect(token()).toBe(f.token);
+    expect(machine()).toBe(original);
+    expect(f.run('ls /work/host/secrets')).not.toContain('replaced.');
+
+    rmSync(join(f.work, 'fail-enroll'));
+    f.run(
+      'bash /work/host/bin/enroll --replace https://fixture.invalid windows',
+      f.code + '\n',
+    );
+    expect(token()).toBe(receipt.credential);
+    expect(JSON.parse(machine())).toMatchObject({ id: receipt.machine.id });
+    expect(f.run('ls /work/host/secrets')).not.toContain('replaced.');
+    expect(
+      readFileSync(join(f.work, 'requests.log'), 'utf8').trim().split('\n'),
+    ).toEqual(['enroll']);
+  });
   it('leaves no credential after a failed response and refuses incomplete supervisor configuration', () => {
     const f = shellFixture();
     rmSync(join(f.work, 'host/machine.json'));

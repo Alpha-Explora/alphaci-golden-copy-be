@@ -50,3 +50,10 @@ if [ -x "$ROOT/bin/render-assignment" ]; then
   done
   wait || true
 fi
+# A Windows host forwards exactly these ports from its network into WSL. Every
+# materialized environment counts, deployed or not, so forwards never flap.
+mkdir -p "$ROOT/assignments"
+find "$ROOT/assignments" -mindepth 3 -maxdepth 3 -name compose.json -type f -print0 | xargs -0 -r cat |
+  jq -s '[.[].services[]?.ports[]? | split(":")[0] | tonumber? | select(. >= 1 and . <= 65535)] | unique' > "$WORK/published-ports.json"
+chmod 0644 "$WORK/published-ports.json"
+mv "$WORK/published-ports.json" "$ROOT/published-ports.json"

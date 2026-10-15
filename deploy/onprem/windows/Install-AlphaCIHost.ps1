@@ -9,8 +9,14 @@ It installs two scheduled tasks and one firewall rule per port:
 
   AlphaCI Host          as the account that owns the distro, not elevated: keeps it running.
   AlphaCI Port Forward  as SYSTEM, at startup and every minute: keeps netsh portproxy
-                        pointed at the distro's current address.
-  AlphaCI TCP <port>    inbound, only from -ClientSubnets.
+                        pointed at the distro's current address for every port
+                        assigned to this machine in AlphaCI, plus -Ports.
+  AlphaCI TCP <port>    inbound, only from -ClientSubnets, added and removed with
+                        the forwards.
+
+An enrolled machine (-ApiUrl) forwards no static ports unless -Ports is given.
+Add -ReplaceCredential with a replacement enrollment code to retire the current
+machine credential.
 
 Rerunning updates all of them in place. Nothing inside the distro is changed.
 
@@ -26,9 +32,10 @@ Test laptop: runs as you when you sign in, so no password is stored.
 param(
     [Parameter(Mandatory)] [string] $Distro,
     [Parameter(Mandatory)] [string[]] $ClientSubnets,
-    [int[]] $Ports = @(443),
+    [int[]] $Ports,
     [string] $ServiceAccount = ($env:USERDOMAIN + '\' + $env:USERNAME),
     [string] $ApiUrl,
+    [switch] $ReplaceCredential,
     [switch] $OnlyWhenSignedIn
 )
 
@@ -36,6 +43,12 @@ $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:ProgramData 'AlphaCI'
 $startScript = Join-Path $root 'Start-AlphaCIHost.ps1'
 $currentAccount = $env:USERDOMAIN + '\' + $env:USERNAME
+# An enrolled machine forwards the ports of its assigned environments by itself;
+# -Ports adds static ones. The single-environment agent publishes 443.
+if (-not $PSBoundParameters.ContainsKey('Ports')) {
+    $Ports = if ($ApiUrl -or (Test-Path -LiteralPath (Join-Path $root 'installation-state.json'))) { @() } else { @(443) }
+}
+if ($ReplaceCredential -and -not $ApiUrl) { throw 'ReplaceCredential requires -ApiUrl.' }
 
 New-Item -ItemType Directory -Force -Path $root, (Join-Path $root 'logs') | Out-Null
 if ($ApiUrl) {
@@ -79,12 +92,15 @@ if ($ApiUrl) {
     $linuxInstallerDirectory = (& wsl.exe -d $Distro -- wslpath -u (Join-Path $PSScriptRoot '../agent')).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Could not locate the extracted agent directory inside WSL.' }
     # Enrollment reads its code interactively. No code or credential is passed in argv or state.
-    & wsl.exe -d $Distro -u root -- bash ($linuxInstallerDirectory + '/install.sh') --enroll $ApiUrl windows
+    $enrollArguments = @('--enroll', $ApiUrl, 'windows')
+    # A replacement code retires the credential already on this machine.
+    if ($ReplaceCredential) { $enrollArguments += '--replace' }
+    & wsl.exe -d $Distro -u root -- bash ($linuxInstallerDirectory + '/install.sh') @enrollArguments
     if ($LASTEXITCODE -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
     Save-InstallPhase 'startup'
 }
 Copy-Item -Force -LiteralPath (Join-Path $PSScriptRoot 'Start-AlphaCIHost.ps1') -Destination $startScript
-@{ Distro = $Distro; Ports = $Ports } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'host.json')
+@{ Distro = $Distro; Ports = @($Ports); ClientSubnets = @($ClientSubnets) } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'host.json')
 # The service account writes the distro address and its log here; SYSTEM reads them.
 & icacls.exe $root /grant ($ServiceAccount + ':(OI)(CI)M') | Out-Null
 
@@ -147,23 +163,10 @@ $forwardTask = @{
 }
 Register-ScheduledTask @forwardTask | Out-Null
 
-foreach ($port in $Ports) {
-    $name = 'AlphaCI TCP ' + $port
-    if (Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue) {
-        Set-NetFirewallRule -Name $name -RemoteAddress $ClientSubnets -Enabled True
-    } else {
-        $rule = @{
-            Name          = $name
-            DisplayName   = $name
-            Direction     = 'Inbound'
-            Protocol      = 'TCP'
-            LocalPort     = $port
-            RemoteAddress = $ClientSubnets
-            Action        = 'Allow'
-            Profile       = 'Any'
-        }
-        New-NetFirewallRule @rule | Out-Null
-    }
+# The port forward task adds and removes rules as ports are assigned; a rerun
+# applies changed client subnets to the rules that already exist.
+Get-NetFirewallRule -Name 'AlphaCI TCP *' -ErrorAction SilentlyContinue | ForEach-Object {
+    Set-NetFirewallRule -Name $_.Name -RemoteAddress $ClientSubnets -Enabled True
 }
 
 if ($ServiceAccount -eq $currentAccount -or -not $OnlyWhenSignedIn) {

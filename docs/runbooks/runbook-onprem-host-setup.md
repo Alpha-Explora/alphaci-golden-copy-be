@@ -45,16 +45,22 @@ store. It never belongs on an enrolled machine.
 5. Enrollment writes protected host-local credential and public trust files.
    A saved, root-only response lets an interrupted configuration resume without
    another consumption. If the network response itself was lost, issue a new
-   enrollment. A changed API URL requires explicit replacement. Reinstall does
-   not rotate credentials. The timer starts only after a successful authenticated heartbeat.
+   enrollment. Reinstall does not rotate credentials: a replacement code from
+   Hosting is consumed only with `install.sh --enroll <API URL> --replace`
+   (Windows: `-ReplaceCredential`), which sets the current credential aside and
+   restores it if the code is not accepted. A changed API URL also requires
+   replacement. The timer starts only after a successful authenticated heartbeat.
 6. Wait for Connected, then explicitly assign environments from Hosting. Set
    container ports and health paths for the actual application. Choose different
    host ports for every environment sharing this machine. Production requires
    an existing HTTPS ingress. No reverse proxy or certificate is invented.
 
-The Windows test command uses sign-in startup and example forwarded ports 8080,
-8081, and 8082. Add other selected ports by rerunning the Windows installer with
-`-Ports`, retaining the allowed client subnets. A client server uses its dedicated
+The Windows test command uses sign-in startup. The agent publishes the host port
+of every environment materialized on the machine to
+`/opt/alphaci/published-ports.json`; the Windows tasks forward exactly those
+ports (plus any static `-Ports`) and open them to the allowed client subnets,
+removing forwards and `AlphaCI TCP <port>` rules once a port is no longer used.
+Rerun the installer only to change client subnets. A client server uses its dedicated
 WSL account's startup task instead. Windows restart recovery and client-network
 ingress must be tested on that machine.
 

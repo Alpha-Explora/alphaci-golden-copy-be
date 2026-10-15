@@ -35,6 +35,7 @@ export interface EnrollmentReceipt {
   id: string;
   code: string;
   expiresAt: string;
+  replacesMachineId: string | null;
   installer: InstallerRelease;
 }
 export interface EnrollmentResult {
