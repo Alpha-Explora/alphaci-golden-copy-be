@@ -4,7 +4,11 @@ import { resolve } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 import type { DatabaseService } from '../../src/kernel/db/database.service';
 import type { AssignmentConfig } from '../../src/kernel/ports/onprem-assignment.port';
-import { OnpremAssignmentsRepository } from '../../src/modules/runtime/infrastructure/repositories/onprem-assignments.repository';
+import {
+  ONPREM_PORT_RANGE,
+  OnpremAssignmentsRepository,
+  type MachineAssignment,
+} from '../../src/modules/runtime/infrastructure/repositories/onprem-assignments.repository';
 import { OnpremMachinesRepository } from '../../src/modules/runtime/infrastructure/repositories/onprem-machines.repository';
 import { ReleaseRegistryRepository } from '../../src/modules/runtime/infrastructure/repositories/release-registry.repository';
 import { hashMachineSecret } from '../../src/modules/runtime/application/onprem/onprem-hosts.service';
@@ -121,7 +125,7 @@ describe('Reusable machine assignment authorization', () => {
     await pool.query('DELETE FROM identity.app_users WHERE id=$1', [userId]);
     await pool.end();
   });
-  it('uses compare-and-set, replays the same request once, and rejects reserved ports atomically', async () => {
+  it('uses compare-and-set, replays the same request once, and allocates distinct host ports', async () => {
     const request = input();
     const result = await Promise.allSettled([
       assignments.assign(request),
@@ -133,10 +137,15 @@ describe('Reusable machine assignment authorization', () => {
     const current = (await assignments.current(projectId, environmentId))!;
     if (result[0]?.status === 'fulfilled')
       expect((await assignments.assign(request)).id).toBe(current.id);
-    await expect(
-      assignments.assign({ ...input(), environmentId: secondEnv }),
-    ).rejects.toThrow(/port/);
-    expect(await assignments.current(projectId, secondEnv)).toBeNull();
+    // The client's hostPort is ignored: the server picks free ports.
+    const first = (current as MachineAssignment).config.ports[0]!.hostPort;
+    expect(first).toBeGreaterThanOrEqual(ONPREM_PORT_RANGE.first);
+    const other = await assignments.assign({
+      ...input(),
+      environmentId: secondEnv,
+    });
+    expect(other.config.ports[0]!.hostPort).not.toBe(first);
+    await assignments.unassign(projectId, secondEnv, other.id);
     await assignments.unassign(projectId, environmentId, current.id);
     const bound = await assignments.assign({
       ...input(),
@@ -208,6 +217,76 @@ describe('Reusable machine assignment authorization', () => {
       finish();
     }
     expect(await read).toBe('read');
+  });
+  it('picks the only healthy machine and keeps host ports when reassigned on it', async () => {
+    const auto = await assignments.assign({ ...input(), machineId: null });
+    expect(auto.machineId).toBe(machineId);
+    expect(
+      (await machines.heartbeat(hash, { agentVersion: 'test', checks: [] }))
+        .ports,
+    ).toEqual(auto.config.ports.map((port) => port.hostPort));
+    const changed = await assignments.assign({
+      ...input(),
+      machineId: null,
+      expectedAssignmentId: auto.id,
+      config: { ...config, health: [{ slot: 'frontend', path: '/ready' }] },
+    });
+    expect(changed.config.ports).toEqual(auto.config.ports);
+    expect(changed.revision).toBe(auto.revision + 1);
+    await assignments.unassign(projectId, environmentId, changed.id);
+  });
+  it('moves active bindings to a replacement machine with the same ports', async () => {
+    const enroll = async (replacesMachineId?: string) => {
+      const code = hashMachineSecret(randomUUID());
+      await machines.createEnrollment(
+        workspaceId,
+        userId,
+        {
+          name: 'swap',
+          platform: 'ubuntu',
+          requestId: randomUUID(),
+          replacesMachineId,
+        },
+        code,
+      );
+      return (
+        await machines.consume(code, hashMachineSecret(randomUUID()), 'p', {
+          agentVersion: 'test',
+          checks: [],
+        })
+      ).id;
+    };
+    const old = await enroll();
+    // Two healthy machines: a person must choose.
+    await expect(
+      assignments.assign({ ...input(), machineId: null }),
+    ).rejects.toThrow(/Choose the machine/);
+    const bound = await assignments.assign({
+      ...input(),
+      environmentId: secondEnv,
+      machineId: old,
+    });
+    const replacement = await enroll(old);
+    const moved = (await assignments.current(
+      projectId,
+      secondEnv,
+    )) as MachineAssignment;
+    expect(moved.machineId).toBe(replacement);
+    expect(moved.id).not.toBe(bound.id);
+    expect(moved.config).toEqual(bound.config);
+    const reserved = await pool.query<{ machine_id: string }>(
+      'SELECT machine_id FROM env_provisioning.onprem_port_reservations WHERE host_id=$1',
+      [moved.id],
+    );
+    expect(reserved.rows).toEqual([{ machine_id: replacement }]);
+    // Revoking with a replacement moves them as well.
+    await machines.revoke(workspaceId, replacement, machineId);
+    const back = (await assignments.current(
+      projectId,
+      secondEnv,
+    )) as MachineAssignment;
+    expect(back.machineId).toBe(machineId);
+    await assignments.unassign(projectId, secondEnv, back.id);
   });
   it('holds credential authority through a status transaction, then denies revoked credentials', async () => {
     await assignments.assign(input());

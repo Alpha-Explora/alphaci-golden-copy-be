@@ -95,6 +95,10 @@ import {
 } from './ports/provider-ci-secrets-installer.port';
 import { ProviderRateLimitedError } from '../core/provider-rate-limited.error';
 import {
+  ONPREM_ASSIGNMENT,
+  type OnpremAssignmentPort,
+} from '#kernel/ports/onprem-assignment.port';
+import {
   DeploymentLogsHubService,
   type DeploymentLogsReader,
 } from './deployment-logs-hub.service';
@@ -174,6 +178,9 @@ export class DeploymentTargetsService
     @Optional()
     @Inject(GITHUB_ACTIONS_SECRETS)
     private readonly githubActions?: GithubActionsSecretsPort,
+    @Optional()
+    @Inject(ONPREM_ASSIGNMENT)
+    private readonly onpremAssignment?: OnpremAssignmentPort,
   ) {}
 
   async listDeploymentTargets(
@@ -396,7 +403,26 @@ export class DeploymentTargetsService
         environmentId: created.environmentId ?? null,
       },
     });
+    await this.assignHostAutomatically(created, projectId, userId);
     return created;
+  }
+
+  /**
+   * An on-prem target joining an environment needs a machine and host ports.
+   * With one healthy machine in the workspace that needs no choice, so the
+   * environment is (re)assigned now; otherwise Hosting asks later.
+   */
+  private async assignHostAutomatically(
+    target: { provider: string; environmentId?: string | null },
+    projectId: string,
+    userId: string,
+  ) {
+    if (!target.environmentId || !this.deliveredByHost(target.provider)) return;
+    await this.onpremAssignment?.ensureAutomaticAssignment(
+      projectId,
+      target.environmentId,
+      userId,
+    );
   }
 
   /**
@@ -469,6 +495,7 @@ export class DeploymentTargetsService
         environmentId: environment.id,
       },
     });
+    await this.assignHostAutomatically(attached, projectId, userId);
     return attached;
   }
 

@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '#kernel/db/database.service';
+import { moveMachineBindings } from './onprem-assignments.repository';
 import type {
   EnrollmentInput,
   MachineCheckIn,
@@ -173,6 +174,13 @@ export class OnpremMachinesRepository {
         ],
       );
       const row = created.rows[0]!;
+      // The replacement takes over the retired machine's environments.
+      if (enrollment.replaces_machine_id)
+        await moveMachineBindings(
+          client,
+          enrollment.replaces_machine_id,
+          row.id,
+        );
       await client.query(
         `UPDATE env_provisioning.onprem_enrollments SET consumed_at=NOW(),machine_id=$2 WHERE id=$1`,
         [enrollment.id, row.id],
@@ -181,8 +189,12 @@ export class OnpremMachinesRepository {
     });
   }
 
-  async heartbeat(hash: string, input: MachineCheckIn): Promise<void> {
-    await this.db.withTransaction(async (client) => {
+  /** Records a check-in and returns the host ports reserved on the machine. */
+  async heartbeat(
+    hash: string,
+    input: MachineCheckIn,
+  ): Promise<{ ports: number[] }> {
+    return this.db.withTransaction(async (client) => {
       const machine = await client.query<{ id: string }>(
         `SELECT id FROM env_provisioning.onprem_machines WHERE token_sha256=$1 AND revoked_at IS NULL FOR UPDATE`,
         [hash],
@@ -195,19 +207,52 @@ export class OnpremMachinesRepository {
         `UPDATE env_provisioning.onprem_machines SET last_seen_at=NOW(),agent_version=$2,checks=$3 WHERE id=$1`,
         [machine.rows[0].id, input.agentVersion, JSON.stringify(input.checks)],
       );
+      const ports = await client.query<{ host_port: number }>(
+        `SELECT host_port FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1 ORDER BY host_port`,
+        [machine.rows[0].id],
+      );
+      return { ports: ports.rows.map((port) => port.host_port) };
     });
   }
 
-  async revoke(workspaceId: string, id: string): Promise<void> {
-    await this.db.withTransaction(async (client) => {
-      const result = await client.query(
-        `UPDATE env_provisioning.onprem_machines SET revoked_at=COALESCE(revoked_at,NOW()) WHERE workspace_id=$1 AND id=$2 RETURNING id`,
-        [workspaceId, id],
+  /**
+   * Retire a machine. With a replacement, its active environments move there
+   * first, keeping host ports where they are free on the replacement.
+   */
+  async revoke(
+    workspaceId: string,
+    id: string,
+    replacementId: string | null = null,
+  ): Promise<{ moved: number }> {
+    return this.db.withTransaction(async (client) => {
+      if (replacementId === id)
+        throw new ConflictException('A machine cannot replace itself.');
+      // Lock both machines in a fixed order so concurrent revocations cannot deadlock.
+      const locked = await client.query<{
+        id: string;
+        revoked_at: Date | null;
+      }>(
+        `SELECT id, revoked_at FROM env_provisioning.onprem_machines WHERE workspace_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
+        [workspaceId, replacementId ? [id, replacementId] : [id]],
       );
-      if (!result.rowCount)
+      if (!locked.rows.some((row) => row.id === id))
         throw new ConflictException(
           'Machine does not belong to this workspace.',
         );
+      let moved = 0;
+      if (replacementId) {
+        const replacement = locked.rows.find((row) => row.id === replacementId);
+        if (!replacement || replacement.revoked_at)
+          throw new ConflictException(
+            'Replacement machine must be an active machine in this workspace.',
+          );
+        moved = await moveMachineBindings(client, id, replacementId);
+      }
+      await client.query(
+        `UPDATE env_provisioning.onprem_machines SET revoked_at=COALESCE(revoked_at,NOW()) WHERE workspace_id=$1 AND id=$2`,
+        [workspaceId, id],
+      );
+      return { moved };
     });
   }
 

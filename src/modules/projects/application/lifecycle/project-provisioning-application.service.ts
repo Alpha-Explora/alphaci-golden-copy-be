@@ -259,10 +259,11 @@ export class ProjectProvisioningApplicationService {
     const selected = dto.environments?.filter(
       (environment) => environment.hostAssignment,
     );
-    if (!selected?.length) return created;
+    if (!selected?.length && !this.onpremAssignment) return created;
     const environments = await this.support.projectsRepository
       .listProjectEnvironments(created.id)
       .catch(() => null);
+    if (!environments && !selected?.length) return created;
     if (!environments)
       return {
         ...created,
@@ -272,7 +273,25 @@ export class ProjectProvisioningApplicationService {
     const hostAssignments: NonNullable<
       CreateProjectResponse['hostAssignments']
     > = [];
-    for (const definition of selected) {
+    // Environments nobody configured go to the workspace's only healthy
+    // machine; with none or several, Hosting offers the choice later.
+    for (const environment of environments) {
+      if (!this.onpremAssignment) break;
+      if (selected?.some((definition) => definition.slug === environment.slug))
+        continue;
+      const result = await this.onpremAssignment.ensureAutomaticAssignment(
+        created.id,
+        environment.id,
+        userId,
+      );
+      if (result)
+        hostAssignments.push({
+          environmentId: environment.id,
+          status: 'assigned',
+          assignmentId: result.assignmentId,
+        });
+    }
+    for (const definition of selected ?? []) {
       const environment = environments.find(
         (item) => item.slug === definition.slug,
       );
@@ -310,7 +329,7 @@ export class ProjectProvisioningApplicationService {
         });
       }
     }
-    return { ...created, hostAssignments };
+    return hostAssignments.length ? { ...created, hostAssignments } : created;
   }
 
   async setupProject(

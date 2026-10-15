@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -7,7 +8,10 @@ import {
 import type { PoolClient } from 'pg';
 import { isDeepStrictEqual } from 'node:util';
 import { DatabaseService } from '#kernel/db/database.service';
-import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
+import type {
+  AssignmentConfig,
+  AssignmentRequestConfig,
+} from '#kernel/ports/onprem-assignment.port';
 import {
   allowedDeploymentTransitions,
   toDeployment,
@@ -32,6 +36,7 @@ interface AssignmentRow {
   assignment_config: AssignmentConfig;
   revoked_at: Date | null;
   name: string;
+  created_by: string | null;
 }
 export interface LegacyHostAssignment {
   id: string;
@@ -51,9 +56,157 @@ const assignment = (row: AssignmentRow): MachineAssignment => ({
   config: row.assignment_config,
 });
 
+/** Host ports AlphaCI hands out on a machine, lowest free first. */
+export const ONPREM_PORT_RANGE = { first: 8080, last: 8999 } as const;
+/** A machine is healthy while its supervisor checks in (every 30 seconds). */
+export const HEALTHY_MACHINE = `revoked_at IS NULL AND last_seen_at > NOW() - INTERVAL '90 seconds'`;
+
+/** The part of a config a client chooses: everything except host ports. */
+export const requestedConfig = (
+  config: AssignmentConfig | AssignmentRequestConfig,
+): AssignmentRequestConfig => ({
+  ports: config.ports.map(({ slot, containerPort }) => ({
+    slot,
+    containerPort,
+  })),
+  health: config.health,
+  ingress: config.ingress,
+});
+
+/**
+ * Reserve one host port per slot for a binding on a machine whose row the
+ * caller holds FOR UPDATE, so allocations on one machine never race. A slot
+ * keeps its preferred port while that is still free there.
+ */
+export async function reserveMachinePorts(
+  client: PoolClient,
+  machineId: string,
+  hostId: string,
+  config: AssignmentRequestConfig,
+  preferred: ReadonlyMap<string, number> = new Map(),
+): Promise<AssignmentConfig> {
+  const reserved = await client.query<{ host_port: number }>(
+    'SELECT host_port FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+    [machineId],
+  );
+  const taken = new Set(reserved.rows.map((row) => row.host_port));
+  const ports: AssignmentConfig['ports'] = [];
+  for (const port of config.ports) {
+    let hostPort = preferred.get(port.slot);
+    if (hostPort === undefined || taken.has(hostPort)) {
+      hostPort = undefined;
+      for (
+        let next = ONPREM_PORT_RANGE.first;
+        next <= ONPREM_PORT_RANGE.last;
+        next++
+      )
+        if (!taken.has(next)) {
+          hostPort = next;
+          break;
+        }
+    }
+    if (hostPort === undefined)
+      throw new ConflictException(
+        'No free host ports remain on this machine. Unassign an environment or use another machine.',
+      );
+    taken.add(hostPort);
+    ports.push({
+      slot: port.slot,
+      hostPort,
+      containerPort: port.containerPort,
+    });
+    await client.query(
+      'INSERT INTO env_provisioning.onprem_port_reservations(machine_id,host_port,host_id) VALUES($1,$2,$3)',
+      [machineId, hostPort, hostId],
+    );
+  }
+  const stored = { ...requestedConfig(config), ports };
+  await client.query(
+    'UPDATE env_provisioning.onprem_hosts SET assignment_config=$2 WHERE id=$1',
+    [hostId, JSON.stringify(stored)],
+  );
+  return stored;
+}
+
+/**
+ * Move every active binding of a retired machine to its replacement, keeping
+ * host ports where the replacement has them free. Each move is a new revision
+ * of that environment, so agents and history see an ordinary reassignment.
+ * The caller holds both machine rows FOR UPDATE.
+ */
+export async function moveMachineBindings(
+  client: PoolClient,
+  fromMachineId: string,
+  toMachineId: string,
+): Promise<number> {
+  const bindings = await client.query<AssignmentRow>(
+    'SELECT * FROM env_provisioning.onprem_hosts WHERE machine_id=$1 AND revoked_at IS NULL ORDER BY environment_id FOR UPDATE',
+    [fromMachineId],
+  );
+  for (const row of bindings.rows) {
+    // Revoking releases the old machine's port reservations (trigger).
+    await client.query(
+      'UPDATE env_provisioning.onprem_hosts SET revoked_at=NOW() WHERE id=$1',
+      [row.id],
+    );
+    const created = await insertBinding(client, {
+      projectId: row.project_id,
+      environmentId: row.environment_id,
+      machineId: toMachineId,
+      userId: row.created_by,
+      requestId: null,
+      config: row.assignment_config,
+    });
+    await reserveMachinePorts(
+      client,
+      toMachineId,
+      created.id,
+      row.assignment_config,
+      new Map(
+        row.assignment_config.ports.map((port) => [port.slot, port.hostPort]),
+      ),
+    );
+  }
+  return bindings.rowCount ?? 0;
+}
+
+async function insertBinding(
+  client: PoolClient,
+  input: {
+    projectId: string;
+    environmentId: string;
+    machineId: string;
+    userId: string | null;
+    requestId: string | null;
+    config: AssignmentRequestConfig;
+  },
+) {
+  const created = await client.query<AssignmentRow>(
+    `INSERT INTO env_provisioning.onprem_hosts(project_id,environment_id,machine_id,name,created_by,assignment_config,request_id,revision)
+    VALUES($1,$2,$3,'Machine assignment',$4,$5,COALESCE($6::uuid,gen_random_uuid()),(SELECT COALESCE(MAX(revision),0)+1 FROM env_provisioning.onprem_hosts WHERE environment_id=$2)) RETURNING *`,
+    [
+      input.projectId,
+      input.environmentId,
+      input.machineId,
+      input.userId,
+      JSON.stringify(requestedConfig(input.config)),
+      input.requestId,
+    ],
+  );
+  return created.rows[0]!;
+}
+
 @Injectable()
 export class OnpremAssignmentsRepository {
   constructor(private readonly db: DatabaseService) {}
+  /** Healthy machines of a workspace, oldest first. */
+  async healthyMachines(workspaceId: string): Promise<string[]> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM env_provisioning.onprem_machines WHERE workspace_id=$1 AND ${HEALTHY_MACHINE} ORDER BY created_at, id`,
+      [workspaceId],
+    );
+    return result.rows.map((row) => row.id);
+  }
   async machineWorkspace(machineId: string): Promise<string | null> {
     const result = await this.db.query<{ workspace_id: string }>(
       'SELECT workspace_id FROM env_provisioning.onprem_machines WHERE id=$1 AND revoked_at IS NULL',
@@ -88,21 +241,19 @@ export class OnpremAssignmentsRepository {
     environmentId: string;
     workspaceId: string;
     userId: string;
-    machineId: string;
+    /** null: the workspace's only healthy machine. */
+    machineId: string | null;
     expectedAssignmentId: string | null;
     requestId: string;
-    config: AssignmentConfig;
+    config: AssignmentRequestConfig;
   }): Promise<MachineAssignment> {
     try {
       return await this.db.withTransaction(async (client) => {
-        const machine = await client.query<{ id: string }>(
-          'SELECT id FROM env_provisioning.onprem_machines WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL FOR UPDATE',
-          [input.machineId, input.workspaceId],
+        const machineId = await this.lockMachine(
+          client,
+          input.workspaceId,
+          input.machineId,
         );
-        if (!machine.rowCount)
-          throw new NotFoundException(
-            'Active machine not found in this workspace.',
-          );
         await client.query(
           'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
           ['onprem-host:' + input.environmentId],
@@ -115,45 +266,48 @@ export class OnpremAssignmentsRepository {
           const row = replay.rows[0];
           if (
             row.revoked_at ||
-            row.machine_id !== input.machineId ||
-            !isDeepStrictEqual(row.assignment_config, input.config)
+            (input.machineId !== null && row.machine_id !== input.machineId) ||
+            !isDeepStrictEqual(
+              requestedConfig(row.assignment_config),
+              requestedConfig(input.config),
+            )
           )
             throw new ConflictException(
               'This assignment request has already been used. Reload the current assignment.',
             );
           return assignment(row);
         }
-        const active = await client.query<{ id: string }>(
-          'SELECT id FROM env_provisioning.onprem_hosts WHERE environment_id=$1 AND revoked_at IS NULL FOR UPDATE',
+        const active = await client.query<AssignmentRow>(
+          'SELECT * FROM env_provisioning.onprem_hosts WHERE environment_id=$1 AND revoked_at IS NULL FOR UPDATE',
           [input.environmentId],
         );
-        if ((active.rows[0]?.id ?? null) !== input.expectedAssignmentId)
+        const previous = active.rows[0] ?? null;
+        if ((previous?.id ?? null) !== input.expectedAssignmentId)
           throw new ConflictException(
             'The host assignment changed. Reload it before replacing it.',
           );
+        // Revoking releases the previous reservations, so a reassignment on
+        // the same machine keeps each slot's host port.
         await client.query(
           'UPDATE env_provisioning.onprem_hosts SET revoked_at=NOW() WHERE environment_id=$1 AND revoked_at IS NULL',
           [input.environmentId],
         );
-        const created = await client.query<AssignmentRow>(
-          `INSERT INTO env_provisioning.onprem_hosts(project_id,environment_id,machine_id,name,created_by,assignment_config,request_id,revision)
-        VALUES($1,$2,$3,'Machine assignment',$4,$5,$6,(SELECT COALESCE(MAX(revision),0)+1 FROM env_provisioning.onprem_hosts WHERE environment_id=$2)) RETURNING *`,
-          [
-            input.projectId,
-            input.environmentId,
-            input.machineId,
-            input.userId,
-            JSON.stringify(input.config),
-            input.requestId,
-          ],
+        const row = await insertBinding(client, { ...input, machineId });
+        const config = await reserveMachinePorts(
+          client,
+          machineId,
+          row.id,
+          input.config,
+          new Map(
+            previous?.machine_id === machineId
+              ? previous.assignment_config.ports.map((port) => [
+                  port.slot,
+                  port.hostPort,
+                ])
+              : [],
+          ),
         );
-        const row = created.rows[0]!;
-        for (const port of input.config.ports)
-          await client.query(
-            'INSERT INTO env_provisioning.onprem_port_reservations(machine_id,host_port,host_id) VALUES($1,$2,$3)',
-            [input.machineId, port.hostPort, row.id],
-          );
-        return assignment(row);
+        return assignment({ ...row, assignment_config: config });
       });
     } catch (error) {
       if (
@@ -163,13 +317,40 @@ export class OnpremAssignmentsRepository {
         error.code === '23505'
       )
         throw new ConflictException(
-          'constraint' in error &&
-            error.constraint === 'onprem_port_reservations_pkey'
-            ? 'A host port is already reserved on this machine. Choose a different port.'
-            : 'The host assignment changed. Reload and try again.',
+          'The host assignment changed. Reload and try again.',
         );
       throw error;
     }
+  }
+  private async lockMachine(
+    client: PoolClient,
+    workspaceId: string,
+    machineId: string | null,
+  ): Promise<string> {
+    if (machineId) {
+      const machine = await client.query<{ id: string }>(
+        'SELECT id FROM env_provisioning.onprem_machines WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL FOR UPDATE',
+        [machineId, workspaceId],
+      );
+      if (!machine.rowCount)
+        throw new NotFoundException(
+          'Active machine not found in this workspace.',
+        );
+      return machineId;
+    }
+    const healthy = await client.query<{ id: string }>(
+      `SELECT id FROM env_provisioning.onprem_machines WHERE workspace_id=$1 AND ${HEALTHY_MACHINE} ORDER BY created_at, id FOR UPDATE`,
+      [workspaceId],
+    );
+    if (!healthy.rows[0])
+      throw new BadRequestException(
+        'No connected on-prem machine is available. Enroll a machine or bring one online, then assign.',
+      );
+    if (healthy.rows.length > 1)
+      throw new BadRequestException(
+        'Several on-prem machines are connected. Choose the machine for this environment.',
+      );
+    return healthy.rows[0].id;
   }
   async unassign(projectId: string, environmentId: string, expectedId: string) {
     await this.db.withTransaction(async (client) => {

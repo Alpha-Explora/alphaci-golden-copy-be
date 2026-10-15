@@ -10,11 +10,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
+import type { AssignmentRequestConfig } from '#kernel/ports/onprem-assignment.port';
 class InitialHostAssignmentDto {
-  @IsUUID() machineId!: string;
+  /** Omitted when the workspace has a single healthy machine. */
+  @IsOptional() @IsUUID() machineId?: string;
   @IsUUID() requestId!: string;
-  @IsObject() config!: AssignmentConfig;
+  @IsObject() config!: AssignmentRequestConfig;
 }
 
 export class AddProjectEnvironmentDto {
