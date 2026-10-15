@@ -93,6 +93,49 @@ describe('buildProjectScaffold', () => {
     },
   );
 
+  /*
+   * A fresh Next.js repository failed its first quality gate three ways:
+   * jest.config.ts could not load without ts-node, Jest 29 pulled a braces
+   * release with a HIGH advisory into the audit, and the visual test's
+   * mask(_page) hook tripped no-unused-vars.
+   */
+  it.each(['react', 'nextjs', 'nestjs', 'node'])(
+    'gives %s what its own quality gate needs',
+    (stack) => {
+      const files = buildProjectScaffold({
+        ...baseOptions,
+        stack,
+        repoShape: 'standalone',
+      });
+      const pkg = JSON.parse(
+        files.find((file) => file.path === 'package.json')!.content,
+      ) as { devDependencies: Record<string, string> };
+      expect(pkg.devDependencies['ts-node']).toBe('^10.9.2');
+      expect(pkg.devDependencies['jest']).toBe('^30.0.0');
+      expect(pkg.devDependencies['ts-jest']).toBe('^29.4.0');
+      expect(pkg.devDependencies['@types/jest']).toBe('^30.0.0');
+
+      const eslint = files.find(
+        (file) => file.path === 'eslint.config.mjs',
+      )!.content;
+      expect(eslint).toContain("argsIgnorePattern: '^_'");
+      expect(eslint).toContain("varsIgnorePattern: '^_'");
+    },
+  );
+
+  it('overrides the postcss Next.js pins so the audit passes', () => {
+    const pkgOf = (stack: string) =>
+      JSON.parse(
+        buildProjectScaffold({
+          ...baseOptions,
+          stack,
+          repoShape: 'standalone',
+        }).find((file) => file.path === 'package.json')!.content,
+      ) as { overrides?: Record<string, string> };
+    expect(pkgOf('nextjs').overrides).toEqual({ postcss: '^8.5.30' });
+    expect(pkgOf('nestjs').overrides).toBeUndefined();
+  });
+
   it.each(['react', 'nextjs'])(
     'ships a runnable browser suite for %s',
     (stack) => {
