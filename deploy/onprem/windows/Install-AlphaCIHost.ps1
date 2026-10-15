@@ -55,6 +55,7 @@ if ($ApiUrl) {
         Move-Item -Force -LiteralPath $temporaryState -Destination $statePath
     }
     Save-InstallPhase 'prerequisites'
+    Write-Host 'Checking Windows prerequisites (virtualization, WSL, Ubuntu)...'
     $processor = Get-CimInstance Win32_Processor | Select-Object -First 1
     if (-not $processor.VirtualizationFirmwareEnabled) { throw 'Enable hardware virtualization in firmware, then rerun this installer.' }
     $restartRequired = $false
@@ -76,14 +77,20 @@ if ($ApiUrl) {
     $distroDetails = (& wsl.exe -l -v) -replace [char]0, ''
     if (-not ($distroDetails | Where-Object { $_ -match ([regex]::Escape($Distro) + '\s+.*\s+2\s*$') })) { throw 'This host requires WSL2. Convert the selected distro with wsl --set-version before continuing.' }
     Save-InstallPhase 'enrollment'
+    Write-Host ('Starting enrollment inside ' + $Distro + '...')
     # -e runs wslpath without the distro's shell, which would strip the backslashes
     # from a Windows path. Forward slashes keep the path intact either way.
     $agentDirectory = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\agent')).Path -replace '\\', '/'
     $linuxInstallerDirectory = ((& wsl.exe -d $Distro -e wslpath -u $agentDirectory) -join '').Trim()
     if ($LASTEXITCODE -ne 0 -or -not $linuxInstallerDirectory) { throw 'Could not locate the extracted agent directory inside WSL.' }
     # Enrollment reads its code interactively. No code or credential is passed in argv or state.
-    & wsl.exe -d $Distro -u root -e bash ($linuxInstallerDirectory + '/install.sh') --enroll $ApiUrl windows
-    if ($LASTEXITCODE -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
+    # Start-Process hands wsl.exe the console itself; called with &, PowerShell captures its
+    # output line by line and the code prompt (no trailing newline) never appears.
+    $installer = Start-Process -FilePath 'wsl.exe' -NoNewWindow -Wait -PassThru -ArgumentList @(
+        '-d', $Distro, '-u', 'root', '-e', 'bash',
+        ('"' + $linuxInstallerDirectory + '/install.sh"'), '--enroll', $ApiUrl, 'windows')
+    if ($installer.ExitCode -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
+    Write-Host 'Enrolled. Setting up startup and port forwarding...'
     Save-InstallPhase 'startup'
 }
 Copy-Item -Force -LiteralPath (Join-Path $PSScriptRoot 'Start-AlphaCIHost.ps1') -Destination $startScript
