@@ -1,6 +1,6 @@
 # On-prem host onboarding and deployment readiness
 
-Status: proposed design for review. This document does not describe shipped behavior.
+Status: design approved on 2026-10-15. Implementation is pending. This document does not describe shipped behavior.
 
 ## Intended outcome
 
