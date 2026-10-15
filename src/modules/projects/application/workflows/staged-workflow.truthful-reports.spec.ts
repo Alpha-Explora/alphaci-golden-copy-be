@@ -174,7 +174,9 @@ describe('package stage: the report waits for the promotion', () => {
       ]),
     );
     // Still reports after a failed or skipped promotion rather than waiting on it.
-    expect(report?.if).toBe('${{ always() }}');
+    expect(report?.if).toBe(
+      "${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}",
+    );
   });
 
   it('derives the failed verdict from every needed job, promotion included', () => {
@@ -212,7 +214,9 @@ describe('verify stage: a resolve-targets failure is reported', () => {
     const report = parse(fileOf(bundle(), 'verify')).jobs['report-results'];
 
     expect(report?.needs).toContain('resolve-targets');
-    expect(report?.if).toBe('${{ always() }}');
+    expect(report?.if).toBe(
+      "${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}",
+    );
   });
 
   it('counts a resolver failure but not a resolver success as work', () => {
