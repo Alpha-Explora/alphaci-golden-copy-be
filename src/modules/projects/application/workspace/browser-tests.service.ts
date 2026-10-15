@@ -25,6 +25,10 @@ import {
 } from '../../scaffolds/browser-test-starter';
 import { ProjectGithubTokenResolver } from '../github-activity/project-github-token.resolver';
 import { resolveVerifyWorkflowFile } from '../qa-runs/resolve-verify-workflow-file';
+import {
+  OWN_TEST_PATHS_SHOWN,
+  ownBrowserTestPaths,
+} from './browser-tests.own-tests';
 import { readVisualTestingFlag } from './browser-tests.visual-workflow';
 import {
   isFrontendPackage,
@@ -53,6 +57,12 @@ export interface BrowserTestsStatusResponse {
    * role or a missing dev branch first.
    */
   frontend: boolean;
+  /**
+   * The repository's own Playwright tests on dev (any name, not the starter
+   * pack's): they run in the verify stage already. `paths` holds the first
+   * few; null when there is no dev branch to read.
+   */
+  ownTests: { count: number; paths: string[] } | null;
   canAdd: boolean;
   reason: string | null;
   /**
@@ -78,6 +88,8 @@ export interface BrowserTestsAddResponse {
 
 interface RepoInspection {
   devBranchFound: boolean;
+  /** Every file on dev; null without a dev branch. */
+  paths: string[] | null;
   presentFiles: string[];
   missingFiles: string[];
   hasLockfile: boolean;
@@ -88,6 +100,21 @@ const STARTER_PATHS = [
   PLAYWRIGHT_CONFIG_PATH,
   ...BROWSER_TEST_REQUIRED_PATHS,
 ] as const;
+
+/** The repository's own browser tests, from the dev tree; null without a dev branch. */
+function ownTestsOf(
+  found: RepoInspection,
+): BrowserTestsStatusResponse['ownTests'] {
+  if (!found.paths) {
+    return null;
+  }
+  const own = ownBrowserTestPaths(
+    found.paths,
+    found.packageJson,
+    STARTER_PATHS,
+  );
+  return { count: own.length, paths: own.slice(0, OWN_TEST_PATHS_SHOWN) };
+}
 
 function reauth(): ConflictException {
   return new ConflictException({
@@ -141,7 +168,7 @@ export class BrowserTestsService {
       );
     }
 
-    const found = await this.inspect(token, repoFullName);
+    const found = await this.inspect(token, repoFullName, { listPaths: true });
     // No dev branch means a repository still being set up: nothing to read.
     const visual = found.devBranchFound
       ? await this.readVisualFlags(token, repoFullName, project.workflow_path)
@@ -168,6 +195,7 @@ export class BrowserTestsService {
       hasLockfile: found.hasLockfile,
       playwrightVersion: readPlaywrightVersion(found.packageJson),
       frontend,
+      ownTests: ownTestsOf(found),
       canAdd: reason === null,
       reason,
       visual,
@@ -442,14 +470,21 @@ export class BrowserTestsService {
   }
 
   /** What the working branch already has, in one parallel read. */
+  /**
+   * What dev holds: the starter files, package.json and lockfiles, and — for
+   * the status only (`listPaths`) — every path, to find the repository's own
+   * browser tests. The add flow does not need the tree, so it is not read.
+   */
   private async inspect(
     token: string,
     repoFullName: string,
+    options: { listPaths?: boolean } = {},
   ): Promise<RepoInspection> {
     const [owner = '', repo = ''] = repoFullName.split('/');
     if (!(await this.github.branchExists(token, owner, repo, WORKING_BRANCH))) {
       return {
         devBranchFound: false,
+        paths: null,
         presentFiles: [],
         missingFiles: [...STARTER_PATHS],
         hasLockfile: false,
@@ -457,13 +492,17 @@ export class BrowserTestsService {
       };
     }
 
-    const result = await this.github.readRepoFiles(
-      token,
-      repoFullName,
-      WORKING_BRANCH,
-      [...STARTER_PATHS, PACKAGE_JSON, ...LOCKFILES],
-    );
-    if (!result.read) {
+    const [result, tree] = await Promise.all([
+      this.github.readRepoFiles(token, repoFullName, WORKING_BRANCH, [
+        ...STARTER_PATHS,
+        PACKAGE_JSON,
+        ...LOCKFILES,
+      ]),
+      options.listPaths
+        ? this.github.listRepoPaths(token, repoFullName, WORKING_BRANCH)
+        : Promise.resolve(null),
+    ]);
+    if (!result.read || (tree && !tree.read)) {
       throw reauth();
     }
 
@@ -471,6 +510,7 @@ export class BrowserTestsService {
       result.files[path]?.exists === true;
     return {
       devBranchFound: true,
+      paths: tree?.read ? tree.paths : null,
       presentFiles: STARTER_PATHS.filter(exists),
       missingFiles: STARTER_PATHS.filter((path) => !exists(path)),
       hasLockfile: LOCKFILES.some(exists),

@@ -52,6 +52,42 @@ describe('GithubRepoFilesClient', () => {
     expect(result).toMatchObject({ read: false, reason: 'unauthorized' });
   });
 
+  it('lists every file path at a ref from the recursive tree, without folders', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, {
+        tree: [
+          { path: 'e2e', type: 'tree' },
+          { path: 'e2e/home.spec.ts', type: 'blob' },
+          { path: 'package.json', type: 'blob' },
+        ],
+        truncated: false,
+      }),
+    );
+    const result = await client.listRepoPaths('t', 'o/r', 'dev');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.github.com/repos/o/r/git/trees/dev?recursive=1',
+    );
+    expect(result).toEqual({
+      read: true,
+      paths: ['e2e/home.spec.ts', 'package.json'],
+      truncated: false,
+    });
+  });
+
+  it('reports a 401 tree read as unauthorized and throws on any other refusal', async () => {
+    fetchMock.mockResolvedValueOnce(response(401));
+    await expect(
+      client.listRepoPaths('t', 'o/r', 'dev'),
+    ).resolves.toMatchObject({
+      read: false,
+      reason: 'unauthorized',
+    });
+    fetchMock.mockResolvedValue(response(500, { message: 'boom' }));
+    await expect(client.listRepoPaths('t', 'o/r', 'dev')).rejects.toThrow(
+      'GitHub tree read failed (500)',
+    );
+  });
+
   it('commits blobs -> tree -> commit -> ref, in that order, creating the ref last', async () => {
     fetchMock
       .mockResolvedValueOnce(response(200, { object: { sha: 'base' } }))

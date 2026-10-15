@@ -4,6 +4,7 @@
 
 ### Added
 
+- `GET /projects/:id/workspace/browser-tests` gains `ownTests { count, paths }`: the repository's own Playwright test files on dev (any name under an `e2e`/`playwright` folder or named `*.e2e*`, in a repository that uses Playwright), which the verify stage already runs. Before, a repository with its own suite read as having no browser tests because only the starter pack's file names were checked. Read from GitHub's recursive tree (new `GithubProjectPort.listRepoPaths`) for the status only; the add flow is unchanged. Null without a dev branch.
 - Workspace on-prem machine inventory, one-time enrollment, heartbeat, explicit environment assignment with conflict detection and port reservations, protected installer packaging and isolated per-environment workers. Project creation retains the created repository on a host-binding failure and exposes assignment retry status. See the on-prem host runbook for targeted migrations, prerequisites, upgrade and downgrade behavior.
 
 - Added on-prem readiness inspection without automatic migrations, early API-address validation in generated CI jobs, and persisted environment targets in workflow previews and update PRs.
@@ -76,6 +77,7 @@
 
 ### Fixed
 
+- The CI results export shows SonarCloud percentages with one decimal, as SonarCloud does: coverage on new code arrives unrounded (`96.27659574468085`) and is now `96.3%`. Values SonarCloud already rounded are unchanged.
 - Recover unsigned on-prem deployments after signing failure without accepting late signatures or allowing CI to overwrite signed host results. Replacing a host now revokes previous tokens for only that environment, with concurrent registrations serialized and one active token enforced by migration. Rollback rechecks a configured application HTTP health URL before reporting success. Added the host setup runbook and documented the migration, workflow regeneration, and agent update required for rollout.
 - Fixed the architecture route-inventory check failing on Windows checkouts by pinning `*.txt` to LF, so the committed baseline hash matches the working tree.
 - Corrected outbox acknowledgement to update the active `published_at` column rather than the removed legacy `processed_at` column.

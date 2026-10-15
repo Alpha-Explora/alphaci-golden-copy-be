@@ -348,6 +348,14 @@ export type GitHubRepoFilesResult =
   | { read: true; files: Record<string, GitHubRepoFileProbe> }
   | { read: false; reason: 'unauthorized'; message: string };
 
+/**
+ * Every file path at a ref (GitHub's recursive tree). `truncated` is GitHub
+ * saying the tree was too large to list in full (over 100,000 entries).
+ */
+export type GitHubRepoPathsResult =
+  | { read: true; paths: string[]; truncated: boolean }
+  | { read: false; reason: 'unauthorized'; message: string };
+
 export interface GitHubCommitFilesInput {
   /** Existing branch the new one starts from. */
   fromBranch: string;
@@ -688,6 +696,15 @@ export interface GithubProjectPort {
     ref: string,
     paths: readonly string[],
   ): Promise<GitHubRepoFilesResult>;
+  /**
+   * Every file path at `ref`, in one request. Used by the browser-test status
+   * to find a repository's own Playwright tests, whatever they are named.
+   */
+  listRepoPaths(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+  ): Promise<GitHubRepoPathsResult>;
   /**
    * Commit `files` to a NEW branch in one commit through the Git Data API
    * (blobs, tree, commit, then the ref), attributed to the token's owner.

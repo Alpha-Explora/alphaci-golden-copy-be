@@ -54,6 +54,13 @@ function build(
           ),
         }),
     ),
+    listRepoPaths: jest.fn(() =>
+      Promise.resolve({
+        read: true,
+        paths: Object.keys(files),
+        truncated: false,
+      }),
+    ),
     listPullRequests: jest.fn(() => Promise.resolve(opts.openPrs ?? [])),
     commitFilesToNewBranch: jest.fn(() =>
       Promise.resolve(opts.commit ?? { committed: true, commitSha: 'c1' }),
@@ -124,6 +131,39 @@ describe('BrowserTestsService.getStatus', () => {
     expect(status.hasLockfile).toBe(false);
     expect(status.playwrightVersion).toBe('^1.49.0');
     expect(status.canAdd).toBe(true);
+  });
+
+  it("reports the repository's own Playwright tests, which already run in verify", async () => {
+    const pkg = JSON.stringify({
+      dependencies: { next: '15' },
+      devDependencies: { '@playwright/test': '^1.49.0' },
+    });
+    const { service, github } = build({
+      files: {
+        'package.json': pkg,
+        'e2e/feature-1-intake.spec.ts': true,
+        'e2e/tab-bar.spec.ts': true,
+        'src/lib/money.test.ts': true,
+        'tests/e2e/support.ts': true,
+      },
+    });
+
+    const status = await service.getStatus('p', 'u', 'gho');
+
+    expect(github.listRepoPaths).toHaveBeenCalledWith('ghs_read', REPO, 'dev');
+    expect(status.ownTests).toEqual({
+      count: 2,
+      paths: ['e2e/feature-1-intake.spec.ts', 'e2e/tab-bar.spec.ts'],
+    });
+    // The starter pack is still reported as it was: missing its four checks.
+    expect(status.installed).toBe(false);
+  });
+
+  it('has no own tests to report without a dev branch', async () => {
+    const { service, github } = build({ devBranch: false });
+    const status = await service.getStatus('p', 'u', 'gho');
+    expect(status.ownTests).toBeNull();
+    expect(github.listRepoPaths).not.toHaveBeenCalled();
   });
 
   describe('visual testing flag', () => {

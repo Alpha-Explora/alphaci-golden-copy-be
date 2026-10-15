@@ -93,6 +93,49 @@ describe('buildProjectScaffold', () => {
     },
   );
 
+  /*
+   * A fresh Next.js repository failed its first quality gate three ways:
+   * jest.config.ts could not load without ts-node, Jest 29 pulled a braces
+   * release with a HIGH advisory into the audit, and the visual test's
+   * mask(_page) hook tripped no-unused-vars.
+   */
+  it.each(['react', 'nextjs', 'nestjs', 'node'])(
+    'gives %s what its own quality gate needs',
+    (stack) => {
+      const files = buildProjectScaffold({
+        ...baseOptions,
+        stack,
+        repoShape: 'standalone',
+      });
+      const pkg = JSON.parse(
+        files.find((file) => file.path === 'package.json')!.content,
+      ) as { devDependencies: Record<string, string> };
+      expect(pkg.devDependencies['ts-node']).toBe('^10.9.2');
+      expect(pkg.devDependencies['jest']).toBe('^30.0.0');
+      expect(pkg.devDependencies['ts-jest']).toBe('^29.4.0');
+      expect(pkg.devDependencies['@types/jest']).toBe('^30.0.0');
+
+      const eslint = files.find(
+        (file) => file.path === 'eslint.config.mjs',
+      )!.content;
+      expect(eslint).toContain("argsIgnorePattern: '^_'");
+      expect(eslint).toContain("varsIgnorePattern: '^_'");
+    },
+  );
+
+  it('overrides the postcss Next.js pins so the audit passes', () => {
+    const pkgOf = (stack: string) =>
+      JSON.parse(
+        buildProjectScaffold({
+          ...baseOptions,
+          stack,
+          repoShape: 'standalone',
+        }).find((file) => file.path === 'package.json')!.content,
+      ) as { overrides?: Record<string, string> };
+    expect(pkgOf('nextjs').overrides).toEqual({ postcss: '^8.5.30' });
+    expect(pkgOf('nestjs').overrides).toBeUndefined();
+  });
+
   it.each(['react', 'nextjs'])(
     'ships a runnable browser suite for %s',
     (stack) => {
@@ -376,6 +419,55 @@ describe('buildProjectScaffold', () => {
     expect(files.find((file) => file.path === 'Dockerfile')!.content).toContain(
       'CMD ["node", "dist/index.js"]',
     );
+  });
+
+  // npm and yarn from the node base image carry HIGH findings that fail the
+  // release scan; the runner needs only node, so it drops them after the
+  // production install.
+  it.each(['nextjs', 'nodejs', 'nestjs'])(
+    'removes the bundled package managers from the %s runner',
+    (stack) => {
+      const dockerfile = buildProjectScaffold({
+        serviceName: 'svc',
+        stack,
+        includeDocker: true,
+      }).find((file) => file.path === 'Dockerfile')!.content;
+      const install = dockerfile.lastIndexOf('npm ci --omit=dev');
+      const removal = dockerfile.indexOf(
+        'RUN rm -rf /usr/local/lib/node_modules/npm',
+      );
+      expect(install).toBeGreaterThan(-1);
+      expect(removal).toBeGreaterThan(install);
+      expect(dockerfile).toContain('/opt/yarn-*');
+      expect(dockerfile).toContain('CMD ["node", ');
+    },
+  );
+
+  // The Node runner copied dist/, which a Next.js build never writes, so the
+  // first image build of every Next.js project failed at that COPY.
+  it('serves Next.js images with next start from .next', () => {
+    const files = buildProjectScaffold({
+      serviceName: 'storefront',
+      stack: 'nextjs',
+      includeDocker: true,
+    });
+    const dockerfile = files.find(
+      (file) => file.path === 'Dockerfile',
+    )!.content;
+
+    expect(dockerfile).not.toContain('/app/dist');
+    expect(dockerfile).toContain(
+      'COPY --from=builder --chown=flowci:nodejs /app/.next ./.next',
+    );
+    expect(dockerfile).toContain(
+      'COPY --from=builder /app/node_modules/typescript ./node_modules/typescript',
+    );
+    expect(dockerfile).toContain(
+      'CMD ["node", "node_modules/next/dist/bin/next", "start"]',
+    );
+    expect(
+      files.find((file) => file.path === '.dockerignore')!.content,
+    ).toContain('.next');
   });
 
   it('renders a real React scaffold for the react stack', () => {

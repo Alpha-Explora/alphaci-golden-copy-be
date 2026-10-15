@@ -29,6 +29,10 @@ describe('SonarCloud in words', () => {
 
   it('adds the unit, and reads ratings as letters', () => {
     expect(sonarValueText('coverage', '74.1')).toBe('74.1%');
+    // SonarCloud sends coverage on new code unrounded: one decimal, as SonarCloud shows it.
+    expect(sonarValueText('new_coverage', '96.27659574468085')).toBe('96.3%');
+    expect(sonarValueText('duplicated_lines_density', '0.0')).toBe('0.0%');
+    expect(sonarValueText('new_coverage', '80')).toBe('80%');
     expect(sonarValueText('bugs', '3')).toBe('3');
     expect(sonarValueText('new_security_rating', '1.0')).toBe('A');
     expect(sonarValueText('new_reliability_rating', '3.0')).toBe('C');

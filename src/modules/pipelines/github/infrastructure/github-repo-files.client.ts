@@ -5,9 +5,15 @@ import type {
   GitHubCommitFilesResult,
   GitHubRepoFileProbe,
   GitHubRepoFilesResult,
+  GitHubRepoPathsResult,
 } from '#kernel/ports/github.port';
 import type { GithubHttp } from './github-http';
 import { userWriteRefusal } from './github-workspace.mapping';
+
+interface TreeRow {
+  tree?: { path?: string; type?: string }[];
+  truncated?: boolean;
+}
 
 interface ContentsRow {
   content?: string;
@@ -86,6 +92,44 @@ export class GithubRepoFilesClient {
       }
     }
     return { read: true, files };
+  }
+
+  /**
+   * Every file (blob) path at `ref`, from the recursive tree. A 401 is
+   * reported, like readRepoFiles; any other refusal throws, so a failed read
+   * is never mistaken for an empty repository.
+   */
+  async listRepoPaths(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+  ): Promise<GitHubRepoPathsResult> {
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${repoFullName}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+      { headers: this.http.workspaceHeaders(accessToken) },
+    );
+    if (response.status === 401) {
+      return {
+        read: false,
+        reason: 'unauthorized',
+        message:
+          userWriteRefusal(401, false, repoFullName) ??
+          'GitHub no longer accepts your sign-in.',
+      };
+    }
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub tree read failed (${String(response.status)}): ${body.slice(0, 300)}`,
+      );
+    }
+    const payload = (await response.json()) as TreeRow;
+    const paths = (payload.tree ?? [])
+      .filter(
+        (entry) => entry.type === 'blob' && typeof entry.path === 'string',
+      )
+      .map((entry) => entry.path as string);
+    return { read: true, paths, truncated: payload.truncated === true };
   }
 
   /**
