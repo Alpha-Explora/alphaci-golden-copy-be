@@ -320,7 +320,7 @@ export class ReleaseRegistryService {
     });
     if (!stored)
       throw new ConflictException(
-        'The release was signed concurrently. Reload it.',
+        'The release was signed concurrently or its host deployment is no longer pending. Reload it.',
       );
     return this.view(await this.requireRelease(projectId, releaseId));
   }
@@ -336,6 +336,13 @@ export class ReleaseRegistryService {
     await this.requireRelease(projectId, releaseId);
     const deployment = await this.releases.findAutomaticDeployment(releaseId);
     if (!deployment) throw new NotFoundException('Deployment not found');
+    if (deployment.delivery === 'host' && status === 'failed') {
+      const failed = await this.releases.failUnsignedHostDeployment(
+        releaseId,
+        detail,
+      );
+      if (failed) return failed;
+    }
     this.assertWorkflowDelivered(deployment);
     return this.transition(deployment, status, detail);
   }
@@ -532,7 +539,7 @@ export class ReleaseRegistryService {
     return this.releases.listEnvironmentDeployments(environment.id, 100);
   }
 
-  /** Register an on-prem host for one environment; the token is shown once. */
+  /** Replace an environment's host registration; only the new token stays active. */
   async createHost(input: {
     projectId: string;
     environmentId: string;

@@ -120,11 +120,11 @@ deploy() {
   fi
 
   if [ -f "$STATE_DIR/current.env" ] &&
-    compose "$STATE_DIR/current.env" up -d --wait --wait-timeout "$HEALTH_TIMEOUT"; then
+    compose "$STATE_DIR/current.env" up -d --wait --wait-timeout "$HEALTH_TIMEOUT" && healthy; then
     report "$id" rolled_back "The new release failed its health check; the previous release is running again." || return 1
     log "deployment $id rolled back"
   else
-    report "$id" failed "The new release failed its health check and no previous release could be restored." || return 1
+    report "$id" failed "The new release failed its health check and the previous release could not be restored to a healthy state." || return 1
     log "deployment $id failed"
   fi
 }

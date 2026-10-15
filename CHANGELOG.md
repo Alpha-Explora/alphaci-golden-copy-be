@@ -69,6 +69,7 @@
 
 ### Fixed
 
+- Recover unsigned on-prem deployments after signing failure without accepting late signatures or allowing CI to overwrite signed host results. Replacing a host now revokes previous tokens for only that environment, with concurrent registrations serialized and one active token enforced by migration. Rollback rechecks a configured application HTTP health URL before reporting success. Added the host setup runbook and documented the migration, workflow regeneration, and agent update required for rollout.
 - Fixed the architecture route-inventory check failing on Windows checkouts by pinning `*.txt` to LF, so the committed baseline hash matches the working tree.
 - Corrected outbox acknowledgement to update the active `published_at` column rather than the removed legacy `processed_at` column.
 - Added fail-closed protection to the branch-scoped environment rollback so it cannot silently discard preview branch identity in the legacy schema.

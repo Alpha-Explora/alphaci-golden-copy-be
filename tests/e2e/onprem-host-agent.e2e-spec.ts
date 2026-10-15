@@ -8,12 +8,14 @@ import {
 } from 'node:crypto';
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
 
@@ -65,6 +67,10 @@ describe('On-prem host agent', () => {
   let userId: string;
   let port: number;
   let work: string;
+  let healthServer: ReturnType<typeof createServer>;
+  let healthPort: number;
+  let healthResponses: number[] = [];
+  let healthRequests = 0;
   let project: {
     id: string;
     repo: string;
@@ -201,7 +207,8 @@ describe('On-prem host agent', () => {
         IMAGE,
         'sh',
         '-c',
-        'chmod +x /work/docker && bash /agent/alphaci-agent.sh ' + command,
+        'chmod +x /work/docker /work/bin/curl && PATH=/work/bin:$PATH bash /agent/alphaci-agent.sh ' +
+          command,
       ],
       { encoding: 'utf8', timeout: 120_000 },
     );
@@ -310,9 +317,37 @@ describe('On-prem host agent', () => {
     );
     writeFileSync(join(work, 'compose.yaml'), 'services: {}\n');
     writeFileSync(join(work, 'docker'), DOCKER_STUB);
+    mkdirSync(join(work, 'bin'));
+    // Keep real HTTP status checks, but omit retry delays for the scripted
+    // health endpoint. API calls retain the agent's actual curl arguments.
+    writeFileSync(
+      join(work, 'bin', 'curl'),
+      [
+        '#!/usr/bin/env bash',
+        'if [ -n "${ALPHACI_HEALTH_URL:-}" ] && [ "${!#}" = "$ALPHACI_HEALTH_URL" ]; then',
+        '  exec /usr/bin/curl -fsS --max-time 2 "$ALPHACI_HEALTH_URL"',
+        'fi',
+        'exec /usr/bin/curl "$@"',
+        '',
+      ].join('\n'),
+    );
+    healthServer = createServer((_request, response) => {
+      healthRequests += 1;
+      response.writeHead(healthResponses.shift() ?? 503).end();
+    });
+    await new Promise<void>((resolve) =>
+      healthServer.listen(0, '0.0.0.0', resolve),
+    );
+    const address = healthServer.address();
+    if (!address || typeof address === 'string')
+      throw new Error('No health port');
+    healthPort = address.port;
   });
 
   afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      healthServer?.close((error) => (error ? reject(error) : resolve())),
+    );
     await e2e.close();
     if (previousOnpremFlag === undefined) {
       delete process.env['ONPREM_RELEASES_ENABLED'];
@@ -395,6 +430,37 @@ describe('On-prem host agent', () => {
       digest('a'),
     );
   });
+
+  it.each([
+    ['healthy', [503, 200], 'rolled_back'],
+    ['unhealthy', [503, 503], 'failed'],
+  ] as const)(
+    'checks the restored app over HTTP when it is %s',
+    async (_case, responses, expectedStatus) => {
+      const deploymentId = await promoteToProduction(
+        await release('e', trusted.privateKey),
+      );
+      healthResponses = [...responses];
+      healthRequests = 0;
+
+      const log = await runAgent([
+        '-e',
+        'ALPHACI_HEALTH_URL=http://host.docker.internal:' + String(healthPort),
+      ]);
+
+      expect(await status(deploymentId)).toBe(expectedStatus);
+      expect(healthRequests).toBe(2);
+      expect(
+        log.split('\n').filter((line) => line.startsWith('compose')),
+      ).toEqual([
+        expect.stringContaining('/work/state/' + deploymentId + '.env up'),
+        expect.stringContaining('/work/state/current.env up'),
+      ]);
+      expect(
+        readFileSync(join(work, 'state', 'current.env'), 'utf8'),
+      ).toContain(digest('a'));
+    },
+  );
 
   it('writes a support bundle with the running release and none of the host token', async () => {
     const log = await runAgent([], 'support-bundle');

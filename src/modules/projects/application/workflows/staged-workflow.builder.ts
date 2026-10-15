@@ -1637,7 +1637,28 @@ function buildEnvironmentPackageWorkflowFile(
         },
         ...deployJobs,
         ...(hostDelivered
-          ? {}
+          ? {
+              'report-signing-failure': {
+                needs: ['register-release', 'sign-release'],
+                if: "${{ always() && needs.register-release.result == 'success' && needs.sign-release.result != 'success' }}",
+                runs_on: 'ubuntu-latest',
+                steps: [
+                  {
+                    name: 'Clear the unsigned host deployment after signing fails',
+                    env: {
+                      ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                      ALPHACI_API_URL,
+                      RELEASE_ID:
+                        '${{ needs.register-release.outputs.release-id }}',
+                    },
+                    run: [
+                      'set -euo pipefail',
+                      `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"failed",detail:"Release signing failed or was cancelled before host delivery."}')"`,
+                    ].join('\n'),
+                  },
+                ],
+              },
+            }
           : {
               'report-deployment': {
                 needs: ['register-release', ...deployJobIds],
@@ -1666,7 +1687,13 @@ function buildEnvironmentPackageWorkflowFile(
             }),
         'report-results': reportingJob(
           'package',
-          ['validate-access', 'build', 'register-release', ...deployJobIds],
+          [
+            'validate-access',
+            'build',
+            'register-release',
+            'sign-release',
+            ...deployJobIds,
+          ],
           { workJobIds: ['build'] },
         ),
       }),

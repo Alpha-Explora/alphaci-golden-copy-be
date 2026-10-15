@@ -1,5 +1,13 @@
 # Directory Update Log
 
+## 2026-10-15
+
+- **Update**: Documented unsigned on-prem signing-failure cleanup, serialization against late signing, one active host token per environment, replacement and migration revocation rules, and restored-release health checks in the release registry contract and host setup runbook. Generated architecture maps retain the same routes and ownership; the documentation gate verifies their current output.
+
+## 2026-10-14
+
+- **Creation**: Added the on-prem host setup runbook. It takes a fresh Windows PC (WSL Ubuntu) or Ubuntu machine to a verified production host: Docker Engine, the release agent and its pinned signing key, the backend settings and migrations that enable on-prem releases, a project whose production environment is on-prem, host registration, Windows startup and port forwarding, and the first promoted release. It also covers adding hosts and projects, troubleshooting, and removing a host.
+
 ## 2026-10-02
 
 - **Creation**: Recorded GitHub activity ingest and pull-request-only branches (ADR-0015). `dev` is no longer left unprotected: every pipeline branch requires a pull request (zero approvals), the rule merges into existing protection, provisioning applies it last and best effort, and admins retrofit existing repositories. Repository GitHub activity is polled from the Events API into the Audit trail (migration `20261002020000_audit_github_activity.sql`), because webhooks do not reach the backend.
