@@ -29,21 +29,17 @@ const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
 
 export interface StartIterationInput {
   goal?: string | null;
+  /** Accepted only empty: nothing is carried over any more (ITERATIONS_PLAN.md 6a). */
   carryOver?: { requirementItemIds?: string[] };
 }
 
-interface StartResult {
-  iteration: ProjectIterationRow;
-  carriedRequirements: number;
-  carriedItems: number;
-}
-
 /**
- * "Start the next iteration" (ITERATIONS_PLAN.md D2, D5, P2, P13). Lead and
- * admin only; allowed only once the Project's latest Iteration is delivered.
- * The new Iteration and its carried requirements and items are created in one
- * transaction by the repository; the unique one-active-per-Project index makes
- * a double click or a race safe (the loser gets 409 ITERATION_ACTIVE).
+ * "Start the next iteration" (ITERATIONS_PLAN.md D5, 6a). Lead and admin
+ * only; allowed only once the Project's latest Iteration is delivered. The
+ * new Iteration starts empty: every item of the delivered one was passed
+ * before it could merge, so nothing is carried and the delivered record stays
+ * as it is. The unique one-active-per-Project index makes a double click or a
+ * race safe (the loser gets 409 ITERATION_ACTIVE).
  */
 @Injectable()
 export class ProjectIterationStartService {
@@ -86,24 +82,19 @@ export class ProjectIterationStartService {
       throw iterationActive(source.number);
     }
 
-    const itemIds = await this.validateCarryOver(
-      source,
-      input.carryOver?.requirementItemIds ?? [],
-    );
-    const result = await this.iterations.startNext({
+    const carried = [...new Set(input.carryOver?.requirementItemIds ?? [])];
+    if (carried.length > 0) {
+      throw iterationCarryInvalid(carried);
+    }
+    const iteration = await this.iterations.startNext({
       source,
       startedBy: actor.userId,
       startedByLogin: actor.userLogin,
       goal,
-      itemIds,
     });
 
-    await this.announce(project, result, goal, actor);
-    return {
-      iteration: this.iterations.toIteration(result.iteration),
-      carriedRequirements: result.carriedRequirements,
-      carriedItems: result.carriedItems,
-    };
+    await this.announce(project, iteration, goal, actor);
+    return { iteration: this.iterations.toIteration(iteration) };
   }
 
   private normalizeGoal(goal: string | null | undefined): string | null {
@@ -114,40 +105,13 @@ export class ProjectIterationStartService {
     return trimmed === '' ? null : trimmed;
   }
 
-  /**
-   * Every id must be an item of an active requirement of the latest delivered
-   * Iteration (which is `source`). Duplicates collapse; anything else, from
-   * another Project, an older Iteration or an archived requirement, is
-   * rejected as a whole with the offending ids.
-   */
-  private async validateCarryOver(
-    source: ProjectIterationRow,
-    requested: readonly string[],
-  ): Promise<string[]> {
-    const unique = [...new Set(requested)];
-    if (unique.length === 0) {
-      return [];
-    }
-    const candidates = await this.iterations.carryOverCandidates(source);
-    const valid = new Set(
-      (candidates?.requirements ?? []).flatMap((requirement) =>
-        requirement.items.map((item) => item.id),
-      ),
-    );
-    const invalid = unique.filter((id) => !valid.has(id));
-    if (invalid.length > 0) {
-      throw iterationCarryInvalid(invalid);
-    }
-    return unique;
-  }
-
   // ---------------------------------------------------------------------
   // Audit + notifications
   // ---------------------------------------------------------------------
 
   private async announce(
     project: QaProjectContext,
-    result: StartResult,
+    iteration: ProjectIterationRow,
     goal: string | null,
     actor: QaRunActorContext,
   ): Promise<void> {
@@ -155,7 +119,6 @@ export class ProjectIterationStartService {
     // committed change into an error for the caller.
     try {
       const anchor = await this.projectContext.anchorProjectId(project);
-      const { iteration } = result;
       await this.auditEventsService?.recordProjectEvent({
         workspaceId: project.groupId,
         projectId: anchor,
@@ -166,14 +129,12 @@ export class ProjectIterationStartService {
           deliveryProjectId: project.deliveryProjectId,
           iterationId: iteration.id,
           number: iteration.number,
-          carriedItems: result.carriedItems,
-          carriedRequirements: result.carriedRequirements,
         },
       });
-      await this.notifyTeam(project, iteration, result, goal, actor, anchor);
+      await this.notifyTeam(project, iteration, goal, actor, anchor);
     } catch (error) {
       this.logger.warn(
-        `Iteration ${result.iteration.id} was started but announcing it failed: ${String(error)}`,
+        `Iteration ${iteration.id} was started but announcing it failed: ${String(error)}`,
       );
     }
   }
@@ -182,7 +143,6 @@ export class ProjectIterationStartService {
   private async notifyTeam(
     project: QaProjectContext,
     iteration: ProjectIterationRow,
-    result: StartResult,
     goal: string | null,
     actor: QaRunActorContext,
     anchor: string | null,
@@ -201,12 +161,9 @@ export class ProjectIterationStartService {
     if (recipients.size === 0) {
       return;
     }
-    const carried =
-      result.carriedItems === 1
-        ? '1 item carried over'
-        : `${String(result.carriedItems)} items carried over`;
+    const fresh = 'It starts with an empty checklist.';
     const body = this.truncate(
-      goal ? `Goal: ${goal}. ${carried}.` : `${carried}.`,
+      goal ? `Goal: ${goal}. ${fresh}` : fresh,
       NOTIFICATION_BODY_TRUNCATE_LENGTH,
     );
     await Promise.all(

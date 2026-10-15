@@ -42,14 +42,18 @@ export const iterationActive = (iterationNumber: number) =>
     iterationNumber,
   });
 
-/** A carry-over id that is not an item of the latest delivered Iteration. */
+/**
+ * A start that names items to carry over. Nothing is carried any more: every
+ * item was passed before the Iteration was delivered, and the next one starts
+ * empty (ITERATIONS_PLAN.md 6a). An empty list is still accepted.
+ */
 export const iterationCarryInvalid = (invalidIds: string[]) =>
   new BadRequestException({
     statusCode: 400,
     error: 'Bad Request',
     code: 'ITERATION_CARRY_INVALID',
     message:
-      'Some items cannot be carried over. Only items of the last delivered iteration can be.',
+      'Items are no longer carried over: a new iteration starts with an empty checklist.',
     invalidIds,
   });
 

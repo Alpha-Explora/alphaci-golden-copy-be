@@ -1012,8 +1012,6 @@ describeDatabase('project_requirements migration', () => {
     let checklists: QaChecklistsRepository;
     let iteration1: string;
     let runId: string;
-    let featureId: string;
-    let systemId: string;
     let items: Record<string, string> = {};
 
     const one = async <T extends object>(sql: string): Promise<T> => {
@@ -1083,8 +1081,6 @@ describeDatabase('project_requirements migration', () => {
           },
         ],
       });
-      featureId = feature.checklist.id;
-      systemId = system1.checklist.id;
       items = {
         card: feature.items[0]!.id,
         wallet: feature.items[1]!.id,
@@ -1137,113 +1133,29 @@ describeDatabase('project_requirements migration', () => {
       );
     }, 60_000);
 
-    it('lists the delivered items with the delivering run status', async () => {
-      const rows = await iterations.listCarryOverItems(iteration1, runId);
-      expect(
-        rows.map((row) => [row.title, row.progress, row.last_status]),
-      ).toEqual([
-        ['Pay by card', 'done', 'passed'],
-        ['Pay by wallet', 'done', 'failed'],
-        ['Pay by voucher', 'todo', null],
-        ['Rate limit', 'done', 'blocked'],
-      ]);
-    });
-
-    it('creates Iteration 2 and copies the selected items; failed/blocked go back to in_progress, delivered rows stay frozen', async () => {
+    it('creates Iteration 2 empty: nothing is copied and the delivered rows stay frozen', async () => {
       const before = await sourceSnapshot();
 
-      const result = await iterations.startNext({
+      const created = await iterations.startNext({
         deliveryProjectId: projectD,
         startedBy: lead.id,
         startedByLogin: lead.login,
         goal: 'Loyalty points',
-        // Out of source order on purpose: order follows the source position.
-        itemIds: [items.rate!, items.voucher!, items.wallet!, items.card!],
-        signoffRunId: runId,
       });
 
-      expect(result).toMatchObject({
-        iteration: {
-          number: 2,
-          status: 'active',
-          goal: 'Loyalty points',
-          started_by: lead.id,
-          started_by_login: 'lead',
-        },
-        carriedRequirements: 2,
-        carriedItems: 4,
+      expect(created).toMatchObject({
+        number: 2,
+        status: 'active',
+        goal: 'Loyalty points',
+        started_by: lead.id,
+        started_by_login: 'lead',
       });
-      const iteration2 = result.iteration.id;
-
-      const requirements = await client.query<{
-        name: string;
-        kind: string;
-        description: string | null;
-        delivery_project_id: string;
-        archived_at: string | null;
-        created_by: string;
-        id: string;
-      }>(
-        `SELECT * FROM projects.qa_checklists WHERE iteration_id = '${iteration2}'
-          ORDER BY (kind = 'functional') DESC, created_at, id;`,
-      );
-      // The same names are allowed again in the new Iteration.
       expect(
-        requirements.rows.map((row) => [row.name, row.kind, row.description]),
-      ).toEqual([
-        ['Checkout feature', 'functional', 'Pay for a cart'],
-        ['Hardening', 'system', null],
-      ]);
-      expect(
-        requirements.rows.every(
-          (row) =>
-            row.delivery_project_id === projectD &&
-            row.archived_at === null &&
-            row.created_by === owner &&
-            row.id !== featureId &&
-            row.id !== systemId,
+        await count(
+          client,
+          `SELECT COUNT(*) AS n FROM projects.qa_checklists WHERE iteration_id = '${created.id}';`,
         ),
-      ).toBe(true);
-
-      const copied = await client.query<{
-        title: string;
-        position: number;
-        progress: string;
-        progress_by: string | null;
-        acceptance_criteria: string | null;
-        test_identifier: string | null;
-        requirement: string;
-      }>(
-        `SELECT i.title, i."position", i.progress, i.progress_by, i.acceptance_criteria,
-                i.test_identifier, c.name AS requirement
-           FROM projects.qa_checklist_items i
-           JOIN projects.qa_checklists c ON c.id = i.checklist_id
-          WHERE c.iteration_id = '${iteration2}'
-          ORDER BY (c.kind = 'functional') DESC, c.created_at, i."position";`,
-      );
-      expect(
-        copied.rows.map((row) => [
-          row.requirement,
-          row.position,
-          row.title,
-          row.progress,
-          row.progress_by === null ? null : 'kept',
-        ]),
-      ).toEqual([
-        // card passed: progress copied unchanged (with its author)
-        ['Checkout feature', 0, 'Pay by card', 'done', 'kept'],
-        // wallet failed: back to in_progress, no author
-        ['Checkout feature', 1, 'Pay by wallet', 'in_progress', null],
-        // voucher was not in the run: progress copied unchanged
-        ['Checkout feature', 2, 'Pay by voucher', 'todo', null],
-        // rate limit blocked: back to in_progress
-        ['Hardening', 0, 'Rate limit', 'in_progress', null],
-      ]);
-      expect(copied.rows[0]).toMatchObject({
-        acceptance_criteria: 'Given Pay by card',
-        test_identifier: 't-Pay by card',
-      });
-
+      ).toBe(0);
       // Delivered rows are never modified.
       expect(await sourceSnapshot()).toEqual(before);
       expect((await iterations.findById(iteration1))?.status).toBe('delivered');
@@ -1261,8 +1173,6 @@ describeDatabase('project_requirements migration', () => {
           startedBy: lead.id,
           startedByLogin: lead.login,
           goal: null,
-          itemIds: [items.card!],
-          signoffRunId: runId,
         }),
       ).rejects.toMatchObject({ code: '23505' });
 
@@ -1293,7 +1203,7 @@ describeDatabase('project_requirements migration', () => {
       ).resolves.toBeDefined();
     });
 
-    it('a start with nothing selected creates an empty Iteration', async () => {
+    it('a later start creates the next empty Iteration', async () => {
       await client.query(
         `UPDATE projects.project_iterations
             SET status = 'delivered', delivered_at = NOW()
@@ -1304,14 +1214,8 @@ describeDatabase('project_requirements migration', () => {
         startedBy: lead.id,
         startedByLogin: lead.login,
         goal: null,
-        itemIds: [],
-        signoffRunId: null,
       });
-      expect(result).toMatchObject({
-        iteration: { number: 3, goal: null },
-        carriedRequirements: 0,
-        carriedItems: 0,
-      });
+      expect(result).toMatchObject({ number: 3, goal: null });
     });
   });
 });

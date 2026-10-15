@@ -43,10 +43,9 @@ export class DeliveryProjectIterationsController {
   ) {}
 
   /**
-   * Starts the next Iteration (lead/admin) and carries over the chosen items of
-   * the last delivered one. 409 ITERATION_ACTIVE while one is active or on a
-   * lost race; 400 ITERATION_CARRY_INVALID for an item that is not the last
-   * delivered Iteration's.
+   * Starts the next Iteration (lead/admin), empty: nothing is carried over.
+   * 409 ITERATION_ACTIVE while one is active or on a lost race; 400
+   * ITERATION_CARRY_INVALID when items are named to carry over.
    */
   @Post()
   start(

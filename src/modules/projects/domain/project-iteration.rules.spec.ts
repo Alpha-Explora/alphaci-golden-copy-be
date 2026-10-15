@@ -1,8 +1,6 @@
 import {
-  CARRY_OVER_RESET_STATUSES,
   canStartNextIteration,
   isIterationWritable,
-  isUnfinishedForCarryOver,
 } from './project-iteration.rules';
 
 describe('isIterationWritable', () => {
@@ -24,32 +22,6 @@ describe('canStartNextIteration', () => {
       expect(canStartNextIteration({ mayManage, hasActiveIteration })).toBe(
         expected,
       );
-    },
-  );
-});
-
-describe('carry-over rules', () => {
-  it('resets exactly the statuses QA failed, blocked or returned', () => {
-    expect([...CARRY_OVER_RESET_STATUSES].sort()).toEqual([
-      'blocked',
-      'failed',
-      'returned_to_dev',
-    ]);
-  });
-
-  it.each([
-    ['done', 'passed', false],
-    ['done', 'failed', true],
-    ['done', 'blocked', true],
-    ['done', 'returned_to_dev', true],
-    ['done', 'pending', true],
-    ['done', null, true],
-    ['in_progress', 'passed', true],
-    ['todo', null, true],
-  ] as const)(
-    'progress=%s lastStatus=%s -> suggested %s',
-    (progress, lastStatus, expected) => {
-      expect(isUnfinishedForCarryOver({ progress, lastStatus })).toBe(expected);
     },
   );
 });
