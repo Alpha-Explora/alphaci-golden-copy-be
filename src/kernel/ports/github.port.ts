@@ -356,6 +356,32 @@ export type GitHubRepoPathsResult =
   | { read: true; paths: string[]; truncated: boolean }
   | { read: false; reason: 'unauthorized'; message: string };
 
+/**
+ * Files to replace on an existing branch, as one new commit on top of it.
+ * Every file not listed is carried over untouched from the branch head.
+ */
+export interface GitHubCommitToBranchInput {
+  branch: string;
+  message: string;
+  /** Full UTF-8 contents of each file to replace. */
+  files: { path: string; content: string }[];
+}
+
+/**
+ * The outcome of advancing an existing branch.
+ *
+ *   base_missing  the branch does not exist
+ *   refused       GitHub would not move the branch (a protection rule, or a
+ *                 head that moved underneath us); `message` is GitHub's own
+ */
+export type GitHubCommitToBranchResult =
+  | { committed: true; commitSha: string }
+  | {
+      committed: false;
+      reason: 'base_missing' | 'refused';
+      message: string;
+    };
+
 export interface GitHubCommitFilesInput {
   /** Existing branch the new one starts from. */
   fromBranch: string;
@@ -714,6 +740,22 @@ export interface GithubProjectPort {
     repoFullName: string,
     input: GitHubCommitFilesInput,
   ): Promise<GitHubCommitFilesResult>;
+  /**
+   * Replace files on an existing branch in one commit (base tree, commit,
+   * then the branch ref). Used by drift repair; a GitHub refusal is returned,
+   * not thrown, so the caller can stop and say which branch held.
+   */
+  commitFilesToBranch(
+    accessToken: string,
+    repoFullName: string,
+    input: GitHubCommitToBranchInput,
+  ): Promise<GitHubCommitToBranchResult>;
+  /**
+   * The GitHub App installation that covers `repoFullName`, asked of GitHub
+   * itself rather than read from stored installations. Null when the App is
+   * not installed on the repository.
+   */
+  getRepoInstallationAccessToken(repoFullName: string): Promise<string | null>;
   /**
    * Dispatch a `workflow_dispatch` run on a person's behalf — first caller:
    * QA automation's "Run Playwright" (re-dispatches the generated verify

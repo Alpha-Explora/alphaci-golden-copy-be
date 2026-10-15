@@ -220,6 +220,246 @@ describe('ProjectDriftRepairService', () => {
     });
   });
 
+  describe('repair_ci_api_url', () => {
+    /** The branch each commit was asked to advance, in call order. */
+    const committedBranches = (): string[] =>
+      github.commitFilesToBranch.mock.calls.map(
+        (call: [string, string, { branch: string }]) => call[2].branch,
+      );
+
+    const API = 'https://api.alphaci.test';
+    const STALE = 'alphaci-api-url: http://localhost:4000\n';
+    const FIXED = `alphaci-api-url: ${API}\n`;
+    const github = {
+      getInstallationAccessTokenForUserRepo: jest.fn(),
+      getRepoInstallationAccessToken: jest.fn(),
+      listRepoContents: jest.fn(),
+      getFileContent: jest.fn(),
+      setActionsSecretStrict: jest.fn(),
+      commitFilesToBranch: jest.fn(),
+    };
+    const findAppRole = jest.fn();
+    const ciFinding = {
+      id: 'finding-ci',
+      projectId: 'project-1',
+      targetId: null,
+      source: 'github_live',
+      severity: 'error',
+      code: 'ci_api_url_stale',
+      message: 'CI workflows still point at http://localhost:4000',
+      details: {},
+      status: 'active',
+      detectedAt: '2026-06-13T00:00:00.000Z',
+      resolvedAt: null,
+    };
+    /** branch -> whether its one workflow file still names the old base. */
+    function branches(stale: Record<string, boolean>) {
+      github.listRepoContents.mockImplementation(
+        (_t: string, _r: string, _p: string, branch: string) =>
+          Promise.resolve({
+            path: '.github/workflows',
+            ref: branch,
+            entries:
+              branch in stale
+                ? [
+                    {
+                      name: 'ci.yml',
+                      path: '.github/workflows/ci.yml',
+                      type: 'file',
+                      size: 1,
+                      sha: 's',
+                    },
+                  ]
+                : [],
+            file: null,
+          }),
+      );
+      github.getFileContent.mockImplementation(
+        (_t: string, _o: string, _r: string, _p: string, branch: string) =>
+          Promise.resolve(stale[branch] ? STALE : FIXED),
+      );
+    }
+    function service() {
+      return new ProjectDriftRepairService(
+        { ...projectsRepository, findAppRole } as never,
+        findingsRepository as never,
+        ciService,
+        deploymentTargetsRepository,
+        projectWorkflowsService as never,
+        auditEventsService as never,
+        notificationEventsService as never,
+        capabilityResolver as never,
+        github as never,
+      );
+    }
+    const repair = (role = 'lead') => {
+      findAppRole.mockResolvedValue(role);
+      return service().repair(
+        'project-1',
+        'finding-ci',
+        'user-1',
+        'repair_ci_api_url',
+        'gh-user-token',
+      );
+    };
+
+    beforeEach(() => {
+      process.env['PLATFORM_PUBLIC_URL'] = API;
+      findingsRepository.findByIdForProject.mockResolvedValue(ciFinding);
+      github.getInstallationAccessTokenForUserRepo.mockResolvedValue(
+        'install-token',
+      );
+      github.getRepoInstallationAccessToken.mockResolvedValue(null);
+      github.setActionsSecretStrict.mockResolvedValue(undefined);
+      github.commitFilesToBranch.mockImplementation(
+        (_t: string, _r: string, input: { branch: string }) =>
+          Promise.resolve({
+            committed: true,
+            commitSha: `sha-${input.branch}`,
+          }),
+      );
+      branches({ dev: true, uat: true, main: true });
+    });
+    afterEach(() => {
+      delete process.env['PLATFORM_PUBLIC_URL'];
+    });
+
+    it('sets both secrets before committing, then one commit per branch: dev, uat, main', async () => {
+      await repair();
+
+      expect(github.setActionsSecretStrict.mock.calls).toEqual([
+        ['install-token', 'tone', 'orders-api', 'ALPHACI_API_URL', API],
+        [
+          'install-token',
+          'tone',
+          'orders-api',
+          'ALPHACI_REPORT_URL',
+          `${API}/api/v1/ci/report`,
+        ],
+      ]);
+      expect(committedBranches()).toEqual(['dev', 'uat', 'main']);
+      const lastSecret = Math.max(
+        ...github.setActionsSecretStrict.mock.invocationCallOrder,
+      );
+      expect(
+        Math.min(...github.commitFilesToBranch.mock.invocationCallOrder),
+      ).toBeGreaterThan(lastSecret);
+      expect(github.commitFilesToBranch.mock.calls[0]?.[2]).toEqual({
+        branch: 'dev',
+        message: 'ci: point ALPHACI checks at the public API URL',
+        files: [{ path: '.github/workflows/ci.yml', content: FIXED }],
+      });
+    });
+
+    it('commits only to the branches that still name the old base', async () => {
+      branches({ dev: false, uat: true, main: false });
+
+      const response = await repair();
+
+      expect(github.commitFilesToBranch).toHaveBeenCalledTimes(1);
+      expect(github.commitFilesToBranch.mock.calls[0]?.[2].branch).toBe('uat');
+      expect(response).toMatchObject({
+        status: 'completed',
+        result: {
+          commits: [
+            {
+              branch: 'uat',
+              commitSha: 'sha-uat',
+              files: ['.github/workflows/ci.yml'],
+            },
+          ],
+        },
+      });
+    });
+
+    it('resolves the finding with nothing to commit when the files already name the current base', async () => {
+      branches({ dev: false, uat: false, main: false });
+
+      const response = await repair();
+
+      expect(github.commitFilesToBranch).not.toHaveBeenCalled();
+      expect(github.setActionsSecretStrict).toHaveBeenCalledTimes(2);
+      expect(findingsRepository.markStatus).toHaveBeenCalledWith(
+        'finding-ci',
+        'resolved',
+      );
+      expect(response.message).toContain('no workflow file needed a change');
+    });
+
+    it('stops at a refused branch, leaves the finding active, and names what was committed', async () => {
+      github.commitFilesToBranch.mockImplementation(
+        (_t: string, _r: string, input: { branch: string }) =>
+          Promise.resolve(
+            input.branch === 'uat'
+              ? {
+                  committed: false,
+                  reason: 'refused',
+                  message:
+                    'GitHub would not update uat: Changes must be made through a pull request.',
+                }
+              : { committed: true, commitSha: `sha-${input.branch}` },
+          ),
+      );
+
+      await expect(repair()).rejects.toThrow(
+        /Repair stopped at uat: .*Already committed: dev\./,
+      );
+      expect(committedBranches()).toEqual(['dev', 'uat']);
+      expect(findingsRepository.markStatus).not.toHaveBeenCalled();
+    });
+
+    it('uses the stored installation first and does not ask GitHub', async () => {
+      await repair();
+
+      expect(github.getInstallationAccessTokenForUserRepo).toHaveBeenCalledWith(
+        'user-1',
+        'tone/orders-api',
+      );
+      expect(github.getRepoInstallationAccessToken).not.toHaveBeenCalled();
+    });
+
+    it("falls back to GitHub's own installation for the repository when no stored one matches", async () => {
+      github.getInstallationAccessTokenForUserRepo.mockResolvedValue(null);
+      github.getRepoInstallationAccessToken.mockResolvedValue('gh-install');
+
+      await repair();
+
+      expect(github.getRepoInstallationAccessToken).toHaveBeenCalledWith(
+        'tone/orders-api',
+      );
+      for (const call of github.setActionsSecretStrict.mock.calls) {
+        expect(call[0]).toBe('gh-install');
+      }
+      for (const call of github.commitFilesToBranch.mock.calls) {
+        expect(call[0]).toBe('gh-install');
+      }
+    });
+
+    it('refuses with a plain message when the App is not installed on the repository', async () => {
+      github.getInstallationAccessTokenForUserRepo.mockResolvedValue(null);
+      github.getRepoInstallationAccessToken.mockResolvedValue(null);
+
+      await expect(repair()).rejects.toBeInstanceOf(BadRequestException);
+      expect(github.setActionsSecretStrict).not.toHaveBeenCalled();
+      expect(github.commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('is a lead or admin action', async () => {
+      await expect(repair('member')).rejects.toBeInstanceOf(ForbiddenException);
+      expect(github.commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('refuses a finding of another code', async () => {
+      findingsRepository.findByIdForProject.mockResolvedValue({
+        ...ciFinding,
+        code: 'branch_protection_missing',
+      });
+
+      await expect(repair()).rejects.toBeInstanceOf(BadRequestException);
+      expect(github.setActionsSecretStrict).not.toHaveBeenCalled();
+    });
+  });
+
   describe('persona gate on non-protection repairs', () => {
     const lifecycleActions = [
       'mark_ignored',

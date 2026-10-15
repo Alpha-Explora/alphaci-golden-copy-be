@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { resolvePlatformBaseUrl } from '#kernel/config/ci-api-base-url';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
 import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
@@ -7,7 +8,6 @@ import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
   buildStagedWorkflowBundle,
   resolveDefaultCentralWorkflowRef,
-  resolvePlatformBaseUrl,
 } from './staged-workflow.builder';
 
 const makeTemplate = (

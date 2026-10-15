@@ -32,6 +32,11 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 import {
+  findStaleCiWorkflowFiles,
+  resolvePlatformBaseUrl,
+} from '#kernel/config/ci-api-base-url';
+import {
+  PIPELINE_BRANCHES,
   PROTECTED_BRANCHES,
   WORKING_BRANCH,
 } from '#kernel/config/pipeline-branches';
@@ -142,6 +147,9 @@ export class ProjectDriftRepairService {
         return this.detachTarget(ctx);
       case 'repair_branch_protection':
         return this.repairBranchProtection(ctx, project.repo_full_name);
+      case 'repair_ci_api_url':
+        await this.assertLifecycleRole(ctx);
+        return this.repairCiApiUrl(ctx, project.repo_full_name);
       case 'regenerate_workflow_preview':
         await this.assertPullRequestRole(ctx);
         return this.regenerateWorkflowPreview(ctx);
@@ -347,6 +355,146 @@ export class ProjectDriftRepairService {
       'Deployment target detached from ALPHACI',
       { targetId: ctx.finding.targetId },
     );
+  }
+
+  /**
+   * Re-points the two AlphaCI repository secrets at this deployment, then
+   * rewrites the old base in each committed workflow file: one commit per
+   * branch, dev first and production (main) last. A branch GitHub refuses stops
+   * the run, and the finding stays active. Each run re-reads the files and
+   * commits only to branches that still name the old address, so a re-run
+   * picks up where a stopped one left off.
+   */
+  private async repairCiApiUrl(
+    ctx: DriftRepairContext,
+    repoFullName: string,
+  ): Promise<ProjectDriftRepairResponse> {
+    this.assertCode(ctx.finding, ['ci_api_url_stale'], ctx.action);
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo || !this.githubService) {
+      throw new BadRequestException(
+        'Project does not name a GitHub repository',
+      );
+    }
+    const github = this.githubService;
+    const token = await this.repositoryInstallationToken(
+      github,
+      ctx.userId,
+      repoFullName,
+    );
+    const apiUrl = resolvePlatformBaseUrl();
+    const reportUrl = `${apiUrl}/api/v1/ci/report`;
+
+    // Read before writing: what needs a commit is decided up front.
+    const plans: {
+      branch: string;
+      files: { path: string; content: string }[];
+    }[] = [];
+    for (const branch of PIPELINE_BRANCHES) {
+      const stale = await findStaleCiWorkflowFiles(
+        github,
+        token,
+        repoFullName,
+        branch,
+        apiUrl,
+      );
+      if (stale.length > 0) {
+        plans.push({
+          branch,
+          files: stale.map(({ path, content }) => ({ path, content })),
+        });
+      }
+    }
+
+    // Secrets before commits, so a run that the commits start already sees them.
+    await github.setActionsSecretStrict(
+      token,
+      owner,
+      repo,
+      'ALPHACI_API_URL',
+      apiUrl,
+    );
+    await github.setActionsSecretStrict(
+      token,
+      owner,
+      repo,
+      'ALPHACI_REPORT_URL',
+      reportUrl,
+    );
+
+    const commits: { branch: string; commitSha: string; files: string[] }[] =
+      [];
+    for (const plan of plans) {
+      const outcome = await github.commitFilesToBranch(token, repoFullName, {
+        branch: plan.branch,
+        message: 'ci: point ALPHACI checks at the public API URL',
+        files: plan.files,
+      });
+      if (!outcome.committed) {
+        const done = commits.map((commit) => commit.branch).join(', ');
+        throw new BadGatewayException(
+          `Repair stopped at ${plan.branch}: ${outcome.message}${done ? ` Already committed: ${done}.` : ''}`,
+        );
+      }
+      commits.push({
+        branch: plan.branch,
+        commitSha: outcome.commitSha,
+        files: plan.files.map((file) => file.path),
+      });
+    }
+
+    await this.findingsRepository.markStatus(ctx.findingId, 'resolved');
+    await this.recordRepairEvent({
+      userId: ctx.userId,
+      projectId: ctx.projectId,
+      eventCode: 'drift_repair_completed',
+      title: 'Drift repair completed',
+      body: `CI now points at ${apiUrl}.`,
+      metadata: {
+        findingId: ctx.findingId,
+        action: ctx.action,
+        findingCode: ctx.finding.code,
+        apiUrl,
+        branches: commits.map((commit) => commit.branch),
+      },
+    });
+    const committedTo = commits.map((commit) => commit.branch).join(', ');
+    return this.completed(
+      ctx.findingId,
+      ctx.action,
+      committedTo
+        ? `CI points at ${apiUrl}; committed to ${committedTo}`
+        : `CI points at ${apiUrl}; no workflow file needed a change`,
+      {
+        apiUrl,
+        reportUrl,
+        secrets: ['ALPHACI_API_URL', 'ALPHACI_REPORT_URL'],
+        commits,
+      },
+    );
+  }
+
+  /**
+   * The installation that can write this repository's secrets and branches:
+   * the stored installation first, then GitHub's own answer for the repository,
+   * because the stored rows can be empty while the App is installed.
+   */
+  private async repositoryInstallationToken(
+    github: GithubProjectPort,
+    userId: string,
+    repoFullName: string,
+  ): Promise<string> {
+    const token =
+      (await github.getInstallationAccessTokenForUserRepo(
+        userId,
+        repoFullName,
+      )) ?? (await github.getRepoInstallationAccessToken(repoFullName));
+    if (!token) {
+      throw new BadRequestException(
+        'The AlphaCI GitHub App is not installed on this repository, so its CI cannot be repaired from here.',
+      );
+    }
+    return token;
   }
 
   private async regenerateWorkflowPreview(

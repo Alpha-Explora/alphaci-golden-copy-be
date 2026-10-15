@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import {
   DEPLOYMENT_CAPABILITY_RESOLVER,
@@ -13,7 +13,14 @@ import {
   GITHUB_PROJECT_PORT,
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
-import { PROTECTED_BRANCHES } from '#kernel/config/pipeline-branches';
+import {
+  findStaleCiWorkflowFiles,
+  resolvePlatformBaseUrl,
+} from '#kernel/config/ci-api-base-url';
+import {
+  PIPELINE_BRANCHES,
+  PROTECTED_BRANCHES,
+} from '#kernel/config/pipeline-branches';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import { EnvVarsRepository } from '../infrastructure/repositories/env-vars.repository';
 import type {
@@ -136,6 +143,8 @@ function maybeTargetFindings(
 
 @Injectable()
 export class ProjectDriftService implements DeploymentDriftQuery {
+  private readonly logger = new Logger(ProjectDriftService.name);
+
   constructor(
     @Inject(DEPLOYMENT_DRIFT_FINDINGS_STORE)
     private readonly findingsRepository: DeploymentDriftFindingsStore,
@@ -191,6 +200,12 @@ export class ProjectDriftService implements DeploymentDriftQuery {
     const findings = this.buildFindings(project, targets, envMetadata, ciToken);
     findings.push(
       ...(await this.buildBranchProtectionFindings(
+        project,
+        options?.githubAccessToken,
+      )),
+    );
+    findings.push(
+      ...(await this.buildCiApiUrlFindings(
         project,
         options?.githubAccessToken,
       )),
@@ -334,6 +349,65 @@ export class ProjectDriftService implements DeploymentDriftQuery {
     }
 
     return findings;
+  }
+
+  /**
+   * Committed workflow files on the pipeline branches that still name another
+   * AlphaCI API (a localhost address from before the public URL was read
+   * correctly). Secret values cannot be read back, so this reads the files
+   * only. It needs the same live token as the branch probe, and a branch GitHub
+   * will not let us read is skipped: unknown is not drifted.
+   */
+  private async buildCiApiUrlFindings(
+    project: DeploymentProjectReference,
+    githubAccessToken: string | null | undefined,
+  ): Promise<ProjectDriftFindingInput[]> {
+    if (!githubAccessToken || !this.githubService) {
+      return [];
+    }
+    const expectedBaseUrl = resolvePlatformBaseUrl();
+    const files: Array<{ branch: string; path: string }> = [];
+    const staleBaseUrls = new Set<string>();
+
+    for (const branch of PIPELINE_BRANCHES) {
+      try {
+        const stale = await findStaleCiWorkflowFiles(
+          this.githubService,
+          githubAccessToken,
+          project.repoFullName,
+          branch,
+          expectedBaseUrl,
+        );
+        for (const file of stale) {
+          files.push({ branch, path: file.path });
+          file.staleBases.forEach((base) => staleBaseUrls.add(base));
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Could not read CI workflows on ${branch} of ${project.repoFullName}: ${(error as Error).message}`,
+        );
+      }
+    }
+    if (files.length === 0) {
+      return [];
+    }
+
+    const bases = [...staleBaseUrls];
+    return [
+      {
+        projectId: project.projectId,
+        source: 'github_live',
+        severity: 'error',
+        code: 'ci_api_url_stale',
+        message: `CI workflows still point at ${bases.join(', ')} instead of ${expectedBaseUrl}.`,
+        details: {
+          repoFullName: project.repoFullName,
+          expectedBaseUrl,
+          staleBaseUrls: bases,
+          files,
+        },
+      },
+    ];
   }
 
   private enabled(): boolean {

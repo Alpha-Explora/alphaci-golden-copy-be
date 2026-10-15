@@ -537,6 +537,7 @@ export type ProjectDriftRepairAction =
   | 'rotate_ci_token'
   | 'detach_target'
   | 'repair_branch_protection'
+  | 'repair_ci_api_url'
   | 'mark_ignored';
 
 export interface ProjectDriftRepairResponse {

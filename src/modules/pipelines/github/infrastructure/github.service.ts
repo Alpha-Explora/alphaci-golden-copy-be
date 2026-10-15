@@ -24,6 +24,8 @@ import {
   type GitHubDispatchWorkflowResult,
   type GitHubCommitFilesInput,
   type GitHubCommitFilesResult,
+  type GitHubCommitToBranchInput,
+  type GitHubCommitToBranchResult,
   type GitHubRepoFilesResult,
   type GitHubRepoPathsResult,
   type GitHubOpenPullRequestInput,
@@ -2377,6 +2379,49 @@ export class GithubService
       repoFullName,
       input,
     );
+  }
+
+  commitFilesToBranch(
+    accessToken: string,
+    repoFullName: string,
+    input: GitHubCommitToBranchInput,
+  ): Promise<GitHubCommitToBranchResult> {
+    return this.repoFiles.commitFilesToBranch(accessToken, repoFullName, input);
+  }
+
+  /**
+   * The App installation GitHub reports for one repository. Stored
+   * installation rows can be empty while the App is installed (installed by
+   * someone else, or before linking), so drift repair asks GitHub directly.
+   * A 404 means the App is not installed there: null, never a guess.
+   */
+  async getRepoInstallationAccessToken(
+    repoFullName: string,
+  ): Promise<string | null> {
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo) return null;
+
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${owner}/${repo}/installation`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.createAppJwt()}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub repository installation lookup failed (${String(response.status)}): ${body.slice(0, 300)}`,
+      );
+    }
+
+    const payload = (await response.json()) as { id?: unknown };
+    if (typeof payload.id !== 'number') return null;
+    return this.createInstallationAccessToken(payload.id);
   }
 
   /**
