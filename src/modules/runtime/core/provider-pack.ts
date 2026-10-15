@@ -6,6 +6,7 @@ import type { RuntimeEnvProviderClient } from '../application/ports/runtime-env-
 import type { DeploymentProvider } from './deployment-provider.contract';
 import type { DeploymentProviderPolicy } from '../domain/deployment-provider.policy';
 import type { WorkflowFragment } from './workflow-fragment.contract';
+import type { DeploymentHistorySource } from '../application/ports/deployment-history-source.port';
 
 /**
  * The complete Runtime contribution for one deployment provider.
@@ -27,6 +28,7 @@ export interface RuntimeProviderPack {
    * provider whose pipeline deploys directly, such as Vercel.
    */
   readonly releaser?: ProviderReleaser;
+  readonly historySource?: DeploymentHistorySource;
 }
 
 /** Nest token used by Runtime's provider composition root. */
@@ -96,6 +98,11 @@ export class RuntimeProviderPackRegistry {
     if (pack.releaser && pack.releaser.provider !== id) {
       throw new Error(
         `Provider pack '${id}' contains releaser '${pack.releaser.provider}'`,
+      );
+    }
+    if (pack.historySource && pack.historySource.provider !== id) {
+      throw new Error(
+        `Provider pack '${id}' contains history source '${pack.historySource.provider}'`,
       );
     }
     if (pack.provider.capabilities.envProvisioning !== false && !pack.client) {

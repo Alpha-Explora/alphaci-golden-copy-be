@@ -154,7 +154,17 @@ and these checks pass; otherwise it reports `failed`. With the URL unset,
 health is limited to Compose's wait result and the services' own healthchecks;
 it does not verify an application HTTP endpoint.
 
-## Manifest
+## Deployment history
+
+Runtime provider packs may contribute an AlphaCI-owned history source. The
+on-prem source reads environment deployments joined to their immutable
+release identity, restricted by project, the target's environment, and the
+deployment's target IDs. Hosted providers retain authenticated provider API
+history. Empty registry history is a successful live result; query failures
+report unavailable history. A rolled-back attempt remains failed history,
+even when the prior release was restored successfully.
+
+## Signed manifest
 
 The signed payload is the canonical JSON (RFC 8785) of the manifest described
 by [the manifest JSON Schema](onprem-release-manifest-schema.json):

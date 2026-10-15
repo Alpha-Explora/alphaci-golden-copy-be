@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '#kernel/db/database.service';
 import type {
+  DeploymentHistoryItem,
+  DeploymentHistoryStatus,
+} from '../../core/deployment-provisioning.contract';
+import { ONPREM_COMPOSE_PROVIDER_ID } from '../providers/onprem/onprem-compose.provider';
+import type {
   ReleaseArtifact,
   ReleaseManifest,
   ReleaseSlot,
@@ -118,6 +123,63 @@ export function allowedDeploymentTransitions(
 @Injectable()
 export class ReleaseRegistryRepository {
   constructor(private readonly databaseService: DatabaseService) {}
+
+  async listTargetDeploymentHistory(
+    projectId: string,
+    targetId: string,
+  ): Promise<DeploymentHistoryItem[]> {
+    const result = await this.databaseService.query<{
+      id: string;
+      status: DeploymentStatus;
+      created_at: Date;
+      updated_at: Date;
+      commit_sha: string;
+      source_branch: string;
+      branch_name: string;
+      slot: DeploymentHistoryItem['slot'];
+      provider_project_name: string;
+      environment_id: string;
+    }>(
+      `SELECT d.id, d.status, d.created_at, d.updated_at, r.commit_sha,
+              r.source_branch, t.branch_name, t.slot, t.provider_project_name, t.environment_id
+         FROM env_provisioning.project_deployment_targets t
+         JOIN env_provisioning.environment_deployments d
+           ON d.project_id = t.project_id AND d.environment_id = t.environment_id
+          AND t.id = ANY(d.target_ids)
+         JOIN env_provisioning.releases r ON r.id = d.release_id AND r.project_id = d.project_id
+        WHERE t.project_id = $1 AND t.id = $2 AND d.delivery = 'host'
+        ORDER BY d.created_at DESC, d.id DESC LIMIT 100`,
+      [projectId, targetId],
+    );
+    const statuses: Record<DeploymentStatus, DeploymentHistoryStatus> = {
+      pending: 'queued',
+      deploying: 'building',
+      healthy: 'ready',
+      failed: 'failed',
+      rolled_back: 'failed',
+    };
+    const url = `/projects/${projectId}`;
+    return result.rows.map((row) => ({
+      id: row.id,
+      targetId,
+      targetName: row.provider_project_name,
+      provider: ONPREM_COMPOSE_PROVIDER_ID,
+      slot: row.slot,
+      environment: row.branch_name === 'main' ? 'production' : row.branch_name,
+      branch: row.branch_name,
+      commitSha: row.commit_sha,
+      commitMessage: null,
+      createdBy: null,
+      status: statuses[row.status],
+      createdAt: iso(row.created_at) ?? '',
+      readyAt: row.status === 'healthy' ? iso(row.updated_at) : null,
+      deploymentUrl: null,
+      pullRequestNumber: null,
+      inspectorUrl: null,
+      dashboardUrl: url,
+      consoleUrl: url,
+    }));
+  }
 
   /**
    * Register a release with its artifacts and the automatic deployment of the

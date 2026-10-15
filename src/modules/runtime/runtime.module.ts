@@ -20,6 +20,11 @@ import { OnpremAgentController } from './api/onprem-agent.controller';
 import { ProjectReleasesController } from './api/project-releases.controller';
 import { ReleaseRegistryService } from './application/release-registry.service';
 import { ReleaseRegistryRepository } from './infrastructure/repositories/release-registry.repository';
+import { OnpremDeploymentHistorySource } from './infrastructure/providers/onprem/onprem-deployment-history.source';
+import {
+  DEPLOYMENT_HISTORY_SOURCES,
+  DeploymentHistorySourceRegistry,
+} from './core/deployment-history-source.registry';
 import { ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER } from '#kernel/ports/deployment-runtime.port';
 import { DeploymentTargetsRepository } from './infrastructure/repositories/deployment-targets.repository';
 import { DeploymentTargetsService } from './application/deployment-targets.service';
@@ -158,6 +163,16 @@ import {
     DeploymentTargetsService,
     ReleaseRegistryRepository,
     ReleaseRegistryService,
+    OnpremDeploymentHistorySource,
+    DeploymentHistorySourceRegistry,
+    {
+      provide: DEPLOYMENT_HISTORY_SOURCES,
+      useFactory: (packs: RuntimeProviderPackRegistry) =>
+        packs
+          .list()
+          .flatMap((pack) => (pack.historySource ? [pack.historySource] : [])),
+      inject: [RuntimeProviderPackRegistry],
+    },
     {
       provide: ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER,
       useExisting: DeploymentTargetsService,
@@ -207,6 +222,7 @@ import {
         gcpProvider: GcpDeploymentProvider,
         onpremProvider: OnpremComposeDeploymentProvider,
         workflowFragments: readonly WorkflowFragment[],
+        onpremHistory: OnpremDeploymentHistorySource,
       ) => [
         createRenderProviderPack({
           provider: renderProvider,
@@ -228,7 +244,10 @@ import {
           ciSecretsInstaller: vercelCiSecretsInstaller,
         }),
         createGcpProviderPack({ provider: gcpProvider }),
-        createOnpremComposeProviderPack({ provider: onpremProvider }),
+        createOnpremComposeProviderPack({
+          provider: onpremProvider,
+          historySource: onpremHistory,
+        }),
       ],
       inject: [
         RENDER_DEPLOYMENT_PROVIDER,
@@ -243,6 +262,7 @@ import {
         GcpDeploymentProvider,
         OnpremComposeDeploymentProvider,
         WORKFLOW_FRAGMENTS,
+        OnpremDeploymentHistorySource,
       ],
     },
     RuntimeProviderPackRegistry,
