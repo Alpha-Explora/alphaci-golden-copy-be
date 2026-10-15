@@ -50,13 +50,21 @@ store. It never belongs on an enrolled machine.
    (Windows: `-ReplaceCredential`), which sets the current credential aside and
    restores it if the code is not accepted. A changed API URL also requires
    replacement. The timer starts only after a successful authenticated heartbeat.
-6. Wait for Connected, then explicitly assign environments from Hosting. Set
-   container ports and health paths for the actual application. Choose different
-   host ports for every environment sharing this machine. Production requires
-   an existing HTTPS ingress. No reverse proxy or certificate is invented.
+6. Wait for Connected. While it is the workspace's only connected machine,
+   new non-production on-prem environments are assigned to it automatically
+   (container port 3000 for a frontend, 4000 for a backend, health at `/`);
+   adjust them from Hosting if the application differs. With several connected
+   machines, Hosting asks which one to use. AlphaCI picks each host port
+   (from 8080 upward, distinct per machine). Production requires an existing
+   HTTPS ingress, so it is assigned from Hosting. No reverse proxy or
+   certificate is invented.
+7. To retire a machine, enroll its replacement with a replacement code (or
+   revoke it naming the replacement): its environments move to the new
+   machine with the same host ports where they are free.
 
-The Windows test command uses sign-in startup. The agent publishes the host port
-of every environment materialized on the machine to
+The Windows test command uses sign-in startup. The agent publishes every host
+port AlphaCI reserved on the machine (returned by each heartbeat) and the host
+port of every environment materialized there to
 `/opt/alphaci/published-ports.json`; the Windows tasks forward exactly those
 ports (plus any static `-Ports`) and open them to the allowed client subnets,
 removing forwards and `AlphaCI TCP <port>` rules once a port is no longer used.

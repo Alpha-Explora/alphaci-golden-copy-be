@@ -245,7 +245,7 @@ describe('Reusable machine assignment authorization', () => {
           name: 'swap',
           platform: 'ubuntu',
           requestId: randomUUID(),
-          replacesMachineId,
+          ...(replacesMachineId ? { replacesMachineId } : {}),
         },
         code,
       );
