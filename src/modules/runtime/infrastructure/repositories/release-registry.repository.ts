@@ -197,29 +197,64 @@ export class ReleaseRegistryRepository {
     return row ? toRelease(row) : null;
   }
 
-  /** Store the signed manifest once; returns null when the release is no longer pending. */
+  /** Signing and unsigned-deployment cleanup serialize on the release row. */
   async attachManifest(input: {
     releaseId: string;
     manifest: ReleaseManifest;
     manifestSha256: string;
     signature: { algorithm: string; keyId: string; value: string };
   }): Promise<boolean> {
-    const result = await this.databaseService.query(
-      `UPDATE env_provisioning.releases
+    return this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        'SELECT id FROM env_provisioning.releases WHERE id = $1 FOR UPDATE',
+        [input.releaseId],
+      );
+      const result = await client.query(
+        `UPDATE env_provisioning.releases
           SET verification_status = 'verified', manifest = $2, manifest_sha256 = $3,
               signature_algorithm = $4, signature_key_id = $5, signature_value = $6,
               verified_at = NOW()
-        WHERE id = $1 AND verification_status = 'pending'`,
-      [
-        input.releaseId,
-        JSON.stringify(input.manifest),
-        input.manifestSha256,
-        input.signature.algorithm,
-        input.signature.keyId,
-        input.signature.value,
-      ],
-    );
-    return (result.rowCount ?? 0) === 1;
+        WHERE id = $1 AND verification_status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM env_provisioning.environment_deployments
+             WHERE release_id = $1 AND trigger = 'automatic'
+               AND delivery = 'host' AND status <> 'pending'
+          )`,
+        [
+          input.releaseId,
+          JSON.stringify(input.manifest),
+          input.manifestSha256,
+          input.signature.algorithm,
+          input.signature.keyId,
+          input.signature.value,
+        ],
+      );
+      return (result.rowCount ?? 0) === 1;
+    });
+  }
+
+  /** CI may clean up a failed signer, but never take over a signed host release. */
+  async failUnsignedHostDeployment(
+    releaseId: string,
+    detail: string | null,
+  ): Promise<EnvironmentDeploymentRecord | null> {
+    return this.databaseService.withTransaction(async (client) => {
+      const release = await client.query<{ verification_status: string }>(
+        `SELECT verification_status FROM env_provisioning.releases
+          WHERE id = $1 FOR UPDATE`,
+        [releaseId],
+      );
+      if (release.rows[0]?.verification_status !== 'pending') return null;
+      const result = await client.query<DeploymentRow>(
+        `UPDATE env_provisioning.environment_deployments
+            SET status = 'failed', detail = $2, updated_at = NOW()
+          WHERE release_id = $1 AND trigger = 'automatic' AND delivery = 'host'
+            AND status IN ('pending', 'failed')
+          RETURNING *`,
+        [releaseId, detail],
+      );
+      return result.rows[0] ? toDeployment(result.rows[0]) : null;
+    });
   }
 
   /** The release an environment currently runs: its latest healthy deployment. */
@@ -350,34 +385,47 @@ export class ReleaseRegistryRepository {
     tokenSha256: string;
     createdBy: string;
   }): Promise<OnpremHostRecord> {
-    const result = await this.databaseService.query<{
-      id: string;
-      project_id: string;
-      environment_id: string;
-      name: string;
-      token_prefix: string;
-    }>(
-      `INSERT INTO env_provisioning.onprem_hosts
+    return this.databaseService.withTransaction(async (client) => {
+      // Serialize registrations even when no host exists yet. Keep the lock
+      // in Runtime instead of locking another module's environment table.
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        ['onprem-host:' + input.environmentId],
+      );
+      await client.query(
+        `UPDATE env_provisioning.onprem_hosts SET revoked_at = NOW()
+          WHERE environment_id = $1 AND revoked_at IS NULL`,
+        [input.environmentId],
+      );
+      const result = await client.query<{
+        id: string;
+        project_id: string;
+        environment_id: string;
+        name: string;
+        token_prefix: string;
+      }>(
+        `INSERT INTO env_provisioning.onprem_hosts
          (project_id, environment_id, name, token_prefix, token_sha256, created_by)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, project_id, environment_id, name, token_prefix`,
-      [
-        input.projectId,
-        input.environmentId,
-        input.name,
-        input.tokenPrefix,
-        input.tokenSha256,
-        input.createdBy,
-      ],
-    );
-    const row = requiredRow(result.rows[0]);
-    return {
-      id: row.id,
-      projectId: row.project_id,
-      environmentId: row.environment_id,
-      name: row.name,
-      tokenPrefix: row.token_prefix,
-    };
+        [
+          input.projectId,
+          input.environmentId,
+          input.name,
+          input.tokenPrefix,
+          input.tokenSha256,
+          input.createdBy,
+        ],
+      );
+      const row = requiredRow(result.rows[0]);
+      return {
+        id: row.id,
+        projectId: row.project_id,
+        environmentId: row.environment_id,
+        name: row.name,
+        tokenPrefix: row.token_prefix,
+      };
+    });
   }
 
   async findActiveHostByTokenHash(

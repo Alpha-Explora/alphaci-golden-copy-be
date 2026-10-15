@@ -54,7 +54,7 @@ describe('Release registry and promotion', () => {
   let sequence = 0;
 
   /** dev, uat, and main; Render targets unless an environment is on-prem. */
-  async function releaseProject(onprem: Array<'uat' | 'main'> = []) {
+  async function releaseProject(onprem: Array<'dev' | 'uat' | 'main'> = []) {
     sequence += 1;
     const repo =
       'e2e-org/releases-' + String(Date.now()) + '-' + String(sequence);
@@ -373,6 +373,148 @@ describe('Release registry and promotion', () => {
         .set(ci(project))
         .expect(200);
       expect((read.body as Release).releaseId).toBe(release.releaseId);
+    });
+
+    it('recovers an unsigned host release after signing fails without accepting a late signature', async () => {
+      const project = await releaseProject(['dev']);
+      const token = await addHost(project, project.dev);
+      const release = await register(project);
+      const assignments = () =>
+        request(e2e.http)
+          .get('/api/v1/onprem/assignments')
+          .set({ Authorization: 'Bearer ' + token });
+      expect((await assignments().expect(200)).body).toEqual([]);
+
+      const fail = () =>
+        request(e2e.http)
+          .post(
+            '/api/v1/ci/releases/' + release.releaseId + '/deployment-status',
+          )
+          .set(ci(project))
+          .send({
+            repoFullName: project.repo,
+            status: 'failed',
+            detail: 'Release signing failed.',
+          });
+      expect((await fail().expect(200)).body).toMatchObject({
+        status: 'failed',
+      });
+      await fail().expect(200);
+      await attach(project, release, signedManifest(project, release)).expect(
+        409,
+      );
+      expect((await assignments().expect(200)).body).toEqual([]);
+
+      await register(project, {
+        workflowRun: {
+          ...registration(project).workflowRun,
+          runId: '987654321',
+        },
+      });
+    });
+
+    it('replaces the active host token only in its own environment, including concurrent registrations', async () => {
+      const project = await releaseProject(['dev', 'uat']);
+      const otherProject = await releaseProject(['dev']);
+      const original = await addHost(project, project.dev);
+      const otherEnvironment = await addHost(project, project.uat);
+      const otherProjectToken = await addHost(otherProject, otherProject.dev);
+      const release = await register(project);
+      await attach(project, release, signedManifest(project, release)).expect(
+        200,
+      );
+      const poll = (token: string) =>
+        request(e2e.http)
+          .get('/api/v1/onprem/assignments')
+          .set({ Authorization: 'Bearer ' + token });
+      expect((await poll(original).expect(200)).body).toHaveLength(1);
+
+      const replacement = await addHost(project, project.dev);
+      await poll(original).expect(401);
+      await request(e2e.http)
+        .post(
+          '/api/v1/onprem/deployments/' +
+            required(release.deployments[0]).id +
+            '/status',
+        )
+        .set({ Authorization: 'Bearer ' + original })
+        .send({ status: 'deploying' })
+        .expect(401);
+      expect((await poll(replacement).expect(200)).body).toHaveLength(1);
+
+      const replacements = await Promise.all([
+        addHost(project, project.dev),
+        addHost(project, project.dev),
+      ]);
+      await poll(replacement).expect(401);
+      const outcomes = await Promise.all(
+        replacements.map((token) => poll(token)),
+      );
+      expect(outcomes.map(({ status }) => status).sort()).toEqual([200, 401]);
+      await poll(otherEnvironment).expect(200);
+      await poll(otherProjectToken).expect(200);
+    });
+
+    it('keeps CI from taking over a signed host deployment', async () => {
+      const project = await releaseProject(['dev']);
+      const release = await register(project);
+      const report = (status: string) =>
+        request(e2e.http)
+          .post(
+            '/api/v1/ci/releases/' + release.releaseId + '/deployment-status',
+          )
+          .set(ci(project))
+          .send({ repoFullName: project.repo, status });
+      for (const status of ['deploying', 'healthy', 'rolled_back']) {
+        await report(status).expect(409);
+      }
+      await attach(project, release, signedManifest(project, release)).expect(
+        200,
+      );
+      for (const status of ['deploying', 'healthy', 'failed', 'rolled_back']) {
+        await report(status).expect(409);
+      }
+      const token = await addHost(project, project.dev);
+      await request(e2e.http)
+        .post(
+          '/api/v1/onprem/deployments/' +
+            required(release.deployments[0]).id +
+            '/status',
+        )
+        .set({ Authorization: 'Bearer ' + token })
+        .send({ status: 'deploying' })
+        .expect(201);
+      await report('failed').expect(409);
+    });
+
+    it('serializes signing against failure cleanup so exactly one can succeed', async () => {
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const project = await releaseProject(['dev']);
+        const release = await register(project);
+        const [signed, failed] = await Promise.all([
+          attach(project, release, signedManifest(project, release)),
+          request(e2e.http)
+            .post(
+              '/api/v1/ci/releases/' + release.releaseId + '/deployment-status',
+            )
+            .set(ci(project))
+            .send({ repoFullName: project.repo, status: 'failed' }),
+        ]);
+        expect([signed.status, failed.status].sort()).toEqual([200, 409]);
+        const read = await request(e2e.http)
+          .get('/api/v1/ci/releases/' + release.releaseId)
+          .query({ repo: project.repo })
+          .set(ci(project))
+          .expect(200);
+        expect(read.body).toMatchObject({
+          verificationStatus: signed.status === 200 ? 'verified' : 'pending',
+          deployments: [
+            expect.objectContaining({
+              status: signed.status === 200 ? 'pending' : 'failed',
+            }),
+          ],
+        });
+      }
     });
 
     it.each([

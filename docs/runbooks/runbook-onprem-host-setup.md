@@ -137,7 +137,7 @@ Do this once per AlphaCI deployment.
 
     ```bash
     git checkout main && git pull && npm ci
-    npm run db:apply -- 20260925050000_project_environments.sql 20260928100000_deployment_target_environments.sql 20260928200000_release_registry.sql 20260928210000_onprem_compose_provider.sql
+    npm run db:apply -- 20260925050000_project_environments.sql 20260928100000_deployment_target_environments.sql 20260928200000_release_registry.sql 20260928210000_onprem_compose_provider.sql 20261015010000_one_active_onprem_host.sql
     ```
 17. **Backend hosting settings** (for example the Render service's Environment page): set these values, save, and redeploy:
 
@@ -282,7 +282,10 @@ step uses the API from the browser console while signed in.
 
 ## Adding another host
 
-Each environment has one host token. For a new machine, repeat Parts 1–3, copy
+Each environment has one active host token. Registering a replacement revokes
+all previous host tokens for that environment. Stop the old agent before
+replacement; revoking a token cannot stop a deployment already running there.
+For a new machine, repeat Parts 1–3, copy
 `release-signing.pub.pem` to `/opt/alphaci/trust/` (step 14), skip Parts 4 and 5,
 register the host in the environment's card (step 21), then follow Parts 7–9.
 
@@ -305,6 +308,7 @@ Compose project and agent configuration.
 | Deployment failed: signature, hash, or project rejected | The host's `release-signing.pub.pem` does not match the key that signed the release. |
 | Deployment failed: image could not be pulled | Repeat step 25 with `sudo`, and confirm the token has `read:packages` and organization authorization. |
 | Deployment rolled back | The new release failed to start or its health check. Run `sudo docker compose -p alphaci logs --tail 200`. |
+| Previous release restored but deployment reports failed | The restored Compose services or the configured `ALPHACI_HEALTH_URL` failed the health check. Check the application logs and endpoint. |
 | Works on the PC but not from other machines | Run `netsh interface portproxy show v4tov4` in PowerShell and confirm the **AlphaCI TCP 443** firewall rule allows the caller's network. |
 | Stops after sign-out or reboot | The startup task runs only while signed in. Re-run step 27 with `-ServiceAccount`. |
 
@@ -312,6 +316,16 @@ For anything else, run `sudo /opt/alphaci/bin/alphaci-agent support-bundle`. It
 writes an archive of agent logs, Compose state, and the running release to
 `/opt/alphaci/support`. The archive never contains the host token, but it does
 contain application logs; review it before sending.
+
+For an on-prem first environment, generated package workflows report signing
+failure or cancellation to release its pending deployment. Regenerate existing
+project workflows to install the cleanup job. CI can fail only an unsigned,
+pending host deployment; a signed release remains the host's responsibility.
+If workflow cleanup could not run, a project CI token can report `failed` to
+`POST /api/v1/ci/releases/<release-id>/deployment-status` with
+`{"repoFullName":"owner/repo","status":"failed","detail":"Signing did not complete."}`.
+The API rejects a late signature after cleanup. A retry must register a release
+from a new workflow run.
 
 ## Removing a host
 

@@ -2,6 +2,7 @@ import yaml from 'js-yaml';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
 import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
+import { onpremComposeWorkflowFragment } from '#modules/runtime/infrastructure/providers/onprem/onprem-compose-workflow.fragment';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
@@ -103,6 +104,7 @@ function workflows(bundleOptions: StagedWorkflowOptions) {
     new WorkflowFragmentRegistry([
       renderWorkflowFragment,
       vercelWorkflowFragment,
+      onpremComposeWorkflowFragment,
     ]),
   );
   return new Map(
@@ -185,6 +187,33 @@ describe('pipeline generated from project environments', () => {
         /docker-build/.test(job.uses ?? ''),
       ),
     ).toBe(false);
+  });
+
+  it('cleans up failed or cancelled signing for a host deployment and includes signing in the stage result', () => {
+    const files = workflows({
+      ...options,
+      environmentTargets: (options.environmentTargets ?? []).map((target) => ({
+        ...target,
+        provider: 'onprem-compose',
+      })),
+    });
+    const stage = files.get('.github/workflows/20-alphaci-package.yml')!;
+    expect(deployJobs(stage)).toEqual([]);
+    expect(stage.jobs['report-deployment']).toBeUndefined();
+    expect(stage.jobs['report-signing-failure']).toMatchObject({
+      needs: expect.arrayContaining(['register-release', 'sign-release']),
+      if: "${{ always() && needs.register-release.result == 'success' && needs.sign-release.result != 'success' }}",
+      steps: [
+        expect.objectContaining({
+          env: expect.objectContaining({
+            RELEASE_ID: '${{ needs.register-release.outputs.release-id }}',
+          }),
+          run: expect.stringContaining('status:"failed"'),
+        }),
+      ],
+    });
+    expect(stage.jobs['report-results']?.needs).toContain('sign-release');
+    expect(packageStage.jobs['report-signing-failure']).toBeUndefined();
   });
 
   it('checks the recorded deployment target set before starting promotion', () => {
