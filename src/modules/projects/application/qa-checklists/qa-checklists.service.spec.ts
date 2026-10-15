@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import type { ProjectLinkPort } from '#kernel/ports/project-link.port';
+import { fakeIterations } from '../../__fixtures__/project-iterations';
 import { QaChecklistsService } from './qa-checklists.service';
 import type { QaAccessService } from './qa-access.service';
 import type {
@@ -17,6 +18,8 @@ import type {
 const projectLink = {
   getProjectFolder: jest.fn().mockResolvedValue(null),
 } as unknown as ProjectLinkPort;
+
+const { service: iterations } = fakeIterations();
 
 const checklistRow = (
   overrides: Partial<QaChecklistRow> = {},
@@ -33,6 +36,7 @@ const checklistRow = (
   updated_at: '2026-09-25T00:00:00.000Z',
   kind: 'system',
   delivery_project_id: null,
+  iteration_id: null,
   legacy_checklist_id: null,
   ...overrides,
 });
@@ -92,7 +96,12 @@ describe('QaChecklistsService — permission matrix', () => {
     const access = makeAccess({
       canAccessWorkspace: jest.fn().mockResolvedValue(false),
     });
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.listForWorkspace('workspace-1', 'stranger', false),
@@ -105,7 +114,12 @@ describe('QaChecklistsService — permission matrix', () => {
     const access = makeAccess({
       canAccessWorkspace: jest.fn().mockResolvedValue(false),
     });
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.createForWorkspace('workspace-1', 'stranger', {
@@ -119,7 +133,12 @@ describe('QaChecklistsService — permission matrix', () => {
     const access = makeAccess({
       canManage: jest.fn().mockResolvedValue(false),
     });
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.createForWorkspace('workspace-1', 'qa-user', {
@@ -138,9 +157,15 @@ describe('QaChecklistsService — permission matrix', () => {
     });
     const access = makeAccess();
     const recordProjectEvent = jest.fn().mockResolvedValue(undefined);
-    const service = new QaChecklistsService(repository, access, projectLink, {
-      recordProjectEvent,
-    });
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+      {
+        recordProjectEvent,
+      },
+    );
 
     const result = await service.createForWorkspace('workspace-1', 'lead-1', {
       name: 'Release checklist',
@@ -183,7 +208,12 @@ describe('QaChecklistsService — permission matrix', () => {
       hasActiveNameConflict: jest.fn().mockResolvedValue(true),
     });
     const access = makeAccess();
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.createForWorkspace('workspace-1', 'lead-1', {
@@ -200,7 +230,12 @@ describe('QaChecklistsService — versioning and archival', () => {
       findById: jest.fn().mockResolvedValue(checklistRow({ version: 3 })),
     });
     const access = makeAccess();
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.updateMeta('checklist-1', 'lead-1', {
@@ -220,7 +255,12 @@ describe('QaChecklistsService — versioning and archival', () => {
         ),
     });
     const access = makeAccess();
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.updateMeta('checklist-1', 'lead-1', {
@@ -236,7 +276,12 @@ describe('QaChecklistsService — versioning and archival', () => {
       updateMeta: jest.fn().mockResolvedValue(null),
     });
     const access = makeAccess();
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.updateMeta('checklist-1', 'lead-1', {
@@ -258,7 +303,12 @@ describe('QaChecklistsService — versioning and archival', () => {
         .mockResolvedValue(new Map([['checklist-1', ['project-1']]])),
     });
     const access = makeAccess();
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     const result = await service.replaceItems('checklist-1', 'lead-1', {
       expectedVersion: 1,
@@ -302,9 +352,15 @@ describe('QaChecklistsService — versioning and archival', () => {
     });
     const access = makeAccess();
     const recordProjectEvent = jest.fn().mockResolvedValue(undefined);
-    const service = new QaChecklistsService(repository, access, projectLink, {
-      recordProjectEvent,
-    });
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+      {
+        recordProjectEvent,
+      },
+    );
 
     const result = await service.archive('checklist-1', 'lead-1');
 
@@ -320,7 +376,12 @@ describe('QaChecklistsService — sharing', () => {
       validWorkspaceProjectIds: jest.fn().mockResolvedValue(['project-1']),
     });
     const access = makeAccess();
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.setSharedProjects('checklist-1', 'lead-1', {
@@ -338,9 +399,15 @@ describe('QaChecklistsService — sharing', () => {
     });
     const access = makeAccess();
     const recordProjectEvent = jest.fn().mockResolvedValue(undefined);
-    const service = new QaChecklistsService(repository, access, projectLink, {
-      recordProjectEvent,
-    });
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+      {
+        recordProjectEvent,
+      },
+    );
 
     const result = await service.setSharedProjects('checklist-1', 'lead-1', {
       projectIds: ['project-1', 'project-1'],
@@ -370,7 +437,12 @@ describe('QaChecklistsService — sharing', () => {
         ),
     });
     const access = makeAccess();
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.setSharedProjects('checklist-1', 'lead-1', {
@@ -386,7 +458,12 @@ describe('QaChecklistsService — project-scoped read', () => {
     const access = makeAccess({
       findVisibleProjectWorkspace: jest.fn().mockResolvedValue(null),
     });
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     await expect(
       service.listForProject('project-1', 'stranger'),
@@ -400,7 +477,12 @@ describe('QaChecklistsService — project-scoped read', () => {
         .fn()
         .mockResolvedValue({ workspaceId: null }),
     });
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     const result = await service.listForProject('project-1', 'member-1');
 
@@ -417,7 +499,12 @@ describe('QaChecklistsService — project-scoped read', () => {
       canAccessWorkspace: jest.fn().mockResolvedValue(true),
       canManage: jest.fn().mockResolvedValue(true),
     });
-    const service = new QaChecklistsService(repository, access, projectLink);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      projectLink,
+      iterations,
+    );
 
     const result = await service.listForProject('project-1', 'lead-1');
 
@@ -439,6 +526,7 @@ describe('QaChecklistsService — add/remove sharing', () => {
       repository,
       makeAccess(),
       projectLink,
+      iterations,
       {
         recordProjectEvent,
       },
@@ -481,6 +569,7 @@ describe('QaChecklistsService — add/remove sharing', () => {
       repository,
       makeAccess(),
       projectLink,
+      iterations,
     );
 
     await service.updateSharedProjects('checklist-1', 'lead-1', {
@@ -505,6 +594,7 @@ describe('QaChecklistsService — add/remove sharing', () => {
       repository,
       makeAccess(),
       projectLink,
+      iterations,
     );
 
     await expect(
@@ -523,6 +613,7 @@ describe('QaChecklistsService — add/remove sharing', () => {
       repository,
       makeAccess(),
       projectLink,
+      iterations,
     );
 
     await expect(
@@ -542,6 +633,7 @@ describe('QaChecklistsService — add/remove sharing', () => {
       makeRepository({ findById: jest.fn().mockResolvedValue(checklistRow()) }),
       makeAccess({ canManage: jest.fn().mockResolvedValue(false) }),
       projectLink,
+      iterations,
     );
     await expect(
       forbidden.updateSharedProjects('checklist-1', 'qa-user', {
@@ -559,6 +651,7 @@ describe('QaChecklistsService — add/remove sharing', () => {
       }),
       makeAccess(),
       projectLink,
+      iterations,
     );
     await expect(
       archived.updateSharedProjects('checklist-1', 'lead-1', {
@@ -610,6 +703,7 @@ describe('QaChecklistsService - checklists that belong to a Project', () => {
       repository,
       makeAccess(),
       projectLink,
+      iterations,
     );
 
     await expect(call(service)).rejects.toMatchObject({
@@ -621,7 +715,7 @@ describe('QaChecklistsService - checklists that belong to a Project', () => {
 
   it('the per-repository list returns the requirements of the repository Project', async () => {
     const repository = makeRepository({
-      listByDeliveryProject: jest.fn().mockResolvedValue([moved()]),
+      listByIteration: jest.fn().mockResolvedValue([moved()]),
     });
     const access = makeAccess({
       findVisibleProjectWorkspace: jest
@@ -633,11 +727,17 @@ describe('QaChecklistsService - checklists that belong to a Project', () => {
         .fn()
         .mockResolvedValue({ deliveryProjectId: 'dp-1' }),
     } as unknown as ProjectLinkPort;
-    const service = new QaChecklistsService(repository, access, link);
+    const service = new QaChecklistsService(
+      repository,
+      access,
+      link,
+      iterations,
+    );
 
     const result = await service.listForProject('project-1', 'lead-1');
 
-    expect(repository.listByDeliveryProject).toHaveBeenCalledWith('dp-1', {
+    // The requirements of the Project's CURRENT Iteration, not of every one.
+    expect(repository.listByIteration).toHaveBeenCalledWith('it-1', {
       includeArchived: false,
     });
     expect(repository.listByProject).not.toHaveBeenCalled();

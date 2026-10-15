@@ -37,6 +37,8 @@ GET /api/v1/ci/runs/report
 GET /api/v1/ci/visual-baselines
 GET /api/v1/ci/visual-baselines/file
 GET /api/v1/delivery-projects/{deliveryProjectId}
+GET /api/v1/delivery-projects/{deliveryProjectId}/iterations
+GET /api/v1/delivery-projects/{deliveryProjectId}/iterations/current
 GET /api/v1/delivery-projects/{deliveryProjectId}/members
 GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs
 GET /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/current

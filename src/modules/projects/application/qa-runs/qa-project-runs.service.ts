@@ -16,6 +16,7 @@ import {
   NotificationEventPublisher,
 } from '#kernel/events/platform-event-publisher.js';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
+import { isIterationWritable } from '../../domain/project-iteration.rules';
 import { bucketMyQaItem } from '../../domain/qa-my-items.rules';
 import {
   canCreateRun,
@@ -44,6 +45,8 @@ import {
   type QaRunSignoffRow,
 } from '../../infrastructure/qa-runs.repository';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
+import type { ProjectIterationRef } from '../qa-checklists/project-iterations.contracts';
+import { ProjectIterationsService } from '../qa-checklists/project-iterations.service';
 import {
   QaProjectContextService,
   type QaProjectContext,
@@ -185,6 +188,7 @@ export class QaProjectRunsService {
     private readonly heads: QaUatHeadsService,
     private readonly automation: QaAutomationService,
     private readonly attachments: QaRunAttachmentsService,
+    private readonly iterations: ProjectIterationsService,
     // Explicit tokens: the sink aliases are type aliases, which TypeScript
     // emits as `Object` in design:paramtypes, so without @Inject Nest finds no
     // provider and @Optional() silently injects undefined.
@@ -210,10 +214,13 @@ export class QaProjectRunsService {
       userId,
     );
     const limit = this.clampLimit(options.limit);
-    const rows = await this.projectRuns.listProjectRuns(deliveryProjectId, {
+    const iteration =
+      await this.iterations.ensureActiveIteration(deliveryProjectId);
+    const rows = await this.projectRuns.listProjectRuns(iteration.id, {
       limit: limit + 1,
       cursor: this.decodeCursor(options.cursor),
     });
+    const iterationRef = this.iterations.toRef(iteration);
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     const next = rows.length > limit && last ? this.encodeCursor(last) : null;
@@ -233,6 +240,7 @@ export class QaProjectRunsService {
           project.name,
           itemsByRun.get(run.id) ?? [],
           signoffsByRun.get(run.id) ?? null,
+          iterationRef,
         ),
       ),
       next,
@@ -253,11 +261,13 @@ export class QaProjectRunsService {
       actor.userId,
     );
     const role = await this.access.findAppRole(actor.userId);
+    const iteration =
+      await this.iterations.ensureActiveIteration(deliveryProjectId);
     const readings = await this.heads.readHeads(project.repositories, actor);
 
     if (this.allReadable(readings)) {
       const run = await this.projectRuns.findRunByFingerprint(
-        deliveryProjectId,
+        iteration.id,
         this.fingerprintOf(readings),
       );
       if (run) {
@@ -271,10 +281,9 @@ export class QaProjectRunsService {
       }
     }
 
-    const latest = await this.projectRuns.findNewestProjectRun(
-      deliveryProjectId,
-      { openOnly: false },
-    );
+    const latest = await this.projectRuns.findNewestProjectRun(iteration.id, {
+      openOnly: false,
+    });
     const coverage = latest
       ? ((await this.projectRuns.listCoverageByRunIds([latest.id])).get(
           latest.id,
@@ -362,9 +371,11 @@ export class QaProjectRunsService {
       actor.userId,
     );
     const role = await this.access.findAppRole(actor.userId);
+    const iteration =
+      await this.iterations.ensureActiveIteration(deliveryProjectId);
 
     const [rows, readings] = await Promise.all([
-      this.requirements.listActiveByDeliveryProject(deliveryProjectId),
+      this.requirements.listActiveByIteration(iteration.id),
       this.heads.readHeads(project.repositories, actor, {
         maxAgeMs: DISPLAY_HEAD_MAX_AGE_MS,
       }),
@@ -373,7 +384,7 @@ export class QaProjectRunsService {
       rows.map((row) => row.id),
     );
 
-    const run = await this.pickRunForFeed(deliveryProjectId, readings);
+    const run = await this.pickRunForFeed(iteration.id, readings);
     const assembled = run
       ? await this.assembleStored(project, run, role, readings)
       : null;
@@ -430,9 +441,13 @@ export class QaProjectRunsService {
     if (project.repositories.length === 0) {
       throw qaNoRepositories();
     }
+    const iteration =
+      await this.iterations.ensureActiveIteration(deliveryProjectId);
+    this.iterations.assertWritable(iteration);
 
-    const requirementRows =
-      await this.requirements.listActiveByDeliveryProject(deliveryProjectId);
+    const requirementRows = await this.requirements.listActiveByIteration(
+      iteration.id,
+    );
     const itemsByRequirement = await this.checklists.listItemsByChecklistIds(
       requirementRows.map((row) => row.id),
     );
@@ -473,6 +488,7 @@ export class QaProjectRunsService {
 
     const result = await this.projectRuns.createRun({
       deliveryProjectId,
+      iterationId: iteration.id,
       projectName: project.name,
       headsFingerprint: fingerprintHeads(captured),
       repositories: captured,
@@ -524,6 +540,9 @@ export class QaProjectRunsService {
     );
     const run = await this.requireRun(deliveryProjectId, runId);
     const item = await this.requireItem(run.id, itemId);
+    // Before requireRunOpen: a delivered Iteration's runs are signed off, and
+    // "Reopen it" would be the wrong advice there.
+    await this.iterations.assertRowWritable(run);
     this.requireRunOpen(run);
 
     const role = await this.access.findAppRole(actor.userId);
@@ -614,6 +633,7 @@ export class QaProjectRunsService {
       actor.userId,
     );
     const run = await this.requireRun(deliveryProjectId, runId);
+    await this.iterations.assertRowWritable(run);
     this.requireRunOpen(run);
 
     const role = await this.access.findAppRole(actor.userId);
@@ -720,6 +740,8 @@ export class QaProjectRunsService {
       actor.userId,
     );
     const run = await this.requireRun(deliveryProjectId, runId);
+    // Reopen is blocked too: a delivered Iteration's code is already in main.
+    await this.iterations.assertRowWritable(run);
 
     const role = await this.access.findAppRole(actor.userId);
     if (!canReopenRun(role)) {
@@ -793,19 +815,19 @@ export class QaProjectRunsService {
 
   /** The run for the current heads, else the newest open Project run. */
   private async pickRunForFeed(
-    deliveryProjectId: string,
+    iterationId: string,
     readings: readonly QaUatHeadReading[],
   ): Promise<QaProjectRunRow | null> {
     if (this.allReadable(readings)) {
       const run = await this.projectRuns.findRunByFingerprint(
-        deliveryProjectId,
+        iterationId,
         this.fingerprintOf(readings),
       );
       if (run) {
         return run;
       }
     }
-    return this.projectRuns.findNewestProjectRun(deliveryProjectId, {
+    return this.projectRuns.findNewestProjectRun(iterationId, {
       openOnly: true,
     });
   }
@@ -958,6 +980,7 @@ export class QaProjectRunsService {
       automationByRepository,
       changed,
       attachmentCounts,
+      iterationRef,
     ] = await Promise.all([
       this.runs.findPriorItemSummaries(
         items
@@ -967,10 +990,11 @@ export class QaProjectRunsService {
       this.requirements.listItemsByIds(sourceIds),
       this.automationFor(coverage),
       this.requirements.requirementsChangedSince(
-        project.deliveryProjectId,
+        run.iteration_id,
         signoff?.signed_at ?? run.created_at,
       ),
       this.attachments.countsByItem(run.id),
+      this.iterations.findRef(run.iteration_id),
     ]);
 
     const repositories = buildHeadStatuses(
@@ -978,7 +1002,11 @@ export class QaProjectRunsService {
       readings,
       coverage,
     );
-    const open = run.status === 'open';
+    // A delivered Iteration is read-only whatever its runs say (the P8 guard
+    // refuses the write), so no control is offered, not even Reopen.
+    const writable =
+      iterationRef === null || isIterationWritable(iterationRef.status);
+    const open = run.status === 'open' && writable;
     const mayVerify = open && canSetVerification(role);
     const merged = this.mergeAutomation(automationByRepository);
 
@@ -1007,7 +1035,7 @@ export class QaProjectRunsService {
     });
 
     return {
-      ...this.toListItem(run, project.name, items, signoff),
+      ...this.toListItem(run, project.name, items, signoff, iterationRef),
       repositories,
       stale: repositories.some((repository) => repository.moved),
       requirementsChanged: changed,
@@ -1015,7 +1043,7 @@ export class QaProjectRunsService {
       permissions: {
         canSetVerification: mayVerify,
         canSignOff: open && canSignOff(role),
-        canReopen: !open && canReopenRun(role),
+        canReopen: run.status !== 'open' && writable && canReopenRun(role),
         canDispatch: open && canDispatchAutomation(role),
       },
       attachments: {
@@ -1102,11 +1130,13 @@ export class QaProjectRunsService {
     projectName: string,
     items: QaRunItemRow[],
     signoff: QaRunSignoffRow | null,
+    iteration: ProjectIterationRef | null,
   ): ProjectQaRunListItem {
     return {
       id: run.id,
       scope: 'project',
       deliveryProjectId: run.delivery_project_id,
+      iteration,
       // The Project's CURRENT name; the stored label is only the name at run start.
       deliveryProjectName: projectName || run.checklist_name,
       branch: run.branch,

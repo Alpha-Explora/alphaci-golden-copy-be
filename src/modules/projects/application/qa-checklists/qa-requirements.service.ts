@@ -36,6 +36,7 @@ import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.r
 import { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
 import { QA_PROMOTION_MERGED_EVENT } from '../qa-runs/qa-promotion.contracts';
 import type { QaVerificationStatusCounts } from '../qa-runs/qa-runs.contracts';
+import { ProjectIterationsService } from './project-iterations.service';
 import { QaAccessService } from './qa-access.service';
 import { QaProjectContextService } from './qa-project-context.service';
 import { buildProjectOverview, promotionSince } from './qa-overview.assembly';
@@ -114,6 +115,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     private readonly runs: QaRunsRepository,
     private readonly access: QaAccessService,
     private readonly projectContext: QaProjectContextService,
+    private readonly iterations: ProjectIterationsService,
     // Required, not @Optional(): the overview reads promotion merges through
     // it, and a silently-undefined collaborator would only fail on that call.
     @Inject(AUDIT_LATEST_EVENT_QUERY_PORT)
@@ -160,9 +162,11 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
         ? undefined
         : this.parseKind(options.kind);
 
+    const iteration =
+      await this.iterations.ensureActiveIteration(deliveryProjectId);
     const [role, rows] = await Promise.all([
       this.access.findAppRole(userId),
-      this.checklists.listByDeliveryProject(deliveryProjectId, {
+      this.checklists.listByIteration(iteration.id, {
         ...(kind ? { kind } : {}),
         includeArchived: options.includeArchived,
       }),
@@ -193,12 +197,15 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
    * progress and verification, plus what the Home dashboard summarizes per
    * Project (newest run, counts, promotion, the caller's membership).
    *
+   * Only each Project's CURRENT Iteration is shown (P3).
+   *
    * The number of database round trips does not depend on how many Projects
    * the team has: every per-Project read is one batched query over all the
-   * team's Project ids. Three sequential stages, each a parallel batch:
-   *   1. Projects, requirements, the caller's manage right;
-   *   2. requirement items, newest runs + sign-offs, members + repositories;
-   *   3. run items of those runs, promotion merges (audit).
+   * team's Project ids. Four sequential stages, each a parallel batch:
+   *   1. Projects, the caller's manage right;
+   *   2. each Project's current Iteration (created once when missing);
+   *   3. requirements, newest runs + sign-offs, members + repositories;
+   *   4. requirement items, run items of those runs, promotion merges (audit).
    *
    * `counts.readyForQa` applies the My QA items rule (bucketMyQaItem) to the
    * Project's NEWEST run. GET .../qa/my-items instead picks its run from the
@@ -218,24 +225,32 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     if (!(await this.access.canAccessWorkspace(userId, workspaceId))) {
       throw new NotFoundException('Workspace not found');
     }
-    const [projects, rows, canManage] = await Promise.all([
+    const [projects, canManage] = await Promise.all([
       this.projectContext.listGroupProjects(workspaceId),
-      this.requirements.listByWorkspace(workspaceId, includeArchived),
       this.access.canManage(userId),
     ]);
     const projectIds = projects.map((project) => project.id);
+    const iterationIds = [
+      ...(await this.iterations.ensureForProjects(projectIds)).values(),
+    ].map((iteration) => iteration.id);
 
-    const [itemsByRequirement, latestRuns, facts] = await Promise.all([
-      this.checklists.listItemsByChecklistIds(rows.map((row) => row.id)),
-      this.projectRuns.findLatestRunHeadlines(projectIds),
+    const [rows, latestRuns, facts] = await Promise.all([
+      this.requirements.listByWorkspace(
+        workspaceId,
+        includeArchived,
+        iterationIds,
+      ),
+      this.projectRuns.findLatestRunHeadlines(iterationIds),
       this.projectContext.listOverviewFacts(projectIds, userId),
     ]);
-    const [itemFactsByRun, mergedAtByRepository] = await Promise.all([
-      this.projectRuns.listItemFactsByRunIds(
-        [...latestRuns.values()].map((run) => run.runId),
-      ),
-      this.findPromotionMerges(latestRuns, facts),
-    ]);
+    const [itemsByRequirement, itemFactsByRun, mergedAtByRepository] =
+      await Promise.all([
+        this.checklists.listItemsByChecklistIds(rows.map((row) => row.id)),
+        this.projectRuns.listItemFactsByRunIds(
+          [...latestRuns.values()].map((run) => run.runId),
+        ),
+        this.findPromotionMerges(latestRuns, facts),
+      ]);
 
     const summarize = (
       row: QaChecklistRow,
@@ -347,13 +362,16 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       userId,
     );
     await this.assertManage(userId);
+    const iteration =
+      await this.iterations.ensureActiveIteration(deliveryProjectId);
+    this.iterations.assertWritable(iteration);
 
     const kind = this.parseKind(dto.kind);
     const name = this.requireNonBlank(dto.name, 'name');
     const items = dto.items ?? [];
     this.assertItemCount(items.length);
 
-    const scope = { deliveryProjectId, kind };
+    const scope = { iterationId: iteration.id, kind };
     if (
       await this.checklists.hasActiveNameConflict(
         project.groupId,
@@ -374,6 +392,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
           createdBy: userId,
           kind,
           deliveryProjectId,
+          iterationId: iteration.id,
           items: items.map((item) => ({
             title: this.requireNonBlank(item.title, 'title'),
             acceptanceCriteria: item.acceptanceCriteria ?? null,
@@ -413,6 +432,9 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       userId,
     );
     await this.assertManage(userId);
+    const iteration =
+      await this.iterations.ensureActiveIteration(deliveryProjectId);
+    this.iterations.assertWritable(iteration);
 
     const kind = this.parseKind(dto.kind);
     const drafts = dto.requirements;
@@ -449,7 +471,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
 
     // Up-front check against existing active requirements, so the common
     // collision answers without opening the write transaction.
-    const scope = { deliveryProjectId, kind };
+    const scope = { iterationId: iteration.id, kind };
     for (const [index, entry] of prepared.entries()) {
       if (
         await this.checklists.hasActiveNameConflict(
@@ -475,6 +497,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
           createdBy: userId,
           kind,
           deliveryProjectId,
+          iterationId: iteration.id,
           items: entry.items,
         })),
       );
@@ -512,6 +535,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
   ): Promise<Requirement> {
     const row = await this.requireRequirement(id, userId);
     await this.assertManage(userId);
+    await this.iterations.assertRowWritable(row);
     this.assertNotArchived(row);
     if (row.version !== dto.expectedVersion) {
       throw requirementStale(dto.expectedVersion, row.version);
@@ -527,7 +551,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
         row.workspace_id,
         name,
         row.id,
-        { deliveryProjectId: row.delivery_project_id, kind: row.kind },
+        { iterationId: row.iteration_id, kind: row.kind },
       ))
     ) {
       throw requirementNameTaken(name);
@@ -573,6 +597,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
   async archive(id: string, userId: string): Promise<Requirement> {
     const row = await this.requireRequirement(id, userId);
     await this.assertManage(userId);
+    await this.iterations.assertRowWritable(row);
 
     const wasArchived = row.archived_at !== null;
     const archived = await this.checklists.archive(id, userId);
@@ -596,6 +621,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
   ): Promise<RequirementItem> {
     const row = await this.requireRequirement(id, userId);
     await this.assertManage(userId);
+    await this.iterations.assertRowWritable(row);
     this.assertNotArchived(row);
 
     const existing = await this.checklists.listItemsByChecklistIds([id]);
@@ -623,6 +649,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
   ): Promise<RequirementItem> {
     const row = await this.requireRequirement(id, userId);
     await this.assertManage(userId);
+    await this.iterations.assertRowWritable(row);
     this.assertNotArchived(row);
     await this.requireItem(id, itemId);
 
@@ -660,6 +687,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
   async deleteItem(id: string, itemId: string, userId: string): Promise<void> {
     const row = await this.requireRequirement(id, userId);
     await this.assertManage(userId);
+    await this.iterations.assertRowWritable(row);
     this.assertNotArchived(row);
 
     if (!(await this.requirements.deleteItem(id, itemId))) {
@@ -679,6 +707,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
   ): Promise<Requirement> {
     const row = await this.requireRequirement(id, userId);
     await this.assertManage(userId);
+    await this.iterations.assertRowWritable(row);
     this.assertNotArchived(row);
 
     if (!(await this.requirements.reorderItems(id, dto.itemIds))) {
@@ -713,6 +742,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     if (!canSetProgress(role)) {
       throw progressForbidden();
     }
+    await this.iterations.assertRowWritable(row);
     this.assertNotArchived(row);
     const before = await this.requireItem(id, itemId);
 
@@ -750,12 +780,12 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     actor: RequirementActorContext,
     dto: SetProgressDto,
   ): Promise<boolean> {
-    if (!row.delivery_project_id) {
+    if (!row.delivery_project_id || !row.iteration_id) {
       return false;
     }
     const note = dto.note ?? null;
     const returned = await this.projectRuns.findReturnedOpenRunItems(
-      row.delivery_project_id,
+      row.iteration_id,
       item.id,
     );
     const previousVerifiers: Array<string | null> = [];

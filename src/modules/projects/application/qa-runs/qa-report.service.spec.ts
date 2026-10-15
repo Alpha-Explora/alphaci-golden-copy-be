@@ -43,6 +43,7 @@ const runRow = (
   id: 'run-1',
   scope: 'repository',
   delivery_project_id: null,
+  iteration_id: null,
   heads_fingerprint: null,
   project_id: 'project-1',
   checklist_id: 'checklist-1',

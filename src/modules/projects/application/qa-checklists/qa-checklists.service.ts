@@ -20,6 +20,7 @@ import {
   type QaChecklistItemRow,
   type QaChecklistRow,
 } from '../../infrastructure/qa-checklists.repository';
+import { ProjectIterationsService } from './project-iterations.service';
 import { QaAccessService } from './qa-access.service';
 import { requirementMovedToProject } from './qa-errors';
 import {
@@ -53,6 +54,7 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     private readonly access: QaAccessService,
     @Inject(PROJECT_LINK_PORT)
     private readonly projectLink: ProjectLinkPort,
+    private readonly iterations: ProjectIterationsService,
     // Explicit token: AuditEventSink is a type alias, which TypeScript emits
     // as `Object` in design:paramtypes, so without @Inject Nest finds no
     // provider and @Optional() silently injects undefined.
@@ -381,9 +383,14 @@ export class QaChecklistsService implements WorkspaceDataCleanupPort {
     // belonged to Projects.
     const folder = await this.projectLink.getProjectFolder(projectId);
     const rows = folder
-      ? await this.repository.listByDeliveryProject(folder.deliveryProjectId, {
-          includeArchived: false,
-        })
+      ? await this.repository.listByIteration(
+          (
+            await this.iterations.ensureActiveIteration(
+              folder.deliveryProjectId,
+            )
+          ).id,
+          { includeArchived: false },
+        )
       : await this.repository.listByProject(projectId);
     return { items: await this.assembleMany(rows), canManage };
   }

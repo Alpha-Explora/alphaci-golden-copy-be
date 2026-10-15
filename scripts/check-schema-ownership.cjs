@@ -194,6 +194,12 @@ const LEGACY_MIGRATION_REFERENCES = new Map([
     pairs(['storage.buckets']),
   ],
   [
+    // One-time backfill of Iteration 1 per Project; the runtime path never reads
+    // hierarchy.* (the Project is resolved through ProjectLinkPort).
+    'projects/20261015010000_project_iterations.sql',
+    pairs(['hierarchy.delivery_projects']),
+  ],
+  [
     'runtime/20260608_env_provisioning.sql',
     pairs(['identity.app_users', 'projects.provisioned_projects']),
   ],
