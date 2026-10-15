@@ -1,0 +1,11 @@
+[Unit]
+Description=Check in and poll assigned AlphaCI environments
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

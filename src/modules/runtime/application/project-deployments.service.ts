@@ -27,6 +27,7 @@ import { DeploymentProviderRegistry } from '../core/deployment-provider.registry
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import type { ProviderDeployEvent } from './ports/runtime-env-provider.client';
 import { ShortTtlCoalescer } from './short-ttl-coalescer';
+import { DeploymentHistorySourceRegistry } from '../core/deployment-history-source.registry';
 
 /**
  * Deploy history is read on every Overview load / preview card / QA lookup,
@@ -69,6 +70,8 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     @Optional()
     @Inject(DEPLOYMENT_CAPABILITY_RESOLVER)
     private readonly capabilityResolver?: CapabilityResolverPort,
+    @Optional()
+    private readonly historySources?: DeploymentHistorySourceRegistry,
   ) {}
 
   async listDeployments(
@@ -211,7 +214,7 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
     const failedProviders = new Set<string>();
     let attempted = 0;
 
-    if (this.clientRegistry) {
+    if (this.clientRegistry || this.historySources) {
       for (const target of targets) {
         const outcome = await this.fetchTargetDeployments(target, userId);
         items.push(...outcome.items);
@@ -265,15 +268,19 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
       failedProvider: null,
     };
 
-    if (!this.clientRegistry || !target.providerProjectId?.trim()) {
-      return skipped;
-    }
-    const client = this.clientRegistry.getClient(target.provider);
-    if (!client.getDeployHistory) {
-      return skipped;
-    }
-
     try {
+      const source = this.historySources?.find(target.provider);
+      if (source) {
+        return {
+          items: await source.read(target, userId),
+          attempted: true,
+          failedProvider: null,
+        };
+      }
+      if (!this.clientRegistry || !target.providerProjectId?.trim())
+        return skipped;
+      const client = this.clientRegistry.getClient(target.provider);
+      if (!client.getDeployHistory) return skipped;
       // Resolving the token is part of "is this connected at all", not part
       // of the request, so a missing one is a skip rather than a failure.
       const token = await this.resolveProviderToken(target, userId);

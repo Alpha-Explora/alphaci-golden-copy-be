@@ -27,6 +27,67 @@ sources:
 
 # Release registry
 
+## Workspace machines and environment assignments
+
+Runtime owns `onprem_workspace_lifecycle`, `onprem_machines`, `onprem_enrollments`,
+and `onprem_port_reservations`. Apply migrations `20261015020000` and
+`20261015030000` after `20261015010000` before activating this version. RLS and
+explicit revokes deny direct `anon` and `authenticated` access. HTTP requests use
+the existing workspace visibility, application hosting role, and subscription gates.
+
+- `GET /workspaces/:workspaceId/onprem-hosts` lists machines and pending enrollment.
+- `POST /workspaces/:workspaceId/onprem-host-enrollments` accepts name, platform,
+  request UUID, and optional explicit replacement machine ID. It returns a
+  256-bit code once, expiring after ten minutes, the public API URL, and a pinned
+  installer version/HTTPS URL/SHA-256. Storage receives only the code hash.
+- `POST /onprem/enroll` consumes that code transactionally and returns one
+  `onprem_machine_` credential plus public verification keys. A lost response
+  cannot replay credentials. Issue a new enrollment or explicit replacement.
+- `POST /onprem/heartbeat` uses the machine bearer credential and reports agent
+  version and prerequisite checks. A check-in older than 90 seconds is offline.
+- `POST /workspaces/:workspaceId/onprem-hosts/:machineId/revoke` stops new
+  authorized work. It cannot stop offline containers or erase host data.
+- `GET`, `POST`, and `DELETE /projects/:projectId/environments/:environmentId/host-assignment`
+  read, explicitly assign/replace, and unassign. POST takes machine ID, request
+  UUID, expected current assignment ID or null, ports, health paths, and ingress.
+  DELETE requires the expected current assignment ID. Stale comparisons return
+  409. Identical POST request replays reuse the active assignment. Reads expose
+  a legacy binding with null machine/config so it can be explicitly replaced.
+
+One active host binding remains allowed per environment. Legacy registration
+cannot silently revoke a machine binding. Assignment transactions lock the
+machine, environment advisory key, and binding; reserve machine host ports;
+and roll back both replacement and reservations on a conflict. Assignment reads
+hold credential and binding locks through release selection. Status writes
+recheck the live credential and exact project/environment binding in the same
+transaction. Revocation either follows an authorized operation's commit or
+causes that operation to fail. Workspace deletion revokes machines and expires
+codes before deleting Identity's workspace; cleanup failure aborts deletion.
+
+Production assignment requires explicitly configured HTTPS ingress. Each target
+slot has a container port, a distinct machine host port, and a health path or
+explicit null. Null records missing health evidence; the agent reports the
+deployment failed without pulling or applying it until health is configured.
+Readiness distinguishes missing schema, offline/revoked machines, prerequisites,
+missing health paths, and still-unverified runner, registry, port, ingress, and
+application checks. Connected does not mean application healthy.
+
+Machine migration rollback revokes credentials and expires codes while retaining
+their history. Reapplying cannot reactivate them. Assignment rollback refuses
+active machine bindings and retains revoked history. Unassign first, then create
+explicit legacy registrations if downgrading. SQL never runs at application startup.
+
+`GET /onprem/installer/:version` serves only the configured archive whose bytes
+match `ONPREM_INSTALLER_SHA256`. Operator configuration also sets
+`ONPREM_INSTALLER_VERSION`, `ONPREM_INSTALLER_URL`, and `ONPREM_INSTALLER_PATH`.
+The packaging command is `node scripts/package-onprem-agent.mjs`; it creates a
+local archive and checksum manifest, without publishing a release.
+
+Optional project creation host bindings use the kernel `OnpremAssignmentPort`
+after project creation succeeds. Failures return `hostAssignments` or
+`hostAssignmentError` alongside the created project. Retry assignment through
+Hosting rather than submitting project creation again.
+
 A release is registered once by CI for a project's first environment, and its
 identity never changes: project, source environment, source branch, full
 40-character commit SHA, per-slot container artifacts, and the workflow run
@@ -154,7 +215,32 @@ and these checks pass; otherwise it reports `failed`. With the URL unset,
 health is limited to Compose's wait result and the services' own healthchecks;
 it does not verify an application HTTP endpoint.
 
-## Manifest
+## Deployment history
+
+`GET /projects/:projectId/environments/:environmentId/onprem-readiness`
+requires normal session authentication, subscription/capability access, and
+project visibility. It returns separate `checks[{id,status,message}]`, with
+status `passed`, `failed`, or `unverified`. It inspects schema objects and
+the validity/uniqueness of the active-host index without applying migrations.
+API URL configuration, actual runner reachability, public signing trust,
+CI signing-secret access, registry pull access, and host state have separate
+results. Unavailable secret inspection remains unverified.
+
+Generated GitHub-hosted jobs reject loopback/private API addresses before
+authorization. Configure `PLATFORM_PUBLIC_URL` with the reachable HTTPS base
+URL and regenerate workflows when it changes. Workflow previews restore
+persisted environments and targets, including host delivery and image signing.
+Local browser OAuth callback settings remain independent.
+
+Runtime provider packs may contribute an AlphaCI-owned history source. The
+on-prem source reads environment deployments joined to their immutable
+release identity, restricted by project, the target's environment, and the
+deployment's target IDs. Hosted providers retain authenticated provider API
+history. Empty registry history is a successful live result; query failures
+report unavailable history. A rolled-back attempt remains failed history,
+even when the prior release was restored successfully.
+
+## Signed manifest
 
 The signed payload is the canonical JSON (RFC 8785) of the manifest described
 by [the manifest JSON Schema](onprem-release-manifest-schema.json):

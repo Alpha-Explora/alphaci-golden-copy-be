@@ -110,6 +110,7 @@ export class ProjectsService {
       this.notificationEventPublisher,
       this.workflowFragmentRegistry,
       this.capabilityResolver,
+      this.deploymentTargetsRepository,
     ));
   }
 

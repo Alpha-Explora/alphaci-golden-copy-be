@@ -10,3 +10,7 @@ export interface WorkspaceDataCleanupPort {
 }
 
 export const WORKSPACE_DATA_CLEANUP = Symbol('WorkspaceDataCleanupPort');
+/** Revoke machine credentials before the workspace disappears. Failures block deletion. */
+export const WORKSPACE_RUNTIME_DATA_CLEANUP = Symbol(
+  'WorkspaceRuntimeDataCleanupPort',
+);

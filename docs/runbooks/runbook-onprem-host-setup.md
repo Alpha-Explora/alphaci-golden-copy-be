@@ -23,6 +23,58 @@ sources:
 ---
 # On-prem host setup
 
+## Enroll a reusable machine
+
+Use the workspace **Hosts** screen for the machine workflow. Set a public HTTPS
+`PLATFORM_PUBLIC_URL`, enable `ONPREM_RELEASES_ENABLED`, configure P-256 public
+`ALPHACI_RELEASE_TRUST_KEYS_JSON`, apply the three `20261015` Runtime migrations,
+and configure the installer version, URL, hash, and local archive path described
+in the release registry contract. Keep the signing private key in CI's secret
+store. It never belongs on an enrolled machine.
+
+1. Build the preview package with `node scripts/package-onprem-agent.mjs`.
+2. Choose Add host and copy the checksum-verifying installation command for the
+   chosen platform. Paste the one-time code only at the installer's hidden prompt.
+3. On Ubuntu, install Docker Engine/Compose, curl, jq, OpenSSL, flock,
+   ca-certificates, and iproute2 first. Enable systemd and leave at least 1 GiB
+   free. The installer checks these prerequisites and keeps existing Docker configuration.
+4. On Windows, run as the account owning the Ubuntu WSL2 distro, in administrator
+   PowerShell. The installer saves a non-secret installation ID and phase. If
+   Windows features require a restart, restart and rerun the same command.
+   It reports missing distro, WSL2, systemd, and Ubuntu prerequisites explicitly.
+5. Enrollment writes protected host-local credential and public trust files.
+   A saved, root-only response lets an interrupted configuration resume without
+   another consumption. If the network response itself was lost, issue a new
+   enrollment. A changed API URL requires explicit replacement. Reinstall does
+   not rotate credentials. The timer starts only after a successful authenticated heartbeat.
+6. Wait for Connected, then explicitly assign environments from Hosting. Set
+   container ports and health paths for the actual application. Choose different
+   host ports for every environment sharing this machine. Production requires
+   an existing HTTPS ingress. No reverse proxy or certificate is invented.
+
+The Windows test command uses sign-in startup and example forwarded ports 8080,
+8081, and 8082. Add other selected ports by rerunning the Windows installer with
+`-Ports`, retaining the allowed client subnets. A client server uses its dedicated
+WSL account's startup task instead. Windows restart recovery and client-network
+ingress must be tested on that machine.
+
+Each assignment uses `/opt/alphaci/assignments/<project UUID>/<environment UUID>`,
+Compose project `ac-<environment UUID without dashes>`, separate network and
+named data volumes, a local worker lock, release state, and logs. Only its actual
+frontend/backend slots become services. Configure application data persistence
+to match the application's needs; the generated default volume mounts at
+`/var/lib/alphaci-data`. Registry login stays local to the host.
+
+Inspect `journalctl -u alphaci-machine.service` and assignment `worker.log` files.
+Run `/opt/alphaci/bin/alphaci-supervisor support-bundle` for machine diagnostics.
+The Windows export chooses the machine or legacy diagnostic path automatically.
+Uninstall disables polling timers and removes Windows startup/network rules;
+containers, credentials, and data remain until explicitly removed. Revoke access
+in AlphaCI too. Unassign/revoke cannot cancel Docker commands already executing.
+Separate machines are required for mutually untrusted workloads.
+
+The remainder of this runbook describes the retained legacy registration path.
+
 This runbook takes a fresh Windows PC to a running AlphaCI production host. The
 first project in it is a single backend service: its Test environment deploys
 to Render, and its Production environment deploys to the host.

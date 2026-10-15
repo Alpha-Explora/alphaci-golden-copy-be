@@ -28,6 +28,7 @@ HEALTH_TIMEOUT="${ALPHACI_HEALTH_TIMEOUT:-120}"
 API="${ALPHACI_API_URL%/}"
 API="${API%/api/v1}"
 WORK="$(mktemp -d)"
+chmod 700 "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$STATE_DIR"
 
@@ -39,7 +40,7 @@ report() {
   body=$(jq -n --arg status "$2" --arg detail "${3:-}" \
     '{status: $status} + (if $detail == "" then {} else {detail: $detail} end)')
   curl -fsS --max-time 30 -X POST "$API/api/v1/onprem/deployments/$1/status" \
-    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -H "@$WORK/auth.header" -H 'Content-Type: application/json' \
     -d "$body" > /dev/null
 }
 
@@ -78,6 +79,12 @@ release_env() {
 }
 
 healthy() {
+  if [ -n "${ALPHACI_HEALTH_URLS_FILE:-}" ]; then
+    while IFS= read -r url; do
+      curl -fsS --max-time 10 --retry 3 --retry-delay 2 --retry-all-errors "$url" > /dev/null || return 1
+    done < "$ALPHACI_HEALTH_URLS_FILE"
+    return 0
+  fi
   [ -z "${ALPHACI_HEALTH_URL:-}" ] ||
     curl -fsS --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors "$ALPHACI_HEALTH_URL" > /dev/null
 }
@@ -167,8 +174,15 @@ if [ "${1:-}" = support-bundle ]; then
 fi
 
 TOKEN="$(tr -d '[:space:]' < "$ALPHACI_HOST_TOKEN_FILE")"
-curl -fsS --max-time 30 "$API/api/v1/onprem/assignments" \
-  -H "Authorization: Bearer $TOKEN" -o "$WORK/assignments.json"
+printf 'Authorization: Bearer %s\n' "$TOKEN" > "$WORK/auth.header"
+chmod 600 "$WORK/auth.header"
+unset TOKEN
+if [ -n "${ALPHACI_ASSIGNMENTS_FILE:-}" ]; then
+  cp "$ALPHACI_ASSIGNMENTS_FILE" "$WORK/assignments.json"
+else
+  curl -fsS --max-time 30 "$API/api/v1/onprem/assignments" \
+    -H "@$WORK/auth.header" -o "$WORK/assignments.json"
+fi
 count=$(jq 'length' "$WORK/assignments.json")
 for index in $(seq 0 $((count - 1))); do
   jq ".[$index]" "$WORK/assignments.json" > "$WORK/assignment.json"

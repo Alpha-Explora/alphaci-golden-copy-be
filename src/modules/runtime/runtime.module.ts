@@ -1,4 +1,9 @@
 import { Module } from '@nestjs/common';
+import { OnpremHostsModule } from './onprem-hosts.module';
+import { OnpremAssignmentsService } from './application/onprem/onprem-assignments.service';
+import { OnpremAssignmentsRepository } from './infrastructure/repositories/onprem-assignments.repository';
+import { OnpremAssignmentsController } from './api/onprem-assignments.controller';
+import { ONPREM_ASSIGNMENT } from '#kernel/ports/onprem-assignment.port';
 import { ConfigService } from '@nestjs/config';
 
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
@@ -17,9 +22,16 @@ import { DeploymentTargetsController } from './api/deployment-targets.controller
 import { EnvironmentDeploymentTargetsController } from './api/environment-deployment-targets.controller';
 import { EnvironmentReleasesController } from './api/environment-releases.controller';
 import { OnpremAgentController } from './api/onprem-agent.controller';
+import { OnpremReadinessController } from './api/onprem-readiness.controller';
+import { OnpremReadinessService } from './application/onprem/onprem-readiness.service';
 import { ProjectReleasesController } from './api/project-releases.controller';
 import { ReleaseRegistryService } from './application/release-registry.service';
 import { ReleaseRegistryRepository } from './infrastructure/repositories/release-registry.repository';
+import { OnpremDeploymentHistorySource } from './infrastructure/providers/onprem/onprem-deployment-history.source';
+import {
+  DEPLOYMENT_HISTORY_SOURCES,
+  DeploymentHistorySourceRegistry,
+} from './core/deployment-history-source.registry';
 import { ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER } from '#kernel/ports/deployment-runtime.port';
 import { DeploymentTargetsRepository } from './infrastructure/repositories/deployment-targets.repository';
 import { DeploymentTargetsService } from './application/deployment-targets.service';
@@ -109,6 +121,7 @@ import {
 
 @Module({
   imports: [
+    OnpremHostsModule,
     AuditModule,
     DatabaseModule,
     EventsModule,
@@ -123,17 +136,22 @@ import {
     GcpDeploymentModule,
   ],
   controllers: [
+    OnpremAssignmentsController,
     ReleasesController,
     ProviderConnectionsController,
     DeploymentTargetsController,
     EnvironmentDeploymentTargetsController,
     EnvironmentReleasesController,
     OnpremAgentController,
+    OnpremReadinessController,
     ProjectReleasesController,
     EnvVarsController,
     CustomDomainsController,
   ],
   providers: [
+    OnpremAssignmentsService,
+    OnpremAssignmentsRepository,
+    { provide: ONPREM_ASSIGNMENT, useExisting: OnpremAssignmentsService },
     ProviderConnectionsRepository,
     DeploymentTargetsRepository,
     EnvVarsRepository,
@@ -158,6 +176,17 @@ import {
     DeploymentTargetsService,
     ReleaseRegistryRepository,
     ReleaseRegistryService,
+    OnpremReadinessService,
+    OnpremDeploymentHistorySource,
+    DeploymentHistorySourceRegistry,
+    {
+      provide: DEPLOYMENT_HISTORY_SOURCES,
+      useFactory: (packs: RuntimeProviderPackRegistry) =>
+        packs
+          .list()
+          .flatMap((pack) => (pack.historySource ? [pack.historySource] : [])),
+      inject: [RuntimeProviderPackRegistry],
+    },
     {
       provide: ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER,
       useExisting: DeploymentTargetsService,
@@ -207,6 +236,7 @@ import {
         gcpProvider: GcpDeploymentProvider,
         onpremProvider: OnpremComposeDeploymentProvider,
         workflowFragments: readonly WorkflowFragment[],
+        onpremHistory: OnpremDeploymentHistorySource,
       ) => [
         createRenderProviderPack({
           provider: renderProvider,
@@ -228,7 +258,10 @@ import {
           ciSecretsInstaller: vercelCiSecretsInstaller,
         }),
         createGcpProviderPack({ provider: gcpProvider }),
-        createOnpremComposeProviderPack({ provider: onpremProvider }),
+        createOnpremComposeProviderPack({
+          provider: onpremProvider,
+          historySource: onpremHistory,
+        }),
       ],
       inject: [
         RENDER_DEPLOYMENT_PROVIDER,
@@ -243,6 +276,7 @@ import {
         GcpDeploymentProvider,
         OnpremComposeDeploymentProvider,
         WORKFLOW_FRAGMENTS,
+        OnpremDeploymentHistorySource,
       ],
     },
     RuntimeProviderPackRegistry,
@@ -375,6 +409,7 @@ import {
     SubscriptionGuard,
   ],
   exports: [
+    ONPREM_ASSIGNMENT,
     DEPLOYMENT_PROVISIONING_FACADE,
     DEPLOYMENT_HISTORY_QUERY,
     DEPLOYMENT_DRIFT_QUERY,

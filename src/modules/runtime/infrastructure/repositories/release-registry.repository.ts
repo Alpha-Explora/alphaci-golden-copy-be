@@ -1,6 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '#kernel/db/database.service';
+import type {
+  DeploymentHistoryItem,
+  DeploymentHistoryStatus,
+} from '../../core/deployment-provisioning.contract';
+import { ONPREM_COMPOSE_PROVIDER_ID } from '../providers/onprem/onprem-compose.provider';
 import type {
   ReleaseArtifact,
   ReleaseManifest,
@@ -77,7 +83,7 @@ interface ReleaseRow {
   artifacts: Array<{ slot: ReleaseSlot; image: string; digest: string }> | null;
 }
 
-interface DeploymentRow {
+export interface DeploymentRow {
   id: string;
   project_id: string;
   environment_id: string;
@@ -118,6 +124,63 @@ export function allowedDeploymentTransitions(
 @Injectable()
 export class ReleaseRegistryRepository {
   constructor(private readonly databaseService: DatabaseService) {}
+
+  async listTargetDeploymentHistory(
+    projectId: string,
+    targetId: string,
+  ): Promise<DeploymentHistoryItem[]> {
+    const result = await this.databaseService.query<{
+      id: string;
+      status: DeploymentStatus;
+      created_at: Date;
+      updated_at: Date;
+      commit_sha: string;
+      source_branch: string;
+      branch_name: string;
+      slot: DeploymentHistoryItem['slot'];
+      provider_project_name: string;
+      environment_id: string;
+    }>(
+      `SELECT d.id, d.status, d.created_at, d.updated_at, r.commit_sha,
+              r.source_branch, t.branch_name, t.slot, t.provider_project_name, t.environment_id
+         FROM env_provisioning.project_deployment_targets t
+         JOIN env_provisioning.environment_deployments d
+           ON d.project_id = t.project_id AND d.environment_id = t.environment_id
+          AND t.id = ANY(d.target_ids)
+         JOIN env_provisioning.releases r ON r.id = d.release_id AND r.project_id = d.project_id
+        WHERE t.project_id = $1 AND t.id = $2 AND d.delivery = 'host'
+        ORDER BY d.created_at DESC, d.id DESC LIMIT 100`,
+      [projectId, targetId],
+    );
+    const statuses: Record<DeploymentStatus, DeploymentHistoryStatus> = {
+      pending: 'queued',
+      deploying: 'building',
+      healthy: 'ready',
+      failed: 'failed',
+      rolled_back: 'failed',
+    };
+    const url = `/projects/${projectId}`;
+    return result.rows.map((row) => ({
+      id: row.id,
+      targetId,
+      targetName: row.provider_project_name,
+      provider: ONPREM_COMPOSE_PROVIDER_ID,
+      slot: row.slot,
+      environment: row.branch_name === 'main' ? 'production' : row.branch_name,
+      branch: row.branch_name,
+      commitSha: row.commit_sha,
+      commitMessage: null,
+      createdBy: null,
+      status: statuses[row.status],
+      createdAt: iso(row.created_at) ?? '',
+      readyAt: row.status === 'healthy' ? iso(row.updated_at) : null,
+      deploymentUrl: null,
+      pullRequestNumber: null,
+      inspectorUrl: null,
+      dashboardUrl: url,
+      consoleUrl: url,
+    }));
+  }
 
   /**
    * Register a release with its artifacts and the automatic deployment of the
@@ -392,6 +455,15 @@ export class ReleaseRegistryRepository {
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
         ['onprem-host:' + input.environmentId],
       );
+      const bound = await client.query<{ machine_id: string | null }>(
+        `SELECT machine_id FROM env_provisioning.onprem_hosts
+          WHERE environment_id=$1 AND revoked_at IS NULL FOR UPDATE`,
+        [input.environmentId],
+      );
+      if (bound.rows[0]?.machine_id)
+        throw new ConflictException(
+          'Unassign the reusable machine explicitly before registering a legacy host.',
+        );
       await client.query(
         `UPDATE env_provisioning.onprem_hosts SET revoked_at = NOW()
           WHERE environment_id = $1 AND revoked_at IS NULL`,
@@ -458,13 +530,11 @@ export class ReleaseRegistryRepository {
   /** In-flight deployments for one environment whose release has a signed manifest. */
   async listHostAssignments(
     environmentId: string,
+    client?: PoolClient,
   ): Promise<
     Array<{ deployment: EnvironmentDeploymentRecord; release: ReleaseRecord }>
   > {
-    const result = await this.databaseService.query<
-      DeploymentRow & { release: ReleaseRow }
-    >(
-      `SELECT deployment.*,
+    const sql = `SELECT deployment.*,
               (SELECT row_to_json(r) FROM (
                  SELECT ${RELEASE_COLUMNS}
                    FROM env_provisioning.releases AS release
@@ -476,9 +546,14 @@ export class ReleaseRegistryRepository {
         WHERE deployment.environment_id = $1
           AND deployment.delivery = 'host'
           AND deployment.status IN ('pending', 'deploying')
-        ORDER BY deployment.created_at`,
-      [environmentId],
-    );
+        ORDER BY deployment.created_at`;
+    const result = client
+      ? await client.query<DeploymentRow & { release: ReleaseRow }>(sql, [
+          environmentId,
+        ])
+      : await this.databaseService.query<
+          DeploymentRow & { release: ReleaseRow }
+        >(sql, [environmentId]);
     return result.rows.map((row) => ({
       deployment: toDeployment(row),
       release: toRelease(row.release),
@@ -528,7 +603,7 @@ function toRelease(row: ReleaseRow): ReleaseRecord {
   };
 }
 
-function toDeployment(row: DeploymentRow): EnvironmentDeploymentRecord {
+export function toDeployment(row: DeploymentRow): EnvironmentDeploymentRecord {
   return {
     id: row.id,
     projectId: row.project_id,

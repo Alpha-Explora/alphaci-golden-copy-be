@@ -1,11 +1,11 @@
 {
-  "routeCount": 246,
+  "routeCount": 256,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "dcc2a6a8e1f9364767c91fc2468fb73669b6e6028d5c0af3a124e700b22fa00a",
+  "referenceSha256": "6884455312d706bc0b197f1c48c53386f3c77d0fc13c38f87fdb0bf3a1c8c825",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "dcc2a6a8e1f9364767c91fc2468fb73669b6e6028d5c0af3a124e700b22fa00a",
+  "baselineSha256": "6884455312d706bc0b197f1c48c53386f3c77d0fc13c38f87fdb0bf3a1c8c825",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -237,6 +237,31 @@
       "reason": "Iterations phase 3: start the next Iteration with carry-over (ITERATIONS_PLAN.md section 5)",
       "routes": [
         "POST /api/v1/delivery-projects/{deliveryProjectId}/iterations"
+      ]
+    },
+    {
+      "reason": "Read on-prem deployment prerequisites without modifying schema or claiming runner and host health.",
+      "routes": [
+        "GET /api/v1/projects/{projectId}/environments/{environmentId}/onprem-readiness"
+      ]
+    },
+    {
+      "reason": "Enroll workspace machines with one-time codes, heartbeat and revoke credentials, and explicitly assign project environments.",
+      "routes": [
+        "GET /api/v1/workspaces/{workspaceId}/onprem-hosts",
+        "POST /api/v1/workspaces/{workspaceId}/onprem-host-enrollments",
+        "POST /api/v1/workspaces/{workspaceId}/onprem-hosts/{machineId}/revoke",
+        "POST /api/v1/onprem/enroll",
+        "POST /api/v1/onprem/heartbeat",
+        "GET /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment",
+        "POST /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment",
+        "DELETE /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment"
+      ]
+    },
+    {
+      "reason": "Distribute the configured installer archive only when its bytes match the pinned checksum.",
+      "routes": [
+        "GET /api/v1/onprem/installer/{version}"
       ]
     }
   ]

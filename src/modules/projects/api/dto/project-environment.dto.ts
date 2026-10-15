@@ -1,4 +1,21 @@
-import { IsIn, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import {
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  MaxLength,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
+class InitialHostAssignmentDto {
+  @IsUUID() machineId!: string;
+  @IsUUID() requestId!: string;
+  @IsObject() config!: AssignmentConfig;
+}
 
 export class AddProjectEnvironmentDto {
   @IsString()
@@ -18,6 +35,10 @@ export class AddProjectEnvironmentDto {
 
   @IsIn(['production', 'non_production'])
   role!: 'production' | 'non_production';
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => InitialHostAssignmentDto)
+  hostAssignment?: InitialHostAssignmentDto;
 }
 
 export class RenameProjectEnvironmentDto {

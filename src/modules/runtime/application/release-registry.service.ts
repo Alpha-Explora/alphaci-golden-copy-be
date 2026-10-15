@@ -13,6 +13,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { OnpremAssignmentsRepository } from '../infrastructure/repositories/onprem-assignments.repository';
+import { MACHINE_TOKEN_PREFIX } from './onprem/onprem-hosts.service';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import {
@@ -133,6 +135,8 @@ export class ReleaseRegistryService {
     @Optional()
     @Inject(GITHUB_ACTIONS_SECRETS)
     private readonly githubActions?: GithubActionsSecretsPort,
+    @Optional()
+    private readonly machineAssignments?: OnpremAssignmentsRepository,
   ) {}
 
   async registerRelease(
@@ -577,6 +581,41 @@ export class ReleaseRegistryService {
 
   /** What a host must deploy: its environment's in-flight, signed deployments. */
   async hostAssignments(token: string) {
+    if (this.machineAssignments) {
+      this.assertOnpremEnabled();
+      return this.machineAssignments.withAuthorizedAgent(
+        sha256(token),
+        this.agentKind(token),
+        async (auth, client) => {
+          const result = [];
+          for (const binding of auth.bindings) {
+            const assignments = await this.releases.listHostAssignments(
+              binding.environmentId,
+              client,
+            );
+            for (const { deployment, release } of assignments) {
+              if (deployment.projectId !== binding.projectId) continue;
+              result.push({
+                deploymentId: deployment.id,
+                status: deployment.status,
+                assignment: {
+                  projectId: binding.projectId,
+                  environmentId: binding.environmentId,
+                  targetIds: deployment.targetIds,
+                  ...(binding.machine ? { machine: binding.machine } : {}),
+                },
+                envelope: {
+                  manifest: release.manifest,
+                  manifestSha256: release.manifestSha256,
+                  signature: release.signature,
+                },
+              });
+            }
+          }
+          return result;
+        },
+      );
+    }
     const host = await this.requireHost(token);
     const assignments = await this.releases.listHostAssignments(
       host.environmentId,
@@ -603,6 +642,16 @@ export class ReleaseRegistryService {
     status: DeploymentStatus,
     detail: string | null,
   ): Promise<EnvironmentDeploymentRecord> {
+    if (this.machineAssignments) {
+      this.assertOnpremEnabled();
+      return this.machineAssignments.reportStatus(
+        sha256(token),
+        this.agentKind(token),
+        deploymentId,
+        status,
+        detail,
+      );
+    }
     const host = await this.requireHost(token);
     const deployment = await this.releases.findDeployment(deploymentId);
     if (
@@ -693,6 +742,12 @@ export class ReleaseRegistryService {
     const release = await this.releases.findRelease(projectId, releaseId);
     if (!release) throw new NotFoundException('Unknown release');
     return release;
+  }
+
+  private agentKind(token: string): 'machine' | 'legacy' {
+    if (token.startsWith(MACHINE_TOKEN_PREFIX)) return 'machine';
+    if (token.startsWith(HOST_TOKEN_PREFIX)) return 'legacy';
+    throw new UnauthorizedException('Host credential is invalid.');
   }
 
   private async requireHost(token: string) {

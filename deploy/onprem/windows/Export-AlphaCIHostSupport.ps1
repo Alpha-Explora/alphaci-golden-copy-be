@@ -31,7 +31,7 @@ Copy-Item -Recurse -LiteralPath (Join-Path $root 'logs') -Destination $work -Err
 Copy-Item -LiteralPath (Join-Path $root 'wsl-address.txt') -Destination $work -ErrorAction SilentlyContinue
 
 # The agent writes its own archive inside the distro; copy it out as bytes.
-$linuxBundle = & wsl.exe -d $config.Distro -u root -- /opt/alphaci/bin/alphaci-agent support-bundle | Select-Object -Last 1
+$linuxBundle = & wsl.exe -d $config.Distro -u root -- bash -c 'if test -s /opt/alphaci/machine.json; then exec /opt/alphaci/bin/alphaci-supervisor support-bundle; else exec /opt/alphaci/bin/alphaci-agent support-bundle; fi' | Select-Object -Last 1
 if ($linuxBundle) {
     $windowsPath = (& wsl.exe -d $config.Distro -u root -- wslpath -w $linuxBundle.Trim()) -join ''
     Copy-Item -LiteralPath $windowsPath.Trim() -Destination (Join-Path $work 'agent-support.tar.gz')

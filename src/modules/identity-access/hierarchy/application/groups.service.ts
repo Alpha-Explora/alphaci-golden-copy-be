@@ -5,12 +5,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import { DatabaseService } from '#kernel/db/database.service';
 import {
   WORKSPACE_DATA_CLEANUP,
+  WORKSPACE_RUNTIME_DATA_CLEANUP,
   type WorkspaceDataCleanupPort,
 } from '#kernel/ports/workspace-data-cleanup.port';
 import {
@@ -46,6 +48,9 @@ export class GroupsService {
     @Inject(WORKSPACE_DATA_CLEANUP)
     private readonly workspaceDataCleanup: WorkspaceDataCleanupPort,
     private readonly projectMembersRepository: DeliveryProjectMembersRepository,
+    @Optional()
+    @Inject(WORKSPACE_RUNTIME_DATA_CLEANUP)
+    private readonly runtimeCleanup?: WorkspaceDataCleanupPort,
   ) {}
 
   async createGroup(
@@ -190,6 +195,9 @@ export class GroupsService {
       metadata: { groupId, name: group.name },
     });
 
+    // Machine credentials do not depend on session membership. Revoke them
+    // before deletion; a failed revocation must leave the workspace intact.
+    await this.runtimeCleanup?.purgeWorkspace(groupId);
     const deleted = await this.groupsRepository.deleteGroup(groupId);
     if (!deleted) {
       throw new NotFoundException('Group not found');
