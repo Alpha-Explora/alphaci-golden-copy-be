@@ -572,6 +572,91 @@ export class QaProjectRunsRepository {
     return { run, signoff, repositories: coverage.get(run.id) ?? [] };
   }
 
+  /**
+   * Adds every item of the Iteration's active requirements that an OPEN
+   * Project run of it does not hold yet, as a pending row after the run's last
+   * position (same snapshot columns as createRun). A run keeps the items that
+   * existed when it started; without this, a story written later could never
+   * be verified on unchanged heads (one run per Iteration and heads), and the
+   * gate, which needs every item passed, would stay closed. Each open run row
+   * is locked first, as every other run write does. Returns the rows added.
+   */
+  async appendMissingItemsToOpenRuns(iterationId: string): Promise<number> {
+    return this.databaseService.withTransaction(async (client) => {
+      const open = await client.query<{ id: string }>(
+        `
+          SELECT id FROM projects.qa_verification_runs
+          WHERE scope = 'project' AND iteration_id = $1 AND status = 'open'
+          ORDER BY id
+          FOR UPDATE;
+        `,
+        [iterationId],
+      );
+      let added = 0;
+      for (const run of open.rows) {
+        const result = await client.query(
+          `
+            INSERT INTO projects.qa_run_items (
+              run_id, source_item_id, "position", title, description,
+              target_persona, verification_type, test_identifier, requirement_id,
+              requirement_name, requirement_kind, acceptance_criteria
+            )
+            SELECT $1, i.id,
+                   base.last_position + (row_number() OVER (
+                     ORDER BY (c.kind = 'functional') DESC, c.created_at, c.id,
+                              i."position", i.id
+                   ))::int,
+                   i.title, i.description, i.target_persona, i.verification_type,
+                   i.test_identifier, c.id, c.name, c.kind, i.acceptance_criteria
+            FROM projects.qa_checklist_items i
+            JOIN projects.qa_checklists c ON c.id = i.checklist_id
+            CROSS JOIN (
+              SELECT COALESCE(MAX("position"), -1) AS last_position
+              FROM projects.qa_run_items WHERE run_id = $1
+            ) base
+            WHERE c.iteration_id = $2
+              AND c.archived_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM projects.qa_run_items ri
+                WHERE ri.run_id = $1 AND ri.source_item_id = i.id
+              );
+          `,
+          [run.id, iterationId],
+        );
+        added += result.rowCount ?? 0;
+      }
+      return added;
+    });
+  }
+
+  /**
+   * How many items of the Iteration's active requirements have no PASSED row
+   * in `runId`: items added after the run started, and any the run left
+   * unpassed. Zero means the run verified every item the Iteration holds now.
+   */
+  async countIterationItemsNotPassed(
+    iterationId: string,
+    runId: string,
+  ): Promise<number> {
+    const result = await this.databaseService.query<{ n: number }>(
+      `
+        SELECT COUNT(*)::int AS n
+        FROM projects.qa_checklist_items i
+        JOIN projects.qa_checklists c ON c.id = i.checklist_id
+        WHERE c.iteration_id = $1
+          AND c.archived_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM projects.qa_run_items ri
+            WHERE ri.run_id = $2
+              AND ri.source_item_id = i.id
+              AND ri.status = 'passed'
+          );
+      `,
+      [iterationId, runId],
+    );
+    return Number(result.rows[0]?.n ?? 0);
+  }
+
   /** Verification status counts per requirement for one run (null key = source requirement deleted). */
   async verificationCountsByRequirement(
     runId: string,

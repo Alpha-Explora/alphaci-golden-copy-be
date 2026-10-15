@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -97,6 +98,8 @@ export interface RequirementActorContext {
  */
 @Injectable()
 export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
+  private readonly logger = new Logger(QaRequirementsService.name);
+
   constructor(
     private readonly checklists: QaChecklistsRepository,
     private readonly requirements: QaRequirementsRepository,
@@ -354,6 +357,9 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
         kind,
         itemCount: itemRows.length,
       });
+      if (itemRows.length > 0) {
+        await this.addToOpenRuns(iteration.id);
+      }
       const role = await this.access.findAppRole(userId);
       return this.toRequirement(checklist, itemRows, role);
     } catch (error) {
@@ -467,6 +473,9 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
         itemCount: items.length,
         batch: true,
       });
+    }
+    if (created.some(({ items }) => items.length > 0)) {
+      await this.addToOpenRuns(iteration.id);
     }
     const role = await this.access.findAppRole(userId);
     return {
@@ -586,7 +595,26 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       itemId: item.id,
       change: 'added',
     });
+    if (row.iteration_id) {
+      await this.addToOpenRuns(row.iteration_id);
+    }
     return this.toItem(item, await this.access.findAppRole(userId), row);
+  }
+
+  /**
+   * A new item joins the Iteration's open QA runs as pending, so QA verifies
+   * it before Approved (the gate needs every item passed). The item is
+   * already saved, so a failure here is logged, not thrown: reopening a run
+   * adds whatever it is missing.
+   */
+  private async addToOpenRuns(iterationId: string): Promise<void> {
+    try {
+      await this.projectRuns.appendMissingItemsToOpenRuns(iterationId);
+    } catch (error) {
+      this.logger.warn(
+        `Requirement items of Iteration ${iterationId} were saved but adding them to its open QA runs failed: ${String(error)}`,
+      );
+    }
   }
 
   async updateItem(

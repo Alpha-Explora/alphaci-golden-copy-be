@@ -263,7 +263,34 @@ describe('evaluateProjectPromotionGate', () => {
     ],
     requirementCount: 3,
     latestSignedOffRun: run(),
+    itemsNotPassed: 0,
+    requirementsChangedAfterSignoff: false,
     ...overrides,
+  });
+
+  it('blocks an Approved run that did not pass every item the Iteration holds now', () => {
+    const one = evaluateProjectPromotionGate(input({ itemsNotPassed: 1 }));
+    expect(one.eligible).toBe(false);
+    expect(one.reasons).toEqual([
+      '1 requirement item is not passed in the signed-off QA run: a Product owner reopens the run so QA verifies them',
+    ]);
+
+    const two = evaluateProjectPromotionGate(input({ itemsNotPassed: 2 }));
+    expect(two.reasons).toEqual([
+      '2 requirement items are not passed in the signed-off QA run: a Product owner reopens the run so QA verifies them',
+    ]);
+  });
+
+  it('blocks when requirements changed after the sign-off', () => {
+    const result = evaluateProjectPromotionGate(
+      input({ requirementsChangedAfterSignoff: true }),
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toEqual([
+      'Requirements changed after QA signed off: a Product owner reopens the run so QA verifies them',
+    ]);
+    expect(result.run?.stale).toBe(false);
   });
 
   it('is eligible when the latest signed-off run is Approved and current for every repository', () => {

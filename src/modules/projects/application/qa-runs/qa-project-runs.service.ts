@@ -645,6 +645,9 @@ export class QaProjectRunsService {
 
     const items = await this.runs.listItemsByRunId(run.id);
     this.validateVerdict(dto, items);
+    if (dto.verdict === 'APPROVED') {
+      await this.assertRunCoversIteration(run);
+    }
 
     const now = new Date().toISOString();
     const signoffId = randomUUID();
@@ -759,6 +762,11 @@ export class QaProjectRunsService {
     });
     if (!reopened) {
       throw new ConflictException('This run is not signed off.');
+    }
+    // Stories written since the run started join it as pending, so QA can
+    // verify them on the same heads before signing off again.
+    if (run.iteration_id) {
+      await this.projectRuns.appendMissingItemsToOpenRuns(run.iteration_id);
     }
     await this.recordAudit(
       QA_RUN_EVENTS.reopened,
@@ -934,6 +942,35 @@ export class QaProjectRunsService {
       throw new BadRequestException('cursor is not valid');
     }
     return { createdAt, id };
+  }
+
+  /**
+   * Every item of the run is passed (validateVerdict), but the run may lack
+   * an item the Iteration holds now (a run started before new items joined
+   * open runs, or a failed sync): that story was never verified. Approved
+   * needs every item, so the delivered Iteration never carries unfinished work.
+   */
+  private async assertRunCoversIteration(run: QaProjectRunRow): Promise<void> {
+    if (!run.iteration_id) {
+      return;
+    }
+    const missing = await this.projectRuns.countIterationItemsNotPassed(
+      run.iteration_id,
+      run.id,
+    );
+    if (missing > 0) {
+      // Add them now (a run started before items synced, or a failed sync),
+      // so the refusal is something QA can act on: verify, then sign off.
+      await this.projectRuns.appendMissingItemsToOpenRuns(run.iteration_id);
+      throw new ConflictException({
+        code: 'QA_RUN_MISSING_ITEMS',
+        message:
+          missing === 1
+            ? '1 requirement item was added after this run started, so QA has not verified it. It is now in the run as Pending: verify it, then sign off.'
+            : `${String(missing)} requirement items were added after this run started, so QA has not verified them. They are now in the run as Pending: verify them, then sign off.`,
+        missingItems: missing,
+      });
+    }
   }
 
   private validateVerdict(dto: SignoffQaRunDto, items: QaRunItemRow[]): void {

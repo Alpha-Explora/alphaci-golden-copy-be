@@ -168,7 +168,11 @@ export function evaluateQaPromotionGate(
  *   - that run's active verdict is APPROVED (Rejected and Conditional block);
  *   - the run has a coverage row for every repository of the Project, and each
  *     captured head equals the repository's head now. A repository that moved,
- *     or that joined the Project after the run, makes the run stale for all.
+ *     or that joined the Project after the run, makes the run stale for all;
+ *   - the run PASSED every item the Iteration's requirements hold now (an
+ *     item added after the run started was never verified), and no
+ *     requirement changed after the sign-off. A delivered Iteration therefore
+ *     never holds unfinished work, so the next one starts empty.
  *
  * Using the latest signed-off run (not "any approved run") means a later
  * Rejected sign-off on newer heads blocks even when an older run was approved.
@@ -195,6 +199,10 @@ export interface QaProjectGateInput {
   repositories: readonly QaProjectGateRepository[];
   requirementCount: number;
   latestSignedOffRun: QaProjectGateRun | null;
+  /** Items of the Iteration's active requirements the signed-off run did not pass (0 without a run). */
+  itemsNotPassed: number;
+  /** A requirement was created, edited, archived or had items changed after the sign-off. */
+  requirementsChangedAfterSignoff: boolean;
 }
 
 export interface QaProjectGateResult {
@@ -207,6 +215,12 @@ export interface QaProjectGateResult {
     signedAt: string;
     stale: boolean;
   } | null;
+}
+
+function pluralItems(count: number): string {
+  return count === 1
+    ? '1 requirement item is'
+    : `${String(count)} requirement items are`;
 }
 
 function repoLabel(repoFullName: string): string {
@@ -269,6 +283,16 @@ export function evaluateProjectPromotionGate(
         repository.runSha === null
           ? `Project run is stale: "${label}" was added to the Project after the run`
           : `Project run is stale: "${label}" moved from ${shortSha(repository.runSha)} to ${shortSha(repository.currentSha as string)}`,
+      );
+    }
+    if (input.itemsNotPassed > 0) {
+      reasons.push(
+        `${pluralItems(input.itemsNotPassed)} not passed in the signed-off QA run: a Product owner reopens the run so QA verifies them`,
+      );
+    }
+    if (input.requirementsChangedAfterSignoff) {
+      reasons.push(
+        'Requirements changed after QA signed off: a Product owner reopens the run so QA verifies them',
       );
     }
   }
