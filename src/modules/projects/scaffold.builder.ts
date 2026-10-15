@@ -692,6 +692,10 @@ function buildDockerfile(nodeVersion: string, stack: string): string {
     'RUN addgroup -S nodejs && adduser -S flowci -G nodejs',
     'COPY --from=builder /app/package*.json ./',
     'RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi',
+    // The app runs on node alone. The npm and yarn bundled in the base image
+    // carry HIGH findings of their own that fail the release scan, so drop them
+    // once the production install is done.
+    'RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/lib/node_modules/corepack /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg',
     'COPY --from=builder --chown=flowci:nodejs /app/dist ./dist',
     'USER flowci',
     'EXPOSE 3000',
@@ -727,6 +731,10 @@ function buildNextDockerfile(nodeVersion: string): string {
     'RUN addgroup -S nodejs && adduser -S flowci -G nodejs',
     'COPY --from=builder /app/package*.json ./',
     'RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi',
+    // The app runs on node alone. The npm and yarn bundled in the base image
+    // carry HIGH findings of their own that fail the release scan, so drop them
+    // once the production install is done.
+    'RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/lib/node_modules/corepack /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg',
     'COPY --from=builder /app/next.config.* ./',
     // `next start` transpiles next.config.ts with TypeScript, a dev dependency
     // the production install leaves out; without it the server never starts.
