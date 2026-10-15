@@ -11,6 +11,9 @@ sources:
   - id: 'release-service'
     resource: 'src/modules/runtime/application/release-registry.service.ts'
     title: 'Release registration, promotion, and host rules'
+  - id: 'active-host-schema'
+    resource: 'supabase/migrations/runtime/20261015010000_one_active_onprem_host.sql'
+    title: 'One active host registration per environment'
   - id: 'manifest'
     resource: 'src/modules/runtime/domain/release-manifest.ts'
     title: 'Manifest canonical form and checks'
@@ -53,7 +56,12 @@ release's identity or artifacts, and to a verified release's manifest.
   signature algorithm. Resubmitting the same signed manifest is accepted; a
   different one is refused.
 - POST /ci/releases/:releaseId/deployment-status reports the first
-  environment's automatic deployment.
+  environment's automatic deployment. For host delivery, CI may report only
+  `failed` while the release is unsigned and its automatic deployment is
+  pending; repeating that cleanup is accepted. CI cannot report a signed
+  host deployment's outcome. Signing and cleanup serialize on the release
+  row: a late signature after cleanup is rejected, and a retry registers a
+  release from a new workflow run.
 
 CI tokens can register, sign, read, and report their own project's releases.
 They cannot promote, approve, or change what production runs.
@@ -107,6 +115,12 @@ environment ID, GitHub Environment, and target ID; none is chosen from the
 branch. Projects without environments keep the fixed `dev → uat → main`
 pipeline.
 
+For a host-delivered first environment, signing failure or cancellation runs
+the generated cleanup job to fail its unsigned pending deployment and free
+the environment for a later release. Existing project workflows must be
+regenerated to gain this job. If it cannot run, the same CI status endpoint
+allows explicit cleanup. Package stage results include the signing job.
+
 ## On-prem hosts (host token)
 
 Hosts stay unreachable until the deployment sets
@@ -114,6 +128,14 @@ Hosts stay unreachable until the deployment sets
 registers a host for one environment with POST
 /projects/:projectId/environments/:environmentId/hosts; the response holds
 the only copy of the host token, and only its SHA-256 is stored.
+
+Each environment has one active registration. Registering a replacement
+atomically revokes all its previous tokens; simultaneous registrations
+serialize per environment. Other environments and projects retain their
+tokens. The migration keeps the newest active registration when upgrading
+legacy duplicates, and rolling back its unique index does not reactivate
+revoked credentials. Stop the old agent before replacement: revocation
+refuses future requests but cannot stop Docker commands already running.
 
 - GET /onprem/assignments returns the host's environment's in-flight
   deployments whose release is signed: the assignment (project, destination
@@ -124,6 +146,13 @@ the only copy of the host token, and only its SHA-256 is stored.
 
 The host verifies the signature with its pinned public key before pulling
 any artifact. Neither the manifest nor the assignment carries host secrets.
+
+The agent waits for Compose services on deployment and restoration. When
+`ALPHACI_HEALTH_URL` is configured, that URL must also answer successfully
+after both operations. A rollback reports `rolled_back` only if restoration
+and these checks pass; otherwise it reports `failed`. With the URL unset,
+health is limited to Compose's wait result and the services' own healthchecks;
+it does not verify an application HTTP endpoint.
 
 ## Manifest
 

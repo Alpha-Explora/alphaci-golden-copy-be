@@ -190,6 +190,13 @@ step uses the API from the browser console while signed in.
 
 ## Part 7: Configure the agent
 
+Configure `ALPHACI_HEALTH_URL` in `/opt/alphaci/agent.env` with the application's
+readiness URL reachable from Ubuntu. The URL must return 2xx after both a new
+deployment and restoration of the previous release. For HTTPS, Ubuntu must
+trust the certificate authority; accepting a browser certificate warning does
+not configure curl's trust. If the setting is empty, the agent uses Compose's
+wait result and any service healthchecks, without an application HTTP check.
+
 22. **Ubuntu:** set the API URL and hostname:
 
     ```bash

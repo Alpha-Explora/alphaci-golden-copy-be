@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-15
+
+- **Update**: Documented unsigned on-prem signing-failure cleanup, serialization against late signing, one active host token per environment, replacement and migration revocation rules, and restored-release health checks in the release registry contract and host setup runbook. Generated architecture maps retain the same routes and ownership; the documentation gate verifies their current output.
+
 ## 2026-10-14
 
 - **Creation**: Added the on-prem host setup runbook. It takes a fresh Windows PC (WSL Ubuntu) or Ubuntu machine to a verified production host: Docker Engine, the release agent and its pinned signing key, the backend settings and migrations that enable on-prem releases, a project whose production environment is on-prem, host registration, Windows startup and port forwarding, and the first promoted release. It also covers adding hosts and projects, troubleshooting, and removing a host.
