@@ -4,6 +4,7 @@
 
 ### Added
 
+- `GET /projects/:id/workspace/browser-tests` gains `ownTests { count, paths }`: the repository's own Playwright test files on dev (any name under an `e2e`/`playwright` folder or named `*.e2e*`, in a repository that uses Playwright), which the verify stage already runs. Before, a repository with its own suite read as having no browser tests because only the starter pack's file names were checked. Read from GitHub's recursive tree (new `GithubProjectPort.listRepoPaths`) for the status only; the add flow is unchanged. Null without a dev branch.
 - Workspace on-prem machine inventory, one-time enrollment, heartbeat, explicit environment assignment with conflict detection and port reservations, protected installer packaging and isolated per-environment workers. Project creation retains the created repository on a host-binding failure and exposes assignment retry status. See the on-prem host runbook for targeted migrations, prerequisites, upgrade and downgrade behavior.
 
 - Added on-prem readiness inspection without automatic migrations, early API-address validation in generated CI jobs, and persisted environment targets in workflow previews and update PRs.
