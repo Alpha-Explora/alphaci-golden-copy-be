@@ -11,7 +11,8 @@ if [ "${1:-}" = --enroll ]; then
   for tool in curl jq openssl flock sha256sum docker systemctl ss; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
   done
-  docker info >/dev/null && docker compose version >/dev/null
+  docker info >/dev/null || { echo 'Docker Engine must be running.' >&2; exit 1; }
+  docker compose version >/dev/null || { echo 'Docker Compose v2 is required.' >&2; exit 1; }
   [ -d /run/systemd/system ] || { echo 'Enable systemd and restart Ubuntu before installing.' >&2; exit 1; }
   [ -s /etc/ssl/certs/ca-certificates.crt ] || { echo 'Install ca-certificates first.' >&2; exit 1; }
   available=$(df -Pk /opt | awk 'NR==2 {print $4}')

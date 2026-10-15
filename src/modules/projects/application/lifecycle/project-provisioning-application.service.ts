@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Inject,
   Injectable,
   Optional,
@@ -296,14 +297,16 @@ export class ProjectProvisioningApplicationService {
           status: 'assigned',
           assignmentId: result.assignmentId,
         });
-      } catch {
+      } catch (error) {
         // The repository already exists. Keep it usable and retry through the
         // existing environment's explicit assignment endpoint, never create again.
         hostAssignments.push({
           environmentId: environment.id,
           status: 'failed',
           message:
-            'Project created. Assign or retry the host from this environment in Hosting.',
+            error instanceof HttpException
+              ? `Project created. Host assignment failed: ${error.message}`
+              : 'Project created. Assign or retry the host from this environment in Hosting.',
         });
       }
     }

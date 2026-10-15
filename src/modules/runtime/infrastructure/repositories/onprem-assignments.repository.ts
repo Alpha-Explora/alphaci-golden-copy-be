@@ -163,7 +163,10 @@ export class OnpremAssignmentsRepository {
         error.code === '23505'
       )
         throw new ConflictException(
-          'A host port is already reserved on this machine. Choose a different port.',
+          'constraint' in error &&
+            error.constraint === 'onprem_port_reservations_pkey'
+            ? 'A host port is already reserved on this machine. Choose a different port.'
+            : 'The host assignment changed. Reload and try again.',
         );
       throw error;
     }
