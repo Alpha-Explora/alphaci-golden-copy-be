@@ -25,6 +25,7 @@ import {
   type GitHubCommitFilesInput,
   type GitHubCommitFilesResult,
   type GitHubRepoFilesResult,
+  type GitHubRepoPathsResult,
   type GitHubOpenPullRequestInput,
   type GitHubOpenPullRequestResult,
   type GithubOrganizationMember,
@@ -2356,6 +2357,14 @@ export class GithubService
     paths: readonly string[],
   ): Promise<GitHubRepoFilesResult> {
     return this.repoFiles.readRepoFiles(accessToken, repoFullName, ref, paths);
+  }
+
+  listRepoPaths(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+  ): Promise<GitHubRepoPathsResult> {
+    return this.repoFiles.listRepoPaths(accessToken, repoFullName, ref);
   }
 
   commitFilesToNewBranch(
