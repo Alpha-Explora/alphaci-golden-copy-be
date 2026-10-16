@@ -70,6 +70,33 @@ describe('Machine supervisor with recording Docker fixture', () => {
       '644',
     );
   });
+  it('publishes the ports AlphaCI reserved before anything is deployed', () => {
+    const f = shellFixture();
+    writeFileSync(
+      join(f.work, 'heartbeat-reply.json'),
+      JSON.stringify({ ports: [8081, 8080, 0, 'x'] }),
+    );
+    f.run('/work/host/bin/alphaci-supervisor --heartbeat-only');
+    const published = () =>
+      JSON.parse(
+        readFileSync(join(f.work, 'host/published-ports.json'), 'utf8'),
+      ) as number[];
+    expect(published()).toEqual([8080, 8081]);
+    // A materialized environment keeps its port alongside the reserved ones.
+    writeFileSync(
+      join(f.work, 'assignments.json'),
+      JSON.stringify([f.assignment(18140)]),
+    );
+    f.run('/work/host/bin/alphaci-supervisor --once');
+    expect(published()).toEqual([8080, 8081, 18140]);
+    // A released reservation stops being forwarded.
+    writeFileSync(
+      join(f.work, 'heartbeat-reply.json'),
+      JSON.stringify({ ports: [8081] }),
+    );
+    f.run('/work/host/bin/alphaci-supervisor --heartbeat-only');
+    expect(published()).toEqual([8081, 18140]);
+  });
   it('reports missing health and occupied ports as failed without pulling or changing a stack', () => {
     for (const missingHealth of [true, false]) {
       const f = shellFixture(),

@@ -14,7 +14,7 @@ import { SubscriptionGuard } from '#kernel/auth/subscription.guard';
 import { CapabilityGuard } from '#kernel/composition/capability.guard';
 import { RequiresCapability } from '#kernel/composition/requires-capability.decorator';
 import { OnpremHostsService } from '../application/onprem/onprem-hosts.service';
-import { CreateEnrollmentDto } from './dto/onprem-host.dto';
+import { CreateEnrollmentDto, RevokeMachineDto } from './dto/onprem-host.dto';
 
 @Controller('workspaces/:workspaceId')
 @RequiresCapability('runtime.env-provisioning')
@@ -45,7 +45,13 @@ export class OnpremHostsController {
     @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
     @Param('machineId', ParseUUIDPipe) machineId: string,
     @Req() req: Request,
+    @Body() body: RevokeMachineDto = {},
   ) {
-    return this.hosts.revoke(workspaceId, machineId, req.session.user!.id);
+    return this.hosts.revoke(
+      workspaceId,
+      machineId,
+      req.session.user!.id,
+      body.replacementMachineId ?? null,
+    );
   }
 }

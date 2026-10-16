@@ -35,8 +35,22 @@ else
   checks='[{"id":"docker","status":"passed","message":"Docker Engine and Compose are available."}]'
 fi
 printf '%s' "$checks" | jq '{agentVersion:"0.1.0",checks:.}' > "$WORK/heartbeat.json"
-curl -fsS --max-time 30 -H "@$WORK/auth.header" -H 'Content-Type: application/json' --data-binary "@$WORK/heartbeat.json" "$API/api/v1/onprem/heartbeat" >/dev/null
-[ "${1:-}" = --heartbeat-only ] && exit 0
+# The reply lists the host ports AlphaCI reserved on this machine.
+curl -fsS --max-time 30 -H "@$WORK/auth.header" -H 'Content-Type: application/json' --data-binary "@$WORK/heartbeat.json" -o "$WORK/heartbeat-reply.json" "$API/api/v1/onprem/heartbeat"
+# A Windows host forwards exactly these ports from its network into WSL: every
+# port AlphaCI reserved here, so forwards and firewall rules exist before the
+# first deployment, and every materialized environment's, deployed or not, so
+# forwards never flap.
+publish_ports() {
+  mkdir -p "$ROOT/assignments"
+  { jq -c '[.ports[]?]' "$WORK/heartbeat-reply.json" 2>/dev/null || echo '[]'
+    find "$ROOT/assignments" -mindepth 3 -maxdepth 3 -name compose.json -type f -print0 | xargs -0 -r cat |
+      jq -c '[.services[]?.ports[]? | split(":")[0] | tonumber?]'
+  } | jq -s '[.[][] | numbers | select(. >= 1 and . <= 65535 and . == floor)] | unique' > "$WORK/published-ports.json"
+  chmod 0644 "$WORK/published-ports.json"
+  mv "$WORK/published-ports.json" "$ROOT/published-ports.json"
+}
+if [ "${1:-}" = --heartbeat-only ]; then publish_ports; exit 0; fi
 curl -fsS --max-time 30 -H "@$WORK/auth.header" "$API/api/v1/onprem/assignments" -o "$WORK/assignments.json"
 # Assignment execution is installed by the same controlled package.
 if [ -x "$ROOT/bin/render-assignment" ]; then
@@ -50,10 +64,4 @@ if [ -x "$ROOT/bin/render-assignment" ]; then
   done
   wait || true
 fi
-# A Windows host forwards exactly these ports from its network into WSL. Every
-# materialized environment counts, deployed or not, so forwards never flap.
-mkdir -p "$ROOT/assignments"
-find "$ROOT/assignments" -mindepth 3 -maxdepth 3 -name compose.json -type f -print0 | xargs -0 -r cat |
-  jq -s '[.[].services[]?.ports[]? | split(":")[0] | tonumber? | select(. >= 1 and . <= 65535)] | unique' > "$WORK/published-ports.json"
-chmod 0644 "$WORK/published-ports.json"
-mv "$WORK/published-ports.json" "$ROOT/published-ports.json"
+publish_ports

@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -21,14 +23,38 @@ import {
   type DeploymentTargetsQuery,
 } from '#kernel/ports/deployment-runtime.port';
 import type {
-  AssignmentConfig,
+  AssignmentRequestConfig,
   OnpremAssignmentPort,
 } from '#kernel/ports/onprem-assignment.port';
 import { canManageHosting } from '#kernel/rules/persona-access.rules';
-import { OnpremAssignmentsRepository } from '../../infrastructure/repositories/onprem-assignments.repository';
+import {
+  OnpremAssignmentsRepository,
+  requestedConfig,
+} from '../../infrastructure/repositories/onprem-assignments.repository';
 
+const ONPREM_COMPOSE = 'onprem-compose';
+
+/** What an environment gets when nobody chose: one port per slot, health at /. */
+export function defaultAssignmentConfig(
+  slots: ReadonlyArray<string>,
+): AssignmentRequestConfig {
+  const known = slots.filter(
+    (slot): slot is 'frontend' | 'backend' =>
+      slot === 'frontend' || slot === 'backend',
+  );
+  return {
+    ports: known.map((slot) => ({
+      slot,
+      containerPort: slot === 'frontend' ? 3000 : 4000,
+    })),
+    health: known.map((slot) => ({ slot, path: '/' })),
+    ingress: { mode: 'direct', publicUrl: null },
+  };
+}
+
+/** Host ports are not part of a request: the server allocates them. */
 export function validateAssignmentConfig(
-  config: AssignmentConfig,
+  config: AssignmentRequestConfig,
   slots: string[],
   production: boolean,
 ) {
@@ -40,8 +66,7 @@ export function validateAssignmentConfig(
     throw new BadRequestException(
       'Configure one port mapping for each target slot.',
     );
-  const seen = new Set<string>(),
-    ports = new Set<number>();
+  const seen = new Set<string>();
   for (const port of config.ports) {
     if (!port || !slots.includes(port.slot) || seen.has(port.slot))
       throw new BadRequestException(
@@ -49,18 +74,13 @@ export function validateAssignmentConfig(
       );
     seen.add(port.slot);
     if (
-      !Number.isInteger(port.hostPort) ||
       !Number.isInteger(port.containerPort) ||
-      port.hostPort < 1 ||
-      port.hostPort > 65535 ||
       port.containerPort < 1 ||
-      port.containerPort > 65535 ||
-      ports.has(port.hostPort)
+      port.containerPort > 65535
     )
       throw new BadRequestException(
-        'Ports must be distinct integers from 1 to 65535.',
+        'Container ports must be integers from 1 to 65535.',
       );
-    ports.add(port.hostPort);
   }
   if (!Array.isArray(config.health) || config.health.length !== slots.length)
     throw new BadRequestException(
@@ -118,6 +138,7 @@ export function validateAssignmentConfig(
 
 @Injectable()
 export class OnpremAssignmentsService implements OnpremAssignmentPort {
+  private readonly logger = new Logger(OnpremAssignmentsService.name);
   constructor(
     private readonly repository: OnpremAssignmentsRepository,
     @Inject(WORKSPACE_ACCESS_PORT) private readonly access: WorkspaceAccessPort,
@@ -137,43 +158,123 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
     environmentId: string,
     userId: string,
     input: {
-      machineId: string;
+      /** Omitted: the workspace's only healthy machine. */
+      machineId?: string | null;
       expectedAssignmentId: string | null;
       requestId: string;
-      config: AssignmentConfig;
+      config: AssignmentRequestConfig;
     },
   ) {
     const environment = await this.visible(projectId, environmentId, userId);
     const membership = await this.manager(projectId, userId);
+    const machineId = input.machineId ?? null;
     if (
-      (await this.repository.machineWorkspace(input.machineId)) !==
-      membership.workspaceId
+      machineId &&
+      (await this.repository.machineWorkspace(machineId)) !==
+        membership.workspaceId
     )
       throw new NotFoundException(
         'Active machine not found in this workspace.',
       );
-    const targets = (
-      await this.targets.listDeploymentTargets(projectId)
-    ).filter((target) => target.environmentId === environmentId);
-    if (
-      !targets.length ||
-      targets.some((target) => target.provider !== 'onprem-compose')
-    )
+    const slots = await this.onpremSlots(projectId, environmentId);
+    if (!slots)
       throw new BadRequestException(
         'All environment targets must use on-prem Compose.',
       );
     validateAssignmentConfig(
       input.config,
-      targets.map((target) => target.slot),
+      slots,
       environment.role === 'production',
     );
     return this.repository.assign({
       ...input,
+      machineId,
+      config: requestedConfig(input.config),
       projectId,
       environmentId,
       userId,
       workspaceId: membership.workspaceId,
     });
+  }
+  async ensureAutomaticAssignment(
+    projectId: string,
+    environmentId: string,
+    userId: string,
+  ): Promise<{ assignmentId: string } | null> {
+    if (this.config.get('ONPREM_RELEASES_ENABLED') !== 'true') return null;
+    try {
+      const environment = await this.visible(projectId, environmentId, userId);
+      const slots = await this.onpremSlots(projectId, environmentId);
+      if (!slots) return null;
+      const current = await this.repository.current(projectId, environmentId);
+      if (current?.config) {
+        const assigned: string[] = current.config.ports.map(
+          (port) => port.slot,
+        );
+        if (
+          assigned.length === slots.length &&
+          slots.every((slot) => assigned.includes(slot))
+        )
+          return { assignmentId: current.id };
+        // A slot was added or removed: reassign on the same machine. Kept
+        // slots keep their settings and host ports; new ones get defaults.
+        const defaults = defaultAssignmentConfig(slots);
+        const config = current.config;
+        const result = await this.assign(projectId, environmentId, userId, {
+          machineId: current.machineId,
+          expectedAssignmentId: current.id,
+          requestId: randomUUID(),
+          config: {
+            ...config,
+            ports: defaults.ports.map(
+              (port) =>
+                config.ports.find((item) => item.slot === port.slot) ?? port,
+            ),
+            health: defaults.health.map(
+              (item) =>
+                config.health.find((old) => old.slot === item.slot) ?? item,
+            ),
+          },
+        });
+        return { assignmentId: result.id };
+      }
+      // A legacy host keeps its registration until a person replaces it, and
+      // production needs a person to name its HTTPS ingress.
+      if (current || environment.role === 'production') return null;
+      const membership = await this.manager(projectId, userId);
+      const healthy = await this.repository.healthyMachines(
+        membership.workspaceId,
+      );
+      if (healthy.length !== 1) return null;
+      const result = await this.assign(projectId, environmentId, userId, {
+        machineId: null,
+        expectedAssignmentId: null,
+        requestId: randomUUID(),
+        config: defaultAssignmentConfig(slots),
+      });
+      return { assignmentId: result.id };
+    } catch (error) {
+      // A convenience only: Hosting still offers the explicit assignment.
+      this.logger.warn(
+        `Automatic host assignment skipped for environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+  /** The environment's target slots, when every one of them is on-prem Compose. */
+  private async onpremSlots(
+    projectId: string,
+    environmentId: string,
+  ): Promise<string[] | null> {
+    const targets = (
+      await this.targets.listDeploymentTargets(projectId)
+    ).filter((target) => target.environmentId === environmentId);
+    if (
+      !targets.length ||
+      targets.some((target) => target.provider !== ONPREM_COMPOSE)
+    )
+      return null;
+    return targets.map((target) => target.slot);
   }
   async unassign(
     projectId: string,
@@ -189,7 +290,11 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
     projectId: string,
     environmentId: string,
     userId: string,
-    input: { machineId: string; requestId: string; config: AssignmentConfig },
+    input: {
+      machineId?: string;
+      requestId: string;
+      config: AssignmentRequestConfig;
+    },
   ) {
     const result = await this.assign(projectId, environmentId, userId, {
       ...input,

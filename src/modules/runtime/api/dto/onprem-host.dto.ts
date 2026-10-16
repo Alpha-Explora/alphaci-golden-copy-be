@@ -36,3 +36,7 @@ export class MachineCheckInDto {
 export class ConsumeEnrollmentDto extends MachineCheckInDto {
   @Matches(/^[A-Za-z0-9_-]{43}$/) code!: string;
 }
+export class RevokeMachineDto {
+  /** An active machine of the same workspace that takes over the environments. */
+  @IsOptional() @IsUUID() replacementMachineId?: string;
+}

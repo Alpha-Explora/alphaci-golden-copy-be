@@ -109,20 +109,25 @@ export class OnpremHostsService {
       trustKeys,
     };
   }
-  async heartbeat(credential: string, input: MachineCheckIn): Promise<void> {
+  /** The supervisor forwards and opens exactly the returned host ports. */
+  async heartbeat(
+    credential: string,
+    input: MachineCheckIn,
+  ): Promise<{ ports: number[] }> {
     this.enabled();
     if (!credential.startsWith(MACHINE_TOKEN_PREFIX))
       throw new UnauthorizedException('Machine credential is invalid.');
-    await this.machines.heartbeat(hashMachineSecret(credential), input);
+    return this.machines.heartbeat(hashMachineSecret(credential), input);
   }
   async revoke(
     workspaceId: string,
     machineId: string,
     userId: string,
-  ): Promise<void> {
+    replacementMachineId: string | null = null,
+  ): Promise<{ moved: number }> {
     this.enabled();
     await this.assertManager(workspaceId, userId);
-    await this.machines.revoke(workspaceId, machineId);
+    return this.machines.revoke(workspaceId, machineId, replacementMachineId);
   }
   private async assertManager(workspaceId: string, userId: string) {
     await this.access.assertWorkspaceRole(workspaceId, userId, [
