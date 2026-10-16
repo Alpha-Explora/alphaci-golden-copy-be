@@ -8,16 +8,16 @@ import { canonicalJson } from '../../../src/modules/runtime/domain/release-manif
 const image = 'alphaci-agent-e2e:1';
 
 /**
- * Runs a container command, then hands the mounted work directory back to this
- * process's user. The scripts run as container root with umask 077, so the
- * files they create are root-owned and unreadable to this process on Linux.
- * Windows has no uid to hand back to, so the command is returned unchanged.
+ * Runs a container command, then gives the mounted work directory back the
+ * owner of its mount point. The scripts run as container root with umask 077,
+ * so the files they create are root-owned and unreadable to the host user on
+ * Linux. The trap runs on any exit, including `exit` or a failing command in
+ * the script, and it works with rootless Docker or Podman because it names
+ * the mount point's owner rather than a host uid. Failure is ignored: some
+ * Windows bind mounts cannot change ownership, and there the tests never needed it.
  */
-export function returnWorkToHostUser(command: string): string {
-  const uid = process.getuid?.();
-  const gid = process.getgid?.();
-  if (uid === undefined || gid === undefined) return command;
-  return `${command}; status=$?; chown -R ${uid}:${gid} /work; exit $status`;
+export function restoreWorkOwnership(command: string): string {
+  return `trap 'chown -R --reference=/work /work 2>/dev/null || true' EXIT; ${command}`;
 }
 
 export function buildShellFixture() {
@@ -118,7 +118,7 @@ esac
         image,
         'bash',
         '-c',
-        returnWorkToHostUser(
+        restoreWorkOwnership(
           'chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; ' +
             command,
         ),

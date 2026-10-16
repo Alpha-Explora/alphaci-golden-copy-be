@@ -49,6 +49,8 @@ const signingEnvironment = {
   ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT:
     'release-signer@e2e-project.iam.gserviceaccount.com',
 };
+/** The placeholder GitHub token a signed-in scenario session holds. */
+const githubAccessToken = 'e2e-github-token';
 const previousSigningEnvironment = Object.fromEntries(
   Object.keys(signingEnvironment).map((key) => [key, process.env[key]]),
 );
@@ -352,7 +354,7 @@ describe('Release registry and promotion', () => {
       Object.assign(process.env, signingEnvironment);
       // Quick-login has no GitHub token; a GitHub sign-in stores one, and the
       // on-prem target's signing step needs it.
-      e2e = await startApplication({ githubAccessToken: 'e2e-github-token' });
+      e2e = await startApplication({ githubAccessToken });
       ({ agent, userId } = await e2e.signIn('admin'));
     });
 
@@ -864,16 +866,19 @@ describe('Release registry and promotion', () => {
 
       // The only write is the signing variable, so the host can verify releases.
       // No provider or workflow is called.
-      expect(
-        e2e.externalCalls
-          .slice(start)
-          .map(({ port, method, args }) => [port, method, args[3]]),
-      ).toEqual([
-        [
-          'githubActions',
-          'setActionsVariableStrict',
-          'ALPHACI_RELEASE_KMS_KEY_VERSION',
-        ],
+      const [owner, repo] = project.repo.split('/') as [string, string];
+      expect(e2e.externalCalls.slice(start)).toEqual([
+        {
+          port: 'githubActions',
+          method: 'setActionsVariableStrict',
+          args: [
+            githubAccessToken,
+            owner,
+            repo,
+            'ALPHACI_RELEASE_KMS_KEY_VERSION',
+            releaseKeyId,
+          ],
+        },
       ]);
       expect(await onpremDiscovery(agent)).toMatchObject({ enabled: true });
     });

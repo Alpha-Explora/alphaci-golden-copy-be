@@ -5,7 +5,7 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import {
-  returnWorkToHostUser,
+  restoreWorkOwnership,
   shellFixture,
 } from './support/onprem-shell-fixture';
 
@@ -124,7 +124,7 @@ describe('Two projects on one real Docker daemon', () => {
         'alphaci-machine-live-test:1',
         'bash',
         '-c',
-        returnWorkToHostUser(
+        restoreWorkOwnership(
           `chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; /work/host/bin/render-assignment /work/${file}`,
         ),
       ],
