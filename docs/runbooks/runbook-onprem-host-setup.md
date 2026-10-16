@@ -63,7 +63,14 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    certificate is invented.
 7. To retire a machine, enroll its replacement with a replacement code (or
    revoke it naming the replacement): its environments move to the new
-   machine with the same host ports where they are free.
+   machine with the same host ports where they are free. Revoking without a
+   replacement ends those environments' bindings and releases their host ports.
+   The environments then have no host until you assign them from Hosting; no
+   Unassign is needed. Automatic assignment runs only when an environment is
+   provisioned, or when a target is created or attached to it, not after a
+   revocation. Revoking also ends the machine's pending replacement enrollment,
+   so that code stops working. To keep the environments on the replacement,
+   consume its enrollment before revoking.
 
 The Windows test command uses sign-in startup. The agent publishes every host
 port AlphaCI reserved on the machine (returned by each heartbeat) and the host
@@ -557,6 +564,7 @@ page, then redeploy. Do not commit values to the repository.
 | Variable | Value |
 |---|---|
 | `PLATFORM_PUBLIC_URL` | Public HTTPS origin, for example `https://api.example.com`, with no path, query, or credentials. |
+| `TRUST_PROXY_HOPS` | Optional. Reverse proxies in front of the API. Default `1` (Render's edge alone). Set `2` only while a Vercel rewrite proxies the API, and never higher than the real chain. See [Agent request limits](#agent-request-limits). |
 | `ONPREM_RELEASES_ENABLED` | `true` |
 | `ALPHACI_RELEASE_TRUST_KEYS_JSON` | The one-line JSON from Part 5, step 13. |
 | `ONPREM_INSTALLER_RELEASE_REPO` | The repository that publishes installer releases, as `owner/repo`. |
@@ -577,14 +585,52 @@ backend can read the release with a token. Without a pin, the backend also
 requires the release to be immutable (see below). Otherwise enrollment returns
 503 and issues no code.
 
+### Agent request limits
+
+Agent endpoints (`POST /onprem/heartbeat`, `GET /onprem/assignments`, and
+`POST /onprem/deployments/:deploymentId/status`) have two limits, each counted
+per minute:
+
+- **120 requests per machine** per endpoint. The count follows the machine's
+  credential, so machines behind one NAT do not share it. A supervisor on its
+  30-second timer sends 2 heartbeats and 2 assignment polls a minute; each
+  deployment status report adds one more, so 120 leaves room for bursts and
+  retries.
+- **300 requests per client address** per endpoint, across every credential.
+  Only requests that need a credential lookup count, so a machine's own
+  rejected traffic cannot use up its NAT neighbours' share. This bounds the work
+  a flood can cause. A NAT shared by more than about 60 machines that all
+  reconnect at once can reach it, so keep such machines on separate networks.
+
+Each count is a fixed window that starts with the first request of the minute.
+A machine over its limit gets `429 Too Many Requests` with `Retry-After: 60`.
+It is accepted again within a minute, and it needs no action.
+
+Requests with an unknown or revoked credential count against their client
+address. Each address gets 30 lookups a minute that find no machine. After that,
+such requests are not looked up again, so a flood of made-up tokens cannot load
+the database. A machine verified earlier keeps its own bucket meanwhile.
+
+`POST /onprem/enroll` takes no credential, so it stays limited per client IP:
+5 requests per minute. Enroll machines one at a time when several sit behind one
+NAT, or wait a minute between them.
+
+The client IP comes from `TRUST_PROXY_HOPS` (default `1`, Render's edge alone).
+Set it to `2` only while a Vercel rewrite sits in front of the API. A value that
+is too low shares one IP bucket across every client; a value that is too high
+lets a client spoof its address. Machine limits do not depend on the IP.
+
+The counters live in each API instance's memory. With several instances, a
+machine can make up to 120 requests per minute to each instance.
+
 ### Apply the migrations
 
 If Part 5 has not run against this database, apply its migrations first. Then
-apply the four on-prem migrations in this order. Each one is idempotent, so
+apply the five on-prem migrations in this order. Each one is idempotent, so
 running it again is a safe recovery step.
 
 ```bash
-npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_one_active_onprem_host.sql 20261015020000_onprem_machines.sql 20261015030000_onprem_machine_assignments.sql
+npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_one_active_onprem_host.sql 20261015020000_onprem_machines.sql 20261015030000_onprem_machine_assignments.sql 20261016010000_end_revoked_machine_bindings.sql
 ```
 
 ### Protect published releases

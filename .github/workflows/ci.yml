@@ -88,3 +88,50 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_DB_CA_CERT: ${{ secrets.SUPABASE_DB_CA_CERT }}
         run: npm test -- --ci --runInBand tests/integration/database.integration.spec.ts
+
+  e2e:
+    name: End-to-end suite (Postgres fixture)
+    # A push to a branch with an open pull request already runs through the
+    # pull_request event, so pushes run this job only on main.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # project-creation-environments reads the central workflow templates from
+      # this path. The default (../alphaci-workflow) resolves outside the
+      # checkout, so point it at the sibling checkout below.
+      TEMPLATE_REPO_PATH: ${{ github.workspace }}/alphaci-workflow
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Public repository. It must sit inside the workspace: actions/checkout
+      # refuses paths outside it. Pinned to the commit the suite was last run
+      # against. To bump it, run the suite against the new commit, then change
+      # `ref` here in the same pull request.
+      - uses: actions/checkout@v4
+        with:
+          repository: Alpha-Explora/alphaci-workflow
+          ref: 0e584eb948951c855fe46a3493a2b395b8a5d208
+          path: alphaci-workflow
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # global-setup starts the disposable Postgres fixture with docker compose.
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      - name: Upload e2e report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: artifacts/e2e/
+          if-no-files-found: ignore

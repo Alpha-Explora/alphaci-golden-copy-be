@@ -119,6 +119,13 @@ export class OnpremHostsService {
       throw new UnauthorizedException('Machine credential is invalid.');
     return this.machines.heartbeat(hashMachineSecret(credential), input);
   }
+  /** The active machine a credential belongs to; null for any other credential. */
+  async machineIdForCredential(
+    credential: string | null,
+  ): Promise<string | null> {
+    if (!credential?.startsWith(MACHINE_TOKEN_PREFIX)) return null;
+    return this.machines.activeMachineId(hashMachineSecret(credential));
+  }
   async revoke(
     workspaceId: string,
     machineId: string,
