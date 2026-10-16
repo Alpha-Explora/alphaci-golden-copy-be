@@ -76,7 +76,14 @@ export class OnpremHostsService {
       { ...input, name },
       hashMachineSecret(code),
     );
-    return { ...receipt, apiUrl, code, installer };
+    return {
+      ...receipt,
+      apiUrl,
+      code,
+      // The installer must be told to retire the credential already on disk.
+      replacesMachineId: input.replacesMachineId ?? null,
+      installer,
+    };
   }
   async consumeEnrollment(
     code: string,

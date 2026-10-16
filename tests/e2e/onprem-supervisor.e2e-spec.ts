@@ -51,6 +51,25 @@ describe('Machine supervisor with recording Docker fixture', () => {
       'compose -p',
     );
   });
+  it('publishes the host ports of every materialized environment for Windows forwarding', () => {
+    const f = shellFixture(),
+      a = f.assignment(18130),
+      b = f.assignment(9443);
+    writeFileSync(join(f.work, 'assignments.json'), JSON.stringify([a, b]));
+    f.run('/work/host/bin/alphaci-supervisor --once');
+    const published = () =>
+      JSON.parse(
+        readFileSync(join(f.work, 'host/published-ports.json'), 'utf8'),
+      ) as number[];
+    expect(published()).toEqual([9443, 18130]);
+    // Finished deployments leave the in-flight list; their ports stay forwarded.
+    writeFileSync(join(f.work, 'assignments.json'), '[]');
+    f.run('/work/host/bin/alphaci-supervisor --once');
+    expect(published()).toEqual([9443, 18130]);
+    expect(f.run('stat -c %a /work/host/published-ports.json').trim()).toBe(
+      '644',
+    );
+  });
   it('reports missing health and occupied ports as failed without pulling or changing a stack', () => {
     for (const missingHealth of [true, false]) {
       const f = shellFixture(),

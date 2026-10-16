@@ -17,7 +17,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import type { DeploymentProviderId } from '#kernel/ports/deployment-runtime.port';
-import { AddProjectEnvironmentDto } from './project-environment.dto';
+import { CreateProjectEnvironmentDto } from './project-environment.dto';
 
 /** Rejects C0/C1 control characters (incl. newlines and tabs). */
 export const PROJECT_NAME_PATTERN = /^[^\p{Cc}]*$/u;
@@ -347,8 +347,8 @@ export class CreateProjectDto {
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => AddProjectEnvironmentDto)
-  environments?: AddProjectEnvironmentDto[];
+  @Type(() => CreateProjectEnvironmentDto)
+  environments?: CreateProjectEnvironmentDto[];
 
   @IsOptional()
   @ValidateNested()

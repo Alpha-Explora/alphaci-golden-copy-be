@@ -23,7 +23,9 @@ if [ "${1:-}" = --enroll ]; then
   install -m 0755 alphaci-agent.sh /opt/alphaci/bin/alphaci-agent
   install -m 0755 alphaci-supervisor.sh /opt/alphaci/bin/alphaci-supervisor
   [ ! -f render-assignment.sh ] || install -m 0755 render-assignment.sh /opt/alphaci/bin/render-assignment
-  bash ./enroll.sh "${2:?Public API URL is required}" "${3:-ubuntu}"
+  # API URL, optional platform and optional --replace pass through unchanged.
+  [ -n "${2:-}" ] || { echo 'Public API URL is required.' >&2; exit 1; }
+  bash ./enroll.sh "${@:2}"
   /opt/alphaci/bin/alphaci-supervisor --heartbeat-only
   install -m 0644 alphaci-machine.service /etc/systemd/system/alphaci-machine.service
   install -m 0644 alphaci-machine.timer /etc/systemd/system/alphaci-machine.timer

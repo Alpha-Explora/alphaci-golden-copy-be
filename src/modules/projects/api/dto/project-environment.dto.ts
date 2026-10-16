@@ -35,6 +35,10 @@ export class AddProjectEnvironmentDto {
 
   @IsIn(['production', 'non_production'])
   role!: 'production' | 'non_production';
+}
+
+/** An environment defined during project creation, which may also pick its host. */
+export class CreateProjectEnvironmentDto extends AddProjectEnvironmentDto {
   @IsOptional()
   @ValidateNested()
   @Type(() => InitialHostAssignmentDto)
