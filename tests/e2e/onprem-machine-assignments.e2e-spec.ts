@@ -468,4 +468,42 @@ describe('Reusable machine assignment authorization', () => {
     );
     expect(ports.rows).toEqual([]);
   });
+  it('serializes a revoke against using its replacement code, with no deadlock and no half-applied replacement', async () => {
+    for (let round = 0; round < 5; round++) {
+      const target = await enroll();
+      const code = hashMachineSecret(randomUUID());
+      await machines.createEnrollment(
+        workspaceId,
+        userId,
+        {
+          name: 'contested',
+          platform: 'ubuntu',
+          requestId: randomUUID(),
+          replacesMachineId: target,
+        },
+        code,
+      );
+      const [revoked, consumed] = await Promise.allSettled([
+        machines.revoke(workspaceId, target),
+        machines.consume(code, hashMachineSecret(randomUUID()), 'c', {
+          agentVersion: 'test',
+          checks: [],
+        }),
+      ]);
+      // Revoke always succeeds. The code either wins the race or is refused cleanly;
+      // a deadlock would surface as a server error with a different message.
+      expect(revoked.status).toBe('fulfilled');
+      if (consumed.status === 'rejected')
+        expect((consumed.reason as Error).message).toMatch(
+          /Enrollment expired|has been revoked/,
+        );
+      const left = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM env_provisioning.onprem_hosts h
+           JOIN env_provisioning.onprem_machines m ON m.id=h.machine_id
+          WHERE m.id=$1 AND m.revoked_at IS NOT NULL AND h.revoked_at IS NULL`,
+        [target],
+      );
+      expect(left.rows[0]!.count).toBe('0');
+    }
+  });
 });

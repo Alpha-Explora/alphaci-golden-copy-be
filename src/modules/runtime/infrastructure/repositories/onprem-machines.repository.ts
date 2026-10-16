@@ -139,22 +139,37 @@ export class OnpremMachinesRepository {
     input: MachineCheckIn,
   ): Promise<MachineSummary> {
     return this.db.withTransaction(async (client) => {
-      // Lock workspace first, consistently with deletion and enrollment creation.
-      const lookup = await client.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1`,
+      const lookup = await client.query<{
+        workspace_id: string;
+        replaces_machine_id: string | null;
+      }>(
+        `SELECT workspace_id, replaces_machine_id FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1`,
         [codeHash],
       );
       if (!lookup.rows[0])
         throw new UnauthorizedException('Enrollment code is invalid.');
+      // Same lock order as revocation and enrollment creation: workspace, then
+      // machine, then enrollment, then bindings. Expiry is read after the locks.
       await this.lockWorkspace(client, lookup.rows[0].workspace_id);
+      const replacedId = lookup.rows[0].replaces_machine_id;
+      const replaced = replacedId
+        ? await client.query<{ revoked_at: Date | null }>(
+            `SELECT revoked_at FROM env_provisioning.onprem_machines WHERE id=$1 FOR UPDATE`,
+            [replacedId],
+          )
+        : null;
       const found = await client.query<EnrollmentRow>(
-        `SELECT *, expires_at <= NOW() AS expired FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1 FOR UPDATE`,
+        `SELECT *, expires_at <= clock_timestamp() AS expired FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1 FOR UPDATE`,
         [codeHash],
       );
       const enrollment = found.rows[0];
       if (!enrollment || enrollment.expired || enrollment.consumed_at)
         throw new ConflictException(
           'Enrollment expired or was already consumed. Create a new code; use explicit replacement if a credential was lost.',
+        );
+      if (replaced?.rows[0]?.revoked_at)
+        throw new ConflictException(
+          'The machine this code replaces has been revoked. Create a new enrollment.',
         );
       if (enrollment.replaces_machine_id) {
         await client.query(
@@ -231,6 +246,8 @@ export class OnpremMachinesRepository {
     return this.db.withTransaction(async (client) => {
       if (replacementId === id)
         throw new ConflictException('A machine cannot replace itself.');
+      // Same order as every path: workspace, machines, enrollments, then bindings.
+      await this.lockWorkspace(client, workspaceId);
       // Lock both machines in a fixed order so concurrent revocations cannot deadlock.
       const locked = await client.query<{
         id: string;
@@ -285,13 +302,13 @@ export class OnpremMachinesRepository {
         `INSERT INTO env_provisioning.onprem_workspace_lifecycle(workspace_id,deleted_at) VALUES($1,NOW()) ON CONFLICT(workspace_id) DO UPDATE SET deleted_at=NOW()`,
         [workspaceId],
       );
-      await client.query(
-        `UPDATE env_provisioning.onprem_enrollments SET expires_at=LEAST(expires_at,NOW()) WHERE workspace_id=$1`,
-        [workspaceId],
-      );
-      // Machines first, then their bindings: the same lock order as assignment.
+      // Same order as every path: machines, then enrollments, then bindings.
       const result = await client.query(
         `UPDATE env_provisioning.onprem_machines SET revoked_at=NOW() WHERE workspace_id=$1 AND revoked_at IS NULL`,
+        [workspaceId],
+      );
+      await client.query(
+        `UPDATE env_provisioning.onprem_enrollments SET expires_at=LEAST(expires_at,NOW()) WHERE workspace_id=$1`,
         [workspaceId],
       );
       await client.query(

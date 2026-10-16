@@ -177,10 +177,18 @@ export class OnpremMachineThrottlerGuard extends ThrottlerGuard {
         machineId,
         expiresAt: now + VERIFIED_TTL_MS,
       });
-    } else if (!failures || failures.resetsAt <= now) {
-      boundedSet(this.failedLookups, ip, { count: 1, resetsAt: now + 60_000 });
     } else {
-      failures.count += 1;
+      // The lookup found no live machine, so an earlier verification no longer
+      // holds: a revoked machine must not keep its own bucket through the fallback.
+      this.verified.delete(key);
+      if (!failures || failures.resetsAt <= now) {
+        boundedSet(this.failedLookups, ip, {
+          count: 1,
+          resetsAt: now + 60_000,
+        });
+      } else {
+        failures.count += 1;
+      }
     }
     return machineId;
   }

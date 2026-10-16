@@ -33,19 +33,26 @@ const DEFAULT_LIMIT = 60;
 /** Longer than the verified cache keeps an entry. */
 const PAST_CACHE_TTL_MS = 61_000;
 
-/** Credentials containing "known" belong to a machine; the rest do not. */
+/**
+ * Credentials containing "known" belong to a machine until they are revoked;
+ * the rest belong to none.
+ */
 function hostsFake() {
+  const revoked = new Set<string>();
   const machineIdForCredential = jest.fn(async (credential: string | null) =>
-    credential?.includes('known') ? `machine-${credential}` : null,
+    credential?.includes('known') && !revoked.has(credential)
+      ? `machine-${credential}`
+      : null,
   );
   return {
     machineIdForCredential,
+    revoke: (credential: string) => revoked.add(credential),
     hosts: { machineIdForCredential } as unknown as OnpremHostsService,
   };
 }
 
 function setup() {
-  const { hosts, machineIdForCredential } = hostsFake();
+  const { hosts, machineIdForCredential, revoke } = hostsFake();
   const storage = new FixedWindowThrottlerStorage();
   const options: ThrottlerModuleOptions = {
     throttlers: [
@@ -64,7 +71,7 @@ function setup() {
     new Reflector(),
     hosts,
   );
-  return { guard, machineIdForCredential };
+  return { guard, machineIdForCredential, revoke };
 }
 
 /** A request context for one handler, as Nest builds it for an HTTP call. */
@@ -192,6 +199,22 @@ describe('OnpremMachineThrottlerGuard', () => {
       call('heartbeat', `Bearer onprem_machine_random${index}`),
     );
     expect(machineIdForCredential).toHaveBeenCalledTimes(FAILED_LOOKUP_BUDGET);
+  });
+
+  it('forgets a verified machine once a lookup finds that it has been revoked', async () => {
+    const { guard, revoke } = setup();
+    await guard.onModuleInit();
+    const retired = 'onprem_machine_known_retired';
+    await guard.canActivate(call('heartbeat', `Bearer ${retired}`));
+    expect(guard['verified'].size).toBe(1);
+    revoke(retired);
+    advance(PAST_CACHE_TTL_MS);
+    // The lookup now finds no machine, so the earlier verification is dropped and
+    // the request is keyed on the address.
+    await expect(
+      guard.canActivate(call('heartbeat', `Bearer ${retired}`)),
+    ).resolves.toBe(true);
+    expect(guard['verified'].size).toBe(0);
   });
 
   it('serves an expired-cache machine from its own bucket once the failed-lookup budget is spent', async () => {
