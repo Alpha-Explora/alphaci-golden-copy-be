@@ -120,6 +120,55 @@ describe('Machine enrollment shell installer', () => {
     expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(true);
     expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(false);
   });
+  it('deletes the code file only when the server refuses the code itself (400, 401, 409)', () => {
+    for (const [status, deleted] of [
+      ['400', true],
+      ['401', true],
+      ['409', true],
+      ['403', false],
+      ['404', false],
+      ['408', false],
+      ['429', false],
+    ] as const) {
+      const f = shellFixture();
+      rmSync(join(f.work, 'host/machine.json'));
+      rmSync(join(f.work, 'host/secrets/machine-token'));
+      writeFileSync(join(f.work, 'host/enroll-code'), f.code + '\n');
+      writeFileSync(join(f.work, 'enroll-status'), status);
+      expect(() =>
+        f.run(
+          'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+        ),
+      ).toThrow();
+      expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(!deleted);
+      expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(
+        false,
+      );
+    }
+  });
+  it('does not keep a truncated response, and keeps the code file for a retry', () => {
+    const f = shellFixture();
+    rmSync(join(f.work, 'host/machine.json'));
+    rmSync(join(f.work, 'host/secrets/machine-token'));
+    writeFileSync(join(f.work, 'host/enroll-code'), f.code + '\n');
+    writeFileSync(join(f.work, 'enroll-truncate'), '1');
+    expect(() =>
+      f.run(
+        'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+      ),
+    ).toThrow();
+    expect(
+      existsSync(join(f.work, 'host/secrets/enrollment-response.json')),
+    ).toBe(false);
+    expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(false);
+    expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(true);
+    rmSync(join(f.work, 'enroll-truncate'));
+    expect(
+      f.run(
+        'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+      ),
+    ).toContain('Machine enrolled');
+  });
   it('consumes a replacement code only with --replace and restores the old credential when it fails', () => {
     const f = shellFixture();
     const receipt = JSON.parse(

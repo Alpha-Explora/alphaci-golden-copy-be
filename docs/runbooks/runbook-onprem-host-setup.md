@@ -557,7 +557,7 @@ page, then redeploy. Do not commit values to the repository.
 | `ONPREM_RELEASES_ENABLED` | `true` |
 | `ALPHACI_RELEASE_TRUST_KEYS_JSON` | The one-line JSON from Part 5, step 13. |
 | `ONPREM_INSTALLER_RELEASE_REPO` | The repository that publishes installer releases, as `owner/repo`. |
-| `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.1.0`. |
+| `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.2.0`. |
 | `ONPREM_INSTALLER_SHA256` | Recommended. The SHA-256 of `alphaci-agent-<version>.tar.gz`, copied from that release's `installer-release.json` after you have checked the release yourself. Enrollment then trusts this value rather than the release contents. |
 | `ONPREM_INSTALLER_RELEASE_TOKEN` | Optional. A GitHub token used only for API calls, to avoid the shared unauthenticated rate limit. Keep it secret. |
 
