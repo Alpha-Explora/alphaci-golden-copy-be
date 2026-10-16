@@ -2015,10 +2015,18 @@ function normalizeServicePath(servicePath: string | undefined): string {
  * run against a stale deployment, passed, and recorded a green stage for a
  * commit that was never shipped.
  *
- * The answer lives in the previous run's JOBS, so this asks for them. The
- * reporting job is excluded because it carries `if: always()` and therefore
- * runs even when the whole stage skipped - counting it would make every
- * skipped stage look like it had worked.
+ * The answer lives in the previous run's JOBS, so this asks for them, and
+ * reads ONE of them: the previous stage's own access gate. Every stage has
+ * one under the same id, and every job that does work waits on it, so "the
+ * gate passed" is exactly "the stage did its work".
+ *
+ * It used to count the jobs that did not skip, minus the reporting job. That
+ * is a deny-list, and it broke the moment a job that always runs was added:
+ * `pipeline-context` and this check itself run in every chained stage, so the
+ * count never dropped below 2 and the gate never closed. Observed on uat:
+ * quality failed on coverage, the build stage skipped all its work, and
+ * post-deploy tests ran against a hostname that had never been deployed and
+ * failed on its 404. Naming the job that matters cannot be outgrown that way.
  *
  * This job never fails. It publishes a fact, and the gate below consumes it,
  * so a stage with no work to build on SKIPS rather than turning red. A red
@@ -2046,6 +2054,7 @@ function upstreamWorkCheckJob() {
           PREVIOUS_RUN_ID: '${{ github.event.workflow_run.id }}',
           PREVIOUS_NAME: '${{ github.event.workflow_run.name }}',
           EVENT_NAME: '${{ github.event_name }}',
+          GATE_JOB: VALIDATE_ACCESS_JOB_ID,
         },
         run: [
           'set -euo pipefail',
@@ -2059,7 +2068,7 @@ function upstreamWorkCheckJob() {
           'JOBS=$(curl -sf --max-time 10 \\',
           '  -H "Authorization: Bearer $GH_TOKEN" \\',
           '  -H "Accept: application/vnd.github+json" \\',
-          '  "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest" \\',
+          '  "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest&per_page=100" \\',
           '  || printf \'{"jobs":[]}\')',
           '',
           '# An unreachable API is not evidence of a skipped stage. Letting the stage',
@@ -2072,16 +2081,24 @@ function upstreamWorkCheckJob() {
           '  exit 0',
           'fi',
           '',
-          'WORKED=$(printf \'%s\' "$JOBS" | jq \'[.jobs[]? | select(.name != "report-results") | select(.conclusion != "skipped")] | length\')',
+          'GATE=$(printf \'%s\' "$JOBS" | jq -r --arg gate "$GATE_JOB" \'[.jobs[]? | select(.name == $gate) | (.conclusion // "pending")] | first // "missing"\')',
           '',
-          'if [ "$WORKED" -eq 0 ]; then',
-          '  echo "::warning::$PREVIOUS_NAME completed without running any of its jobs, so this stage has nothing to act on and will skip. Its gate was closed, which usually means the stage before IT did not pass - fix that one."',
-          '  echo "ran=false" >> "$GITHUB_OUTPUT"',
+          'if [ "$GATE" = "success" ]; then',
+          '  echo "$PREVIOUS_NAME passed its $GATE_JOB gate."',
+          '  echo "ran=true" >> "$GITHUB_OUTPUT"',
           '  exit 0',
           'fi',
           '',
-          'echo "$PREVIOUS_NAME ran $WORKED job(s)."',
-          'echo "ran=true" >> "$GITHUB_OUTPUT"',
+          '# Same reasoning as an unreachable API: a stage without the gate job is',
+          '# not one this generator wrote, and its absence proves nothing.',
+          'if [ "$GATE" = "missing" ]; then',
+          '  echo "::warning::$PREVIOUS_NAME has no $GATE_JOB job, so this stage proceeds without checking whether it did any work."',
+          '  echo "ran=true" >> "$GITHUB_OUTPUT"',
+          '  exit 0',
+          'fi',
+          '',
+          'echo "::warning::$PREVIOUS_NAME did not pass its $GATE_JOB gate ($GATE), so this stage has nothing to act on and will skip. That gate closes when the stage before IT did not pass - fix that one."',
+          'echo "ran=false" >> "$GITHUB_OUTPUT"',
         ].join('\n'),
       },
     ],
@@ -2203,6 +2220,11 @@ function validationJob(stage: WorkflowStage) {
  * consumes the same decision. Pull-request source refs get the baseline;
  * direct `uat` and `main` runs get the strict profile. Sonar participation is
  * detected from secret presence (job-level `if` cannot read secrets context).
+ *
+ * `promotion-coverage-threshold` is the strict bar on every branch. The test
+ * jobs only warn when coverage clears their own threshold but not this one,
+ * so it says something on dev and nothing on uat and main, where the two are
+ * equal. Without it a dev commit met the strict bar only when promotion failed.
  */
 function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
   return {
@@ -2211,6 +2233,8 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
     outputs: {
       branch: '${{ steps.resolve.outputs.branch }}',
       'coverage-threshold': '${{ steps.resolve.outputs.coverage-threshold }}',
+      'promotion-coverage-threshold':
+        '${{ steps.resolve.outputs.promotion-coverage-threshold }}',
       'fail-on-warning': '${{ steps.resolve.outputs.fail-on-warning }}',
       'sonar-enabled': '${{ steps.resolve.outputs.sonar-enabled }}',
       'sonar-gate-wait': '${{ steps.resolve.outputs.sonar-gate-wait }}',
@@ -2237,6 +2261,7 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
           '{',
           '  echo "branch=$BRANCH"',
           '  echo "coverage-threshold=$COVERAGE_THRESHOLD"',
+          `  echo "promotion-coverage-threshold=${strictCoverage}"`,
           '  echo "fail-on-warning=$FAIL_ON_WARNING"',
           '  echo "sonar-enabled=$SONAR_CONFIGURED"',
           '  echo "sonar-gate-wait=$SONAR_GATE_WAIT"',
