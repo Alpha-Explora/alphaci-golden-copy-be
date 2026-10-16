@@ -5,7 +5,10 @@ import {
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '#kernel/db/database.service';
-import { moveMachineBindings } from './onprem-assignments.repository';
+import {
+  endMachineBindings,
+  moveMachineBindings,
+} from './onprem-assignments.repository';
 import type {
   EnrollmentInput,
   MachineCheckIn,
@@ -97,12 +100,12 @@ export class OnpremMachinesRepository {
       await this.lockWorkspace(client, workspaceId);
       if (input.replacesMachineId) {
         const machine = await client.query(
-          `SELECT id FROM env_provisioning.onprem_machines WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
+          `SELECT id FROM env_provisioning.onprem_machines WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL FOR UPDATE`,
           [input.replacesMachineId, workspaceId],
         );
         if (!machine.rowCount)
           throw new ConflictException(
-            'Replacement machine does not belong to this workspace.',
+            'Replacement machine must be an active machine in this workspace.',
           );
       }
       const result = await client.query<{ id: string; expires_at: Date }>(
@@ -136,22 +139,37 @@ export class OnpremMachinesRepository {
     input: MachineCheckIn,
   ): Promise<MachineSummary> {
     return this.db.withTransaction(async (client) => {
-      // Lock workspace first, consistently with deletion and enrollment creation.
-      const lookup = await client.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1`,
+      const lookup = await client.query<{
+        workspace_id: string;
+        replaces_machine_id: string | null;
+      }>(
+        `SELECT workspace_id, replaces_machine_id FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1`,
         [codeHash],
       );
       if (!lookup.rows[0])
         throw new UnauthorizedException('Enrollment code is invalid.');
+      // Same lock order as revocation and enrollment creation: workspace, then
+      // machine, then enrollment, then bindings. Expiry is read after the locks.
       await this.lockWorkspace(client, lookup.rows[0].workspace_id);
+      const replacedId = lookup.rows[0].replaces_machine_id;
+      const replaced = replacedId
+        ? await client.query<{ revoked_at: Date | null }>(
+            `SELECT revoked_at FROM env_provisioning.onprem_machines WHERE id=$1 FOR UPDATE`,
+            [replacedId],
+          )
+        : null;
       const found = await client.query<EnrollmentRow>(
-        `SELECT *, expires_at <= NOW() AS expired FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1 FOR UPDATE`,
+        `SELECT *, expires_at <= clock_timestamp() AS expired FROM env_provisioning.onprem_enrollments WHERE code_sha256=$1 FOR UPDATE`,
         [codeHash],
       );
       const enrollment = found.rows[0];
       if (!enrollment || enrollment.expired || enrollment.consumed_at)
         throw new ConflictException(
           'Enrollment expired or was already consumed. Create a new code; use explicit replacement if a credential was lost.',
+        );
+      if (replaced?.rows[0]?.revoked_at)
+        throw new ConflictException(
+          'The machine this code replaces has been revoked. Create a new enrollment.',
         );
       if (enrollment.replaces_machine_id) {
         await client.query(
@@ -217,7 +235,8 @@ export class OnpremMachinesRepository {
 
   /**
    * Retire a machine. With a replacement, its active environments move there
-   * first, keeping host ports where they are free on the replacement.
+   * first, keeping host ports where they are free on the replacement. Without
+   * one, its bindings end, so the environments are free to assign again.
    */
   async revoke(
     workspaceId: string,
@@ -227,6 +246,8 @@ export class OnpremMachinesRepository {
     return this.db.withTransaction(async (client) => {
       if (replacementId === id)
         throw new ConflictException('A machine cannot replace itself.');
+      // Same order as every path: workspace, machines, enrollments, then bindings.
+      await this.lockWorkspace(client, workspaceId);
       // Lock both machines in a fixed order so concurrent revocations cannot deadlock.
       const locked = await client.query<{
         id: string;
@@ -247,6 +268,16 @@ export class OnpremMachinesRepository {
             'Replacement machine must be an active machine in this workspace.',
           );
         moved = await moveMachineBindings(client, id, replacementId);
+      } else {
+        // Revoking is the emergency stop for a compromised credential, so it always
+        // succeeds. A pending replacement enrollment for this machine can no longer
+        // be used, and the machine row lock above serializes this with enrollment
+        // creation.
+        await client.query(
+          `UPDATE env_provisioning.onprem_enrollments SET expires_at=LEAST(expires_at,NOW()) WHERE replaces_machine_id=$1 AND consumed_at IS NULL`,
+          [id],
+        );
+        await endMachineBindings(client, id);
       }
       await client.query(
         `UPDATE env_provisioning.onprem_machines SET revoked_at=COALESCE(revoked_at,NOW()) WHERE workspace_id=$1 AND id=$2`,
@@ -256,18 +287,32 @@ export class OnpremMachinesRepository {
     });
   }
 
+  /** The active machine holding this credential hash; null when unknown or revoked. */
+  async activeMachineId(hash: string): Promise<string | null> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM env_provisioning.onprem_machines WHERE token_sha256=$1 AND revoked_at IS NULL`,
+      [hash],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
   async purgeWorkspace(workspaceId: string): Promise<{ removed: number }> {
     return this.db.withTransaction(async (client) => {
       await client.query(
         `INSERT INTO env_provisioning.onprem_workspace_lifecycle(workspace_id,deleted_at) VALUES($1,NOW()) ON CONFLICT(workspace_id) DO UPDATE SET deleted_at=NOW()`,
         [workspaceId],
       );
+      // Same order as every path: machines, then enrollments, then bindings.
+      const result = await client.query(
+        `UPDATE env_provisioning.onprem_machines SET revoked_at=NOW() WHERE workspace_id=$1 AND revoked_at IS NULL`,
+        [workspaceId],
+      );
       await client.query(
         `UPDATE env_provisioning.onprem_enrollments SET expires_at=LEAST(expires_at,NOW()) WHERE workspace_id=$1`,
         [workspaceId],
       );
-      const result = await client.query(
-        `UPDATE env_provisioning.onprem_machines SET revoked_at=NOW() WHERE workspace_id=$1 AND revoked_at IS NULL`,
+      await client.query(
+        `UPDATE env_provisioning.onprem_hosts SET revoked_at=NOW() WHERE revoked_at IS NULL AND machine_id IN (SELECT id FROM env_provisioning.onprem_machines WHERE workspace_id=$1)`,
         [workspaceId],
       );
       return { removed: result.rowCount ?? 0 };
