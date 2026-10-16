@@ -23,7 +23,8 @@ if [ "${1:-}" = --enroll ]; then
   install -m 0755 alphaci-agent.sh /opt/alphaci/bin/alphaci-agent
   install -m 0755 alphaci-supervisor.sh /opt/alphaci/bin/alphaci-supervisor
   [ ! -f render-assignment.sh ] || install -m 0755 render-assignment.sh /opt/alphaci/bin/render-assignment
-  # API URL, optional platform and optional --replace pass through unchanged.
+  # API URL, optional platform and optional --replace pass through unchanged. So does
+  # ALPHACI_ENROLL_CODE_FILE, which enroll.sh reads the code from when it is set.
   [ -n "${2:-}" ] || { echo 'Public API URL is required.' >&2; exit 1; }
   bash ./enroll.sh "${@:2}"
   /opt/alphaci/bin/alphaci-supervisor --heartbeat-only

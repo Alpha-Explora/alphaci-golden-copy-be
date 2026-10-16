@@ -16,7 +16,10 @@ It installs two scheduled tasks and one firewall rule per port:
 
 An enrolled machine (-ApiUrl) forwards no static ports unless -Ports is given.
 Add -ReplaceCredential with a replacement enrollment code to retire the current
-machine credential.
+machine credential. -EnrollCodeFile names a file holding the enrollment code
+(the one-click install file writes it); the code is read and the file deleted
+before anything else runs, and enrollment gets a copy readable only by this
+account that is deleted again afterwards. Without it, the code is prompted for.
 
 Rerunning updates all of them in place. Nothing inside the distro is changed.
 
@@ -35,6 +38,7 @@ param(
     [int[]] $Ports,
     [string] $ServiceAccount = ($env:USERDOMAIN + '\' + $env:USERNAME),
     [string] $ApiUrl,
+    [string] $EnrollCodeFile,
     [switch] $ReplaceCredential,
     [switch] $OnlyWhenSignedIn
 )
@@ -49,6 +53,15 @@ if (-not $PSBoundParameters.ContainsKey('Ports')) {
     $Ports = if ($ApiUrl -or (Test-Path -LiteralPath (Join-Path $root 'installation-state.json'))) { @() } else { @(443) }
 }
 if ($ReplaceCredential -and -not $ApiUrl) { throw 'ReplaceCredential requires -ApiUrl.' }
+if ($EnrollCodeFile -and -not $ApiUrl) { throw 'EnrollCodeFile requires -ApiUrl.' }
+# Read the code and delete its file before anything can fail, so no failed run leaves it behind.
+$enrollCode = $null
+if ($EnrollCodeFile) {
+    if (-not (Test-Path -LiteralPath $EnrollCodeFile -PathType Leaf)) { throw 'The enrollment code file is missing.' }
+    $enrollCode = (Get-Content -Raw -LiteralPath $EnrollCodeFile).Trim()
+    Remove-Item -Force -LiteralPath $EnrollCodeFile
+    if ($enrollCode -cnotmatch '^[A-Za-z0-9_-]{43}$') { throw 'Invalid enrollment code format.' }
+}
 
 New-Item -ItemType Directory -Force -Path $root, (Join-Path $root 'logs') | Out-Null
 if ($ApiUrl) {
@@ -96,16 +109,29 @@ if ($ApiUrl) {
     $agentDirectory = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\agent')).Path -replace '\\', '/'
     $linuxInstallerDirectory = ((& wsl.exe -d $Distro -e wslpath -u $agentDirectory) -join '').Trim()
     if ($LASTEXITCODE -ne 0 -or -not $linuxInstallerDirectory) { throw 'Could not locate the extracted agent directory inside WSL.' }
-    # Enrollment reads its code interactively. No code or credential is passed in argv or state.
-    $enrollArguments = @(
-        '-d', $Distro, '-u', 'root', '-e', 'bash',
-        ('"' + $linuxInstallerDirectory + '/install.sh"'), '--enroll', $ApiUrl, 'windows')
-    # A replacement code retires the credential already on this machine.
-    if ($ReplaceCredential) { $enrollArguments += '--replace' }
-    # Start-Process hands wsl.exe the console itself; called with &, PowerShell captures its
-    # output line by line and the code prompt (no trailing newline) never appears.
-    $installer = Start-Process -FilePath 'wsl.exe' -NoNewWindow -Wait -PassThru -ArgumentList $enrollArguments
-    if ($installer.ExitCode -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
+    # Enrollment takes its code from a file that exists only for this run: written here,
+    # readable only by this account, deleted in finally. No code or credential is passed in argv.
+    $codeFile = $null
+    try {
+        $enrollArguments = @('-d', $Distro, '-u', 'root', '-e')
+        if ($enrollCode) {
+            $codeFile = Join-Path $env:TEMP ('alphaci-enroll-' + [guid]::NewGuid() + '.txt')
+            [IO.File]::WriteAllText($codeFile, $enrollCode + "`n", [Text.UTF8Encoding]::new($false))
+            & icacls.exe $codeFile /inheritance:r /grant:r ($currentAccount + ':(R,D)') | Out-Null
+            $codeLinuxPath = ((& wsl.exe -d $Distro -e wslpath -u ($codeFile -replace '\\', '/')) -join '').Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $codeLinuxPath) { throw 'Could not pass the enrollment code to WSL.' }
+            $enrollArguments += @('env', ('"ALPHACI_ENROLL_CODE_FILE=' + $codeLinuxPath + '"'))
+        }
+        $enrollArguments += @('bash', ('"' + $linuxInstallerDirectory + '/install.sh"'), '--enroll', $ApiUrl, 'windows')
+        # A replacement code retires the credential already on this machine.
+        if ($ReplaceCredential) { $enrollArguments += '--replace' }
+        # Start-Process hands wsl.exe the console itself; called with &, PowerShell captures its
+        # output line by line and the code prompt (no trailing newline) never appears.
+        $installer = Start-Process -FilePath 'wsl.exe' -NoNewWindow -Wait -PassThru -ArgumentList $enrollArguments
+        if ($installer.ExitCode -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
+    } finally {
+        if ($codeFile) { Remove-Item -Force -LiteralPath $codeFile -ErrorAction SilentlyContinue }
+    }
     Write-Host 'Enrolled. Setting up startup and port forwarding...'
     Save-InstallPhase 'startup'
 }

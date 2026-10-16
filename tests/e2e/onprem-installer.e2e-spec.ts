@@ -35,6 +35,52 @@ describe('Machine enrollment shell installer', () => {
       readFileSync(join(f.work, 'requests.log'), 'utf8').trim().split('\n'),
     ).toEqual(['enroll']);
   });
+  it('reads the code from ALPHACI_ENROLL_CODE_FILE, deletes the file, and keeps the code out of argv and output', () => {
+    const f = shellFixture();
+    rmSync(join(f.work, 'host/machine.json'));
+    rmSync(join(f.work, 'host/secrets/machine-token'));
+    writeFileSync(join(f.work, 'host/enroll-code'), f.code + '\n', {
+      mode: 0o600,
+    });
+    const output = f.run(
+      'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+    );
+    expect(output).toContain('Code received from the install file');
+    expect(output).not.toContain(f.code);
+    expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(false);
+    expect(
+      readFileSync(join(f.work, 'curl-arguments.log'), 'utf8'),
+    ).not.toContain(f.code);
+    expect(
+      readFileSync(join(f.work, 'requests.log'), 'utf8').trim().split('\n'),
+    ).toEqual(['enroll']);
+    expect(f.run('stat -c %a /work/host/secrets/machine-token').trim()).toBe(
+      '600',
+    );
+  });
+  it('deletes a code file before it can be used, whether the code is malformed or the server refuses it', () => {
+    const f = shellFixture();
+    rmSync(join(f.work, 'host/machine.json'));
+    rmSync(join(f.work, 'host/secrets/machine-token'));
+    writeFileSync(join(f.work, 'host/enroll-code'), 'not-a-valid-code\n');
+    expect(() =>
+      f.run(
+        'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+      ),
+    ).toThrow();
+    expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(false);
+    expect(existsSync(join(f.work, 'requests.log'))).toBe(false);
+
+    writeFileSync(join(f.work, 'host/enroll-code'), f.code + '\n');
+    writeFileSync(join(f.work, 'fail-enroll'), '1');
+    expect(() =>
+      f.run(
+        'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+      ),
+    ).toThrow();
+    expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(false);
+    expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(false);
+  });
   it('consumes a replacement code only with --replace and restores the old credential when it fails', () => {
     const f = shellFixture();
     const receipt = JSON.parse(

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Run locally as root. Codes arrive through the terminal, never command arguments.
-# --replace consumes a replacement code: the current credential is set aside and
-# restored only if the new code is never accepted.
+# Run locally as root. Codes arrive through the terminal or from a code file named
+# by ALPHACI_ENROLL_CODE_FILE, never command arguments. --replace consumes a
+# replacement code: the current credential is set aside and restored only if the
+# new code is never accepted.
 set -euo pipefail
 umask 077
 ROOT="${ALPHACI_HOME:-/opt/alphaci}"
@@ -13,6 +14,18 @@ API="${ARGS[0]:?Usage: enroll.sh https://api.example.com [ubuntu|windows] [--rep
 PLATFORM="${ARGS[1]:-ubuntu}"
 [[ "$API" =~ ^https://[^[:space:]]+$ ]] || { echo 'Use the public HTTPS API address.' >&2; exit 1; }
 API="${API%/}"; API="${API%/api/v1}"
+# An installer hands the code over in a file. Read it and delete the file before
+# anything else can exit, so a run that fails here never leaves the code behind.
+CODE=""; CODE_FROM_FILE=0
+if [ -n "${ALPHACI_ENROLL_CODE_FILE:-}" ]; then
+  CODE_FILE="$ALPHACI_ENROLL_CODE_FILE"
+  unset ALPHACI_ENROLL_CODE_FILE
+  [ -f "$CODE_FILE" ] && [ ! -L "$CODE_FILE" ] || { rm -f -- "$CODE_FILE"; echo 'The enrollment code file is missing.' >&2; exit 1; }
+  CODE=$(<"$CODE_FILE")
+  rm -f -- "$CODE_FILE"
+  unset CODE_FILE
+  CODE_FROM_FILE=1
+fi
 install -d -m 0700 "$ROOT/secrets"
 PENDING="$ROOT/secrets/enrollment-response.json"
 RETIRED=""
@@ -38,11 +51,15 @@ restore_retired() {
 }
 trap 'unset CODE; rm -rf "$WORK"; restore_retired' EXIT
 if [ ! -s "$PENDING" ]; then
+if [ "$CODE_FROM_FILE" = 1 ]; then
+  printf 'Code received from the install file. Enrolling this machine...\n' >&2
+else
 # End the prompt with a newline so it shows even where output is line-buffered.
 printf '\nPaste the one-time enrollment code from AlphaCI, then press Enter (input is hidden):\n' >&2
 read -r -s CODE
-CODE="${CODE//[[:space:]]/}"
 printf 'Code received. Enrolling this machine...\n' >&2
+fi
+CODE="${CODE//[[:space:]]/}"
 [[ "$CODE" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo 'Invalid code format.' >&2; exit 1; }
 printf '%s' "$CODE" | jq -Rs '{code:.,agentVersion:"0.1.0",checks:[]}' > "$WORK/request.json"
 unset CODE

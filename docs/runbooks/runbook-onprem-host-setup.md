@@ -33,8 +33,10 @@ in the release registry contract. Keep the signing key in Cloud KMS (or, for lab
 hosts only, in CI's secret store). It never belongs on an enrolled machine.
 
 1. Build the preview package with `node scripts/package-onprem-agent.mjs`.
-2. Choose Add host and copy the checksum-verifying installation command for the
-   chosen platform. Paste the one-time code only at the installer's hidden prompt.
+2. Choose Add host and either download the install file for the chosen platform
+   (it already carries the one-time code: run it once, then delete it), or copy
+   the checksum-verifying installation command and paste the code only at the
+   installer's hidden prompt.
 3. On Ubuntu, install Docker Engine/Compose, curl, jq, OpenSSL, flock,
    ca-certificates, and iproute2 first. Enable systemd and leave at least 1 GiB
    free. The installer checks these prerequisites and keeps existing Docker configuration.
