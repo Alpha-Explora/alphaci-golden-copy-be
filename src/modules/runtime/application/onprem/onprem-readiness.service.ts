@@ -7,6 +7,15 @@ import {
   type DeploymentProjectReferenceLookup,
 } from '#kernel/ports/deployment-runtime.port';
 import { validateCiApiConnectivity } from '#kernel/config/ci-api-connectivity';
+import {
+  RELEASE_TRUST_KEYS_ENV,
+  resolveReleaseSigningSource,
+} from '#kernel/config/release-signing.config';
+import {
+  kmsTrustProblem,
+  labTrustProblem,
+  readLabSigningKey,
+} from '#kernel/config/release-signing-key';
 import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
 
 export interface ReadinessCheck {
@@ -166,6 +175,8 @@ export class OnpremReadinessService {
         'Configure valid P-256 release verification public keys.',
       );
     }
+    const signing = await this.releaseSigningStatus();
+    check('release-signing', signing.status, signing.message);
     check(
       'ci-signing-secret',
       'unverified',
@@ -177,6 +188,60 @@ export class OnpremReadinessService {
       'Verify image pull access from the assigned host.',
     );
     return { checks };
+  }
+
+  /**
+   * Whether releases can be signed and verified: a usable signing source, and a
+   * trust entry that verifies its key ID. Cloud KMS is the production path; the
+   * lab key is accepted only as a lab-only source.
+   */
+  private async releaseSigningStatus(): Promise<{
+    status: ReadinessCheck['status'];
+    message: string;
+  }> {
+    const read = (key: string) => this.config.get<string>(key);
+    const source = resolveReleaseSigningSource(read);
+    const trustKeys = read(RELEASE_TRUST_KEYS_ENV);
+    const failed = (message: string) => ({
+      status: 'failed' as const,
+      message,
+    });
+    switch (source.kind) {
+      case 'none':
+        return failed(
+          'Releases cannot be signed: configure Cloud KMS (ALPHACI_RELEASE_KMS_KEY_VERSION with its two signer settings). Lab hosts only may use ONPREM_LAB_SIGNING_KEY_PATH.',
+        );
+      case 'invalid':
+        return failed(`Releases cannot be signed: ${source.problem}`);
+      case 'kms': {
+        const problem = kmsTrustProblem(source.keyVersion, trustKeys);
+        return problem
+          ? failed(problem)
+          : {
+              status: 'passed',
+              message:
+                'Releases are signed with Cloud KMS, and the key version is trusted.',
+            };
+      }
+      case 'lab': {
+        let pem: string;
+        try {
+          pem = await readLabSigningKey(source.keyPath);
+        } catch (error) {
+          return failed(
+            `The lab signing key cannot be used: ${error instanceof Error ? error.message : 'unreadable'}.`,
+          );
+        }
+        const problem = labTrustProblem(pem, trustKeys);
+        return problem
+          ? failed(problem)
+          : {
+              status: 'passed',
+              message:
+                'Releases are signed with a lab key (ONPREM_LAB_SIGNING_KEY_PATH) that is trusted. Lab hosts only; client hosts must use Cloud KMS.',
+            };
+      }
+    }
   }
 
   private async machineChecks(

@@ -1,9 +1,14 @@
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   BadRequestException,
   ForbiddenException,
   InternalServerErrorException,
   NotFoundException,
   UnauthorizedException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
@@ -23,6 +28,7 @@ describe('DeploymentTargetsService', () => {
   const deploymentTargetsRepository = {
     createDeploymentTarget: jest.fn(),
     deleteDeploymentTargetForUser: jest.fn(),
+    findEnvironmentTarget: jest.fn(),
     findDeploymentTargetForUser: jest.fn(),
     listDeploymentTargets: jest.fn(),
     updateDeploymentTargetMetadataForUser: jest.fn(),
@@ -41,6 +47,7 @@ describe('DeploymentTargetsService', () => {
     getClient: jest.fn(),
   };
   const configService = {
+    get: jest.fn(),
     getOrThrow: jest.fn(),
   };
   const capabilityResolver = {
@@ -67,6 +74,14 @@ describe('DeploymentTargetsService', () => {
   };
   const providerRegistry = {
     find: jest.fn((provider: string) => {
+      if (provider === 'onprem-compose') {
+        return {
+          label: 'On-prem Compose',
+          supportedSlots: ['backend', 'frontend', 'standalone'],
+          isEnabled: () => ({ enabled: true }),
+          capabilities: { connectivity: 'indirect' },
+        };
+      }
       if (provider === 'render') {
         return {
           label: 'Render',
@@ -1716,6 +1731,215 @@ describe('DeploymentTargetsService', () => {
         });
       }
       expect(client.queryLogs).not.toHaveBeenCalled();
+    });
+  });
+  describe('on-prem targets added by a user', () => {
+    const KEY_VERSION =
+      'projects/alphaci-prod/locations/europe-west1/keyRings/release/cryptoKeys/release-signing/cryptoKeyVersions/3';
+    const SIGNER_ENV = {
+      ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER:
+        'projects/123456789/locations/global/workloadIdentityPools/alphaci-release/providers/github',
+      ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT:
+        'release-signer@alphaci-prod.iam.gserviceaccount.com',
+    };
+    const onpremRequest = {
+      slot: 'backend',
+      provider: 'onprem-compose',
+      ownershipMode: 'byo',
+      environmentId: '0c1d2e3f-4a5b-4c6d-8e7f-000000000001',
+    } as never;
+    const githubActions = {
+      setActionsSecretStrict: jest.fn(),
+      setActionsVariableStrict: jest.fn(),
+    };
+    const withGithub = () => {
+      Object.assign(service, { githubActions });
+      return service;
+    };
+    const configuredWith = (env: Record<string, string>) =>
+      configService.get.mockImplementation((key: string) => env[key]);
+
+    beforeEach(() => {
+      projectReferenceLookup.findProjectEnvironment.mockResolvedValue({
+        id: '0c1d2e3f-4a5b-4c6d-8e7f-000000000001',
+        slug: 'main',
+        sourceBranch: 'main',
+        role: 'production',
+      });
+      deploymentTargetsRepository.findEnvironmentTarget.mockResolvedValue(null);
+      deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([]);
+      deploymentTargetsRepository.createDeploymentTarget.mockResolvedValue({
+        id: 'target-1',
+        slot: 'backend',
+        provider: 'onprem-compose',
+        providerProjectName: 'lab-pc',
+        environmentId: '0c1d2e3f-4a5b-4c6d-8e7f-000000000001',
+      });
+    });
+
+    it('refuses without a GitHub token, and creates nothing', async () => {
+      await expect(
+        withGithub().createDeploymentTarget(
+          'project-1',
+          'user-1',
+          onpremRequest,
+          { githubAccessToken: null },
+        ),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(githubActions.setActionsVariableStrict).not.toHaveBeenCalled();
+      expect(
+        deploymentTargetsRepository.createDeploymentTarget,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('refuses with the step to take when the backend has no signing configuration, and creates nothing', async () => {
+      configuredWith({});
+
+      await expect(
+        withGithub().createDeploymentTarget(
+          'project-1',
+          'user-1',
+          onpremRequest,
+          { githubAccessToken: 'gh-token' },
+        ),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('regenerate this project'),
+      });
+
+      expect(githubActions.setActionsVariableStrict).not.toHaveBeenCalled();
+      expect(
+        deploymentTargetsRepository.createDeploymentTarget,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('writes the Cloud KMS variable before creating the target, when signing is trusted', async () => {
+      const { publicKey } = generateKeyPairSync('ec', {
+        namedCurve: 'prime256v1',
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+      });
+      configuredWith({
+        ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+        ...SIGNER_ENV,
+        ALPHACI_RELEASE_TRUST_KEYS_JSON: JSON.stringify({
+          [KEY_VERSION]: publicKey,
+        }),
+      });
+
+      await expect(
+        withGithub().createDeploymentTarget(
+          'project-1',
+          'user-1',
+          onpremRequest,
+          { githubAccessToken: 'gh-token' },
+        ),
+      ).resolves.toMatchObject({ id: 'target-1' });
+
+      expect(githubActions.setActionsVariableStrict).toHaveBeenCalledWith(
+        'gh-token',
+        'owner',
+        'repo',
+        'ALPHACI_RELEASE_KMS_KEY_VERSION',
+        KEY_VERSION,
+      );
+      expect(
+        githubActions.setActionsVariableStrict.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        deploymentTargetsRepository.createDeploymentTarget.mock
+          .invocationCallOrder[0] ?? Infinity,
+      );
+    });
+
+    it('refuses an untrusted Cloud KMS key version before writing the variable', async () => {
+      configuredWith({
+        ...SIGNER_ENV,
+        ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+        ALPHACI_RELEASE_TRUST_KEYS_JSON: '{}',
+      });
+
+      await expect(
+        withGithub().createDeploymentTarget(
+          'project-1',
+          'user-1',
+          onpremRequest,
+          {
+            githubAccessToken: 'gh-token',
+          },
+        ),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('would not verify'),
+      });
+
+      expect(githubActions.setActionsVariableStrict).not.toHaveBeenCalled();
+      expect(
+        deploymentTargetsRepository.createDeploymentTarget,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('refuses an untrusted lab key before writing it, so the lab private key never reaches the repository', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'lab-key-'));
+      try {
+        const { privateKey } = generateKeyPairSync('ec', {
+          namedCurve: 'prime256v1',
+          privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+          publicKeyEncoding: { type: 'spki', format: 'pem' },
+        });
+        const keyPath = join(directory, 'release-signing.key');
+        writeFileSync(keyPath, privateKey);
+        configuredWith({
+          ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+          ALPHACI_RELEASE_TRUST_KEYS_JSON: '{}',
+        });
+
+        await expect(
+          withGithub().createDeploymentTarget(
+            'project-1',
+            'user-1',
+            onpremRequest,
+            {
+              githubAccessToken: 'gh-token',
+            },
+          ),
+        ).rejects.toMatchObject({
+          message: expect.stringContaining('would not verify'),
+        });
+
+        expect(githubActions.setActionsSecretStrict).not.toHaveBeenCalled();
+        expect(githubActions.setActionsVariableStrict).not.toHaveBeenCalled();
+        expect(
+          deploymentTargetsRepository.createDeploymentTarget,
+        ).not.toHaveBeenCalled();
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('refuses on a server without the GitHub port, and creates nothing', async () => {
+      await expect(
+        service.createDeploymentTarget('project-1', 'user-1', onpremRequest, {
+          githubAccessToken: 'gh-token',
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+      expect(
+        deploymentTargetsRepository.createDeploymentTarget,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('creates a provisioning target without touching signing, which provisioning configures for the whole project', async () => {
+      configuredWith({});
+
+      await withGithub().createDeploymentTarget(
+        'project-1',
+        'user-1',
+        onpremRequest,
+      );
+
+      expect(githubActions.setActionsVariableStrict).not.toHaveBeenCalled();
+      expect(
+        deploymentTargetsRepository.createDeploymentTarget,
+      ).toHaveBeenCalledTimes(1);
     });
   });
 });
