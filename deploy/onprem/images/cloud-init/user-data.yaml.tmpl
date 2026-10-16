@@ -1,0 +1,42 @@
+#cloud-config
+# AlphaCI on-prem Ubuntu VM. scripts/render-onprem-user-data.mjs fills in the {{...}}
+# placeholders and inlines the first-boot script and unit from deploy/onprem/images/first-boot.
+# The enrollment code below is one-time and expires 10 minutes after it was issued:
+# start the VM before it expires, or get a new code from Hosting.
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - docker.io
+  - docker-compose-v2
+  - iproute2
+  - jq
+  - openssl
+  - util-linux
+write_files:
+  - path: /etc/alphaci/enrollment-code
+    owner: root:root
+    permissions: '0600'
+    content: |
+      {{ENROLLMENT_CODE}}
+  - path: /etc/alphaci/first-boot.env
+    owner: root:root
+    permissions: '0644'
+    content: |
+      ALPHACI_API_URL='{{API_URL}}'
+      ALPHACI_ARCHIVE_URL='{{ARCHIVE_URL}}'
+      ALPHACI_ARCHIVE_SHA256='{{ARCHIVE_SHA256}}'
+  - path: /usr/local/sbin/alphaci-first-boot
+    owner: root:root
+    permissions: '0755'
+    content: |
+{{FIRST_BOOT_SCRIPT}}
+  - path: /etc/systemd/system/alphaci-first-boot.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+{{FIRST_BOOT_UNIT}}
+runcmd:
+  - [systemctl, enable, --now, docker.service]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, alphaci-first-boot.service]

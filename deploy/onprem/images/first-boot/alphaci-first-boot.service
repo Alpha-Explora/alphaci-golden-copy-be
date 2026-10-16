@@ -1,0 +1,14 @@
+[Unit]
+Description=Enroll this AlphaCI on-prem machine from the code it was given
+Wants=network-online.target
+After=network-online.target docker.service
+# Runs only while the code is waiting. Without it the unit is skipped on every boot.
+ConditionPathExists=/etc/alphaci/enrollment-code
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/alphaci-first-boot
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target
