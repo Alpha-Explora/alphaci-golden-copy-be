@@ -11,3 +11,5 @@
 *.txt text eol=lf
 *.sh text eol=lf
 deploy/onprem/agent/* text eol=lf
+deploy/onprem/deb/* text eol=lf
+deploy/onprem/images/** text eol=lf

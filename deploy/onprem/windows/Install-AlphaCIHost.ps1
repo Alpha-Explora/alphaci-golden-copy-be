@@ -54,12 +54,12 @@ if (-not $PSBoundParameters.ContainsKey('Ports')) {
 }
 if ($ReplaceCredential -and -not $ApiUrl) { throw 'ReplaceCredential requires -ApiUrl.' }
 if ($EnrollCodeFile -and -not $ApiUrl) { throw 'EnrollCodeFile requires -ApiUrl.' }
-# Read the code and delete its file before anything can fail, so no failed run leaves it behind.
+# Read and check the code now. The file itself is deleted only when enrollment is about to
+# run, so a restart or a failed prerequisite leaves the code in place for a rerun.
 $enrollCode = $null
 if ($EnrollCodeFile) {
     if (-not (Test-Path -LiteralPath $EnrollCodeFile -PathType Leaf)) { throw 'The enrollment code file is missing.' }
     $enrollCode = (Get-Content -Raw -LiteralPath $EnrollCodeFile).Trim()
-    Remove-Item -Force -LiteralPath $EnrollCodeFile
     if ($enrollCode -cnotmatch '^[A-Za-z0-9_-]{43}$') { throw 'Invalid enrollment code format.' }
 }
 
@@ -95,7 +95,8 @@ if ($ApiUrl) {
     if ($restartRequired) {
         Save-InstallPhase 'restart_required'
         Write-Output 'Restart Windows, then rerun this command. The saved installation identity will be reused.'
-        return
+        # 3010 is the "restart required" code; the code file is still there for the rerun.
+        exit 3010
     }
     if ($ServiceAccount -ne $currentAccount) { throw 'Enroll while signed in as the Windows account that owns this WSL distro, then configure its startup task.' }
     $installedDistros = @((& wsl.exe -l -q) -replace [char]0, '' | Where-Object { $_.Trim() })
@@ -115,6 +116,8 @@ if ($ApiUrl) {
     try {
         $enrollArguments = @('-d', $Distro, '-u', 'root', '-e')
         if ($enrollCode) {
+            # The caller's copy goes now that enrollment is about to read the code.
+            Remove-Item -Force -LiteralPath $EnrollCodeFile
             $codeFile = Join-Path $env:TEMP ('alphaci-enroll-' + [guid]::NewGuid() + '.txt')
             [IO.File]::WriteAllText($codeFile, $enrollCode + "`n", [Text.UTF8Encoding]::new($false))
             # Grant by SID: an account name can be ambiguous, and a failed grant must not leave the code readable.
