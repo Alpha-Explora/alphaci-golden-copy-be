@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Enroll this Ubuntu machine with AlphaCI and start its agent timer. The package
+# installs the agent without enrolling it, so run this once after installing.
+#   sudo alphaci-enroll https://api.example.com
+#   sudo alphaci-enroll https://api.example.com --replace      (replacement code)
+#   sudo env ALPHACI_ENROLL_CODE_FILE=/path/to/code alphaci-enroll https://api.example.com
+# Without ALPHACI_ENROLL_CODE_FILE the code is prompted for, hidden, as usual.
+set -euo pipefail
+ROOT=/opt/alphaci
+[ "$EUID" -eq 0 ] || { echo 'Run alphaci-enroll with sudo.' >&2; exit 1; }
+[ "$#" -ge 1 ] || { echo 'Usage: sudo alphaci-enroll https://api.example.com [--replace]' >&2; exit 2; }
+. "$ROOT/bin/ubuntu-prerequisites.sh"
+check_ubuntu_prerequisites
+# The API URL comes first; --replace passes through to enroll.sh unchanged.
+"$ROOT/bin/enroll" "$1" ubuntu "${@:2}"
+"$ROOT/bin/alphaci-supervisor" --heartbeat-only
+systemctl enable --now alphaci-machine.timer
+echo 'Host connected. Assign an environment in AlphaCI to deploy a project.'
