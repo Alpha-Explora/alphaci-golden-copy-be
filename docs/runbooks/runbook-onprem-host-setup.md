@@ -51,7 +51,8 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    Hosting is consumed only with `install.sh --enroll <API URL> --replace`
    (Windows: `-ReplaceCredential`), which sets the current credential aside and
    restores it if the code is not accepted. A changed API URL also requires
-   replacement. The timer starts only after a successful authenticated heartbeat.
+   replacement. The timer starts once enrollment succeeds; the first authenticated
+   check-in runs before it, and if that check-in fails the timer keeps retrying.
 6. Wait for Connected. While it is the workspace's only connected machine,
    new non-production on-prem environments are assigned to it automatically
    (container port 3000 for a frontend, 4000 for a backend, health at `/`);

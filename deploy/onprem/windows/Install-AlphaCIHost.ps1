@@ -117,7 +117,10 @@ if ($ApiUrl) {
         if ($enrollCode) {
             $codeFile = Join-Path $env:TEMP ('alphaci-enroll-' + [guid]::NewGuid() + '.txt')
             [IO.File]::WriteAllText($codeFile, $enrollCode + "`n", [Text.UTF8Encoding]::new($false))
-            & icacls.exe $codeFile /inheritance:r /grant:r ($currentAccount + ':(R,D)') | Out-Null
+            # Grant by SID: an account name can be ambiguous, and a failed grant must not leave the code readable.
+            $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            & icacls.exe $codeFile /inheritance:r /grant:r ('*' + $currentSid + ':(R,D)') | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not restrict the enrollment code file to this account.' }
             $codeLinuxPath = ((& wsl.exe -d $Distro -e wslpath -u ($codeFile -replace '\\', '/')) -join '').Trim()
             if ($LASTEXITCODE -ne 0 -or -not $codeLinuxPath) { throw 'Could not pass the enrollment code to WSL.' }
             $enrollArguments += @('env', ('"ALPHACI_ENROLL_CODE_FILE=' + $codeLinuxPath + '"'))

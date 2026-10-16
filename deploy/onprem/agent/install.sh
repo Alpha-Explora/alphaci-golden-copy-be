@@ -27,12 +27,19 @@ if [ "${1:-}" = --enroll ]; then
   # ALPHACI_ENROLL_CODE_FILE, which enroll.sh reads the code from when it is set.
   [ -n "${2:-}" ] || { echo 'Public API URL is required.' >&2; exit 1; }
   bash ./enroll.sh "${@:2}"
-  /opt/alphaci/bin/alphaci-supervisor --heartbeat-only
   install -m 0644 alphaci-machine.service /etc/systemd/system/alphaci-machine.service
   install -m 0644 alphaci-machine.timer /etc/systemd/system/alphaci-machine.timer
   systemctl daemon-reload
+  # The units go in before the first check-in, so an enrolled machine keeps polling even
+  # when that check-in fails; the timer retries it every 30 seconds.
+  checked_in=1
+  /opt/alphaci/bin/alphaci-supervisor --heartbeat-only || checked_in=0
   systemctl enable --now alphaci-machine.timer
-  echo 'Host connected. Assign an environment in AlphaCI to deploy a project.'
+  if [ "$checked_in" = 1 ]; then
+    echo 'Host connected. Assign an environment in AlphaCI to deploy a project.'
+  else
+    echo 'Host enrolled, but the first check-in failed. The timer will retry; check journalctl -u alphaci-machine.service if it stays offline.' >&2
+  fi
   exit 0
 fi
 
