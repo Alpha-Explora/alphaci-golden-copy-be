@@ -88,3 +88,33 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_DB_CA_CERT: ${{ secrets.SUPABASE_DB_CA_CERT }}
         run: npm test -- --ci --runInBand tests/integration/database.integration.spec.ts
+
+  e2e:
+    name: End-to-end suite (Postgres fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # project-creation-environments reads the central workflow templates from
+      # this path. The default (../alphaci-workflow) resolves outside the
+      # checkout, so point it at the sibling checkout below.
+      TEMPLATE_REPO_PATH: ${{ github.workspace }}/alphaci-workflow
+    steps:
+      - uses: actions/checkout@v4
+
+      # Public repository. It must sit inside the workspace: actions/checkout
+      # refuses paths outside it.
+      - uses: actions/checkout@v4
+        with:
+          repository: Alpha-Explora/alphaci-workflow
+          path: alphaci-workflow
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # global-setup starts the disposable Postgres fixture with docker compose.
+      - name: End-to-end tests
+        run: npm run test:e2e
