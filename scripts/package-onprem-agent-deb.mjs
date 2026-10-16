@@ -25,6 +25,12 @@ export const PACKAGE_FILES = [
     'opt/alphaci/bin/alphaci-supervisor',
     0o755,
   ],
+  // The supervisor runs this for each assignment (render-assignment.sh), so it ships too.
+  [
+    'deploy/onprem/agent/alphaci-agent.sh',
+    'opt/alphaci/bin/alphaci-agent',
+    0o755,
+  ],
   [
     'deploy/onprem/agent/render-assignment.sh',
     'opt/alphaci/bin/render-assignment',

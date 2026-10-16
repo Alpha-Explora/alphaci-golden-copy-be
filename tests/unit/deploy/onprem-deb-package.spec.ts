@@ -38,9 +38,31 @@ it('lays the agent out under /opt/alphaci with the machine units and the enrollm
     'DEBIAN/postrm',
   ])
     expect(existsSync(join(stage, file))).toBe(true);
-  // The installer's own unit files stay out of the package: it is not a legacy agent.
+  // The supervisor runs opt/alphaci/bin/alphaci-agent for each assignment, so the
+  // package must ship it there, not under /usr.
+  expect(existsSync(join(stage, 'opt/alphaci/bin/alphaci-agent'))).toBe(true);
   expect(existsSync(join(stage, 'usr/bin/alphaci-agent'))).toBe(false);
   expect(existsSync(join(stage, 'etc/systemd'))).toBe(false);
+});
+
+it('ships every /opt/alphaci/bin program that the shipped scripts run', () => {
+  const shipped = [
+    'opt/alphaci/bin/alphaci-supervisor',
+    'opt/alphaci/bin/alphaci-agent',
+    'opt/alphaci/bin/render-assignment',
+    'opt/alphaci/bin/enroll',
+    'opt/alphaci/bin/ubuntu-prerequisites.sh',
+    'usr/bin/alphaci-enroll',
+  ];
+  const called = new Set<string>();
+  for (const file of shipped)
+    for (const match of read(file).matchAll(
+      /(?:\$ROOT|\/opt\/alphaci)\/bin\/([A-Za-z0-9._-]+)/g,
+    ))
+      called.add(match[1]);
+  expect(called.size).toBeGreaterThan(0);
+  for (const name of called)
+    expect(existsSync(join(stage, 'opt/alphaci/bin', name))).toBe(true);
 });
 
 it('declares an architecture-independent package for this agent version', () => {

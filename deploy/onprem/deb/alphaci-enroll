@@ -13,6 +13,12 @@ ROOT=/opt/alphaci
 check_ubuntu_prerequisites
 # The API URL comes first; --replace passes through to enroll.sh unchanged.
 "$ROOT/bin/enroll" "$1" ubuntu "${@:2}"
-"$ROOT/bin/alphaci-supervisor" --heartbeat-only
+checked_in=1
+"$ROOT/bin/alphaci-supervisor" --heartbeat-only || checked_in=0
+# The timer goes on even when the first check-in fails, so an enrolled machine keeps polling.
 systemctl enable --now alphaci-machine.timer
-echo 'Host connected. Assign an environment in AlphaCI to deploy a project.'
+if [ "$checked_in" = 1 ]; then
+  echo 'Host connected. Assign an environment in AlphaCI to deploy a project.'
+else
+  echo 'Host enrolled, but the first check-in failed. The timer will retry; check journalctl -u alphaci-machine.service if it stays offline.' >&2
+fi
