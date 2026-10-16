@@ -5,10 +5,14 @@ import {
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '#kernel/db/database.service';
+import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
+import { tunnelPort } from '../../domain/onprem-tunnel';
 import { moveMachineBindings } from './onprem-assignments.repository';
 import type {
   EnrollmentInput,
+  HeartbeatReply,
   MachineCheckIn,
+  MachineHeartbeat,
   MachineSummary,
 } from '../../application/onprem/onprem-host.contracts';
 
@@ -189,11 +193,14 @@ export class OnpremMachinesRepository {
     });
   }
 
-  /** Records a check-in and returns the host ports reserved on the machine. */
+  /**
+   * Records a check-in. Returns the host ports reserved on the machine and the
+   * tunnel-mode assignments it must keep a tunnel open for.
+   */
   async heartbeat(
     hash: string,
-    input: MachineCheckIn,
-  ): Promise<{ ports: number[] }> {
+    input: MachineHeartbeat,
+  ): Promise<HeartbeatReply> {
     return this.db.withTransaction(async (client) => {
       const machine = await client.query<{ id: string }>(
         `SELECT id FROM env_provisioning.onprem_machines WHERE token_sha256=$1 AND revoked_at IS NULL FOR UPDATE`,
@@ -203,15 +210,62 @@ export class OnpremMachinesRepository {
         throw new UnauthorizedException(
           'Machine credential is invalid or revoked.',
         );
+      const machineId = machine.rows[0].id;
       await client.query(
         `UPDATE env_provisioning.onprem_machines SET last_seen_at=NOW(),agent_version=$2,checks=$3 WHERE id=$1`,
-        [machine.rows[0].id, input.agentVersion, JSON.stringify(input.checks)],
+        [machineId, input.agentVersion, JSON.stringify(input.checks)],
       );
+      if (input.tunnels) {
+        // The reports are a snapshot: a binding the machine stopped reporting
+        // loses its address, and each reported tunnel-mode binding takes its own.
+        await client.query(
+          `UPDATE env_provisioning.onprem_hosts SET tunnel_status=NULL,tunnel_url=NULL,tunnel_message=NULL,tunnel_reported_at=NULL
+            WHERE machine_id=$1 AND revoked_at IS NULL AND NOT (id=ANY($2::uuid[]))`,
+          [machineId, input.tunnels.map((report) => report.assignmentId)],
+        );
+        for (const report of input.tunnels)
+          await client.query(
+            `UPDATE env_provisioning.onprem_hosts SET tunnel_status=$3,tunnel_url=$4,tunnel_message=$5,tunnel_reported_at=NOW()
+              WHERE id=$2 AND machine_id=$1 AND revoked_at IS NULL AND assignment_config->'ingress'->>'mode'='tunnel'`,
+            [
+              machineId,
+              report.assignmentId,
+              report.status,
+              report.publicUrl,
+              report.message,
+            ],
+          );
+      }
       const ports = await client.query<{ host_port: number }>(
         `SELECT host_port FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1 ORDER BY host_port`,
-        [machine.rows[0].id],
+        [machineId],
       );
-      return { ports: ports.rows.map((port) => port.host_port) };
+      const tunnels = await client.query<{
+        id: string;
+        project_id: string;
+        environment_id: string;
+        assignment_config: AssignmentConfig;
+      }>(
+        `SELECT id,project_id,environment_id,assignment_config FROM env_provisioning.onprem_hosts
+          WHERE machine_id=$1 AND revoked_at IS NULL AND assignment_config->'ingress'->>'mode'='tunnel' ORDER BY id`,
+        [machineId],
+      );
+      return {
+        ports: ports.rows.map((port) => port.host_port),
+        tunnels: tunnels.rows.flatMap((row) => {
+          const hostPort = tunnelPort(row.assignment_config.ports);
+          return hostPort === null
+            ? []
+            : [
+                {
+                  assignmentId: row.id,
+                  projectId: row.project_id,
+                  environmentId: row.environment_id,
+                  hostPort,
+                },
+              ];
+        }),
+      };
     });
   }
 

@@ -6,7 +6,15 @@ export interface AssignmentConfig {
     containerPort: number;
   }>;
   health: Array<{ slot: 'frontend' | 'backend'; path: string | null }>;
-  ingress: { mode: 'direct' | 'configured'; publicUrl: string | null };
+  ingress: AssignmentIngress;
+}
+/**
+ * How users reach the environment. `tunnel` has the machine create an HTTPS
+ * address; its publicUrl is reported by the machine, never sent by a client.
+ */
+export interface AssignmentIngress {
+  mode: 'direct' | 'configured' | 'tunnel';
+  publicUrl: string | null;
 }
 /**
  * What a client asks for. Host ports are chosen by the server inside the
@@ -19,7 +27,17 @@ export interface AssignmentRequestConfig {
     hostPort?: number;
   }>;
   health: AssignmentConfig['health'];
-  ingress: AssignmentConfig['ingress'];
+  ingress: AssignmentIngress;
+}
+/** The machine's latest state for a tunnel-mode assignment. */
+export type TunnelStatus = 'starting' | 'running' | 'unavailable' | 'failed';
+/** What the API shows: `waiting` until a fresh report arrives. */
+export interface TunnelReport {
+  status: TunnelStatus | 'waiting';
+  /** The reported HTTPS address, only while its report is fresh. */
+  publicUrl: string | null;
+  message: string;
+  reportedAt: string | null;
 }
 export interface OnpremAssignmentPort {
   /** `machineId` omitted: the workspace's only healthy machine is used. */
@@ -43,5 +61,13 @@ export interface OnpremAssignmentPort {
     environmentId: string,
     userId: string,
   ): Promise<{ assignmentId: string } | null>;
+  /**
+   * The address users reach an on-prem environment at: the machine's reported
+   * tunnel address or the configured public URL. Null when there is none yet.
+   */
+  publicAddress(
+    projectId: string,
+    environmentId: string,
+  ): Promise<string | null>;
 }
 export const ONPREM_ASSIGNMENT = Symbol('OnpremAssignmentPort');

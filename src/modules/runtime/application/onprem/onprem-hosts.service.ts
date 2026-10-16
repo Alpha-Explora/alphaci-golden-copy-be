@@ -26,8 +26,10 @@ import type {
   EnrollmentInput,
   EnrollmentReceipt,
   EnrollmentResult,
+  HeartbeatReply,
   InstallerRelease,
   MachineCheckIn,
+  MachineHeartbeat,
 } from './onprem-host.contracts';
 
 export const MACHINE_TOKEN_PREFIX = 'onprem_machine_';
@@ -109,11 +111,14 @@ export class OnpremHostsService {
       trustKeys,
     };
   }
-  /** The supervisor forwards and opens exactly the returned host ports. */
+  /**
+   * The supervisor forwards and opens exactly the returned host ports, and
+   * keeps a tunnel open for each returned tunnel binding.
+   */
   async heartbeat(
     credential: string,
-    input: MachineCheckIn,
-  ): Promise<{ ports: number[] }> {
+    input: MachineHeartbeat,
+  ): Promise<HeartbeatReply> {
     this.enabled();
     if (!credential.startsWith(MACHINE_TOKEN_PREFIX))
       throw new UnauthorizedException('Machine credential is invalid.');

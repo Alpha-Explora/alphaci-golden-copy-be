@@ -2,6 +2,8 @@
 set -euo pipefail
 umask 077
 ROOT="${ALPHACI_HOME:-/opt/alphaci}"
+# tunnel.sh sits beside this script, both installed and in the test fixture.
+. "$(dirname "${BASH_SOURCE[0]}")/tunnel.sh"
 if [ "${1:-}" = support-bundle ]; then
   install -d -m 0700 "$ROOT/support"
   bundle=$(mktemp -d "$ROOT/support/export.XXXXXX")
@@ -13,6 +15,11 @@ if [ "${1:-}" = support-bundle ]; then
     printf '%s\n' "${state#"$ROOT/assignments/"}" >> "$bundle/releases.txt"
     cat "$state" >> "$bundle/releases.txt"
   done
+  # Tunnel logs hold cloudflared's address and connection errors.
+  find "$ROOT/assignments" -mindepth 3 -maxdepth 3 -name tunnel.log -type f -print 2>/dev/null | while IFS= read -r log; do
+    printf '%s\n' "${log#"$ROOT/assignments/"}" >> "$bundle/tunnels.txt"
+    tail -n 50 "$log" >> "$bundle/tunnels.txt"
+  done || true
   archive="$ROOT/support/machine-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
   tar -czf "$archive" -C "$bundle" .
   printf '%s\n' "$archive"
@@ -34,9 +41,31 @@ if ! docker info >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; th
 else
   checks='[{"id":"docker","status":"passed","message":"Docker Engine and Compose are available."}]'
 fi
-printf '%s' "$checks" | jq '{agentVersion:"0.1.0",checks:.}' > "$WORK/heartbeat.json"
-# The reply lists the host ports AlphaCI reserved on this machine.
+# The tunnel reports are what this machine observed in its previous check.
+tunnels=$(find "$ROOT/assignments" -mindepth 3 -maxdepth 3 -name tunnel.json -type f -print0 2> /dev/null |
+  xargs -0 -r cat | jq -sc '[.[] | {assignmentId, status, message, publicUrl}]') || tunnels='[]'
+printf '%s' "$checks" | jq --argjson tunnels "$tunnels" '{agentVersion:"0.1.0",checks:.,tunnels:$tunnels}' > "$WORK/heartbeat.json"
+# The reply lists the host ports AlphaCI reserved on this machine, and the
+# tunnel-mode assignments whose tunnels must stay open.
 curl -fsS --max-time 30 -H "@$WORK/auth.header" -H 'Content-Type: application/json' --data-binary "@$WORK/heartbeat.json" -o "$WORK/heartbeat-reply.json" "$API/api/v1/onprem/heartbeat"
+# Keeps one tunnel open per tunnel-mode assignment and ends the tunnels of
+# assignments that left this machine. The reply is the source of truth.
+sync_tunnels() {
+  local keep="" id project environment port dir
+  while IFS=$'\t' read -r id project environment port; do
+    [[ "$project" =~ ^[0-9a-f-]{36}$ && "$environment" =~ ^[0-9a-f-]{36}$ ]] || continue
+    dir="$ROOT/assignments/$project/$environment"
+    tunnel_sync "$dir" "$id" "$port"
+    keep="$keep $environment "
+  done < <(jq -r '.tunnels[]? | [.assignmentId, .projectId, .environmentId, .hostPort] | @tsv' "$WORK/heartbeat-reply.json")
+  find "$ROOT/assignments" -mindepth 2 -maxdepth 2 -type d 2> /dev/null | while IFS= read -r dir; do
+    case " $keep " in
+      *" ${dir##*/} "*) ;;
+      *) if [ -e "$dir/tunnel.json" ]; then tunnel_stop "$dir"; fi ;;
+    esac
+  done
+}
+sync_tunnels
 # A Windows host forwards exactly these ports from its network into WSL: every
 # port AlphaCI reserved here, so forwards and firewall rules exist before the
 # first deployment, and every materialized environment's, deployed or not, so

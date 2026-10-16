@@ -9,6 +9,7 @@ import {
   Matches,
   MaxLength,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 export class CreateEnrollmentDto {
@@ -32,6 +33,27 @@ export class MachineCheckInDto {
   @ValidateNested({ each: true })
   @Type(() => HostCheckDto)
   checks!: HostCheckDto[];
+}
+/** One tunnel-mode assignment on the machine, as the machine last observed it. */
+export class TunnelReportDto {
+  @IsUUID() assignmentId!: string;
+  @IsIn(['starting', 'running', 'unavailable', 'failed'])
+  status!: 'starting' | 'running' | 'unavailable' | 'failed';
+  @IsString() @MaxLength(300) message!: string;
+  /** The Cloudflare quick tunnel address; only a running tunnel has one. */
+  @ValidateIf((_object, value: unknown) => value !== null)
+  @Matches(/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+$/)
+  @MaxLength(260)
+  publicUrl!: string | null;
+}
+export class HeartbeatDto extends MachineCheckInDto {
+  /** Every tunnel-mode assignment on this machine. Omitted by older agents. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => TunnelReportDto)
+  tunnels?: TunnelReportDto[];
 }
 export class ConsumeEnrollmentDto extends MachineCheckInDto {
   @Matches(/^[A-Za-z0-9_-]{43}$/) code!: string;

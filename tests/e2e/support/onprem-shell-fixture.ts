@@ -28,6 +28,7 @@ export function shellFixture() {
     ['render-assignment.sh', 'render-assignment'],
     ['alphaci-supervisor.sh', 'alphaci-supervisor'],
     ['enroll.sh', 'enroll'],
+    ['tunnel.sh', 'tunnel.sh'],
   ])
     writeFileSync(
       join(work, 'host/bin', destination!),
@@ -86,10 +87,21 @@ while (($#)); do
 done
 case "$url" in
  */enroll) test ! -f /work/fail-enroll || exit 22; cp /work/receipt.json "$output"; echo enroll >> /work/requests.log;;
- */heartbeat) test ! -f /work/revoked || exit 22; echo heartbeat >> /work/requests.log; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi;;
+ */heartbeat) test ! -f /work/revoked || exit 22; echo heartbeat >> /work/requests.log; case "$data" in @*) cp "\${data#@}" /work/heartbeat-body.json;; esac; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi;;
  */assignments) cp /work/assignments.json "$output"; echo assignments >> /work/requests.log;;
  */status) case "$data" in @*) cat "\${data#@}" >> /work/statuses.log;; *) printf '%s' "$data" >> /work/statuses.log;; esac; printf '\\n' >> /work/statuses.log;;
 esac
+`,
+  );
+  // A stand-in for cloudflared: it records each start and stop, prints a quick
+  // tunnel address unless /work/tunnel-silent exists, and runs until terminated.
+  writeFileSync(
+    join(work, 'bin/cloudflared'),
+    `#!/bin/bash
+echo "start $*" >> /work/cloudflared-calls.log
+trap 'echo stop >> /work/cloudflared-calls.log; exit 0' TERM INT
+[ -f /work/tunnel-silent ] || echo 'https://quiet-fox-blue-cloud.trycloudflare.com'
+while :; do sleep 1; done
 `,
   );
   function run(command: string, input = '') {

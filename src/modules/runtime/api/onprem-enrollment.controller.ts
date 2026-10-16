@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Response } from 'express';
 import { OnpremHostsService } from '../application/onprem/onprem-hosts.service';
-import { ConsumeEnrollmentDto, MachineCheckInDto } from './dto/onprem-host.dto';
+import { ConsumeEnrollmentDto, HeartbeatDto } from './dto/onprem-host.dto';
 
 /** Short-lived enrollment code or revocable machine credential, never session auth. */
 @Controller('onprem')
@@ -62,7 +62,7 @@ export class OnpremEnrollmentController {
   @Post('heartbeat')
   heartbeat(
     @Headers('authorization') authorization: string | undefined,
-    @Body() input: MachineCheckInDto,
+    @Body() input: HeartbeatDto,
   ) {
     const match = /^Bearer (\S+)$/i.exec(authorization ?? '');
     if (!match?.[1])

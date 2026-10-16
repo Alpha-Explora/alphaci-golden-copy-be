@@ -6,4 +6,8 @@ After=network-online.target docker.service
 [Service]
 Type=oneshot
 UMask=0077
+# Automatic-address tunnels run in the background and must outlive this one-shot
+# run. Without KillMode=process, systemd ends every process of the run when the
+# supervisor exits; with it, only the supervisor is ended.
+KillMode=process
 ExecStart=/opt/alphaci/bin/alphaci-supervisor --once

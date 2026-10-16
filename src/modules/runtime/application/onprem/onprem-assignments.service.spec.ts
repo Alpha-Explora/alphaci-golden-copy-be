@@ -49,6 +49,53 @@ it('requires explicit production HTTPS ingress', () => {
   ).not.toThrow();
 });
 
+const tunnelConfig: AssignmentConfig = {
+  ...config,
+  ingress: { mode: 'tunnel', publicUrl: null },
+};
+
+it('accepts the automatic HTTPS address for every environment, production included', () => {
+  expect(() =>
+    validateAssignmentConfig(tunnelConfig, ['frontend'], false),
+  ).not.toThrow();
+  expect(() =>
+    validateAssignmentConfig(tunnelConfig, ['frontend'], true),
+  ).not.toThrow();
+});
+
+it('refuses a client-set public URL in tunnel mode, because the machine reports it', () => {
+  expect(() =>
+    validateAssignmentConfig(
+      {
+        ...tunnelConfig,
+        ingress: { mode: 'tunnel', publicUrl: 'https://app.example.com' },
+      },
+      ['frontend'],
+      false,
+    ),
+  ).toThrow(/reported by the machine/);
+});
+
+it('still rejects unknown ingress modes and non-HTTPS production configured URLs', () => {
+  expect(() =>
+    validateAssignmentConfig(
+      { ...config, ingress: { mode: 'proxy' as never, publicUrl: null } },
+      ['frontend'],
+      false,
+    ),
+  ).toThrow(BadRequestException);
+  expect(() =>
+    validateAssignmentConfig(
+      {
+        ...config,
+        ingress: { mode: 'configured', publicUrl: 'http://app.example.com' },
+      },
+      ['frontend'],
+      true,
+    ),
+  ).toThrow(/HTTPS address/);
+});
+
 describe('automatic assignment', () => {
   const repository = {
     current: jest.fn(),
@@ -77,7 +124,7 @@ describe('automatic assignment', () => {
     repository.current.mockResolvedValue(null);
     repository.healthyMachines.mockResolvedValue(['machine']);
     repository.machineWorkspace.mockResolvedValue('ws');
-    repository.assign.mockResolvedValue({ id: 'assignment' });
+    repository.assign.mockResolvedValue({ id: 'assignment', config });
     projects.findProjectEnvironment.mockResolvedValue({
       role: 'non_production',
     });
@@ -164,5 +211,83 @@ describe('automatic assignment', () => {
     await expect(
       service().ensureAutomaticAssignment('project', 'env', 'user'),
     ).resolves.toBeNull();
+  });
+});
+
+describe('tunnel presentation', () => {
+  const repository = {
+    current: jest.fn(),
+    assign: jest.fn(),
+    machineWorkspace: jest.fn().mockResolvedValue('ws'),
+  };
+  const targets = {
+    listDeploymentTargets: jest
+      .fn()
+      .mockResolvedValue([
+        { environmentId: 'env', provider: 'onprem-compose', slot: 'frontend' },
+      ]),
+  };
+  const projects = {
+    findProjectReference: jest.fn().mockResolvedValue({ id: 'project' }),
+    findProjectEnvironment: jest
+      .fn()
+      .mockResolvedValue({ id: 'env', role: 'production' }),
+  };
+  const service = (enabled = 'true') =>
+    new OnpremAssignmentsService(
+      repository as never,
+      {
+        assertProjectRole: jest.fn().mockResolvedValue({ workspaceId: 'ws' }),
+      } as never,
+      { findAppRole: jest.fn().mockResolvedValue('member') } as never,
+      projects as never,
+      targets as never,
+      { get: () => enabled } as never,
+    );
+  const tunnelRow = {
+    id: 'binding',
+    machineId: 'machine',
+    projectId: 'project',
+    environmentId: 'env',
+    revision: 1,
+    config: {
+      ...config,
+      ingress: { mode: 'tunnel' as const, publicUrl: null },
+    },
+  };
+  it('presents a just-saved tunnel assignment as waiting for its address', async () => {
+    repository.assign.mockResolvedValue(tunnelRow);
+    const saved = await service().assign('project', 'env', 'user', {
+      machineId: 'machine',
+      expectedAssignmentId: null,
+      requestId: 'request',
+      config: tunnelRow.config,
+    });
+    expect(saved.tunnel).toMatchObject({ status: 'waiting', publicUrl: null });
+  });
+  it('reads the environment address from the machine report', async () => {
+    repository.current.mockResolvedValue({
+      ...tunnelRow,
+      tunnel: {
+        status: 'running',
+        publicUrl: 'https://quiet-fox-blue-cloud.trycloudflare.com',
+        message: 'Ready.',
+        reportedAt: null,
+      },
+    });
+    expect(await service().publicAddress('project', 'env')).toBe(
+      'https://quiet-fox-blue-cloud.trycloudflare.com',
+    );
+    repository.current.mockResolvedValue({ ...tunnelRow, tunnel: null });
+    expect(await service().publicAddress('project', 'env')).toBeNull();
+  });
+  it('returns no address when on-prem delivery is disabled or the host is legacy', async () => {
+    expect(await service('false').publicAddress('project', 'env')).toBeNull();
+    repository.current.mockResolvedValue({
+      id: 'legacy',
+      machineId: null,
+      config: null,
+    });
+    expect(await service().publicAddress('project', 'env')).toBeNull();
   });
 });

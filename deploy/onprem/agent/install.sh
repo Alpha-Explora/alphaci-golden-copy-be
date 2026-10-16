@@ -22,6 +22,7 @@ if [ "${1:-}" = --enroll ]; then
   install -d -m 0700 /opt/alphaci/secrets /opt/alphaci/assignments
   install -m 0755 alphaci-agent.sh /opt/alphaci/bin/alphaci-agent
   install -m 0755 alphaci-supervisor.sh /opt/alphaci/bin/alphaci-supervisor
+  install -m 0644 tunnel.sh /opt/alphaci/bin/tunnel.sh
   [ ! -f render-assignment.sh ] || install -m 0755 render-assignment.sh /opt/alphaci/bin/render-assignment
   # API URL, optional platform and optional --replace pass through unchanged.
   [ -n "${2:-}" ] || { echo 'Public API URL is required.' >&2; exit 1; }
