@@ -221,3 +221,5 @@ Write-Output ('Distro address: ' + (Get-Content -LiteralPath (Join-Path $root 'w
 & netsh.exe interface portproxy show v4tov4
 Get-NetFirewallRule -Name 'AlphaCI TCP *' | Format-Table Name, Enabled, Direction, Action -AutoSize
 if ($ApiUrl) { Save-InstallPhase 'complete' }
+# A finished installation exits 0 explicitly, so an earlier native command never decides the result.
+exit 0
