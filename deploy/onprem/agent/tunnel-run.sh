@@ -19,7 +19,7 @@ child=""
 trap 'if [ -n "$child" ]; then kill "$child" 2> /dev/null || true; fi' TERM INT
 # --config names an empty file, so a ~/.cloudflared/config.yml cannot replace --url.
 "$BIN" tunnel --config "$DIR/config.yml" --no-autoupdate --url "http://127.0.0.1:$ALPHACI_TUNNEL_PORT" \
-  > >(tr -d '\000' | while IFS= read -r line; do
+  > >(stdbuf -oL tr -d '\000' | while IFS= read -r line; do
     printf '%s\n' "$line"
     url=$(printf '%s\n' "$line" | grep -aoE "$ADDRESS" | head -n 1 || true)
     if [ -n "$url" ]; then

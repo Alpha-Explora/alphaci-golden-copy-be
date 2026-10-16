@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { canonicalJson } from '../../../src/modules/runtime/domain/release-manifest';
 
-const image = 'alphaci-agent-e2e:1';
+const image = 'alphaci-agent-e2e:2';
+// Ubuntu, the agent's target OS: GNU coreutils buffer differently from Alpine's
+// busybox, and the tunnel path depends on that.
 export function buildShellFixture() {
   execFileSync('docker', ['build', '-t', image, '-'], {
     input:
-      'FROM alpine:3.20\nRUN apk add --no-cache bash jq openssl curl coreutils\n',
+      'FROM ubuntu:24.04\nRUN apt-get update && apt-get install -y --no-install-recommends bash jq openssl curl coreutils ca-certificates && rm -rf /var/lib/apt/lists/*\n',
     stdio: ['pipe', 'ignore', 'inherit'],
   });
 }

@@ -32,17 +32,15 @@ tunnel_problem() {
   fi
 }
 
-# tunnel_address <environment>: the address the tunnel printed in its current
-# run, if it is an AlphaCI quick-tunnel address. The tunnel user writes run/, so
-# root reads only a regular file directly in it, never through a link, and only
-# text that matches the pattern is used. Root never writes into run/.
+# tunnel_address <environment>: the address the tunnel printed in its current run,
+# if it is an AlphaCI quick-tunnel address. The tunnel user writes run/, so root opens
+# the file with dd's nofollow and nonblock flags: the open itself never follows a link
+# and never blocks on a FIFO, so no check is needed before it. Only text that matches
+# the pattern is used. Root removes run/address when a tunnel stops and writes nothing
+# else into run/.
 tunnel_address() {
-  local run="$TUNNEL_ROOT/$1/run" file="$TUNNEL_ROOT/$1/run/address" real
-  [ -f "$file" ] && [ ! -L "$file" ] || return 0
-  real=$(readlink -f -- "$file" 2> /dev/null || true)
-  [ "$real" = "$(readlink -f -- "$run")/address" ] || return 0
-  head -c 300 -- "$file" 2> /dev/null | tr -d '' |
-    grep -axE "$TUNNEL_ADDRESS_PATTERN" | head -n 1 || true
+  dd if="$TUNNEL_ROOT/$1/run/address" iflag=nofollow,nonblock bs=300 count=1 status=none 2> /dev/null |
+    tr -d '\r' | grep -axE "$TUNNEL_ADDRESS_PATTERN" | head -n 1 || true
 }
 
 # tunnel_record <environment> <assignment-id> <port> <status> <publicUrl> <message>
@@ -122,10 +120,14 @@ tunnel_sync() {
   fi
 }
 
-# tunnel_stop <environment>: stops the environment's tunnel and forgets its report.
+# tunnel_stop <environment>: stops the environment's tunnel and removes its folder, so
+# later check-ins do not stop it again. Only a folder named by an environment UUID is
+# ever removed.
 tunnel_stop() {
   systemctl stop "$(tunnel_unit "$1")" < /dev/null > /dev/null 2>&1 || true
-  rm -f "$TUNNEL_ROOT/$1/tunnel.json" "$TUNNEL_ROOT/$1/run/address"
+  if [[ "$1" =~ ^[0-9a-f-]{36}$ ]]; then
+    rm -rf "$TUNNEL_ROOT/$1"
+  fi
 }
 
 # tunnel_stop_all: stops every tunnel this machine runs. Used when the machine

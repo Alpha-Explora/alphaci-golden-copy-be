@@ -158,12 +158,12 @@ describe('Automatic HTTPS address (tunnel) with recording fixture', () => {
       join(f.work, 'heartbeat-reply-empty.json'),
       JSON.stringify({ ports: [18155], tunnels: [] }),
     );
+    // Later check-ins must not stop the same tunnel again: its folder is gone.
     f.run(
-      '/work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; cp /work/heartbeat-reply-empty.json /work/heartbeat-reply.json; /work/host/bin/alphaci-supervisor --heartbeat-only; sleep 2',
+      '/work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; cp /work/heartbeat-reply-empty.json /work/heartbeat-reply.json; /work/host/bin/alphaci-supervisor --heartbeat-only; sleep 2; /work/host/bin/alphaci-supervisor --heartbeat-only; /work/host/bin/alphaci-supervisor --heartbeat-only',
     );
-    expect(units(f)).toContain(
-      `stop alphaci-tunnel@${a.assignment.environmentId}.service`,
-    );
+    const stopLine = `stop alphaci-tunnel@${a.assignment.environmentId}.service`;
+    expect(units(f).filter((line) => line === stopLine)).toHaveLength(1);
     expect(existsSync(stateFile(f, a))).toBe(false);
     expect(calls(f)).toContain('stop');
   });
@@ -303,6 +303,23 @@ describe('Automatic HTTPS address (tunnel) with recording fixture', () => {
     expect(readFileSync(join(f.work, 'victim-address'), 'utf8')).toBe(
       'https://quiet-fox-blue-cloud.trycloudflare.com\n',
     );
+  });
+  it('does not wait on a FIFO planted in run/', () => {
+    const f = shellFixture();
+    const { a, tunnel } = binding(f, 18165);
+    writeFileSync(
+      join(f.work, 'heartbeat-reply.json'),
+      JSON.stringify({ ports: [18165], tunnels: [tunnel] }),
+    );
+    const run = `/work/host/tunnels/${a.assignment.environmentId}/run`;
+    // A reader that opened a FIFO with no writer would block forever: check-ins must not.
+    f.run(
+      `/work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; rm -f ${run}/address; mkfifo ${run}/address; timeout 20 /work/host/bin/alphaci-supervisor --heartbeat-only`,
+    );
+    expect(stateOf(f, a)).toMatchObject({
+      status: 'starting',
+      publicUrl: null,
+    });
   });
   it('never writes through a symlink in the environment directory', () => {
     const f = shellFixture();
