@@ -2203,6 +2203,11 @@ function validationJob(stage: WorkflowStage) {
  * consumes the same decision. Pull-request source refs get the baseline;
  * direct `uat` and `main` runs get the strict profile. Sonar participation is
  * detected from secret presence (job-level `if` cannot read secrets context).
+ *
+ * `promotion-coverage-threshold` is the strict bar on every branch. The test
+ * jobs only warn when coverage clears their own threshold but not this one,
+ * so it says something on dev and nothing on uat and main, where the two are
+ * equal. Without it a dev commit met the strict bar only when promotion failed.
  */
 function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
   return {
@@ -2211,6 +2216,8 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
     outputs: {
       branch: '${{ steps.resolve.outputs.branch }}',
       'coverage-threshold': '${{ steps.resolve.outputs.coverage-threshold }}',
+      'promotion-coverage-threshold':
+        '${{ steps.resolve.outputs.promotion-coverage-threshold }}',
       'fail-on-warning': '${{ steps.resolve.outputs.fail-on-warning }}',
       'sonar-enabled': '${{ steps.resolve.outputs.sonar-enabled }}',
       'sonar-gate-wait': '${{ steps.resolve.outputs.sonar-gate-wait }}',
@@ -2237,6 +2244,7 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
           '{',
           '  echo "branch=$BRANCH"',
           '  echo "coverage-threshold=$COVERAGE_THRESHOLD"',
+          `  echo "promotion-coverage-threshold=${strictCoverage}"`,
           '  echo "fail-on-warning=$FAIL_ON_WARNING"',
           '  echo "sonar-enabled=$SONAR_CONFIGURED"',
           '  echo "sonar-gate-wait=$SONAR_GATE_WAIT"',

@@ -153,6 +153,25 @@ describe('toolchain registry', () => {
       );
     });
 
+    it.each([
+      ['nestjs', 'backend-tests'],
+      ['react', 'frontend-tests'],
+      ['dotnet', 'dotnet-tests'],
+    ] as const)(
+      'gives the %s test job the promotion threshold from the policy job',
+      (stack, jobId) => {
+        // Warning-only: dev's test job learns the bar uat and main enforce
+        // before a promotion fails on it.
+        const job = defaultToolchainRegistry.build(stack, context).qualityJobs[
+          jobId
+        ] as { with: Record<string, unknown> };
+
+        expect(job.with['promotion-coverage-threshold']).toBe(
+          '${{ fromJson(needs.branch-policy.outputs.promotion-coverage-threshold) }}',
+        );
+      },
+    );
+
     it('pins every reusable workflow to the requested central ref', () => {
       const jobs = defaultToolchainRegistry.build('react', {
         ...context,
