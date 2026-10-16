@@ -12,7 +12,4 @@
 *.sh text eol=lf
 deploy/onprem/agent/* text eol=lf
 deploy/onprem/deb/* text eol=lf
-<<<<<<< HEAD
-=======
 deploy/onprem/images/** text eol=lf
->>>>>>> feat/onprem-one-click-installer
