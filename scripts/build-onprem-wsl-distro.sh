@@ -40,6 +40,12 @@ done
 [[ "$ARCHIVE_SHA" =~ ^[0-9a-f]{64}$ ]] || die 'Pass --archive-sha256 with the archive SHA-256 (64 lowercase hex).'
 [ -s "$ARCHIVE" ] || die "Agent archive not found: $ARCHIVE"
 printf '%s  %s\n' "$ARCHIVE_SHA" "$ARCHIVE" | sha256sum --check --status || die 'Agent archive checksum mismatch.'
+# Only archives from 0.2.0 on take an enrollment code file; an older one would ignore it.
+ARCHIVE_VERSION="$(tar -xzOf "$ARCHIVE" agent/release-manifest.json 2>/dev/null |
+  sed -n 's/.*"version": *"\([0-9][0-9.]*\)".*/\1/p' | head -n 1 || true)"
+[[ "$ARCHIVE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'The agent archive has no readable version in agent/release-manifest.json.'
+[ "$(printf '%s\n' 0.2.0 "$ARCHIVE_VERSION" | sort -V | head -n 1)" = 0.2.0 ] ||
+  die "The agent archive is version $ARCHIVE_VERSION. Use 0.2.0 or later: earlier archives cannot enroll from a code file."
 
 # The image carries the archive, so the first boot installs without a download.
 apply_overlay() {

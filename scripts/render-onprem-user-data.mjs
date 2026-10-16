@@ -12,6 +12,26 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imagesDirectory = path.join(root, 'deploy/onprem/images');
 const HTTPS_URL = /^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~/-]*)?$/;
 
+// Only archives from 0.2.0 on take an enrollment code file. The archive is a remote
+// file here, so the renderer trusts the version the operator declares; the WSL builder
+// reads the manifest from the archive itself.
+const MINIMUM_ARCHIVE_VERSION = [0, 2, 0];
+
+function requireArchiveVersion(version) {
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? ''))
+    throw new Error('Archive version must look like 0.2.0.');
+  const [major, minor, patch] = version.split('.').map(Number);
+  const [minMajor, minMinor, minPatch] = MINIMUM_ARCHIVE_VERSION;
+  const atLeast =
+    major > minMajor ||
+    (major === minMajor &&
+      (minor > minMinor || (minor === minMinor && patch >= minPatch)));
+  if (!atLeast)
+    throw new Error(
+      `Archive version ${version} cannot take an enrollment code file. Use 0.2.0 or later.`,
+    );
+}
+
 function requireHttpsUrl(value, label) {
   if (!HTTPS_URL.test(value ?? ''))
     throw new Error(
@@ -32,11 +52,13 @@ export function renderUserData({
   apiUrl,
   archiveUrl,
   archiveSha256,
+  archiveVersion,
   code,
   template,
   firstBootScript,
   firstBootUnit,
 }) {
+  requireArchiveVersion(archiveVersion);
   requireHttpsUrl(apiUrl, 'API URL');
   requireHttpsUrl(archiveUrl, 'Archive URL');
   if (!/^[0-9a-f]{64}$/.test(archiveSha256 ?? ''))
@@ -69,12 +91,19 @@ function parseOptions(argv) {
 
 function main(argv) {
   const options = parseOptions(argv);
-  for (const required of ['api', 'archive-url', 'archive-sha256', 'code-file'])
+  for (const required of [
+    'api',
+    'archive-url',
+    'archive-sha256',
+    'archive-version',
+    'code-file',
+  ])
     if (!options[required]) throw new Error(`Missing --${required}.`);
   const userData = renderUserData({
     apiUrl: options.api,
     archiveUrl: options['archive-url'],
     archiveSha256: options['archive-sha256'],
+    archiveVersion: options['archive-version'],
     code: readFileSync(options['code-file'], 'utf8').trim(),
     template: readFileSync(
       path.join(imagesDirectory, 'cloud-init/user-data.yaml.tmpl'),

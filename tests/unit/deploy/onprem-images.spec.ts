@@ -41,6 +41,7 @@ function render(options: {
   api?: string;
   archiveUrl?: string;
   archiveSha256?: string;
+  archiveVersion?: string;
   code?: string;
 }) {
   const directory = workdir();
@@ -54,6 +55,8 @@ function render(options: {
       options.api ?? API,
       '--archive-url',
       options.archiveUrl ?? ARCHIVE_URL,
+      '--archive-version',
+      options.archiveVersion ?? '0.2.0',
       '--archive-sha256',
       options.archiveSha256 ?? 'a'.repeat(64),
       '--code-file',
@@ -113,6 +116,7 @@ describe('cloud-init user-data for an Ubuntu VM', () => {
       { api: 'https://user:secret@api.example.com' },
       { archiveUrl: 'https://example.com/a?x=1' },
       { archiveSha256: 'NOT-HEX' },
+      { archiveVersion: '0.1.0' },
     ]) {
       const result = render(bad);
       expect(result.status).toBe(1);
@@ -140,6 +144,11 @@ posixOnly('WSL distro overlay and first boot', () => {
         'rm -f -- "$ALPHACI_ENROLL_CODE_FILE"',
         '',
       ].join('\n'),
+    );
+    // The builder refuses archives older than 0.2.0, so the stand-in carries a manifest too.
+    writeFileSync(
+      join(source, 'release-manifest.json'),
+      JSON.stringify({ version: '0.2.0' }),
     );
     archive = join(directory, 'alphaci-agent.tar.gz');
     execFileSync('tar', [
@@ -200,6 +209,37 @@ posixOnly('WSL distro overlay and first boot', () => {
     );
   });
 
+  it('refuses an agent archive older than 0.2.0', () => {
+    const old = workdir();
+    mkdirSync(join(old, 'agent'), { recursive: true });
+    writeFileSync(join(old, 'agent', 'install.sh'), '#!/bin/bash\n');
+    writeFileSync(
+      join(old, 'agent', 'release-manifest.json'),
+      JSON.stringify({ version: '0.1.0' }),
+    );
+    const oldArchive = join(old, 'alphaci-agent.tar.gz');
+    execFileSync('tar', ['-czf', oldArchive, '-C', old, 'agent']);
+    const overlay = join(workdir(), 'root');
+    mkdirSync(overlay, { recursive: true });
+    const result = spawnSync(
+      'bash',
+      [
+        builder,
+        '--overlay-only',
+        overlay,
+        '--api',
+        API,
+        '--archive',
+        oldArchive,
+        '--archive-sha256',
+        sha256(readFileSync(oldArchive)),
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('version 0.1.0');
+    expect(existsSync(join(overlay, 'etc/alphaci'))).toBe(false);
+  });
   it('refuses an archive whose checksum does not match', () => {
     const overlay = join(workdir(), 'root');
     mkdirSync(overlay, { recursive: true });
@@ -227,12 +267,12 @@ posixOnly('WSL distro overlay and first boot', () => {
     code = true,
     sha = archiveSha,
     failTimes = 0,
-    attempts = 3,
+    deadline = 60,
   }: {
     code?: boolean;
     sha?: string;
     failTimes?: number;
-    attempts?: number;
+    deadline?: number;
   } = {}) {
     const root = workdir();
     const etc = join(root, 'etc');
@@ -275,7 +315,7 @@ posixOnly('WSL distro overlay and first boot', () => {
       env: {
         PATH: `${bin}:${process.env.PATH}`,
         ALPHACI_IMAGE_ETC: etc,
-        ALPHACI_REACH_ATTEMPTS: String(attempts),
+        ALPHACI_REACH_DEADLINE: String(deadline),
         ALPHACI_REACH_DELAY: '0',
         FAIL_TIMES: String(failTimes),
         RECORD: record,
@@ -313,14 +353,14 @@ posixOnly('WSL distro overlay and first boot', () => {
   });
 
   it('waits for an API that is not up yet, and enrolls once it answers', () => {
-    const run = runFirstBoot({ failTimes: 2, attempts: 5 });
+    const run = runFirstBoot({ failTimes: 2, deadline: 60 });
     expect(run.result.status).toBe(0);
     expect(run.codeSeen?.trim()).toBe(CODE);
     expect(run.systemctl).toBe('disable alphaci-first-boot.service\n');
   });
 
   it('does not use the code when the API never answers', () => {
-    const run = runFirstBoot({ failTimes: 9, attempts: 2 });
+    const run = runFirstBoot({ failTimes: 9, deadline: 0 });
     expect(run.result.status).toBe(1);
     expect(run.result.stderr).toContain('did not answer');
     expect(run.enrollArgs).toBeNull();

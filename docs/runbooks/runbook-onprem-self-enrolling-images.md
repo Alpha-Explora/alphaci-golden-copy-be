@@ -46,12 +46,13 @@ Nothing here is published. You build the image yourself from a release archive.
      --api https://YOUR-API \
      --archive-url https://YOUR-ARCHIVE-URL \
      --archive-sha256 YOUR-SHA256 \
+     --archive-version 0.2.0 \
      --code-file ./enrollment-code.txt \
      --out ./user-data.yaml
    ```
 
-   The renderer checks every value, reads the code from the file (never from the
-   command line), and writes `user-data.yaml` with mode 0600.
+   The renderer checks every value and refuses an archive version older than 0.2.0.
+   It reads the code from the file (never from the command line), and writes `user-data.yaml` with mode 0600.
 2. Give `user-data.yaml` to the VM as its cloud-init user-data, and start the VM
    on Ubuntu 24.04. cloud-init installs Docker and the packages, writes the code
    to `/etc/alphaci/enrollment-code`, and starts `alphaci-first-boot.service`.
@@ -72,7 +73,8 @@ sudo scripts/build-onprem-wsl-distro.sh \
   --out ./images
 ```
 
-The script downloads the Ubuntu noble WSL rootfs, checks it against the
+The script refuses an archive older than 0.2.0 (it reads the manifest inside the
+archive). It downloads the Ubuntu noble WSL rootfs, checks it against the
 `SHA256SUMS` published beside it, installs Docker Compose v2 and Docker Engine in
 a chroot, and writes `images/alphaci-ubuntu-noble.tar.gz` with a `.sha256` file.
 Verify it with `sha256sum -c alphaci-ubuntu-noble.tar.gz.sha256`. To use a rootfs

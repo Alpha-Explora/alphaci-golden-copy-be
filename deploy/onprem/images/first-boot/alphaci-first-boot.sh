@@ -15,15 +15,20 @@ UNIT=alphaci-first-boot.service
 # A boot can come before the network does. Wait here for the API to answer before the
 # installer runs, so the first attempt does not start while the network is still down.
 # Only connection and DNS failures retry; any other curl failure stops with the code in place.
+# The wait has an overall deadline, 10 minutes by default, which stays well inside the
+# unit's 15-minute start timeout. A probe takes at most 15 seconds, so the wait ends within
+# about 30 seconds of the deadline.
 wait_for_api() {
-  local attempts="${ALPHACI_REACH_ATTEMPTS:-40}" delay="${ALPHACI_REACH_DELAY:-15}" attempt status
-  for attempt in $(seq 1 "$attempts"); do
+  local deadline delay="${ALPHACI_REACH_DELAY:-15}" attempt=0 status
+  deadline=$(( $(date +%s) + ${ALPHACI_REACH_DEADLINE:-600} ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    attempt=$((attempt + 1))
     status=0
     curl --silent --show-error --max-time 15 --output /dev/null "$ALPHACI_API_URL" || status=$?
     [ "$status" -eq 0 ] && return 0
     case "$status" in
       6 | 7 | 28)
-        echo "Waiting for $ALPHACI_API_URL (attempt $attempt of $attempts)." >&2
+        echo "Waiting for $ALPHACI_API_URL (attempt $attempt)." >&2
         sleep "$delay"
         ;;
       *)
@@ -32,7 +37,7 @@ wait_for_api() {
         ;;
     esac
   done
-  echo "$ALPHACI_API_URL did not answer. The code was not used." >&2
+  echo "$ALPHACI_API_URL did not answer within the wait. The code was not used." >&2
   return 1
 }
 wait_for_api
