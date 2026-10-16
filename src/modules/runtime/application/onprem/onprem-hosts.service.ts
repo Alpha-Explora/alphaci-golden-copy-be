@@ -18,10 +18,15 @@ import {
 } from '#kernel/ports/app-role.port';
 import { canManageHosting } from '#kernel/rules/persona-access.rules';
 import { OnpremMachinesRepository } from '../../infrastructure/repositories/onprem-machines.repository';
+import {
+  ONPREM_INSTALLER_RELEASE,
+  type OnpremInstallerReleasePort,
+} from '../ports/onprem-installer-release.port';
 import type {
   EnrollmentInput,
   EnrollmentReceipt,
   EnrollmentResult,
+  InstallerRelease,
   MachineCheckIn,
 } from './onprem-host.contracts';
 
@@ -36,6 +41,8 @@ export class OnpremHostsService {
     @Inject(WORKSPACE_ACCESS_PORT) private readonly access: WorkspaceAccessPort,
     @Inject(APP_ROLE_LOOKUP) private readonly roles: AppRoleLookup,
     private readonly config: ConfigService,
+    @Inject(ONPREM_INSTALLER_RELEASE)
+    private readonly installerReleases: OnpremInstallerReleasePort,
   ) {}
   async list(workspaceId: string, userId: string) {
     this.enabled();
@@ -56,14 +63,7 @@ export class OnpremHostsService {
     await this.assertManager(workspaceId, userId);
     this.trustKeys(); // Fail before producing a code that cannot configure a verifier.
     const apiUrl = this.publicApiUrl();
-    const version =
-      this.config.get<string>('ONPREM_INSTALLER_VERSION') || '0.1.0';
-    const url = this.config.get<string>('ONPREM_INSTALLER_URL') || '';
-    const sha256 = this.config.get<string>('ONPREM_INSTALLER_SHA256') || '';
-    if (!/^https:\/\//.test(url) || !/^[0-9a-f]{64}$/.test(sha256))
-      throw new ServiceUnavailableException(
-        'Publish or configure a verified installer release before enrolling a host.',
-      );
+    const installer = await this.installerRelease();
     const name = input.name.trim();
     if (!name || name.length > 80)
       throw new BadRequestException(
@@ -76,7 +76,7 @@ export class OnpremHostsService {
       { ...input, name },
       hashMachineSecret(code),
     );
-    return { ...receipt, apiUrl, code, installer: { version, url, sha256 } };
+    return { ...receipt, apiUrl, code, installer };
   }
   async consumeEnrollment(
     code: string,
@@ -131,6 +131,41 @@ export class OnpremHostsService {
   private enabled() {
     if (this.config.get('ONPREM_RELEASES_ENABLED') !== 'true')
       throw new ForbiddenException('On-prem delivery is disabled.');
+  }
+  /**
+   * A complete explicit URL and SHA-256 win. Without an explicit URL,
+   * ONPREM_INSTALLER_RELEASE_REPO supplies the archive, and a configured
+   * SHA-256 pins its hash. Every other case refuses, so no enrollment code is
+   * issued for an installer that is not verified.
+   */
+  private async installerRelease(): Promise<InstallerRelease> {
+    const version =
+      this.config.get<string>('ONPREM_INSTALLER_VERSION') || '0.1.0';
+    const url = this.config.get<string>('ONPREM_INSTALLER_URL') || '';
+    const sha256 = this.config.get<string>('ONPREM_INSTALLER_SHA256') || '';
+    const releaseRepo =
+      this.config.get<string>('ONPREM_INSTALLER_RELEASE_REPO') || '';
+    const token =
+      this.config.get<string>('ONPREM_INSTALLER_RELEASE_TOKEN') || undefined;
+    if (url && sha256) {
+      if (/^https:\/\//.test(url) && /^[0-9a-f]{64}$/.test(sha256))
+        return { version, url, sha256 };
+    } else if (
+      !url &&
+      releaseRepo &&
+      (!sha256 || /^[0-9a-f]{64}$/.test(sha256))
+    ) {
+      const release = await this.installerReleases.resolve({
+        repo: releaseRepo,
+        version,
+        pinnedSha256: sha256 || undefined,
+        token,
+      });
+      if (release) return release;
+    }
+    throw new ServiceUnavailableException(
+      'Publish or configure a verified installer release before enrolling a host.',
+    );
   }
   private publicApiUrl(): string {
     try {

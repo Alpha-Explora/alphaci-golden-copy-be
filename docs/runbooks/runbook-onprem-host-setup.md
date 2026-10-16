@@ -73,6 +73,9 @@ containers, credentials, and data remain until explicitly removed. Revoke access
 in AlphaCI too. Unassign/revoke cannot cancel Docker commands already executing.
 Separate machines are required for mutually untrusted workloads.
 
+A hosted backend that is not on a developer PC needs the settings in
+[Point customer machines at the deployed API](#point-customer-machines-at-the-deployed-api).
+
 The remainder of this runbook describes the retained legacy registration path.
 
 This runbook takes a fresh Windows PC to a running AlphaCI production host. The
@@ -370,6 +373,9 @@ Compose project and agent configuration.
 | Previous release restored but deployment reports failed | The restored Compose services or the configured `ALPHACI_HEALTH_URL` failed the health check. Check the application logs and endpoint. |
 | Works on the PC but not from other machines | Run `netsh interface portproxy show v4tov4` in PowerShell and confirm the **AlphaCI TCP 443** firewall rule allows the caller's network. |
 | Stops after sign-out or reboot | The startup task runs only while signed in. Re-run step 27 with `-ServiceAccount`. |
+| Enrollment returns 503: "Publish or configure a verified installer release" | On the backend, check `ONPREM_INSTALLER_RELEASE_REPO` and `ONPREM_INSTALLER_VERSION`, and confirm the release `onprem-agent-v<version>` is public and has all three assets. The backend log names the failed check. |
+| Backend log: "The release is not immutable" | No hash is pinned, and the release is not marked immutable. Turn on immutable releases for the repository, or set `ONPREM_INSTALLER_SHA256` to the release's hash. |
+| Backend log: "Installer archive does not match its expected SHA-256" | The archive differs from the pinned hash, or from the hash in `installer-release.json`. Check the release assets, and confirm that the pin matches the release you intend to serve. |
 
 For anything else, run `sudo /opt/alphaci/bin/alphaci-agent support-bundle`. It
 writes an archive of agent logs, Compose state, and the running release to
@@ -400,3 +406,142 @@ from a new workflow run.
    sudo docker compose -p alphaci -f /opt/alphaci/compose/compose.yaml down
    ```
 3. Back up application data before deleting anything. `wsl --unregister Ubuntu-24.04` deletes the whole distro and everything in it.
+
+## Point customer machines at the deployed API
+
+Enrolled machines keep the API address in `/opt/alphaci/machine.json` (`apiUrl`)
+and call it on every check-in. A backend running on a developer PC stops
+answering when that PC is off, so host the API where it stays running and keep
+its public address stable.
+
+### Environment on the deployed backend
+
+Set these in the hosting service's environment, such as Render's Environment
+page, then redeploy. Do not commit values to the repository.
+
+| Variable | Value |
+|---|---|
+| `PLATFORM_PUBLIC_URL` | Public HTTPS origin, for example `https://api.example.com`, with no path, query, or credentials. |
+| `ONPREM_RELEASES_ENABLED` | `true` |
+| `ALPHACI_RELEASE_TRUST_KEYS_JSON` | The one-line JSON from Part 5, step 13. |
+| `ONPREM_INSTALLER_RELEASE_REPO` | The repository that publishes installer releases, as `owner/repo`. |
+| `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.1.0`. |
+| `ONPREM_INSTALLER_SHA256` | Recommended. The SHA-256 of `alphaci-agent-<version>.tar.gz`, copied from that release's `installer-release.json` after you have checked the release yourself. Enrollment then trusts this value rather than the release contents. |
+| `ONPREM_INSTALLER_RELEASE_TOKEN` | Optional. A GitHub token used only for API calls, to avoid the shared unauthenticated rate limit. Keep it secret. |
+
+Leave `ONPREM_INSTALLER_URL` and `ONPREM_INSTALLER_PATH` empty. A complete
+explicit URL and SHA-256 pair takes priority over the release lookup, and a URL
+without its hash refuses enrollment. `ONPREM_INSTALLER_PATH` serves a local
+archive from the same machine and has no use on a hosted backend. Set
+`ENV_PROVISIONING_ENABLED=true` as well when hosts also back project environments
+(Part 5).
+
+The release repository must be public. Customer machines download the archive
+without credentials, so a private repository breaks enrollment even when the
+backend can read the release with a token. Without a pin, the backend also
+requires the release to be immutable (see below). Otherwise enrollment returns
+503 and issues no code.
+
+### Apply the migrations
+
+If Part 5 has not run against this database, apply its migrations first. Then
+apply the four on-prem migrations in this order. Each one is idempotent, so
+running it again is a safe recovery step.
+
+```bash
+npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_one_active_onprem_host.sql 20261015020000_onprem_machines.sql 20261015030000_onprem_machine_assignments.sql
+```
+
+### Protect published releases
+
+Without a pin, the backend trusts the hash in a release's `installer-release.json`,
+so it refuses any release that GitHub does not mark immutable. Immutable releases
+stop a published release from being changed later. Protect the repository before
+the first customer enrolls. These are repository settings, so an administrator
+makes them. The pipeline does not:
+
+1. Turn on immutable releases for the repository, so a published release's
+   assets cannot be replaced.
+2. Add a tag ruleset for `onprem-agent-v*` that blocks updating and deleting
+   tags, so a published tag cannot be moved to another commit.
+3. Pin the hash. Set `ONPREM_INSTALLER_SHA256` on the deployed backend to the
+   value in the release's `installer-release.json`, after you have checked the
+   release. A pinned hash is checked against the archive bytes at most every
+   10 minutes, the cache window, and does not depend on release metadata. If the
+   release changes after you pin it, the check fails and enrollment stops.
+
+### Cut an installer release
+
+1. Merge a change that sets `version` in `deploy/onprem/agent/release-manifest.json`
+   to the new version. The tag must match this value, or the workflow fails.
+2. On the merged commit, create an annotated tag and push it. This example
+   publishes `0.1.1`:
+
+   ```bash
+   git tag -a onprem-agent-v0.1.1 -m "On-prem agent 0.1.1"
+   git push origin onprem-agent-v0.1.1
+   ```
+3. The **On-prem agent release** workflow packages the archive, checks its
+   checksum, and creates the GitHub Release. Confirm that the release has
+   `alphaci-agent-<version>.tar.gz`, `alphaci-agent-<version>.tar.gz.sha256`,
+   and `installer-release.json`. Manual dispatch from a branch only builds the
+   archive as a workflow artifact. Dispatch from the tag to publish it.
+4. Check the new release, then set `ONPREM_INSTALLER_VERSION` to the new version
+   and `ONPREM_INSTALLER_SHA256` to its hash, and redeploy. Codes issued
+   afterwards carry the new archive. A code issued earlier still points at the
+   release it was issued for, which stays unchanged while the release is
+   immutable.
+
+If a release is wrong, publish the next version. The workflow fails for a tag
+whose release already exists, but only the repository settings above stop an
+existing release from being edited. The archive is not signed. Its trust comes
+from the pinned SHA-256, or, without a pin, from an immutable release's
+`installer-release.json`.
+
+### Move an enrolled machine
+
+These commands run on Ubuntu. The Windows installer runs the same enrollment
+inside its WSL distro. `enroll.sh` checks the saved state before it changes
+anything:
+
+- The saved API address matches: it keeps the existing enrollment and changes
+  nothing.
+- The address differs: it refuses with "enrolled with a different API". The
+  script has no replace option, so the steps below move the machine by hand.
+- A saved pending enrollment response for another address is refused as well.
+
+**Same address and same database.** Nothing changes on the machine. The
+credential is stored by hash in the database, so the machine keeps connecting.
+Confirm that it shows Connected under Hosts after its next check-in.
+
+**New address, or a new database.** Re-enroll:
+
+1. In the deployed AlphaCI workspace, create a new enrollment for the machine.
+   If the deployed backend uses the same database as the old one, pass the old
+   machine's ID as `replacesMachineId` in `POST /workspaces/:workspaceId/onprem-host-enrollments`.
+   Consuming the code then revokes the old record. A different database has no
+   old record, so omit the field.
+2. On the machine, stop the timer and move the saved enrollment aside. The
+   files are root-only, so the loop runs under `sudo`. A saved pending response
+   for the old address would make `enroll.sh` refuse, so it is moved too. The
+   assignment directories and application data are not touched:
+
+   ```bash
+   sudo systemctl disable --now alphaci-machine.timer
+   sudo sh -c 'install -d -m 0700 /opt/alphaci/enrollment-backup
+   for file in machine.json trust.json secrets/machine-token secrets/enrollment-response.json; do
+     if [ -e "/opt/alphaci/$file" ]; then mv "/opt/alphaci/$file" /opt/alphaci/enrollment-backup/; fi
+   done'
+   ```
+3. Enroll with the new code. Paste it at the hidden prompt:
+
+   ```bash
+   sudo bash ~/onprem/agent/install.sh --enroll https://YOUR-BACKEND ubuntu
+   ```
+4. Wait for Connected under Hosts. Reassign any environment that does not show
+   the new machine. Then delete the backup, which holds the old machine token
+   and trust file:
+
+   ```bash
+   sudo rm -rf /opt/alphaci/enrollment-backup
+   ```
