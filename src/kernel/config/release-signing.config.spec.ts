@@ -64,6 +64,48 @@ describe('resolveReleaseSigningSource', () => {
 
   it.each([
     {
+      name: 'the signer provider is set and the key version is blank',
+      env: {
+        [RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER_ENV]:
+          SIGNER.workloadIdentityProvider,
+      },
+    },
+    {
+      name: 'the service account is set and the key version is blank',
+      env: { [RELEASE_SIGNER_SERVICE_ACCOUNT_ENV]: SIGNER.serviceAccount },
+    },
+    {
+      name: 'both signer settings are set and the key version is blank',
+      env: COMPLETE_SIGNER_ENV,
+    },
+  ])(
+    'is invalid, never the lab key, when $name and the lab key path is set',
+    ({ env }) => {
+      const source = sourceFrom({
+        [RELEASE_SIGNING_KMS_KEY_VERSION_ENV]: '  ',
+        [RELEASE_SIGNING_LAB_KEY_PATH_ENV]: '/run/keys/lab.pem',
+        ...env,
+      });
+
+      expect(source).toEqual({
+        kind: 'invalid',
+        problem: `${RELEASE_SIGNING_KMS_KEY_VERSION_ENV} must be set when the Cloud KMS signer is configured.`,
+      });
+    },
+  );
+
+  it('still uses the lab key when no Cloud KMS setting is present at all', () => {
+    expect(
+      sourceFrom({
+        [RELEASE_SIGNING_KMS_KEY_VERSION_ENV]: '',
+        [RELEASE_SIGNER_SERVICE_ACCOUNT_ENV]: '',
+        [RELEASE_SIGNING_LAB_KEY_PATH_ENV]: '/run/keys/lab.pem',
+      }),
+    ).toEqual({ kind: 'lab', keyPath: '/run/keys/lab.pem' });
+  });
+
+  it.each([
+    {
       name: 'neither signer setting',
       env: {},
       missing: [

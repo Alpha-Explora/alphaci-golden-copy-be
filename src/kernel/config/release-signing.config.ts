@@ -48,13 +48,23 @@ export type ReleaseSigningSource =
 
 /**
  * Resolves the signing source from a configuration reader. Blank values count
- * as unset. Cloud KMS wins when its key version is set, and a set key version
- * without a complete, valid signer is invalid rather than a lab fallback.
+ * as unset. Any Cloud KMS setting selects the Cloud KMS path, so an incomplete
+ * Cloud KMS configuration is invalid and never falls through to the lab key.
+ * The lab key is used only when no Cloud KMS setting is present at all.
  */
 export function resolveReleaseSigningSource(
   read: (key: string) => string | undefined,
 ): ReleaseSigningSource {
   const keyVersion = nonBlank(read(RELEASE_SIGNING_KMS_KEY_VERSION_ENV));
+  const signerSet =
+    nonBlank(read(RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER_ENV)) !== null ||
+    nonBlank(read(RELEASE_SIGNER_SERVICE_ACCOUNT_ENV)) !== null;
+  if (keyVersion === null && signerSet) {
+    return {
+      kind: 'invalid',
+      problem: `${RELEASE_SIGNING_KMS_KEY_VERSION_ENV} must be set when the Cloud KMS signer is configured.`,
+    };
+  }
   if (keyVersion !== null) {
     if (!KMS_KEY_VERSION_NAME.test(keyVersion)) {
       return {

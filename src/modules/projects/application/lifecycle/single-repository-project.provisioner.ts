@@ -300,23 +300,20 @@ export class SingleRepositoryProjectProvisioner {
         metadata: { repoShape, projectTypeId: dto.projectTypeId },
       });
 
-      return withReleaseSigningWarning(
-        {
-          id: row.id,
-          repoFullName,
-          repoUrl,
-          status: 'provisioned',
-          branchesCreated: [...PROVISIONED_BRANCHES],
-          workflowPath,
-          workflowFiles: workflowFileMetadata(workflowFiles),
-          githubCommitSha: commitSha,
-          githubCommitUrl: commitUrl,
-          projectTypeId: dto.projectTypeId,
-          workflowRecipeId: dto.workflowRecipeId ?? '',
-          deploymentProvisioning,
-        },
-        releaseSigningWarning,
-      );
+      return {
+        id: row.id,
+        repoFullName,
+        repoUrl,
+        status: 'provisioned',
+        branchesCreated: [...PROVISIONED_BRANCHES],
+        workflowPath,
+        workflowFiles: workflowFileMetadata(workflowFiles),
+        githubCommitSha: commitSha,
+        githubCommitUrl: commitUrl,
+        projectTypeId: dto.projectTypeId,
+        workflowRecipeId: dto.workflowRecipeId ?? '',
+        deploymentProvisioning,
+      };
     } catch (error) {
       if (!provisioningComplete) {
         await this.support.compensateFailedProvision(

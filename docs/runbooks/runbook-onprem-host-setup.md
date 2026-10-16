@@ -299,7 +299,10 @@ step uses the API from the browser console while signed in.
     ```
 
     Status `201` means the repository, environments, targets, and pipeline were created.
-20. **AlphaCI configures signing when it creates the project, if any environment deploys to the host.** It sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION` (Cloud KMS) and writes the signer identity into the sign-release job. Two things stay manual: the identity-pool grant for this repository (Part 4), and any fix named in the step 19 response. A `releaseSigningWarning` there means releases cannot be signed yet, or will not verify on the host. Fix the backend setting from step 17, regenerate this project's workflows, and then add the repository variable named in the warning under **Settings**, **Secrets and variables**, **Actions**, **Variables**.
+20. **AlphaCI configures signing when it creates the project, if any environment deploys to the host.** With Cloud KMS, it sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION` and writes the signer identity into the sign-release job. With the lab key (lab hosts only), it writes the lab key as the repository secret `ALPHACI_RELEASE_SIGNING_KEY`. Two things stay manual: the identity-pool grant for this repository (Part 4), and the fix named by any `releaseSigningWarning` in the step 19 response. Find the warning type and fix it as follows:
+    - **Lab secret** (the warning names `ALPHACI_RELEASE_SIGNING_KEY`): the secret could not be written, or the lab key file could not be read or is not a P-256 key. Fix the path in `ONPREM_LAB_SIGNING_KEY_PATH` or the GitHub permission, then add the secret under **Settings**, **Secrets and variables**, **Actions**, **Secrets** with the full contents of `release-signing.key`, including the BEGIN and END lines.
+    - **KMS variable** (the warning names `ALPHACI_RELEASE_KMS_KEY_VERSION`): the variable could not be written, or the Cloud KMS settings in step 17 were incomplete. Complete the settings, regenerate this project's workflows so the sign-release job carries the signer identity, then add the variable under **Settings**, **Secrets and variables**, **Actions**, **Variables**.
+    - **Trust only** (the warning says the releases will not verify): the signing key was written, but `ALPHACI_RELEASE_TRUST_KEYS_JSON` does not contain its key ID with the matching public PEM. Add the entry as in Part 4 and no repository change is needed.
 21. **AlphaCI:** open the project's **Hosting** tab. In the **Production** card, enter a host name such as `lab-pc` and choose **Register host**. Copy the token; it is shown once.
 
 ## Part 7: Configure the agent
@@ -421,7 +424,8 @@ An on-prem target added to a project that already exists is refused until its
 repository can sign releases. Set the Cloud KMS settings on the backend (step 17),
 regenerate the project's workflows so the sign-release job carries the signer
 identity, and then add the target again. AlphaCI writes the repository variable
-when it accepts the target. It cannot see the pipeline's contents from there, so
+when it accepts the target. A trust gap refuses the target before anything is
+written. It cannot see the pipeline's contents from there, so
 the regeneration step is yours to do.
 
 ## Rotate the Cloud KMS signing key

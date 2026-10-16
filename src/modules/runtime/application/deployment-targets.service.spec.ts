@@ -1,4 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   BadRequestException,
   ForbiddenException,
@@ -1846,6 +1849,70 @@ describe('DeploymentTargetsService', () => {
         deploymentTargetsRepository.createDeploymentTarget.mock
           .invocationCallOrder[0] ?? Infinity,
       );
+    });
+
+    it('refuses an untrusted Cloud KMS key version before writing the variable', async () => {
+      configuredWith({
+        ...SIGNER_ENV,
+        ALPHACI_RELEASE_KMS_KEY_VERSION: KEY_VERSION,
+        ALPHACI_RELEASE_TRUST_KEYS_JSON: '{}',
+      });
+
+      await expect(
+        withGithub().createDeploymentTarget(
+          'project-1',
+          'user-1',
+          onpremRequest,
+          {
+            githubAccessToken: 'gh-token',
+          },
+        ),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('would not verify'),
+      });
+
+      expect(githubActions.setActionsVariableStrict).not.toHaveBeenCalled();
+      expect(
+        deploymentTargetsRepository.createDeploymentTarget,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('refuses an untrusted lab key before writing it, so the lab private key never reaches the repository', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'lab-key-'));
+      try {
+        const { privateKey } = generateKeyPairSync('ec', {
+          namedCurve: 'prime256v1',
+          privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+          publicKeyEncoding: { type: 'spki', format: 'pem' },
+        });
+        const keyPath = join(directory, 'release-signing.key');
+        writeFileSync(keyPath, privateKey);
+        configuredWith({
+          ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+          ALPHACI_RELEASE_TRUST_KEYS_JSON: '{}',
+        });
+
+        await expect(
+          withGithub().createDeploymentTarget(
+            'project-1',
+            'user-1',
+            onpremRequest,
+            {
+              githubAccessToken: 'gh-token',
+            },
+          ),
+        ).rejects.toMatchObject({
+          message: expect.stringContaining('would not verify'),
+        });
+
+        expect(githubActions.setActionsSecretStrict).not.toHaveBeenCalled();
+        expect(githubActions.setActionsVariableStrict).not.toHaveBeenCalled();
+        expect(
+          deploymentTargetsRepository.createDeploymentTarget,
+        ).not.toHaveBeenCalled();
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     });
 
     it('refuses on a server without the GitHub port, and creates nothing', async () => {

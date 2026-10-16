@@ -29,6 +29,7 @@ export function configureReleaseSigning(
     owner: input.owner,
     repo: input.repo,
     targets: input.targets,
+    untrusted: 'write-and-warn',
   });
 }
 

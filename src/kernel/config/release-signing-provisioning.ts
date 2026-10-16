@@ -39,17 +39,35 @@ export interface ReleaseSigningWriter {
 }
 
 /**
+ * What happens when the trust setting would not verify the releases:
+ * - `write-and-warn` (provisioning): the setting is written and the gap reported,
+ *   so the repository is usable and the operator can fix the trust setting.
+ * - `refuse` (a user adding an on-prem target): nothing is written, and the gap is
+ *   returned so the caller can refuse. Key material never reaches a repository
+ *   that cannot verify releases.
+ */
+export type UntrustedSigning = 'write-and-warn' | 'refuse';
+
+/** One planned repository write, with the trust answer known before it runs. */
+interface SigningWrite {
+  trustProblem: string | undefined;
+  write: () => Promise<void>;
+}
+
+/**
  * Configures release signing for one repository, given the targets that will
  * consume its releases. Signing is needed whenever any of them is host-delivered:
  * a host verifies the release that a pipeline signs, and every environment
  * shares that release, so one configuration covers the project.
  *
- * Writes the Cloud KMS key version as a repository variable, or, lab only, the
- * lab key as a repository secret. Returns a message when releases from the
- * repository cannot be signed, or when the trust setting would not verify them;
- * undefined when everything is in place. It never throws for a configuration
- * gap, so the caller decides whether the gap is a refusal or a warning. Key
- * material is never logged or returned.
+ * The trust check runs before any write. Cloud KMS needs only the key version,
+ * and the lab key needs only its own PEM, so both are known before writing.
+ *
+ * Returns a message when releases from the repository cannot be signed, or when
+ * the trust setting would not verify them. The message is undefined when all is
+ * in place. It never throws for a configuration gap, so the caller decides
+ * whether the gap is a refusal or a warning. Key material is never logged or
+ * returned.
  */
 export async function configureRepositoryReleaseSigning(input: {
   github: ReleaseSigningWriter;
@@ -59,6 +77,7 @@ export async function configureRepositoryReleaseSigning(input: {
   owner: string;
   repo: string;
   targets: readonly { provider: string }[];
+  untrusted: UntrustedSigning;
 }): Promise<string | undefined> {
   if (!input.targets.some((target) => input.deliveredByHost(target.provider))) {
     return undefined;
@@ -74,42 +93,77 @@ export async function configureRepositoryReleaseSigning(input: {
 
   const where = `${input.owner}/${input.repo}`;
   const trustKeys = input.read(RELEASE_TRUST_KEYS_ENV);
-  let trustProblem: string | undefined;
+  const needed =
+    source.kind === 'kms'
+      ? `the repository variable ${RELEASE_SIGNING_VARIABLE}`
+      : `the repository secret ${RELEASE_SIGNING_SECRET}`;
+
+  let plan: SigningWrite;
   try {
-    if (source.kind === 'kms') {
-      await input.github.setActionsVariableStrict(
-        input.accessToken,
-        input.owner,
-        input.repo,
-        RELEASE_SIGNING_VARIABLE,
-        source.keyVersion,
+    plan =
+      source.kind === 'kms'
+        ? {
+            trustProblem: kmsTrustProblem(source.keyVersion, trustKeys),
+            write: () =>
+              input.github.setActionsVariableStrict(
+                input.accessToken,
+                input.owner,
+                input.repo,
+                RELEASE_SIGNING_VARIABLE,
+                source.keyVersion,
+              ),
+          }
+        : await labSecretPlan(input, source.keyPath, trustKeys);
+  } catch (error) {
+    return warn(
+      `Release signing could not be configured on ${where}: ${describeError(error)}. Releases cannot be signed until ${needed} is set.`,
+    );
+  }
+
+  if (plan.trustProblem !== undefined && input.untrusted === 'refuse') {
+    return warn(
+      `Releases from ${where} would not verify on their hosts. ${plan.trustProblem}`,
+    );
+  }
+
+  try {
+    await plan.write();
+  } catch (error) {
+    return warn(
+      `Release signing could not be configured on ${where}: ${describeError(error)}. Releases cannot be signed until ${needed} is set.`,
+    );
+  }
+
+  return plan.trustProblem === undefined
+    ? undefined
+    : warn(
+        `Releases from ${where} will not verify on their hosts yet. ${plan.trustProblem}`,
       );
-      trustProblem = kmsTrustProblem(source.keyVersion, trustKeys);
-    } else {
-      const pem = await readLabSigningKey(source.keyPath);
-      await input.github.setActionsSecretStrict(
+}
+
+/** Reads the lab key, checks its trust, and plans the repository secret write. */
+async function labSecretPlan(
+  input: {
+    github: ReleaseSigningWriter;
+    accessToken: string;
+    owner: string;
+    repo: string;
+  },
+  keyPath: string,
+  trustKeys: string | undefined,
+): Promise<SigningWrite> {
+  const pem = await readLabSigningKey(keyPath);
+  return {
+    trustProblem: labTrustProblem(pem, trustKeys),
+    write: () =>
+      input.github.setActionsSecretStrict(
         input.accessToken,
         input.owner,
         input.repo,
         RELEASE_SIGNING_SECRET,
         pem,
-      );
-      trustProblem = labTrustProblem(pem, trustKeys);
-    }
-  } catch (error) {
-    const needed =
-      source.kind === 'kms'
-        ? `the repository variable ${RELEASE_SIGNING_VARIABLE}`
-        : `the repository secret ${RELEASE_SIGNING_SECRET}`;
-    return warn(
-      `Release signing could not be configured on ${where}: ${describeError(error)}. Releases cannot be signed until ${needed} is set.`,
-    );
-  }
-  return trustProblem === undefined
-    ? undefined
-    : warn(
-        `Releases from ${where} will not verify on their hosts yet. ${trustProblem}`,
-      );
+      ),
+  };
 }
 
 function warn(message: string): string {

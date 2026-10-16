@@ -1496,14 +1496,11 @@ export class DeploymentTargetsService
   }
 
   /**
-   * An environment is delivered one way: all its targets by the workflow, or
-   * all by its host. A promotion creates one deployment for the environment,
-   * reported by one party.
-   */
-  /**
    * A host verifies the releases its environment consumes, so an on-prem target
    * is refused until the repository can sign them. The refusal names the step to
-   * take, and nothing is created when it is raised.
+   * take. No target is created when it is raised. The repository is written only
+   * after the trust check passes, so a refused target leaves no key material
+   * behind.
    */
   private async configureSigningForHostTarget(
     repoFullName: string,
@@ -1529,10 +1526,16 @@ export class DeploymentTargetsService
       owner,
       repo,
       targets: [{ provider }],
+      untrusted: 'refuse',
     });
     if (problem) throw new UnprocessableEntityException(problem);
   }
 
+  /**
+   * An environment is delivered one way: all its targets by the workflow, or
+   * all by its host. A promotion creates one deployment for the environment,
+   * reported by one party.
+   */
   private async assertEnvironmentDelivery(
     projectId: string,
     environment: DeploymentProjectEnvironment,
