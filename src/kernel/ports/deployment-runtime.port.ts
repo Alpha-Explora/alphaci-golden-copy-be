@@ -373,9 +373,15 @@ export interface DeploymentDriftFindingsStore {
     findingId: string,
   ): Promise<DeploymentDriftFinding | null>;
   markStatus(findingId: string, status: 'resolved' | 'ignored'): Promise<void>;
+  /**
+   * Replace a project's active findings with `findings`. A code listed in
+   * `unchecked` was not judged this run, so its active findings are kept as
+   * they are rather than resolved.
+   */
   replaceActiveFindings(
     projectId: string,
     findings: DeploymentDriftFindingInput[],
+    unchecked?: readonly string[],
   ): Promise<DeploymentDriftFinding[]>;
 }
 

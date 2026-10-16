@@ -80,13 +80,18 @@ export class ProjectSyncFindingsRepository implements DeploymentDriftFindingsSto
   async replaceActiveFindings(
     projectId: string,
     findings: ProjectDriftFindingInput[],
+    unchecked: readonly string[] = [],
   ): Promise<ProjectDriftFinding[]> {
     const existing = await this.findActiveByProject(projectId);
     const nextKeys = new Set(findings.map((finding) => this.key(finding)));
 
     await Promise.all(
       existing
-        .filter((finding) => !nextKeys.has(this.key(finding)))
+        .filter(
+          (finding) =>
+            !nextKeys.has(this.key(finding)) &&
+            !unchecked.includes(finding.code),
+        )
         .map((finding) =>
           this.databaseService.query(
             `

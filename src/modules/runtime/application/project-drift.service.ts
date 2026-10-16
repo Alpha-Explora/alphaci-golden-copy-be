@@ -19,9 +19,13 @@ import {
   resolvePlatformBaseUrl,
 } from '#kernel/config/ci-api-base-url';
 import {
-  PIPELINE_BRANCHES,
   PROTECTED_BRANCHES,
+  projectPipelineBranches,
 } from '#kernel/config/pipeline-branches';
+import {
+  DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
+  type DeploymentProjectReferenceLookup,
+} from '#kernel/ports/deployment-runtime.port';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import { EnvVarsRepository } from '../infrastructure/repositories/env-vars.repository';
 import type {
@@ -36,6 +40,9 @@ import {
   type DeploymentProjectReference,
 } from '../core/deployment-provisioning.contract';
 import type { ProjectDriftFindingInput } from './project-drift.types';
+
+/** The code of the finding the CI API URL probe raises. */
+const CI_API_URL_STALE = 'ci_api_url_stale';
 
 function maybeRepoFinding(
   project: DeploymentProjectReference,
@@ -162,6 +169,9 @@ export class ProjectDriftService implements DeploymentDriftQuery {
     @Optional()
     @Inject(GITHUB_PROJECT_PORT)
     private readonly githubService?: GithubProjectPort,
+    @Optional()
+    @Inject(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP)
+    private readonly projects?: DeploymentProjectReferenceLookup,
   ) {}
 
   async listFindings(
@@ -205,18 +215,19 @@ export class ProjectDriftService implements DeploymentDriftQuery {
         options?.githubAccessToken,
       )),
     );
-    findings.push(
-      ...(await this.buildCiApiUrlFindings(
-        project,
-        options?.githubAccessToken,
-      )),
+    const ciApiUrl = await this.buildCiApiUrlFindings(
+      project,
+      options?.githubAccessToken,
     );
+    findings.push(...ciApiUrl.findings);
     return {
       enabled: true,
       mode: 'local_snapshot',
       findings: await this.findingsRepository.replaceActiveFindings(
         projectId,
         findings,
+        // A scan that could not run keeps the findings it would have judged.
+        ciApiUrl.complete ? [] : [CI_API_URL_STALE],
       ),
     };
   }
@@ -353,29 +364,39 @@ export class ProjectDriftService implements DeploymentDriftQuery {
   }
 
   /**
-   * Committed workflow files on the pipeline branches that still name another
-   * AlphaCI API (a localhost address from before the public URL was read
-   * correctly). Secret values cannot be read back, so this reads the files
-   * only. It needs the same live token as the branch probe, and a branch GitHub
-   * will not let us read is skipped: unknown is not drifted.
+   * Committed workflow files on the project's pipeline branches that still name
+   * another AlphaCI API (a localhost address from before the public URL was read
+   * correctly). The branches are the project's environment branches, then the
+   * fixed tiers. Secret values cannot be read back, so this reads the files only.
+   *
+   * `complete` says whether the scan ran to the end. A scan that could not run
+   * (no token, a base GitHub runners cannot reach, an unreadable environment
+   * list, a branch GitHub would not read) judged nothing, so the caller keeps
+   * the findings it already has rather than resolving them.
    */
   private async buildCiApiUrlFindings(
     project: DeploymentProjectReference,
     githubAccessToken: string | null | undefined,
-  ): Promise<ProjectDriftFindingInput[]> {
+  ): Promise<{ findings: ProjectDriftFindingInput[]; complete: boolean }> {
     if (!githubAccessToken || !this.githubService) {
-      return [];
+      return { findings: [], complete: false };
     }
     const expectedBaseUrl = resolvePlatformBaseUrl();
     // A base GitHub runners cannot reach is not a drift to report: there is
     // nothing correct to point CI at until PLATFORM_PUBLIC_URL is set.
     if (!isReachableFromGithubRunners(expectedBaseUrl)) {
-      return [];
+      return { findings: [], complete: false };
     }
+    const environments = await this.readEnvironmentBranches(project.projectId);
+    if (environments === null) {
+      return { findings: [], complete: false };
+    }
+    const { base, branches } = projectPipelineBranches(environments);
+
     const files: Array<{ branch: string; path: string }> = [];
     const staleBaseUrls = new Set<string>();
-
-    for (const branch of PIPELINE_BRANCHES) {
+    let complete = true;
+    for (const branch of branches) {
       try {
         const stale = await findStaleCiWorkflowFiles(
           this.githubService,
@@ -386,34 +407,54 @@ export class ProjectDriftService implements DeploymentDriftQuery {
         );
         for (const file of stale) {
           files.push({ branch, path: file.path });
-          file.staleBases.forEach((base) => staleBaseUrls.add(base));
+          file.staleBases.forEach((staleBase) => staleBaseUrls.add(staleBase));
         }
       } catch (error) {
+        complete = false;
         this.logger.warn(
           `Could not read CI workflows on ${branch} of ${project.repoFullName}: ${(error as Error).message}`,
         );
       }
     }
     if (files.length === 0) {
-      return [];
+      return { findings: [], complete };
     }
 
     const bases = [...staleBaseUrls];
-    return [
-      {
-        projectId: project.projectId,
-        source: 'github_live',
-        severity: 'error',
-        code: 'ci_api_url_stale',
-        message: `CI workflows still point at ${bases.join(', ')} instead of ${expectedBaseUrl}.`,
-        details: {
-          repoFullName: project.repoFullName,
-          expectedBaseUrl,
-          staleBaseUrls: bases,
-          files,
+    return {
+      complete,
+      findings: [
+        {
+          projectId: project.projectId,
+          source: 'github_live',
+          severity: 'error',
+          code: CI_API_URL_STALE,
+          message: `CI workflows still point at ${bases.join(', ')} instead of ${expectedBaseUrl}.`,
+          details: {
+            repoFullName: project.repoFullName,
+            expectedBaseUrl,
+            staleBaseUrls: bases,
+            baseBranch: base,
+            files,
+          },
         },
-      },
-    ];
+      ],
+    };
+  }
+
+  /** The project's environments in position order; null when they cannot be read. */
+  private async readEnvironmentBranches(
+    projectId: string,
+  ): Promise<Array<{ sourceBranch: string }> | null> {
+    if (!this.projects) return [];
+    try {
+      return await this.projects.listProjectEnvironments(projectId);
+    } catch (error) {
+      this.logger.warn(
+        `Could not read the environments of ${projectId}: ${(error as Error).message}`,
+      );
+      return null;
+    }
   }
 
   private enabled(): boolean {

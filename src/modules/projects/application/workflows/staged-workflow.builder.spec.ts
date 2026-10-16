@@ -2025,6 +2025,7 @@ describe('generated CI against a stale API base', () => {
    */
   function buildUnder(
     base: string,
+    extra: Partial<Parameters<typeof buildStagedWorkflowBundle>[1]> = {},
   ): ReturnType<typeof buildStagedWorkflowBundle> {
     const previous = process.env['PLATFORM_PUBLIC_URL'];
     process.env['PLATFORM_PUBLIC_URL'] = base;
@@ -2036,7 +2037,11 @@ describe('generated CI against a stale API base', () => {
           require('./staged-workflow.builder') as typeof import('./staged-workflow.builder');
         built = fresh.buildStagedWorkflowBundle(
           makeTemplate(),
-          { templateId: 'be-nestjs', serviceName: 'orders-api' },
+          {
+            templateId: 'be-nestjs',
+            serviceName: 'orders-api',
+            ...extra,
+          },
           registry,
         );
       });
@@ -2053,6 +2058,65 @@ describe('generated CI against a stale API base', () => {
 
   it('leaves no trace of the stale base once every generated file is rewritten', () => {
     const bundle = buildUnder(STALE);
+
+    expect(
+      bundle.workflowFiles.filter((file) => file.yaml.includes(STALE)).length,
+    ).toBeGreaterThan(0);
+    for (const file of bundle.workflowFiles) {
+      const rewritten = rewriteCiApiBase(file.yaml, CURRENT).content;
+      expect({ path: file.path, stale: rewritten.includes(STALE) }).toEqual({
+        path: file.path,
+        stale: false,
+      });
+    }
+  });
+
+  it('leaves no stale base in an environment pipeline, whose promote and release jobs name the base too', () => {
+    const bundle = buildUnder(STALE, {
+      environments: [
+        {
+          id: 'env-develop',
+          slug: 'develop',
+          sourceBranch: 'develop',
+          position: 0,
+          role: 'non_production',
+        },
+        {
+          id: 'env-staging',
+          slug: 'staging',
+          sourceBranch: 'staging',
+          position: 1,
+          role: 'non_production',
+        },
+        {
+          id: 'env-main',
+          slug: 'main',
+          sourceBranch: 'main',
+          position: 2,
+          role: 'production',
+        },
+      ],
+      environmentTargets: [
+        {
+          environmentId: 'env-develop',
+          slot: 'backend',
+          targetId: 'target-develop',
+          provider: 'render',
+        },
+        {
+          environmentId: 'env-staging',
+          slot: 'backend',
+          targetId: 'target-staging',
+          provider: 'render',
+        },
+        {
+          environmentId: 'env-main',
+          slot: 'backend',
+          targetId: 'target-main',
+          provider: 'render',
+        },
+      ],
+    });
 
     expect(
       bundle.workflowFiles.filter((file) => file.yaml.includes(STALE)).length,

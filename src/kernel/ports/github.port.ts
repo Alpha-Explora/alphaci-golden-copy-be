@@ -356,11 +356,14 @@ export type GitHubRepoPathsResult =
   | { read: true; paths: string[]; truncated: boolean }
   | { read: false; reason: 'unauthorized'; message: string };
 
-/** What the caller may do on a repository, as GitHub reports it to them. */
-export interface GitHubRepoPermissions {
-  push: boolean;
-  admin: boolean;
-}
+/**
+ * What the caller may do on a repository, as GitHub reports it to them.
+ * `unauthorized` is a sign-in GitHub no longer accepts; `unreadable` is any
+ * other answer that does not show the repository. Neither guesses at access.
+ */
+export type GitHubRepoPermissionsResult =
+  | { read: true; push: boolean; admin: boolean }
+  | { read: false; reason: 'unauthorized' | 'unreadable' };
 
 /**
  * Permissions an installation token is narrowed to, by GitHub's own names
@@ -378,6 +381,12 @@ export interface GitHubCommitFilesInput {
    * rather than building on a head the caller never read.
    */
   fromSha?: string;
+  /**
+   * Move a branch of this name to the new commit when it exists, instead of
+   * failing. Only for a branch the caller has checked holds no commits of its
+   * own; the move is a fast-forward, so nothing is lost.
+   */
+  replaceExisting?: boolean;
   /** Branch to create. Created LAST, so a failure leaves nothing behind. */
   newBranch: string;
   message: string;
@@ -746,13 +755,13 @@ export interface GithubProjectPort {
   ): Promise<string | null>;
   /**
    * What the caller may do on the repository, as GitHub reports it to them.
-   * Null when the repository is not visible to them or GitHub will not say:
-   * the answer fails closed.
+   * A repository GitHub will not show is reported as `read: false`, never
+   * as a guess.
    */
   getRepoPermissions(
     accessToken: string,
     repoFullName: string,
-  ): Promise<GitHubRepoPermissions | null>;
+  ): Promise<GitHubRepoPermissionsResult>;
   /**
    * An installation token for the App's installation on `repoFullName`, asked
    * of GitHub itself and narrowed to that one repository and `permissions`.

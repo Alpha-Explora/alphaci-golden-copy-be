@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 
 import { ProjectDriftRepairService } from './project-drift-repair.handler';
@@ -10,6 +11,7 @@ import { ProjectDriftRepairService } from './project-drift-repair.handler';
 describe('ProjectDriftRepairService', () => {
   const projectsRepository = {
     findByIdAndUser: jest.fn(),
+    listProjectEnvironments: jest.fn(),
     findAppRole: jest.fn(),
   };
   const findingsRepository = {
@@ -225,6 +227,8 @@ describe('ProjectDriftRepairService', () => {
     const API = 'https://api.alphaci.test';
     const STALE = 'alphaci-api-url: http://localhost:4000\n';
     const FIXED = `alphaci-api-url: ${API}\n`;
+    const REPAIR_BRANCH = 'alphaci/repair-ci-api-url';
+    const PR_URL = 'https://github.com/tone/orders-api/pull/42';
     const PERMISSIONS = {
       contents: 'write',
       workflows: 'write',
@@ -235,6 +239,7 @@ describe('ProjectDriftRepairService', () => {
       getRepoPermissions: jest.fn(),
       getRepoInstallationAccessToken: jest.fn(),
       getBranchHeadSha: jest.fn(),
+      compareBranches: jest.fn(),
       listRepoContents: jest.fn(),
       getFileContent: jest.fn(),
       setActionsSecretStrict: jest.fn(),
@@ -256,14 +261,15 @@ describe('ProjectDriftRepairService', () => {
       detectedAt: '2026-06-13T00:00:00.000Z',
       resolvedAt: null,
     };
-    const PR_URL = 'https://github.com/tone/orders-api/pull/42';
     let previousBase: string | undefined;
+    /** The repair branch's head; null while the branch does not exist. */
+    let repairHead: string | null;
 
-    /** dev carries one workflow; `stale` decides whether it still names the old base. */
-    function devWorkflow(stale: boolean) {
+    /** The base branch carries one workflow; `stale` decides whether it names the old base. */
+    function baseWorkflow(stale: boolean) {
       github.listRepoContents.mockResolvedValue({
         path: '.github/workflows',
-        ref: 'dev-head',
+        ref: 'base-head',
         entries: [
           {
             name: 'ci.yml',
@@ -307,10 +313,22 @@ describe('ProjectDriftRepairService', () => {
     beforeEach(() => {
       previousBase = process.env['PLATFORM_PUBLIC_URL'];
       process.env['PLATFORM_PUBLIC_URL'] = API;
+      repairHead = null;
       findingsRepository.findByIdForProject.mockResolvedValue(ciFinding);
-      github.getRepoPermissions.mockResolvedValue({ push: true, admin: false });
+      projectsRepository.listProjectEnvironments.mockResolvedValue([
+        { sourceBranch: 'dev', position: 0 },
+      ]);
+      github.getRepoPermissions.mockResolvedValue({
+        read: true,
+        push: true,
+        admin: false,
+      });
       github.getRepoInstallationAccessToken.mockResolvedValue('app-token');
-      github.getBranchHeadSha.mockResolvedValue('dev-head');
+      github.getBranchHeadSha.mockImplementation(
+        (_t: string, _r: string, branch: string) =>
+          Promise.resolve(branch === REPAIR_BRANCH ? repairHead : 'base-head'),
+      );
+      github.compareBranches.mockResolvedValue({ aheadBy: 0 });
       github.setActionsSecretStrict.mockResolvedValue(undefined);
       github.commitFilesToNewBranch.mockResolvedValue({
         committed: true,
@@ -321,7 +339,7 @@ describe('ProjectDriftRepairService', () => {
         pullRequest: { number: 42, htmlUrl: PR_URL },
       });
       github.findOpenPullRequest.mockResolvedValue(null);
-      devWorkflow(true);
+      baseWorkflow(true);
     });
     afterEach(() => {
       if (previousBase === undefined) {
@@ -349,26 +367,62 @@ describe('ProjectDriftRepairService', () => {
         'tone/orders-api',
         {
           fromBranch: 'dev',
-          fromSha: 'dev-head',
-          newBranch: 'alphaci/repair-ci-api-url',
+          fromSha: 'base-head',
+          newBranch: REPAIR_BRANCH,
           message: 'ci: point ALPHACI checks at the public API URL',
           files: [{ path: '.github/workflows/ci.yml', content: FIXED }],
+          replaceExisting: false,
         },
       );
       expect(github.openPullRequest).toHaveBeenCalledWith(
         'app-token',
         'tone/orders-api',
-        expect.objectContaining({
-          head: 'alphaci/repair-ci-api-url',
-          base: 'dev',
-        }),
+        expect.objectContaining({ head: REPAIR_BRANCH, base: 'dev' }),
       );
       expect(response).toMatchObject({
         status: 'completed',
         message: `Opened a pull request into dev: ${PR_URL}`,
-        result: { pullRequestUrl: PR_URL, pullRequestNumber: 42 },
+        result: {
+          pullRequestUrl: PR_URL,
+          pullRequestNumber: 42,
+          baseBranch: 'dev',
+        },
       });
       expect(findingsRepository.markStatus).not.toHaveBeenCalled();
+    });
+
+    it("builds on the project's first environment branch, and names it in the pull request", async () => {
+      projectsRepository.listProjectEnvironments.mockResolvedValue([
+        { sourceBranch: 'develop', position: 0 },
+        { sourceBranch: 'main', position: 1 },
+      ]);
+
+      const response = await repair();
+
+      expect(github.getBranchHeadSha).toHaveBeenCalledWith(
+        'app-token',
+        'tone/orders-api',
+        'develop',
+      );
+      expect(github.commitFilesToNewBranch.mock.calls[0]?.[2]).toMatchObject({
+        fromBranch: 'develop',
+      });
+      expect(github.openPullRequest.mock.calls[0]?.[2]).toMatchObject({
+        base: 'develop',
+      });
+      expect(response.message).toBe(
+        `Opened a pull request into develop: ${PR_URL}`,
+      );
+    });
+
+    it('falls back to dev for a project with no environments', async () => {
+      projectsRepository.listProjectEnvironments.mockResolvedValue([]);
+
+      await repair();
+
+      expect(github.commitFilesToNewBranch.mock.calls[0]?.[2]).toMatchObject({
+        fromBranch: 'dev',
+      });
     });
 
     it('sets the secrets before the branch is written', async () => {
@@ -382,12 +436,8 @@ describe('ProjectDriftRepairService', () => {
       ).toBeGreaterThan(lastSecret);
     });
 
-    it('reports the open pull request when a previous run already opened it', async () => {
-      github.commitFilesToNewBranch.mockResolvedValue({
-        committed: false,
-        reason: 'branch_exists',
-        message: "Branch 'alphaci/repair-ci-api-url' already exists.",
-      });
+    it('reports the open pull request an earlier run left, and writes nothing new', async () => {
+      repairHead = 'old-repair-head';
       github.findOpenPullRequest.mockResolvedValue({
         number: 7,
         htmlUrl: 'https://github.com/tone/orders-api/pull/7',
@@ -398,16 +448,65 @@ describe('ProjectDriftRepairService', () => {
       expect(github.findOpenPullRequest).toHaveBeenCalledWith(
         'app-token',
         'tone/orders-api',
-        'alphaci/repair-ci-api-url',
+        REPAIR_BRANCH,
         'dev',
       );
+      expect(github.commitFilesToNewBranch).not.toHaveBeenCalled();
       expect(github.openPullRequest).not.toHaveBeenCalled();
       expect(response.message).toBe(
         'A pull request into dev is already open: https://github.com/tone/orders-api/pull/7',
       );
     });
 
-    it('refuses a leftover branch with no open pull request, rather than overwriting it', async () => {
+    it('moves a leftover branch with nothing of its own to the new commit, then opens the pull request', async () => {
+      repairHead = 'old-repair-head';
+      github.compareBranches.mockResolvedValue({ aheadBy: 0 });
+
+      const response = await repair();
+
+      expect(github.compareBranches).toHaveBeenCalledWith(
+        'app-token',
+        'tone/orders-api',
+        'dev',
+        REPAIR_BRANCH,
+      );
+      expect(github.commitFilesToNewBranch.mock.calls[0]?.[2]).toMatchObject({
+        replaceExisting: true,
+      });
+      expect(github.openPullRequest).toHaveBeenCalled();
+      expect(response.message).toBe(
+        `Opened a pull request into dev: ${PR_URL}`,
+      );
+    });
+
+    it('refuses a leftover branch that has commits of its own and no open pull request', async () => {
+      repairHead = 'someones-work';
+      github.compareBranches.mockResolvedValue({ aheadBy: 2 });
+
+      await expect(repair()).rejects.toBeInstanceOf(ConflictException);
+      expect(github.commitFilesToNewBranch).not.toHaveBeenCalled();
+      expect(github.openPullRequest).not.toHaveBeenCalled();
+    });
+
+    it('reports a pull request that appeared when the branch was taken in a race', async () => {
+      github.commitFilesToNewBranch.mockResolvedValue({
+        committed: false,
+        reason: 'branch_exists',
+        message: 'exists',
+      });
+      github.findOpenPullRequest.mockResolvedValueOnce({
+        number: 9,
+        htmlUrl: 'https://github.com/tone/orders-api/pull/9',
+      });
+
+      const response = await repair();
+
+      expect(response.message).toBe(
+        'A pull request into dev is already open: https://github.com/tone/orders-api/pull/9',
+      );
+    });
+
+    it('refuses a branch taken in a race when no pull request is open', async () => {
       github.commitFilesToNewBranch.mockResolvedValue({
         committed: false,
         reason: 'branch_exists',
@@ -418,7 +517,7 @@ describe('ProjectDriftRepairService', () => {
       expect(github.openPullRequest).not.toHaveBeenCalled();
     });
 
-    it('stops without a pull request when dev moved while the repair was being prepared', async () => {
+    it('stops without a pull request when the base moved while the repair was being prepared', async () => {
       github.commitFilesToNewBranch.mockResolvedValue({
         committed: false,
         reason: 'base_moved',
@@ -430,8 +529,8 @@ describe('ProjectDriftRepairService', () => {
       expect(findingsRepository.markStatus).not.toHaveBeenCalled();
     });
 
-    it('opens no pull request when dev already names the current base, and does not resolve the finding', async () => {
-      devWorkflow(false);
+    it('opens no pull request when the base already names the current base, and does not resolve the finding', async () => {
+      baseWorkflow(false);
 
       const response = await repair();
 
@@ -443,6 +542,7 @@ describe('ProjectDriftRepairService', () => {
 
     it('refuses a caller who cannot push, before any secret or token is touched', async () => {
       github.getRepoPermissions.mockResolvedValue({
+        read: true,
         push: false,
         admin: false,
       });
@@ -450,6 +550,28 @@ describe('ProjectDriftRepairService', () => {
       await expect(repair()).rejects.toBeInstanceOf(ForbiddenException);
       expect(github.getRepoInstallationAccessToken).not.toHaveBeenCalled();
       expect(github.setActionsSecretStrict).not.toHaveBeenCalled();
+    });
+
+    it('asks the caller to sign in to GitHub again when GitHub no longer accepts their token', async () => {
+      github.getRepoPermissions.mockResolvedValue({
+        read: false,
+        reason: 'unauthorized',
+      });
+
+      const error = await repair().catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(UnauthorizedException);
+      expect((error as Error).message).toContain('Sign in to GitHub again');
+      expect(github.setActionsSecretStrict).not.toHaveBeenCalled();
+    });
+
+    it('refuses a repository GitHub will not show the caller', async () => {
+      github.getRepoPermissions.mockResolvedValue({
+        read: false,
+        reason: 'unreadable',
+      });
+
+      await expect(repair()).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it("checks the push permission with the caller's own token", async () => {

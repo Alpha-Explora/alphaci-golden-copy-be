@@ -7,6 +7,7 @@ import {
   Injectable,
   NotFoundException,
   Optional,
+  UnauthorizedException,
 } from '@nestjs/common';
 
 import {
@@ -41,6 +42,7 @@ import {
 import {
   PROTECTED_BRANCHES,
   WORKING_BRANCH,
+  projectPipelineBranches,
 } from '#kernel/config/pipeline-branches';
 import {
   canCreatePullRequest,
@@ -377,9 +379,9 @@ export class ProjectDriftRepairService {
    *
    * The two repository secrets are reset directly: a secret cannot be read back
    * and carries no review. The workflow files change through a pull request into
-   * dev, so the change is reviewed, and promotion carries it on to uat and main.
-   * The finding stays active until a drift check on the repository says it is
-   * clean, so this action never marks it resolved.
+   * the project's base branch (its first environment's branch), so the change is
+   * reviewed, and promotion carries it on. The finding stays active until a drift
+   * check on the repository says it is clean, so this action never resolves it.
    *
    * The caller must be able to push to the repository on their own GitHub
    * account. The App token used for the writes is narrowed to that repository
@@ -406,22 +408,22 @@ export class ProjectDriftRepairService {
     await this.assertCanPush(github, ctx.githubAccessToken, repoFullName);
     const token = await this.repairInstallationToken(github, repoFullName);
 
-    // The change is built on the dev head read here, and fails if dev moves.
-    const devHead = await github.getBranchHeadSha(
-      token,
-      repoFullName,
-      WORKING_BRANCH,
+    const environments = await this.projectsRepository.listProjectEnvironments(
+      ctx.projectId,
     );
-    if (!devHead) {
+    const { base } = projectPipelineBranches(environments);
+    // The change is built on the base head read here, and fails if it moves.
+    const baseHead = await github.getBranchHeadSha(token, repoFullName, base);
+    if (!baseHead) {
       throw new BadRequestException(
-        `Branch ${WORKING_BRANCH} does not exist in ${repoFullName}.`,
+        `Branch ${base} does not exist in ${repoFullName}.`,
       );
     }
-    const devStale = await findStaleCiWorkflowFiles(
+    const baseStale = await findStaleCiWorkflowFiles(
       github,
       token,
       repoFullName,
-      devHead,
+      baseHead,
       apiUrl,
     );
 
@@ -442,12 +444,12 @@ export class ProjectDriftRepairService {
       reportUrl,
     );
 
-    if (devStale.length === 0) {
+    if (baseStale.length === 0) {
       return this.completed(
         ctx.findingId,
         ctx.action,
-        `CI points at ${apiUrl}; ${WORKING_BRANCH} already names it, so no workflow change was needed.`,
-        { apiUrl, reportUrl, secrets },
+        `CI points at ${apiUrl}; ${base} already names it, so no workflow change was needed.`,
+        { apiUrl, reportUrl, secrets, baseBranch: base },
       );
     }
 
@@ -455,12 +457,13 @@ export class ProjectDriftRepairService {
       github,
       token,
       repoFullName,
-      devHead,
-      devStale,
+      base,
+      baseHead,
+      baseStale,
     );
     const message = pullRequest.created
-      ? `Opened a pull request into ${WORKING_BRANCH}: ${pullRequest.url}`
-      : `A pull request into ${WORKING_BRANCH} is already open: ${pullRequest.url}`;
+      ? `Opened a pull request into ${base}: ${pullRequest.url}`
+      : `A pull request into ${base} is already open: ${pullRequest.url}`;
     if (pullRequest.created) {
       await this.recordRepairEvent({
         userId: ctx.userId,
@@ -472,6 +475,7 @@ export class ProjectDriftRepairService {
           findingId: ctx.findingId,
           action: ctx.action,
           findingCode: ctx.finding.code,
+          baseBranch: base,
           pullRequestNumber: pullRequest.number,
           pullRequestUrl: pullRequest.url,
         },
@@ -481,50 +485,81 @@ export class ProjectDriftRepairService {
       apiUrl,
       reportUrl,
       secrets,
+      baseBranch: base,
       branch: CI_REPAIR_BRANCH,
       pullRequestUrl: pullRequest.url,
       pullRequestNumber: pullRequest.number,
-      files: devStale.map((file) => file.path),
+      files: baseStale.map((file) => file.path),
     });
   }
 
   /**
-   * One commit on a new branch cut from the recorded dev head, then a pull
-   * request into dev. A branch left from an earlier run is reused when its pull
-   * request is still open; otherwise it is refused, so nothing is overwritten.
+   * One commit on the repair branch, cut from the base head that was read, then
+   * a pull request into the base. A branch left by an earlier run is reused when
+   * its pull request is still open. Otherwise it is moved to the new commit only
+   * if it holds nothing of its own; a branch with commits of its own is refused,
+   * so nothing is overwritten.
    */
   private async openWorkflowFixPullRequest(
     github: GithubProjectPort,
     token: string,
     repoFullName: string,
-    devHead: string,
+    base: string,
+    baseHead: string,
     stale: StaleCiWorkflowFile[],
   ): Promise<{ url: string; number: number; created: boolean }> {
+    const existing = await github.getBranchHeadSha(
+      token,
+      repoFullName,
+      CI_REPAIR_BRANCH,
+    );
+    let replaceExisting = false;
+    if (existing) {
+      const open = await this.openPullRequestFor(
+        github,
+        token,
+        repoFullName,
+        base,
+      );
+      if (open) return open;
+      const comparison = await github.compareBranches(
+        token,
+        repoFullName,
+        base,
+        CI_REPAIR_BRANCH,
+      );
+      if (!comparison || comparison.aheadBy > 0) {
+        throw new ConflictException(
+          `Branch ${CI_REPAIR_BRANCH} has commits of its own and no open pull request. Delete it on GitHub, then run the repair again.`,
+        );
+      }
+      replaceExisting = true;
+    }
+
     const committed = await github.commitFilesToNewBranch(token, repoFullName, {
-      fromBranch: WORKING_BRANCH,
-      fromSha: devHead,
+      fromBranch: base,
+      fromSha: baseHead,
       newBranch: CI_REPAIR_BRANCH,
       message: CI_REPAIR_TITLE,
       files: stale.map(({ path, content }) => ({ path, content })),
+      replaceExisting,
     });
     if (!committed.committed) {
       if (committed.reason === 'branch_exists') {
-        const open = await github.findOpenPullRequest(
+        const open = await this.openPullRequestFor(
+          github,
           token,
           repoFullName,
-          CI_REPAIR_BRANCH,
-          WORKING_BRANCH,
+          base,
         );
-        if (open) {
-          return { url: open.htmlUrl, number: open.number, created: false };
-        }
+        if (open) return open;
         throw new ConflictException(
-          `Branch ${CI_REPAIR_BRANCH} already exists with no open pull request. Delete it on GitHub, then run the repair again.`,
+          `Branch ${CI_REPAIR_BRANCH} could not be updated and has no open pull request. Delete it on GitHub, then run the repair again.`,
         );
       }
       if (committed.reason === 'base_moved') {
         throw new ConflictException(
-          `${WORKING_BRANCH} moved while the repair was being prepared. Run the repair again.`,
+          `${base} moved while the repair was being prepared. Run the repair again.`,
         );
       }
       throw new BadGatewayException(committed.message);
@@ -533,7 +568,7 @@ export class ProjectDriftRepairService {
     const opened = await github.openPullRequest(token, repoFullName, {
       title: CI_REPAIR_TITLE,
       head: CI_REPAIR_BRANCH,
-      base: WORKING_BRANCH,
+      base,
       body: CI_REPAIR_BODY,
     });
     if (!opened.created) {
@@ -546,10 +581,28 @@ export class ProjectDriftRepairService {
     };
   }
 
+  /** The open pull request from the repair branch into `base`, as a result, if there is one. */
+  private async openPullRequestFor(
+    github: GithubProjectPort,
+    token: string,
+    repoFullName: string,
+    base: string,
+  ): Promise<{ url: string; number: number; created: boolean } | null> {
+    const open = await github.findOpenPullRequest(
+      token,
+      repoFullName,
+      CI_REPAIR_BRANCH,
+      base,
+    );
+    return open
+      ? { url: open.htmlUrl, number: open.number, created: false }
+      : null;
+  }
+
   /**
-   * The repair writes on the caller's behalf, so the caller must be able to
-   * push. Checked with their own token, not the App's: a token that can reach
-   * the repository says nothing about whether this person may change it.
+   * The repair writes on the caller's behalf, so the caller must be able to push.
+   * Checked with their own token, not the App's: a token that can reach the
+   * repository says nothing about whether this person may change it.
    */
   private async assertCanPush(
     github: GithubProjectPort,
@@ -562,7 +615,12 @@ export class ProjectDriftRepairService {
       );
     }
     const access = await github.getRepoPermissions(userToken, repoFullName);
-    if (!access || !(access.push || access.admin)) {
+    if (!access.read && access.reason === 'unauthorized') {
+      throw new UnauthorizedException(
+        'Your GitHub sign-in no longer works. Sign in to GitHub again, then retry.',
+      );
+    }
+    if (!access.read || !(access.push || access.admin)) {
       throw new ForbiddenException({
         statusCode: 403,
         error: 'Forbidden',

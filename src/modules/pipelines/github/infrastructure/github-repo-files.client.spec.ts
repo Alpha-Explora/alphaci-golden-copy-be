@@ -192,6 +192,59 @@ describe('GithubRepoFilesClient', () => {
     ).toBe(false);
   });
 
+  it('moves an existing branch to the new commit when asked, and reports a refusal to move it', async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(200, { tree: { sha: 'recordedtree' } }))
+      .mockResolvedValueOnce(response(201, { sha: 'blob1' }))
+      .mockResolvedValueOnce(response(201, { sha: 'tree1' }))
+      .mockResolvedValueOnce(response(201, { sha: 'commit1' }))
+      .mockResolvedValueOnce(response(200, { object: { sha: 'recorded' } }))
+      .mockResolvedValueOnce(response(200, {}));
+
+    const result = await client.commitFilesToNewBranch('t', 'o/r', {
+      fromBranch: 'dev',
+      fromSha: 'recorded',
+      newBranch: 'alphaci/repair-ci-api-url',
+      message: 'm',
+      files: [{ path: '.github/workflows/ci.yml', content: 'new' }],
+      replaceExisting: true,
+    });
+
+    expect(result).toEqual({ committed: true, commitSha: 'commit1' });
+    const urls = fetchMock.mock.calls.map(
+      (c) =>
+        `${String(c[1]?.method ?? 'GET')} ${String(c[0]).split('/repos/o/r')[1]}`,
+    );
+    expect(urls.at(-1)).toBe('PATCH /git/refs/heads/alphaci/repair-ci-api-url');
+    expect(urls).not.toContain('POST /git/refs');
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toEqual({
+      sha: 'commit1',
+    });
+  });
+
+  it('reports a branch GitHub will not move as branch_exists, so the caller can look again', async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(200, { tree: { sha: 'recordedtree' } }))
+      .mockResolvedValueOnce(response(201, { sha: 'blob1' }))
+      .mockResolvedValueOnce(response(201, { sha: 'tree1' }))
+      .mockResolvedValueOnce(response(201, { sha: 'commit1' }))
+      .mockResolvedValueOnce(response(200, { object: { sha: 'recorded' } }))
+      .mockResolvedValueOnce(
+        response(422, { message: 'Update is not a fast forward' }),
+      );
+
+    await expect(
+      client.commitFilesToNewBranch('t', 'o/r', {
+        fromBranch: 'dev',
+        fromSha: 'recorded',
+        newBranch: 'alphaci/repair-ci-api-url',
+        message: 'm',
+        files: [{ path: 'a.yml', content: 'x' }],
+        replaceExisting: true,
+      }),
+    ).resolves.toMatchObject({ committed: false, reason: 'branch_exists' });
+  });
+
   it('reads a branch head, and reports an absent branch as null', async () => {
     fetchMock
       .mockResolvedValueOnce(response(200, { object: { sha: 'head1' } }))

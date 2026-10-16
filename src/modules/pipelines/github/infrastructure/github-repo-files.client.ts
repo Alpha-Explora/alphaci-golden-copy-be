@@ -284,11 +284,23 @@ export class GithubRepoFilesClient {
         };
       }
     }
-    const refRes = await post(`${api}/git/refs`, {
-      ref: `refs/heads/${input.newBranch}`,
-      sha: commit.sha,
-    });
-    if (refRes.status === 422) {
+    const refRes = input.replaceExisting
+      ? await this.http.fetchWithRetry(
+          `${api}/git/refs/heads/${input.newBranch
+            .split('/')
+            .map(encodeURIComponent)
+            .join('/')}`,
+          {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ sha: commit.sha }),
+          },
+        )
+      : await post(`${api}/git/refs`, {
+          ref: `refs/heads/${input.newBranch}`,
+          sha: commit.sha,
+        });
+    if (refRes.status === 422 || (input.replaceExisting && !refRes.ok)) {
       return {
         committed: false,
         reason: 'branch_exists',

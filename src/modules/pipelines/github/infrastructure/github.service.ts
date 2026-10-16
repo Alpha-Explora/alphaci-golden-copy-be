@@ -24,7 +24,7 @@ import {
   type GitHubDispatchWorkflowResult,
   type GitHubCommitFilesInput,
   type GitHubCommitFilesResult,
-  type GitHubRepoPermissions,
+  type GitHubRepoPermissionsResult,
   type GitHubTokenPermissions,
   type GitHubRepoFilesResult,
   type GitHubRepoPathsResult,
@@ -2396,22 +2396,25 @@ export class GithubService
   }
 
   /**
-   * What the caller may do on the repository, read with their own token. Any
-   * answer other than a readable repository is null: the answer fails closed.
+   * What the caller may do on the repository, read with their own token. A
+   * sign-in GitHub no longer accepts is `unauthorized`; any other answer that
+   * does not show the repository is `unreadable`. Neither guesses at access.
    */
   async getRepoPermissions(
     accessToken: string,
     repoFullName: string,
-  ): Promise<GitHubRepoPermissions | null> {
+  ): Promise<GitHubRepoPermissionsResult> {
     const response = await this.http.fetchWithRetry(
       `https://api.github.com/repos/${repoFullName}`,
       { headers: this.http.workspaceHeaders(accessToken) },
     );
-    if (!response.ok) return null;
+    if (response.status === 401) return { read: false, reason: 'unauthorized' };
+    if (!response.ok) return { read: false, reason: 'unreadable' };
     const payload = (await response.json()) as {
       permissions?: { push?: boolean; admin?: boolean };
     };
     return {
+      read: true,
       push: payload.permissions?.push === true,
       admin: payload.permissions?.admin === true,
     };
