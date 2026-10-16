@@ -4,6 +4,7 @@ import { BadGatewayException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
+import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
 
 import type { AppConfig } from '#kernel/config/app.config';
@@ -65,6 +66,13 @@ export async function startApplication(
     githubAnswers?: Record<string, (...args: unknown[]) => unknown>;
     /** Extra CI port calls a scenario expects, recorded then answered. */
     ciAnswers?: Record<string, (...args: unknown[]) => unknown>;
+    /**
+     * The GitHub access token a signed-in user's session holds. Dev quick-login
+     * never runs OAuth, so its session has none; a user who signed in with
+     * GitHub always does. Scenarios that need one pass a placeholder here. The
+     * faked GitHub ports never send it anywhere.
+     */
+    githubAccessToken?: string;
   } = {},
 ): Promise<E2eApplication> {
   const databaseUrl = process.env['E2E_APP_DATABASE_URL'] ?? '';
@@ -133,6 +141,17 @@ export async function startApplication(
     bodyParser: false,
   });
   configureHttpApplication(app);
+  if (options.githubAccessToken !== undefined) {
+    // Runs after the session middleware, before the routes: every signed-in
+    // session gets the placeholder token, as an OAuth sign-in would store it.
+    const githubAccessToken = options.githubAccessToken;
+    app.use((req: Request, _res: Response, next: NextFunction) => {
+      if (req.session?.userId && !req.session.githubAccessToken) {
+        req.session.githubAccessToken = githubAccessToken;
+      }
+      next();
+    });
+  }
   await app.init();
 
   const configuredUrl = app.get(ConfigService).get<AppConfig>('app')

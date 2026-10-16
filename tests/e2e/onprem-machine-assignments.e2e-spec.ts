@@ -125,6 +125,27 @@ describe('Reusable machine assignment authorization', () => {
     await pool.query('DELETE FROM identity.app_users WHERE id=$1', [userId]);
     await pool.end();
   });
+  /** Enrolls a healthy machine, optionally replacing another; returns its id. */
+  const enroll = async (replacesMachineId?: string) => {
+    const code = hashMachineSecret(randomUUID());
+    await machines.createEnrollment(
+      workspaceId,
+      userId,
+      {
+        name: 'swap',
+        platform: 'ubuntu',
+        requestId: randomUUID(),
+        ...(replacesMachineId ? { replacesMachineId } : {}),
+      },
+      code,
+    );
+    return (
+      await machines.consume(code, hashMachineSecret(randomUUID()), 'p', {
+        agentVersion: 'test',
+        checks: [],
+      })
+    ).id;
+  };
   it('uses compare-and-set, replays the same request once, and allocates distinct host ports', async () => {
     const request = input();
     const result = await Promise.allSettled([
@@ -236,26 +257,6 @@ describe('Reusable machine assignment authorization', () => {
     await assignments.unassign(projectId, environmentId, changed.id);
   });
   it('moves active bindings to a replacement machine with the same ports', async () => {
-    const enroll = async (replacesMachineId?: string) => {
-      const code = hashMachineSecret(randomUUID());
-      await machines.createEnrollment(
-        workspaceId,
-        userId,
-        {
-          name: 'swap',
-          platform: 'ubuntu',
-          requestId: randomUUID(),
-          ...(replacesMachineId ? { replacesMachineId } : {}),
-        },
-        code,
-      );
-      return (
-        await machines.consume(code, hashMachineSecret(randomUUID()), 'p', {
-          agentVersion: 'test',
-          checks: [],
-        })
-      ).id;
-    };
     const old = await enroll();
     // Two healthy machines: a person must choose.
     await expect(
@@ -344,5 +345,165 @@ describe('Reusable machine assignment authorization', () => {
     await expect(assignments.authorizeAgent(hash, 'machine')).rejects.toThrow(
       /revoked/,
     );
+  });
+  it('frees a revoked machine without a replacement: its environment and ports become assignable again', async () => {
+    const lone = await enroll();
+    await assignments.assign({ ...input(), machineId: lone });
+    const reserved = (id: string) =>
+      pool.query(
+        'SELECT host_port FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+        [id],
+      );
+    expect((await reserved(lone)).rows).toHaveLength(1);
+    await machines.revoke(workspaceId, lone);
+    expect(await assignments.current(projectId, environmentId)).toBeNull();
+    expect((await reserved(lone)).rows).toEqual([]);
+    // A manual assignment needs no Unassign first: the revoked binding already ended.
+    const healthy = await enroll();
+    const again = await assignments.assign({ ...input(), machineId: null });
+    expect(again.machineId).toBe(healthy);
+    await assignments.unassign(projectId, environmentId, again.id);
+  });
+  it('ends bindings that earlier revocations left active when the migration runs', async () => {
+    const stale = await enroll();
+    await assignments.assign({
+      ...input(),
+      machineId: stale,
+      environmentId: secondEnv,
+    });
+    // Written before revocation ended bindings: the machine is revoked, its binding is not.
+    await pool.query(
+      'UPDATE env_provisioning.onprem_machines SET revoked_at=NOW() WHERE id=$1',
+      [stale],
+    );
+    expect(await assignments.current(projectId, secondEnv)).not.toBeNull();
+    await pool.query(
+      readFileSync(
+        resolve(
+          'supabase/migrations/runtime/20261016010000_end_revoked_machine_bindings.sql',
+        ),
+        'utf8',
+      ),
+    );
+    expect(await assignments.current(projectId, secondEnv)).toBeNull();
+    const reserved = await pool.query(
+      'SELECT 1 FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+      [stale],
+    );
+    expect(reserved.rows).toEqual([]);
+  });
+  it('revokes a machine with a pending replacement enrollment and makes that enrollment unusable', async () => {
+    const compromised = await enroll();
+    await assignments.assign({ ...input(), machineId: compromised });
+    const code = hashMachineSecret(randomUUID());
+    await machines.createEnrollment(
+      workspaceId,
+      userId,
+      {
+        name: 'pending',
+        platform: 'ubuntu',
+        requestId: randomUUID(),
+        replacesMachineId: compromised,
+      },
+      code,
+    );
+    // Emergency revocation always succeeds, and the pending code can no longer be used.
+    await machines.revoke(workspaceId, compromised);
+    expect(await assignments.current(projectId, environmentId)).toBeNull();
+    await expect(
+      machines.consume(code, hashMachineSecret(randomUUID()), 'p', {
+        agentVersion: 'test',
+        checks: [],
+      }),
+    ).rejects.toThrow(/Enrollment expired/);
+  });
+  it('never leaves an active binding on a revoked machine when a revoke races an assignment', async () => {
+    for (let round = 0; round < 5; round++) {
+      const racing = await enroll();
+      const outcomes = await Promise.allSettled([
+        assignments.assign({ ...input(), machineId: racing }),
+        machines.revoke(workspaceId, racing),
+      ]);
+      expect(outcomes[1]?.status).toBe('fulfilled');
+      const left = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM env_provisioning.onprem_hosts h
+           JOIN env_provisioning.onprem_machines m ON m.id=h.machine_id
+          WHERE m.id=$1 AND m.revoked_at IS NOT NULL AND h.revoked_at IS NULL`,
+        [racing],
+      );
+      expect(left.rows[0]!.count).toBe('0');
+      const ports = await pool.query(
+        'SELECT 1 FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+        [racing],
+      );
+      expect(ports.rows).toEqual([]);
+      expect(await assignments.current(projectId, environmentId)).toBeNull();
+    }
+  });
+  it('workspace deletion ends the bindings of its machines and frees their ports', async () => {
+    const deleted = randomUUID();
+    const code = hashMachineSecret(randomUUID());
+    await machines.createEnrollment(
+      deleted,
+      userId,
+      { name: 'deleted', platform: 'ubuntu', requestId: randomUUID() },
+      code,
+    );
+    const doomed = (
+      await machines.consume(code, hashMachineSecret(randomUUID()), 'd', {
+        agentVersion: 'test',
+        checks: [],
+      })
+    ).id;
+    await assignments.assign({
+      ...input(),
+      workspaceId: deleted,
+      machineId: doomed,
+    });
+    await machines.purgeWorkspace(deleted);
+    expect(await assignments.current(projectId, environmentId)).toBeNull();
+    const ports = await pool.query(
+      'SELECT 1 FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+      [doomed],
+    );
+    expect(ports.rows).toEqual([]);
+  });
+  it('serializes a revoke against using its replacement code, with no deadlock and no half-applied replacement', async () => {
+    for (let round = 0; round < 5; round++) {
+      const target = await enroll();
+      const code = hashMachineSecret(randomUUID());
+      await machines.createEnrollment(
+        workspaceId,
+        userId,
+        {
+          name: 'contested',
+          platform: 'ubuntu',
+          requestId: randomUUID(),
+          replacesMachineId: target,
+        },
+        code,
+      );
+      const [revoked, consumed] = await Promise.allSettled([
+        machines.revoke(workspaceId, target),
+        machines.consume(code, hashMachineSecret(randomUUID()), 'c', {
+          agentVersion: 'test',
+          checks: [],
+        }),
+      ]);
+      // Revoke always succeeds. The code either wins the race or is refused cleanly;
+      // a deadlock would surface as a server error with a different message.
+      expect(revoked.status).toBe('fulfilled');
+      if (consumed.status === 'rejected')
+        expect((consumed.reason as Error).message).toMatch(
+          /Enrollment expired|has been revoked/,
+        );
+      const left = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM env_provisioning.onprem_hosts h
+           JOIN env_provisioning.onprem_machines m ON m.id=h.machine_id
+          WHERE m.id=$1 AND m.revoked_at IS NOT NULL AND h.revoked_at IS NULL`,
+        [target],
+      );
+      expect(left.rows[0]!.count).toBe('0');
+    }
   });
 });

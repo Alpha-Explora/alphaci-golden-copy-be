@@ -17,6 +17,7 @@ import { resolve } from 'node:path';
 import type { Response } from 'express';
 import { OnpremHostsService } from '../application/onprem/onprem-hosts.service';
 import { ConsumeEnrollmentDto, MachineCheckInDto } from './dto/onprem-host.dto';
+import { OnpremMachineRateLimit } from './onprem-machine-throttler.guard';
 
 /** Short-lived enrollment code or revocable machine credential, never session auth. */
 @Controller('onprem')
@@ -60,6 +61,7 @@ export class OnpremEnrollmentController {
     return this.hosts.consumeEnrollment(input.code, input);
   }
   @Post('heartbeat')
+  @OnpremMachineRateLimit()
   heartbeat(
     @Headers('authorization') authorization: string | undefined,
     @Body() input: MachineCheckInDto,
