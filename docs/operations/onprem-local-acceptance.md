@@ -61,10 +61,10 @@ Before application there were zero active registrations and zero duplicate activ
 
 ## Installer and workflow artifacts
 
-- Installer version: `0.2.0`.
-- Archive: `artifacts/onprem/alphaci-agent-0.2.0.tar.gz`.
+- Installer version: `0.1.0`.
+- Archive: `artifacts/onprem/alphaci-agent-0.1.0.tar.gz`.
 - SHA-256: `8eb6ad4027f8693d9f806828fc75b1d9984868afe0b4d6f106d6ea80b7148e1a`.
-- Public download: the temporary API plus `/api/v1/onprem/installer/0.2.0`.
+- Public download: the temporary API plus `/api/v1/onprem/installer/0.1.0`.
 - Verification key ID: `sha256:50baced1aee8007e0913900d5b2ad6b8b5296da62ea1a6353d0d32037aca29ce`.
 
 A read-only transaction loaded persisted project settings, environments, and targets, then called `ProjectWorkflowsService.previewWorkflowSettings`. Five generated files are saved in `artifacts/onprem/eatta-workflow-preview/` with no validation warnings. They retain Test `dev`, UAT `uat`, and Production `main`; only Test automatically builds/registers the frontend release. Generated validation, release registration, and signing endpoints use the temporary HTTPS API. Result reporting still uses the repository `ALPHACI_REPORT_URL` secret and must be updated there.

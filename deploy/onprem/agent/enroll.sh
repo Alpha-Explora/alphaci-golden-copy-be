@@ -91,8 +91,9 @@ case "$http_status" in
       echo "AlphaCI sent an incomplete enrollment response.$(code_note ' The code file has been kept for a retry.')" >&2
       exit 1
     fi ;;
-  400|401|409)
-    # The server refuses the code itself: invalid, already used or expired. The file goes.
+  401|409)
+    # The server refuses the code itself: invalid or expired (401), already used (409). The file goes.
+    # A 400 is not a code verdict (the format is checked above), so it is kept like other refusals.
     echo "AlphaCI rejected the enrollment code (HTTP $http_status).$(code_note ' The code file has been deleted.') $(server_message)" >&2
     discard_code_file
     exit 1 ;;
