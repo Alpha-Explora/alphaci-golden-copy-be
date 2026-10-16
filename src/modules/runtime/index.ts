@@ -89,9 +89,13 @@ export {
   type DeploymentProvisioningDefaultsPort,
 } from './core/deployment-provisioning.defaults';
 
-// The app-wide ThrottlerGuard is registered by the composition root, which keeps
-// machine-credential routes keyed per machine rather than per client IP.
-export { OnpremMachineThrottlerGuard } from './api/onprem-machine-throttler.guard';
+// The composition root registers the app-wide throttler with these named
+// throttlers, which key agent routes per machine rather than per client IP.
+export {
+  isOnpremMachineRoute,
+  ONPREM_AGENT_THROTTLERS,
+  OnpremMachineThrottlerGuard,
+} from './api/onprem-machine-throttler.guard';
 
 export type {
   ProjectDriftFinding,

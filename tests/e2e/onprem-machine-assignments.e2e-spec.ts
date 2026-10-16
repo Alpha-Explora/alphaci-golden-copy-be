@@ -358,7 +358,7 @@ describe('Reusable machine assignment authorization', () => {
     await machines.revoke(workspaceId, lone);
     expect(await assignments.current(projectId, environmentId)).toBeNull();
     expect((await reserved(lone)).rows).toEqual([]);
-    // No Unassign: the one healthy machine takes the environment straight away.
+    // A manual assignment needs no Unassign first: the revoked binding already ended.
     const healthy = await enroll();
     const again = await assignments.assign({ ...input(), machineId: null });
     expect(again.machineId).toBe(healthy);
@@ -391,5 +391,84 @@ describe('Reusable machine assignment authorization', () => {
       [stale],
     );
     expect(reserved.rows).toEqual([]);
+  });
+  it('refuses to revoke a machine while its replacement enrollment is pending, then allows it once that expires', async () => {
+    const pendingFor = await enroll();
+    await assignments.assign({ ...input(), machineId: pendingFor });
+    const code = hashMachineSecret(randomUUID());
+    await machines.createEnrollment(
+      workspaceId,
+      userId,
+      {
+        name: 'pending',
+        platform: 'ubuntu',
+        requestId: randomUUID(),
+        replacesMachineId: pendingFor,
+      },
+      code,
+    );
+    await expect(machines.revoke(workspaceId, pendingFor)).rejects.toThrow(
+      /replacement enrollment for this machine is still pending/,
+    );
+    expect(await assignments.current(projectId, environmentId)).toMatchObject({
+      machineId: pendingFor,
+    });
+    await pool.query(
+      "UPDATE env_provisioning.onprem_enrollments SET expires_at=NOW()-INTERVAL '1 second' WHERE code_sha256=$1",
+      [code],
+    );
+    await machines.revoke(workspaceId, pendingFor);
+    expect(await assignments.current(projectId, environmentId)).toBeNull();
+  });
+  it('never leaves an active binding on a revoked machine when a revoke races an assignment', async () => {
+    for (let round = 0; round < 5; round++) {
+      const racing = await enroll();
+      const outcomes = await Promise.allSettled([
+        assignments.assign({ ...input(), machineId: racing }),
+        machines.revoke(workspaceId, racing),
+      ]);
+      expect(outcomes[1]?.status).toBe('fulfilled');
+      const left = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM env_provisioning.onprem_hosts h
+           JOIN env_provisioning.onprem_machines m ON m.id=h.machine_id
+          WHERE m.id=$1 AND m.revoked_at IS NOT NULL AND h.revoked_at IS NULL`,
+        [racing],
+      );
+      expect(left.rows[0]!.count).toBe('0');
+      const ports = await pool.query(
+        'SELECT 1 FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+        [racing],
+      );
+      expect(ports.rows).toEqual([]);
+      expect(await assignments.current(projectId, environmentId)).toBeNull();
+    }
+  });
+  it('workspace deletion ends the bindings of its machines and frees their ports', async () => {
+    const deleted = randomUUID();
+    const code = hashMachineSecret(randomUUID());
+    await machines.createEnrollment(
+      deleted,
+      userId,
+      { name: 'deleted', platform: 'ubuntu', requestId: randomUUID() },
+      code,
+    );
+    const doomed = (
+      await machines.consume(code, hashMachineSecret(randomUUID()), 'd', {
+        agentVersion: 'test',
+        checks: [],
+      })
+    ).id;
+    await assignments.assign({
+      ...input(),
+      workspaceId: deleted,
+      machineId: doomed,
+    });
+    await machines.purgeWorkspace(deleted);
+    expect(await assignments.current(projectId, environmentId)).toBeNull();
+    const ports = await pool.query(
+      'SELECT 1 FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+      [doomed],
+    );
+    expect(ports.rows).toEqual([]);
   });
 });

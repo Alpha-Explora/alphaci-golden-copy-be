@@ -47,11 +47,13 @@ the existing workspace visibility, application hosting role, and subscription ga
 - `POST /onprem/heartbeat` uses the machine bearer credential and reports agent
   version and prerequisite checks. A check-in older than 90 seconds is offline.
   Heartbeat, assignment polling, and status reports are limited to 120 requests
-  per minute per machine credential, not per client IP.
+  per minute per machine credential, and to 300 per minute per client address.
 - `POST /workspaces/:workspaceId/onprem-hosts/:machineId/revoke` stops new
   authorized work and ends the machine's bindings in the same transaction,
   releasing their host ports. A named replacement takes the bindings over
-  instead. It cannot stop offline containers or erase host data.
+  instead. Revocation without a replacement is refused while a replacement
+  enrollment for the machine is pending. It cannot stop offline containers or
+  erase host data.
 - `GET`, `POST`, and `DELETE /projects/:projectId/environments/:environmentId/host-assignment`
   read, explicitly assign/replace, and unassign. POST takes machine ID, request
   UUID, expected current assignment ID or null, ports, health paths, and ingress.

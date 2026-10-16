@@ -23,7 +23,12 @@ import { BillingModule } from '#modules/billing/billing.module.js';
 import { PipelinesModule } from '#modules/pipelines/pipelines.module.js';
 import { ProjectsModule } from '#modules/projects/projects.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
-import { OnpremMachineThrottlerGuard } from '#modules/runtime/index.js';
+import {
+  isOnpremMachineRoute,
+  ONPREM_AGENT_THROTTLERS,
+  OnpremMachineThrottlerGuard,
+} from '#modules/runtime/index.js';
+import { FixedWindowThrottlerStorage } from '#kernel/http/throttling/fixed-window-throttler.storage.js';
 import { PlatformOpsModule } from '#modules/platform-ops/platform-ops.module.js';
 
 @Module({
@@ -41,7 +46,19 @@ import { PlatformOpsModule } from '#modules/platform-ops/platform-ops.module.js'
       // silently degrading to insecure fallbacks during local development.
       validate: validateEnv,
     }),
-    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 60 }]),
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          name: 'default',
+          ttl: 60_000,
+          limit: 60,
+          skipIf: isOnpremMachineRoute,
+        },
+        ...ONPREM_AGENT_THROTTLERS,
+      ],
+      // Per-key fixed windows; the bundled storage cancels other keys' expiry timers.
+      storage: new FixedWindowThrottlerStorage(),
+    }),
     SupabaseModule,
     CompositionModule,
     HealthModule,

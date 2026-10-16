@@ -38,8 +38,8 @@ describe('Per-machine rate limits on agent endpoints', () => {
   let e2e: E2eApplication;
   let previousOnpremFlag: string | undefined;
 
-  /** Enrolls and consumes a machine through the repository; returns its bearer credential. */
-  async function enrollMachine(): Promise<string> {
+  /** Enrolls and consumes a machine through the repository; returns its id and bearer credential. */
+  async function enrollMachine(): Promise<{ id: string; credential: string }> {
     const code = randomBytes(32).toString('base64url');
     const credential =
       MACHINE_TOKEN_PREFIX + randomBytes(32).toString('base64url');
@@ -49,14 +49,16 @@ describe('Per-machine rate limits on agent endpoints', () => {
       { name: 'rate limited', platform: 'ubuntu', requestId: randomUUID() },
       hashMachineSecret(code),
     );
-    await machines.consume(
+    const machine = await machines.consume(
       hashMachineSecret(code),
       hashMachineSecret(credential),
       credential.slice(0, 22),
       checkIn,
     );
-    return credential;
+    return { id: machine.id, credential };
   }
+  const randomCredential = () =>
+    MACHINE_TOKEN_PREFIX + randomBytes(32).toString('base64url');
   const heartbeat = (credential: string) =>
     request(e2e.http)
       .post('/api/v1/onprem/heartbeat')
@@ -79,21 +81,22 @@ describe('Per-machine rate limits on agent endpoints', () => {
   });
 
   it('limits each machine on its own, so machines behind one IP do not share a bucket', async () => {
-    const first = await enrollMachine();
-    const second = await enrollMachine();
+    const first = (await enrollMachine()).credential;
+    const second = (await enrollMachine()).credential;
     // supertest reaches the app from one loopback address for both machines.
     for (let sent = 0; sent < limit; sent++) await heartbeat(first).expect(201);
     await heartbeat(first).expect(429);
     await heartbeat(second).expect(201);
   });
 
-  it('keeps unknown credentials on the client IP, so rotating tokens opens no new bucket', async () => {
+  it('keeps unknown and revoked credentials on the client IP, so rotating them opens no new bucket', async () => {
+    const revoked = await enrollMachine();
+    await machines.revoke(workspaceId, revoked.id);
+    // Alternate revoked and made-up credentials; both are rejected, and both share the IP bucket.
     for (let sent = 0; sent < limit; sent++)
       await heartbeat(
-        MACHINE_TOKEN_PREFIX + randomBytes(32).toString('base64url'),
+        sent % 2 === 0 ? revoked.credential : randomCredential(),
       ).expect(401);
-    await heartbeat(
-      MACHINE_TOKEN_PREFIX + randomBytes(32).toString('base64url'),
-    ).expect(429);
+    await heartbeat(randomCredential()).expect(429);
   });
 });

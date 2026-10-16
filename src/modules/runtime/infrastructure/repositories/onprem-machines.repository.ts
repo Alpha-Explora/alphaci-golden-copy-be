@@ -252,6 +252,17 @@ export class OnpremMachinesRepository {
           );
         moved = await moveMachineBindings(client, id, replacementId);
       } else {
+        // A pending replacement moves these environments when it is consumed.
+        // Ending them now would leave it nothing to move, so wait for it instead.
+        // The machine row lock above also serializes this with enrollment creation.
+        const pending = await client.query(
+          `SELECT 1 FROM env_provisioning.onprem_enrollments WHERE replaces_machine_id=$1 AND consumed_at IS NULL AND expires_at > NOW() LIMIT 1`,
+          [id],
+        );
+        if (pending.rowCount)
+          throw new ConflictException(
+            'A replacement enrollment for this machine is still pending. Its environments move to the replacement when that enrollment is used, so revoke once it is used or has expired.',
+          );
         await endMachineBindings(client, id);
       }
       await client.query(
