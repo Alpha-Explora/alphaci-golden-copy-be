@@ -39,6 +39,7 @@ interface ParsedWorkflow {
         needs?: string[];
         uses?: string;
         with?: Record<string, unknown>;
+        outputs?: Record<string, string>;
         secrets?: Record<string, string> | string;
         steps?: Array<{
           run?: string;
@@ -345,6 +346,12 @@ describe('buildStagedWorkflowBundle', () => {
     expect(quality.jobs['backend-tests']?.with?.['coverage-threshold']).toBe(
       '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
     );
+    // The strict bar on every branch: on dev it is above the gate and warns,
+    // on uat and main it equals the gate and says nothing.
+    expect(policy).toContain('echo "promotion-coverage-threshold=90"');
+    expect(
+      quality.jobs['branch-policy']?.outputs?.['promotion-coverage-threshold'],
+    ).toBe('${{ steps.resolve.outputs.promotion-coverage-threshold }}');
     expect(quality.jobs['lint']?.with?.['fail-on-warning']).toBe(
       '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
     );
@@ -379,6 +386,9 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     expect(bundle.workflowFiles[1]!.yaml).toContain('COVERAGE_THRESHOLD=95');
+    expect(bundle.workflowFiles[1]!.yaml).toContain(
+      'echo "promotion-coverage-threshold=95"',
+    );
   });
 
   it('adds a secret-gated SonarCloud job that consumes the coverage artifact', () => {
