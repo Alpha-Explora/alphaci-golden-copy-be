@@ -22,7 +22,9 @@ param(
     [Parameter(Mandatory)]
     [ValidateSet('Keepalive', 'PortForward', 'Library')]
     [string] $Role,
-    [string] $ConfigPath = (Join-Path $env:ProgramData 'AlphaCI\host.json')
+    # Defaults to %ProgramData%\AlphaCI\host.json; resolved after -Role Library
+    # returns, so the functions load where ProgramData does not exist.
+    [string] $ConfigPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -176,6 +178,7 @@ function Invoke-PortForward {
 }
 
 if ($Role -eq 'Library') { return }
+if (-not $ConfigPath) { $ConfigPath = Join-Path $env:ProgramData 'AlphaCI\host.json' }
 $root = Split-Path -Parent $ConfigPath
 $config = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
 $addressFile = Join-Path $root 'wsl-address.txt'
