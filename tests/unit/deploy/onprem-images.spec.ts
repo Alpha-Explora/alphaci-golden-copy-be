@@ -223,7 +223,17 @@ posixOnly('WSL distro overlay and first boot', () => {
   });
 
   // Runs the first-boot unit's script against a fake /etc/alphaci and a fake systemctl.
-  function runFirstBoot({ code = true, sha = archiveSha } = {}) {
+  function runFirstBoot({
+    code = true,
+    sha = archiveSha,
+    failTimes = 0,
+    attempts = 3,
+  }: {
+    code?: boolean;
+    sha?: string;
+    failTimes?: number;
+    attempts?: number;
+  } = {}) {
     const root = workdir();
     const etc = join(root, 'etc');
     const bin = join(root, 'bin');
@@ -247,11 +257,27 @@ posixOnly('WSL distro overlay and first boot', () => {
       `#!/bin/bash\necho "$*" >> "${record}/systemctl"\n`,
       { mode: 0o755 },
     );
+    // The API probe: the first FAIL_TIMES attempts fail to connect (exit 6), then it answers.
+    writeFileSync(
+      join(bin, 'curl'),
+      [
+        '#!/bin/bash',
+        `n=$(cat "${record}/curl-count" 2>/dev/null || echo 0)`,
+        'n=$((n + 1))',
+        `echo "$n" > "${record}/curl-count"`,
+        '[ "$n" -gt "${FAIL_TIMES:-0}" ] || exit 6',
+        '',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
     const result = spawnSync('bash', [firstBoot], {
       encoding: 'utf8',
       env: {
         PATH: `${bin}:${process.env.PATH}`,
         ALPHACI_IMAGE_ETC: etc,
+        ALPHACI_REACH_ATTEMPTS: String(attempts),
+        ALPHACI_REACH_DELAY: '0',
+        FAIL_TIMES: String(failTimes),
         RECORD: record,
       },
     });
@@ -284,6 +310,22 @@ posixOnly('WSL distro overlay and first boot', () => {
     expect(run.result.status).toBe(1);
     expect(run.enrollArgs).toBeNull();
     expect(run.systemctl).toBeNull();
+  });
+
+  it('waits for an API that is not up yet, and enrolls once it answers', () => {
+    const run = runFirstBoot({ failTimes: 2, attempts: 5 });
+    expect(run.result.status).toBe(0);
+    expect(run.codeSeen?.trim()).toBe(CODE);
+    expect(run.systemctl).toBe('disable alphaci-first-boot.service\n');
+  });
+
+  it('does not use the code when the API never answers', () => {
+    const run = runFirstBoot({ failTimes: 9, attempts: 2 });
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain('did not answer');
+    expect(run.enrollArgs).toBeNull();
+    expect(run.systemctl).toBeNull();
+    expect(lstatSync(join(run.etc, 'enrollment-code')).isFile()).toBe(true);
   });
 
   it('installs nothing and keeps the unit enabled when the archive does not match', () => {

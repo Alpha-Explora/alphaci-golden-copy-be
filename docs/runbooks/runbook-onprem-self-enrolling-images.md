@@ -85,19 +85,20 @@ Import it on the Windows machine, in the account that will own the distro:
 wsl.exe --import AlphaCI-Host C:\WSL\AlphaCI-Host .\alphaci-ubuntu-noble.tar.gz --version 2
 ```
 
-Issue the code now, then write it into the distro. The code goes through standard
-input, so it never appears on a command line:
+Issue the code now, copy it to the clipboard, then write it into the distro from
+there. The code never goes into a PowerShell variable, command history or a command
+line. Clear the clipboard afterwards:
 
 ```powershell
-$code = 'PASTE-THE-CODE-HERE'
-$code | wsl.exe -d AlphaCI-Host -u root -- sh -c 'umask 077 && cat > /etc/alphaci/enrollment-code'
+Get-Clipboard | wsl.exe -d AlphaCI-Host -u root -- sh -c 'umask 077 && cat > /etc/alphaci/enrollment-code'
 ```
 
-That first start booted without the code, so the unit was skipped. Restart the
-distro so the unit runs, then follow it:
+That first start booted without the code, so the unit was skipped. Start the unit
+now. `systemctl start` waits for the enrollment to finish, which keeps the distro
+running until then:
 
 ```powershell
-wsl.exe --terminate AlphaCI-Host
+wsl.exe -d AlphaCI-Host -u root -- systemctl start alphaci-first-boot.service
 wsl.exe -d AlphaCI-Host -u root -- journalctl -u alphaci-first-boot.service --no-pager
 ```
 
@@ -112,15 +113,22 @@ it needs no code:
 
 ## When it does not enroll
 
-- **No code is waiting.** The unit is skipped, not failed. Write the code and
-  restart the machine or the distro.
+- **No code is waiting.** The unit is skipped, not failed. Write the code, then
+  start the unit: `sudo systemctl start alphaci-first-boot.service` on the VM, or
+  the WSL command in the section above.
+- **The API does not answer.** The unit waits up to about 10 minutes for the API
+  before it reads the code. Only connection and DNS failures are retried. If the
+  wait ends, the code is still in place: fix the network, then start the unit again.
+  The wait counts against the code's 10 minutes, so a long outage can expire it.
 - **Prerequisites missing** (Docker not running, systemd not enabled). The installer
   stops before it reads the code, so the code stays in place. Fix the machine and
-  run `sudo systemctl restart alphaci-first-boot.service` (VM) or restart the distro (WSL).
+  start the unit again, as above.
 - **Archive checksum mismatch.** Nothing is installed and the unit stays enabled.
   Rebuild with the correct archive checksum.
-- **Code expired or already used.** Render the user-data again, or issue a new code
-  for the distro and write it again.
+- **Code expired or already used.** The unit disables itself after a successful
+  enrollment, so a VM that enrolled cannot take a new code by restarting. Recreate
+  the VM, or run `cloud-init clean` and reboot. For WSL, import the tarball again.
+  If the code expired before you used it, render or issue a new one.
 
 ## The code
 

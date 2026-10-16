@@ -11,6 +11,31 @@ UNIT=alphaci-first-boot.service
 : "${ALPHACI_ARCHIVE_SHA256:?first-boot.env must set ALPHACI_ARCHIVE_SHA256}"
 [ -s "$ETC/enrollment-code" ] || { echo "No enrollment code is waiting in $ETC/enrollment-code." >&2; exit 1; }
 
+# A boot can come before the network does. enroll.sh deletes the code as soon as it
+# reads it, so wait here for the API to answer. Only connection and DNS failures retry;
+# any other curl failure stops with the code still in place.
+wait_for_api() {
+  local attempts="${ALPHACI_REACH_ATTEMPTS:-40}" delay="${ALPHACI_REACH_DELAY:-15}" attempt status
+  for attempt in $(seq 1 "$attempts"); do
+    status=0
+    curl --silent --show-error --max-time 15 --output /dev/null "$ALPHACI_API_URL" || status=$?
+    [ "$status" -eq 0 ] && return 0
+    case "$status" in
+      6 | 7 | 28)
+        echo "Waiting for $ALPHACI_API_URL (attempt $attempt of $attempts)." >&2
+        sleep "$delay"
+        ;;
+      *)
+        echo "Cannot use $ALPHACI_API_URL (curl exit $status). The code was not used." >&2
+        return 1
+        ;;
+    esac
+  done
+  echo "$ALPHACI_API_URL did not answer. The code was not used." >&2
+  return 1
+}
+wait_for_api
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # The image may carry the installer archive itself, so enrollment needs no download.

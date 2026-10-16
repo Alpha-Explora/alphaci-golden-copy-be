@@ -77,7 +77,8 @@ cleanup() {
     mountpoint -q "$ROOTFS_DIR/$mount" 2>/dev/null && umount -R -l "$ROOTFS_DIR/$mount" || true
   done
   rm -f "$ROOTFS_DIR/usr/sbin/policy-rc.d"
-  rm -rf "$WORK"
+  # --one-file-system: never descend into a mount that survived the unmount above.
+  rm -rf --one-file-system "$WORK"
 }
 trap cleanup EXIT
 
@@ -101,8 +102,11 @@ if [ -e "$ROOTFS_DIR/etc/resolv.conf" ] || [ -L "$ROOTFS_DIR/etc/resolv.conf" ];
 fi
 cp -L /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
 mount -t proc proc "$ROOTFS_DIR/proc"
+# Recursive slave mounts: unmounting inside the chroot must never reach the build host's /dev or /sys.
 mount --rbind /sys "$ROOTFS_DIR/sys"
+mount --make-rrslave "$ROOTFS_DIR/sys"
 mount --rbind /dev "$ROOTFS_DIR/dev"
+mount --make-rrslave "$ROOTFS_DIR/dev"
 # Stop packages from starting services inside the chroot; systemd starts them at boot.
 printf '#!/bin/sh\nexit 101\n' > "$ROOTFS_DIR/usr/sbin/policy-rc.d"
 chmod 0755 "$ROOTFS_DIR/usr/sbin/policy-rc.d"
@@ -116,8 +120,10 @@ rm -rf "$ROOTFS_DIR"/var/lib/apt/lists/*
 rm -f "$ROOTFS_DIR/usr/sbin/policy-rc.d"
 
 apply_overlay "$ROOTFS_DIR"
-[ -e "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/docker.service" ] ||
-  ln -s /usr/lib/systemd/system/docker.service "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/docker.service"
+DOCKER_LINK="$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/docker.service"
+# [ -e ] follows the link, so a dangling link from the package would fail the ln; check for the link itself too.
+[ -e "$DOCKER_LINK" ] || [ -L "$DOCKER_LINK" ] ||
+  ln -s /usr/lib/systemd/system/docker.service "$DOCKER_LINK"
 
 # Unmount before archiving, so the pseudo filesystems stay out of the tarball.
 for mount in dev/pts dev sys proc; do umount -R -l "$ROOTFS_DIR/$mount" 2>/dev/null || true; done
