@@ -58,8 +58,10 @@ it('ships every /opt/alphaci/bin program that the shipped scripts run', () => {
   for (const file of shipped)
     for (const match of read(file).matchAll(
       /(?:\$ROOT|\/opt\/alphaci)\/bin\/([A-Za-z0-9._-]+)/g,
-    ))
-      called.add(match[1]);
+    )) {
+      const program = match[1];
+      if (program) called.add(program);
+    }
   expect(called.size).toBeGreaterThan(0);
   for (const name of called)
     expect(existsSync(join(stage, 'opt/alphaci/bin', name))).toBe(true);
