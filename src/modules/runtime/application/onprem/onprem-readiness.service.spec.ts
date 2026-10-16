@@ -6,6 +6,7 @@ import { labSigningKeyId } from '#kernel/config/release-signing-key';
 import { ConfigService } from '@nestjs/config';
 import type { DatabaseService } from '#kernel/db/database.service';
 import type { DeploymentProjectReferenceLookup } from '#kernel/ports/deployment-runtime.port';
+import { UPDATE_AGENT_MESSAGE } from '../../domain/onprem-tunnel';
 import { OnpremReadinessService } from './onprem-readiness.service';
 
 describe('On-prem readiness', () => {
@@ -148,6 +149,7 @@ describe('On-prem readiness', () => {
                 health: [{ slot: 'frontend', path: '/' }],
                 ingress: { mode: 'tunnel', publicUrl: null },
               },
+              agent_version: '0.3.0',
               tunnel_status: null,
               tunnel_url: null,
               tunnel_message: null,
@@ -200,6 +202,16 @@ describe('On-prem readiness', () => {
           status: 'failed',
           message:
             'Waiting for the HTTPS address. cloudflared is not installed on this machine.',
+        }),
+      );
+    });
+    it('asks for an agent update when the machine runs an agent without tunnels', async () => {
+      const result = await ingress('production', { agent_version: '0.2.0' });
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'ingress',
+          status: 'failed',
+          message: `Waiting for the HTTPS address. ${UPDATE_AGENT_MESSAGE}`,
         }),
       );
     });

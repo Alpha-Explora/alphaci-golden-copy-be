@@ -94,9 +94,11 @@ case "$url" in
 esac
 `,
   );
-  // Stand-ins for cloudflared and systemd. cloudflared reports its version
-  // (/work/cloudflared-old makes it old), records each quick-tunnel start and
-  // stop, prints the banner (or /work/tunnel-banner), and ends on TERM.
+  // Stand-in for cloudflared. It reports its version (/work/cloudflared-old makes
+  // it old), records each quick-tunnel start and stop, and ends on TERM. Its
+  // output is the banner: NUL bytes around the address when /work/tunnel-nul
+  // exists, nothing when /work/tunnel-silent exists. /work/tunnel-banner replaces
+  // the address, and /work/tunnel-per-start gives every start its own address.
   writeFileSync(
     join(work, 'bin/cloudflared'),
     `#!/bin/bash
@@ -106,12 +108,18 @@ if [ "$1" = --version ]; then
 fi
 echo "start $*" >> /work/cloudflared-calls.log
 trap 'echo stop >> /work/cloudflared-calls.log; exit 0' TERM INT
-if [ ! -f /work/tunnel-silent ]; then
-  banner=https://quiet-fox-blue-cloud.trycloudflare.com
-  [ ! -f /work/tunnel-banner ] || banner=$(cat /work/tunnel-banner)
-  printf '|  %s  |\n' "$banner"
+address=https://quiet-fox-blue-cloud.trycloudflare.com
+if [ -f /work/tunnel-per-start ]; then
+  n=$(( $(cat /work/tunnel-starts 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > /work/tunnel-starts
+  address=https://quiet-fox-blue-cloud-$n.trycloudflare.com
 fi
-[ ! -f /work/tunnel-nul ] || { printf junk; head -c 1 /dev/zero; echo '|  https://quiet-fox-blue-cloud.trycloudflare.com  |'; }
+[ ! -f /work/tunnel-banner ] || address=$(cat /work/tunnel-banner)
+if [ -f /work/tunnel-nul ]; then
+  printf junk; head -c 1 /dev/zero; echo "|  $address  |"
+elif [ ! -f /work/tunnel-silent ]; then
+  echo "|  $address  |"
+fi
 while :; do sleep 1; done
 `,
   );

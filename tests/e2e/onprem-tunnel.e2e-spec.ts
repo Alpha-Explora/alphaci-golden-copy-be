@@ -255,6 +255,30 @@ describe('Automatic HTTPS address (tunnel) with recording fixture', () => {
     expect(state['status']).not.toBe('running');
     expect(state['publicUrl']).toBeNull();
   });
+  it('discards the address of an earlier run once the tunnel restarts', () => {
+    const f = shellFixture();
+    const { a, tunnel } = binding(f, 18162);
+    writeFileSync(
+      join(f.work, 'heartbeat-reply.json'),
+      JSON.stringify({ ports: [18162], tunnels: [tunnel] }),
+    );
+    writeFileSync(join(f.work, 'tunnel-per-start'), '1');
+    f.run(
+      `/work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; /work/host/bin/alphaci-supervisor --heartbeat-only; kill $(cat /work/units/${a.assignment.environmentId}.pid); sleep 2; /work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; /work/host/bin/alphaci-supervisor --heartbeat-only`,
+    );
+    expect(calls(f)).toEqual([
+      startLine(a, 18162),
+      'stop',
+      startLine(a, 18162),
+    ]);
+    // The second run's address replaces the first; the first is never reported again.
+    expect(stateOf(f, a)).toMatchObject({
+      status: 'running',
+      publicUrl: 'https://quiet-fox-blue-cloud-2.trycloudflare.com',
+    });
+    const body = readFileSync(join(f.work, 'heartbeat-body.json'), 'utf8');
+    expect(body).not.toContain('quiet-fox-blue-cloud-1.trycloudflare.com');
+  });
   it('starts no tunnel for direct or configured assignments', () => {
     const f = shellFixture();
     writeFileSync(

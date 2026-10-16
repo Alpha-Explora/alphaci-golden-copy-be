@@ -14,13 +14,39 @@ $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:ProgramData 'AlphaCI'
 $configPath = Join-Path $root 'host.json'
 $ports = @()
+
+# Native commands write to stderr. Windows PowerShell 5.1 turns that stderr into
+# a terminating error under 'Stop', so each native call runs with 'Continue' and
+# reports only its exit code. A failed step must not stop the rest of the uninstall.
+function Invoke-Native {
+    param([scriptblock] $Command)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command *> $null
+        return $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 if (Test-Path -LiteralPath $configPath) {
     $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
     $ports = @($config.Ports)
-    if ($PSCmdlet.ShouldProcess($config.Distro, 'disable AlphaCI polling timers, preserving containers and data')) {
-        & wsl.exe -d $config.Distro -u root -- systemctl disable --now alphaci-machine.timer alphaci-agent.timer 2>$null
-        # Stops the automatic-address tunnels; a host without them ignores this.
-        & wsl.exe -d $config.Distro -u root -- /opt/alphaci/bin/alphaci-supervisor --stop-tunnels 2>$null
+    if ($PSCmdlet.ShouldProcess($config.Distro, 'stop AlphaCI tunnels and polling timers, preserving containers and data')) {
+        # Disable polling first, so no run can start a tunnel again. Then stop a
+        # run in progress, so it cannot start one after the tunnels stop. Hosts
+        # whose agent predates tunnels skip the last step: their supervisor does
+        # not know the flag and would run a full poll instead.
+        $distro = $config.Distro
+        [void](Invoke-Native { & wsl.exe -d $distro -u root -- systemctl disable --now alphaci-machine.timer alphaci-agent.timer })
+        [void](Invoke-Native { & wsl.exe -d $distro -u root -- systemctl stop alphaci-machine.service })
+        if ((Invoke-Native { & wsl.exe -d $distro -u root -- test -f /opt/alphaci/bin/tunnel.sh }) -eq 0) {
+            if ((Invoke-Native { & wsl.exe -d $distro -u root -- /opt/alphaci/bin/alphaci-supervisor --stop-tunnels }) -ne 0) {
+                Write-Warning 'The automatic-address tunnels could not be stopped. In WSL, run: sudo /opt/alphaci/bin/alphaci-supervisor --stop-tunnels'
+            }
+        }
     }
 }
 
@@ -38,7 +64,7 @@ if (Test-Path -LiteralPath $forwardedPath) {
 }
 foreach ($port in ($ports | Sort-Object -Unique)) {
     if ($PSCmdlet.ShouldProcess('0.0.0.0:' + $port, 'remove port forward')) {
-        & netsh.exe interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 2>$null | Out-Null
+        [void](Invoke-Native { & netsh.exe interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 })
     }
 }
 Get-NetFirewallRule -Name 'AlphaCI TCP *' -ErrorAction SilentlyContinue | ForEach-Object {

@@ -98,7 +98,7 @@ export class OnpremReadinessService {
         !schema?.machine_schema &&
           '20261015020000_onprem_machines.sql and 20261015030000_onprem_machine_assignments.sql',
         !schema?.tunnel_schema &&
-          '20261016010000_onprem_tunnel_reports.sql: onprem_hosts tunnel columns',
+          '20261017010000_onprem_tunnel_reports.sql: onprem_hosts tunnel columns',
       ].filter(Boolean);
       check(
         'schema',
@@ -271,6 +271,7 @@ export class OnpremReadinessService {
       revoked: boolean;
       fresh: boolean;
       checks: ReadinessCheck[];
+      agent_version: string | null;
       assignment_config: AssignmentConfig | null;
       tunnel_status: TunnelStatus | null;
       tunnel_url: string | null;
@@ -280,7 +281,7 @@ export class OnpremReadinessService {
     }>(
       `SELECT h.machine_id, m.revoked_at IS NOT NULL AS revoked,
                 m.last_seen_at > NOW()-INTERVAL '90 seconds' AS fresh,
-                m.checks, h.assignment_config,
+                m.checks, m.agent_version, h.assignment_config,
                 h.tunnel_status, h.tunnel_url, h.tunnel_message, h.tunnel_reported_at,
                 h.tunnel_reported_at > NOW()-INTERVAL '${TUNNEL_REPORT_WINDOW}' AS tunnel_fresh
            FROM env_provisioning.onprem_hosts h
@@ -335,6 +336,7 @@ export class OnpremReadinessService {
               })
             : null,
           production,
+          host.agent_version,
         )
       : { status: 'failed' as const, message: 'No assignment configuration.' };
     check('ingress', ingress.status, ingress.message);

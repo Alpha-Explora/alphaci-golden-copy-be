@@ -60,6 +60,11 @@ tunnel_sync() {
   dir="$TUNNEL_ROOT/$environment"
   unit=$(tunnel_unit "$environment")
   mkdir -p "$dir"
+  # The tunnel unit runs as its own user, which writes the address file here.
+  if id -u alphaci-tunnel > /dev/null 2>&1; then
+    chown alphaci-tunnel:alphaci-tunnel "$dir"
+    chmod 0750 "$dir"
+  fi
   previous=$(jq -r '.status // empty' "$dir/tunnel.json" 2> /dev/null || true)
   problem=$(tunnel_problem)
   if [ -n "$problem" ]; then
@@ -80,7 +85,7 @@ tunnel_sync() {
   # An empty config file keeps ~/.cloudflared/config.yml from overriding --url.
   if [ ! -e "$dir/config.yml" ]; then
     : > "$dir/config.yml"
-    chmod 0600 "$dir/config.yml"
+    chmod 0644 "$dir/config.yml"
   fi
   if ! systemctl is-active --quiet "$unit" < /dev/null; then
     if systemctl start "$unit" < /dev/null > /dev/null 2>&1; then

@@ -1,6 +1,8 @@
 import {
+  agentSupportsTunnels,
   QUICK_TUNNEL_ADDRESS,
   REJECTED_TUNNEL_ADDRESS,
+  UPDATE_AGENT_MESSAGE,
   RUNNING_WITHOUT_ADDRESS,
   UNKNOWN_TUNNEL_STATE,
   WAITING_FOR_TUNNEL,
@@ -221,12 +223,22 @@ describe('ingressReadiness', () => {
   });
   it('passes the HTTPS requirement for production once an address is reported', () => {
     expect(
-      ingressReadiness({ mode: 'tunnel', publicUrl: null }, running, true),
+      ingressReadiness(
+        { mode: 'tunnel', publicUrl: null },
+        running,
+        true,
+        '0.3.0',
+      ),
     ).toMatchObject({ status: 'unverified' });
   });
   it('waits for the HTTPS address in production, with the machine reason', () => {
     expect(
-      ingressReadiness({ mode: 'tunnel', publicUrl: null }, null, true),
+      ingressReadiness(
+        { mode: 'tunnel', publicUrl: null },
+        null,
+        true,
+        '0.3.0',
+      ),
     ).toEqual({
       status: 'failed',
       message:
@@ -239,7 +251,12 @@ describe('ingressReadiness', () => {
       ...fresh,
     });
     expect(
-      ingressReadiness({ mode: 'tunnel', publicUrl: null }, unavailable, true),
+      ingressReadiness(
+        { mode: 'tunnel', publicUrl: null },
+        unavailable,
+        true,
+        '0.3.0',
+      ),
     ).toEqual({
       status: 'failed',
       message: 'Waiting for the HTTPS address. cloudflared is not installed.',
@@ -247,7 +264,12 @@ describe('ingressReadiness', () => {
   });
   it('shows the machine reason for other environments', () => {
     expect(
-      ingressReadiness({ mode: 'tunnel', publicUrl: null }, null, false),
+      ingressReadiness(
+        { mode: 'tunnel', publicUrl: null },
+        null,
+        false,
+        '0.3.0',
+      ),
     ).toEqual({ status: 'failed', message: WAITING_FOR_TUNNEL });
   });
   it('keeps production configured ingress to HTTPS URLs', () => {
@@ -256,10 +278,59 @@ describe('ingressReadiness', () => {
         { mode: 'configured', publicUrl: 'https://app.example.com' },
         null,
         true,
+        '0.3.0',
       ),
     ).toMatchObject({ status: 'unverified' });
     expect(
-      ingressReadiness({ mode: 'direct', publicUrl: null }, null, true),
+      ingressReadiness(
+        { mode: 'direct', publicUrl: null },
+        null,
+        true,
+        '0.3.0',
+      ),
     ).toMatchObject({ status: 'failed' });
+  });
+});
+
+describe('agentSupportsTunnels', () => {
+  it.each(['0.3.0', '0.3.1', '0.10.0', '1.0.0'])('accepts %s', (version) => {
+    expect(agentSupportsTunnels(version)).toBe(true);
+  });
+  it.each([null, '', '0.2.9', '0.1.0', '0.3', 'x.y.z', '0.3.0-rc1'])(
+    'refuses %s',
+    (version) => {
+      expect(agentSupportsTunnels(version)).toBe(false);
+    },
+  );
+});
+
+describe('ingressReadiness for an older agent', () => {
+  it('asks for an agent update instead of waiting for a tunnel that cannot report', () => {
+    expect(
+      ingressReadiness(
+        { mode: 'tunnel', publicUrl: null },
+        null,
+        false,
+        '0.2.0',
+      ),
+    ).toEqual({ status: 'failed', message: UPDATE_AGENT_MESSAGE });
+    expect(
+      ingressReadiness({ mode: 'tunnel', publicUrl: null }, null, true, null),
+    ).toEqual({
+      status: 'failed',
+      message: `Waiting for the HTTPS address. ${UPDATE_AGENT_MESSAGE}`,
+    });
+  });
+});
+
+describe('parseTunnelReport message', () => {
+  it('drops NUL bytes before the message is stored as text', () => {
+    const parsed = parseTunnelReport({
+      assignmentId: '3f2b1c4e-5d6a-4b7c-8d9e-0f1a2b3c4d5e',
+      status: 'failed',
+      message: 'before after',
+      publicUrl: null,
+    });
+    expect(parsed?.message).toBe('beforeafter');
   });
 });

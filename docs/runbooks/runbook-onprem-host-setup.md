@@ -79,6 +79,7 @@ their readiness says "Waiting for the machine to report its address."
 
 Requirements on the machine:
 
+- An agent of version 0.3.0 or newer. Readiness asks for an update otherwise.
 - `cloudflared` 2026.10.0 or newer on the `PATH` of root (`command -v cloudflared`
   must succeed, and `cloudflared --version` must print a version). 2026.10.0 is
   the release AlphaCI was tested with, and the agent refuses older releases.
@@ -90,7 +91,9 @@ Requirements on the machine:
   to it whether or not a release is healthy, so check the application separately.
 
 Each tunnel is its own systemd unit, `alphaci-tunnel@<environment UUID>.service`,
-configured by `/opt/alphaci/tunnels/<environment UUID>/tunnel.env`. systemd keeps
+configured by `/opt/alphaci/tunnels/<environment UUID>/tunnel.env`. It runs as the
+unprivileged user `alphaci-tunnel`, which can write only that directory, with no
+new privileges, no capabilities, and IPv4/IPv6 sockets only. systemd keeps
 it running and restarts it after 15 seconds if it stops. The supervisor starts
 the unit when an assignment uses tunnel mode and stops it when the assignment
 leaves the machine. The unit runs with an empty cloudflared config, so a

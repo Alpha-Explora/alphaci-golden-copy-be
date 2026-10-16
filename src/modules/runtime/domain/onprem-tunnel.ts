@@ -78,7 +78,10 @@ export function parseTunnelReport(entry: unknown): TunnelReportInput | null {
   if (typeof assignmentId !== 'string' || !UUID.test(assignmentId)) return null;
   const message =
     typeof value['message'] === 'string'
-      ? value['message'].slice(0, MAX_MESSAGE)
+      ? value['message']
+          .split(String.fromCharCode(0))
+          .join('')
+          .slice(0, MAX_MESSAGE)
       : '';
   const rejected = (reason: string): TunnelReportInput => ({
     assignmentId,
@@ -144,6 +147,29 @@ export function tunnelReady(row: TunnelReportRow): boolean {
   return row.status === 'running' && row.url !== null && row.fresh;
 }
 
+/** The agent release that reports tunnels; older agents never do. */
+export const TUNNEL_AGENT_VERSION = '0.3.0';
+export const UPDATE_AGENT_MESSAGE =
+  'Update the agent on this machine to use automatic HTTPS.';
+
+/** Whether an agent version reports tunnels: dotted numbers, compared part by part. */
+export function agentSupportsTunnels(version: string | null): boolean {
+  if (!version) return false;
+  const have = version.split('.').map((part) => Number(part));
+  if (
+    have.length !== 3 ||
+    have.some((part) => !Number.isInteger(part) || part < 0)
+  )
+    return false;
+  const minimum = TUNNEL_AGENT_VERSION.split('.').map((part) => Number(part));
+  for (let index = 0; index < minimum.length; index++) {
+    const reported = have[index] ?? 0;
+    const required = minimum[index] ?? 0;
+    if (reported !== required) return reported > required;
+  }
+  return true;
+}
+
 /**
  * Readiness of the ingress for an assignment. Production needs an HTTPS
  * address: a configured one, or the tunnel's once the machine reports it.
@@ -152,6 +178,7 @@ export function ingressReadiness(
   ingress: AssignmentIngress,
   tunnel: TunnelReport | null,
   production: boolean,
+  agentVersion: string | null,
 ): { status: 'passed' | 'failed' | 'unverified'; message: string } {
   if (ingress.mode === 'tunnel') {
     if (tunnel?.publicUrl)
@@ -162,16 +189,19 @@ export function ingressReadiness(
     if (!production)
       return {
         status: 'failed',
-        message: tunnel?.message ?? WAITING_FOR_TUNNEL,
+        message: agentSupportsTunnels(agentVersion)
+          ? (tunnel?.message ?? WAITING_FOR_TUNNEL)
+          : UPDATE_AGENT_MESSAGE,
       };
     // Production is not handed to the machine until its tunnel runs.
-    const reason =
-      tunnel && tunnel.status !== 'waiting'
-        ? ` ${tunnel.message}`
-        : ' Production is not deployed until the machine reports one.';
+    const detail = !agentSupportsTunnels(agentVersion)
+      ? UPDATE_AGENT_MESSAGE
+      : tunnel && tunnel.status !== 'waiting'
+        ? tunnel.message
+        : 'Production is not deployed until the machine reports one.';
     return {
       status: 'failed',
-      message: `Waiting for the HTTPS address.${reason}`,
+      message: `Waiting for the HTTPS address. ${detail}`,
     };
   }
   if (production)

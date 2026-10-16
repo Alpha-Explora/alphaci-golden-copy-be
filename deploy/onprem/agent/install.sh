@@ -24,7 +24,9 @@ if [ "${1:-}" = --enroll ]; then
   install -m 0755 alphaci-supervisor.sh /opt/alphaci/bin/alphaci-supervisor
   install -m 0644 tunnel.sh /opt/alphaci/bin/tunnel.sh
   install -m 0755 tunnel-run.sh /opt/alphaci/bin/tunnel-run
-  install -d -m 0700 /opt/alphaci/tunnels
+  install -d -m 0755 /opt/alphaci/tunnels
+  # The unit runs cloudflared as this user, which owns only its environment's directory.
+  id -u alphaci-tunnel > /dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin alphaci-tunnel
   install -m 0644 alphaci-tunnel@.service /etc/systemd/system/alphaci-tunnel@.service
   [ ! -f render-assignment.sh ] || install -m 0755 render-assignment.sh /opt/alphaci/bin/render-assignment
   # API URL, optional platform and optional --replace pass through unchanged.
