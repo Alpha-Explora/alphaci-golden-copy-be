@@ -152,3 +152,22 @@ export function stageRunsOnBranch(
  * the file name is declared once here.
  */
 export const ENVIRONMENT_PROMOTE_WORKFLOW_FILE = '30-alphaci-promote.yml';
+
+/**
+ * The branches a project's pipeline runs on. Its environments' source branches
+ * come first, in position order, then the fixed tiers. `base` is where a
+ * workflow fix is proposed: the first environment's branch, or the working tier
+ * for a project with no environments. Projects set their own branch names, so
+ * a fixed list alone can miss the branch that actually runs CI.
+ */
+export function projectPipelineBranches(
+  environments: ReadonlyArray<{ sourceBranch: string }>,
+): { base: string; branches: string[] } {
+  const fromEnvironments = environments
+    .map((environment) => environment.sourceBranch.trim())
+    .filter((branch) => branch.length > 0);
+  const branches = [
+    ...new Set<string>([...fromEnvironments, ...PIPELINE_BRANCHES]),
+  ];
+  return { base: fromEnvironments[0] ?? WORKING_BRANCH, branches };
+}

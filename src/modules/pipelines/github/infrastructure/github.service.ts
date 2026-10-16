@@ -24,6 +24,8 @@ import {
   type GitHubDispatchWorkflowResult,
   type GitHubCommitFilesInput,
   type GitHubCommitFilesResult,
+  type GitHubRepoPermissionsResult,
+  type GitHubTokenPermissions,
   type GitHubRepoFilesResult,
   type GitHubRepoPathsResult,
   type GitHubOpenPullRequestInput,
@@ -544,7 +546,10 @@ export class GithubService
     return `${unsigned}.${signature}`;
   }
 
-  async createInstallationAccessToken(installationId: number): Promise<string> {
+  async createInstallationAccessToken(
+    installationId: number,
+    scope?: { repositories: string[]; permissions: GitHubTokenPermissions },
+  ): Promise<string> {
     const response = await this.http.fetchWithRetry(
       `https://api.github.com/app/installations/${String(installationId)}/access_tokens`,
       {
@@ -553,7 +558,9 @@ export class GithubService
           Authorization: `Bearer ${this.createAppJwt()}`,
           Accept: 'application/vnd.github+json',
           'User-Agent': 'cicd-workflow-product',
+          ...(scope ? { 'Content-Type': 'application/json' } : {}),
         },
+        ...(scope ? { body: JSON.stringify(scope) } : {}),
       },
     );
 
@@ -2377,6 +2384,79 @@ export class GithubService
       repoFullName,
       input,
     );
+  }
+
+  /** The commit a branch points at now; null when the branch does not exist. */
+  getBranchHeadSha(
+    accessToken: string,
+    repoFullName: string,
+    branch: string,
+  ): Promise<string | null> {
+    return this.repoFiles.readBranchHead(accessToken, repoFullName, branch);
+  }
+
+  /**
+   * What the caller may do on the repository, read with their own token. A
+   * sign-in GitHub no longer accepts is `unauthorized`; any other answer that
+   * does not show the repository is `unreadable`. Neither guesses at access.
+   */
+  async getRepoPermissions(
+    accessToken: string,
+    repoFullName: string,
+  ): Promise<GitHubRepoPermissionsResult> {
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${repoFullName}`,
+      { headers: this.http.workspaceHeaders(accessToken) },
+    );
+    if (response.status === 401) return { read: false, reason: 'unauthorized' };
+    if (!response.ok) return { read: false, reason: 'unreadable' };
+    const payload = (await response.json()) as {
+      permissions?: { push?: boolean; admin?: boolean };
+    };
+    return {
+      read: true,
+      push: payload.permissions?.push === true,
+      admin: payload.permissions?.admin === true,
+    };
+  }
+
+  /**
+   * An installation token for the App's installation on one repository, asked
+   * of GitHub and narrowed to that repository and `permissions`. Stored
+   * installation rows are not used: they can be empty, and a token minted from
+   * them could not be narrowed. Null when the App is not installed there.
+   */
+  async getRepoInstallationAccessToken(
+    repoFullName: string,
+    permissions: GitHubTokenPermissions,
+  ): Promise<string | null> {
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo) return null;
+
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${owner}/${repo}/installation`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.createAppJwt()}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub repository installation lookup failed (${String(response.status)}): ${body.slice(0, 300)}`,
+      );
+    }
+
+    const payload = (await response.json()) as { id?: unknown };
+    if (typeof payload.id !== 'number') return null;
+    return this.createInstallationAccessToken(payload.id, {
+      repositories: [repo],
+      permissions,
+    });
   }
 
   /**

@@ -111,7 +111,11 @@ describe('ProjectDriftService', () => {
       allowForcePushes: true,
       allowDeletions: true,
     };
-    const github = { getBranchProtectionSummary: jest.fn() };
+    // No workflow files: the CI URL probe reads nothing and adds no finding.
+    const github = {
+      getBranchProtectionSummary: jest.fn(),
+      listRepoContents: jest.fn().mockResolvedValue({ entries: [] }),
+    };
 
     function serviceWithGithub() {
       return new ProjectDriftService(
@@ -257,6 +261,202 @@ describe('ProjectDriftService', () => {
       expect.arrayContaining([
         expect.objectContaining({ code: 'deployment_target_metadata_missing' }),
       ]),
+      expect.any(Array),
     );
+  });
+
+  describe('CI API URL probe', () => {
+    const CURRENT = 'https://api.alphaci.test';
+    const workflow = (name: string) => ({
+      name,
+      path: `.github/workflows/${name}`,
+      type: 'file',
+      size: 1,
+      sha: name,
+    });
+    const compliant = {
+      protected: true,
+      pullRequestRequired: true,
+      allowForcePushes: false,
+      allowDeletions: false,
+    };
+    const github = {
+      getBranchProtectionSummary: jest.fn(),
+      listRepoContents: jest.fn(),
+      getFileContent: jest.fn(),
+    };
+    const projects = { listProjectEnvironments: jest.fn() };
+    /**
+     * branch -> workflow file -> content. A branch given as {} exists with no
+     * workflows; a branch absent from the map cannot be read.
+     */
+    function repoFiles(byBranch: Record<string, Record<string, string>>) {
+      github.listRepoContents.mockImplementation(
+        (_t: string, _r: string, _p: string, branch: string) => {
+          const files = byBranch[branch];
+          if (files === undefined) {
+            return Promise.reject(new Error(`no read for ${branch}`));
+          }
+          return Promise.resolve({
+            path: '.github/workflows',
+            ref: branch,
+            entries: Object.keys(files).map(workflow),
+            file: null,
+          });
+        },
+      );
+      github.getFileContent.mockImplementation(
+        (_t: string, _o: string, _r: string, path: string, branch: string) =>
+          Promise.resolve(
+            byBranch[branch]?.[path.split('/').pop() ?? ''] ?? null,
+          ),
+      );
+    }
+    const localhost = 'alphaci-api-url: http://localhost:4000\n';
+    const current = `alphaci-api-url: ${CURRENT}\n`;
+    let previousBase: string | undefined;
+
+    beforeEach(() => {
+      previousBase = process.env['PLATFORM_PUBLIC_URL'];
+      process.env['PLATFORM_PUBLIC_URL'] = CURRENT;
+      github.getBranchProtectionSummary.mockResolvedValue(compliant);
+      projects.listProjectEnvironments.mockResolvedValue([
+        { sourceBranch: 'dev' },
+      ]);
+    });
+    afterEach(() => {
+      if (previousBase === undefined) {
+        delete process.env['PLATFORM_PUBLIC_URL'];
+      } else {
+        process.env['PLATFORM_PUBLIC_URL'] = previousBase;
+      }
+    });
+
+    function serviceWithGithub() {
+      return new ProjectDriftService(
+        findingsRepository as never,
+        deploymentTargetsRepository as never,
+        envVarsRepository as never,
+        ciTokensRepository,
+        capabilityResolver as never,
+        github as never,
+        projects as never,
+      );
+    }
+    const detect = (token: string | null = 'gh-token') =>
+      serviceWithGithub().runDetection(projectReference, {
+        githubAccessToken: token,
+      });
+    const ciFindings = async (token: string | null = 'gh-token') =>
+      (await detect(token)).findings.filter(
+        (finding) => finding.code === 'ci_api_url_stale',
+      );
+    /** The codes the store was told it may resolve: CI is listed when its scan did not run. */
+    const uncheckedOnLastWrite = (): unknown =>
+      (
+        findingsRepository.replaceActiveFindings.mock.calls.at(-1) as
+          | unknown[]
+          | undefined
+      )?.[2];
+
+    it('raises one finding when a pipeline branch names an old base', async () => {
+      repoFiles({
+        dev: { 'ci.yml': localhost },
+        uat: { 'ci.yml': current },
+        main: { 'ci.yml': current },
+      });
+
+      expect(await ciFindings()).toEqual([
+        expect.objectContaining({
+          code: 'ci_api_url_stale',
+          source: 'github_live',
+          severity: 'error',
+          message: `CI workflows still point at http://localhost:4000 instead of ${CURRENT}.`,
+          details: {
+            repoFullName: 'tone/orders-api',
+            expectedBaseUrl: CURRENT,
+            staleBaseUrls: ['http://localhost:4000'],
+            baseBranch: 'dev',
+            files: [{ branch: 'dev', path: '.github/workflows/ci.yml' }],
+          },
+        }),
+      ]);
+      expect(uncheckedOnLastWrite()).toEqual([]);
+    });
+
+    it('reports nothing when every workflow already names the current base, and resolves nothing it did not check', async () => {
+      repoFiles({
+        dev: { 'ci.yml': current },
+        uat: { 'ci.yml': current },
+        main: { 'ci.yml': current },
+      });
+
+      await expect(ciFindings()).resolves.toEqual([]);
+      expect(uncheckedOnLastWrite()).toEqual([]);
+    });
+
+    it('keeps existing CI findings, rather than resolving them, when there is no GitHub token', async () => {
+      repoFiles({ dev: { 'ci.yml': localhost } });
+
+      await expect(ciFindings(null)).resolves.toEqual([]);
+      expect(github.listRepoContents).not.toHaveBeenCalled();
+      expect(uncheckedOnLastWrite()).toEqual(['ci_api_url_stale']);
+    });
+
+    it('keeps existing CI findings when a branch GitHub will not read, and still reports the others', async () => {
+      repoFiles({
+        dev: { 'ci.yml': localhost },
+        // uat is absent: its read rejects, and that must not hide dev.
+        main: { 'ci.yml': current },
+      });
+
+      const findings = await ciFindings();
+
+      expect(findings).toHaveLength(1);
+      expect(findings[0]?.details).toMatchObject({
+        files: [{ branch: 'dev', path: '.github/workflows/ci.yml' }],
+      });
+      expect(uncheckedOnLastWrite()).toEqual(['ci_api_url_stale']);
+    });
+
+    it('keeps existing CI findings when the project environments cannot be read', async () => {
+      projects.listProjectEnvironments.mockRejectedValue(new Error('db down'));
+      repoFiles({ dev: { 'ci.yml': localhost } });
+
+      await expect(ciFindings()).resolves.toEqual([]);
+      expect(uncheckedOnLastWrite()).toEqual(['ci_api_url_stale']);
+    });
+
+    it('scans the environment branches as well as the fixed tiers, and names the first environment as the base', async () => {
+      projects.listProjectEnvironments.mockResolvedValue([
+        { sourceBranch: 'develop' },
+        { sourceBranch: 'staging' },
+        { sourceBranch: 'main' },
+      ]);
+      repoFiles({
+        develop: { 'ci.yml': localhost },
+        staging: {},
+        main: {},
+        dev: {},
+        uat: {},
+      });
+
+      const findings = await ciFindings();
+
+      expect(findings[0]?.details).toMatchObject({
+        baseBranch: 'develop',
+        files: [{ branch: 'develop', path: '.github/workflows/ci.yml' }],
+      });
+      expect(uncheckedOnLastWrite()).toEqual([]);
+    });
+
+    it('raises nothing, and keeps existing findings, while the expected base is one GitHub runners cannot reach', async () => {
+      process.env['PLATFORM_PUBLIC_URL'] = 'http://localhost:4000';
+      repoFiles({ dev: { 'ci.yml': localhost } });
+
+      await expect(ciFindings()).resolves.toEqual([]);
+      expect(github.listRepoContents).not.toHaveBeenCalled();
+      expect(uncheckedOnLastWrite()).toEqual(['ci_api_url_stale']);
+    });
   });
 });
