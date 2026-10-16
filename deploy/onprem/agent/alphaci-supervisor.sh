@@ -34,7 +34,7 @@ if ! docker info >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; th
 else
   checks='[{"id":"docker","status":"passed","message":"Docker Engine and Compose are available."}]'
 fi
-printf '%s' "$checks" | jq '{agentVersion:"0.1.0",checks:.}' > "$WORK/heartbeat.json"
+printf '%s' "$checks" | jq '{agentVersion:"0.2.0",checks:.}' > "$WORK/heartbeat.json"
 # The reply lists the host ports AlphaCI reserved on this machine.
 curl -fsS --max-time 30 -H "@$WORK/auth.header" -H 'Content-Type: application/json' --data-binary "@$WORK/heartbeat.json" -o "$WORK/heartbeat-reply.json" "$API/api/v1/onprem/heartbeat"
 # A Windows host forwards exactly these ports from its network into WSL: every

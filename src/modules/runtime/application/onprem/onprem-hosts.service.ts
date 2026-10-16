@@ -152,7 +152,7 @@ export class OnpremHostsService {
    */
   private async installerRelease(): Promise<InstallerRelease> {
     const version =
-      this.config.get<string>('ONPREM_INSTALLER_VERSION') || '0.1.0';
+      this.config.get<string>('ONPREM_INSTALLER_VERSION') || '0.2.0';
     const url = this.config.get<string>('ONPREM_INSTALLER_URL') || '';
     const sha256 = this.config.get<string>('ONPREM_INSTALLER_SHA256') || '';
     const releaseRepo =
