@@ -170,6 +170,23 @@ export async function moveMachineBindings(
   return bindings.rowCount ?? 0;
 }
 
+/**
+ * End every active binding of a machine revoked without a replacement, so its
+ * environments can be assigned or registered again without an Unassign. The
+ * revoked_at trigger releases the reserved host ports. The caller holds the
+ * machine row FOR UPDATE.
+ */
+export async function endMachineBindings(
+  client: PoolClient,
+  machineId: string,
+): Promise<number> {
+  const ended = await client.query(
+    'UPDATE env_provisioning.onprem_hosts SET revoked_at=NOW() WHERE machine_id=$1 AND revoked_at IS NULL',
+    [machineId],
+  );
+  return ended.rowCount ?? 0;
+}
+
 async function insertBinding(
   client: PoolClient,
   input: {

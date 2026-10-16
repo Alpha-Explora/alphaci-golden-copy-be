@@ -11,6 +11,7 @@ import {
 
 import { ReleaseRegistryService } from '../application/release-registry.service';
 import { ReportDeploymentStatusDto } from './dto/release-registry.dto';
+import { OnpremMachineRateLimit } from './onprem-machine-throttler.guard';
 
 /**
  * The surface an on-prem host agent polls, outbound only. Authenticated by a
@@ -22,11 +23,13 @@ export class OnpremAgentController {
   constructor(private readonly releases: ReleaseRegistryService) {}
 
   @Get('assignments')
+  @OnpremMachineRateLimit()
   assignments(@Headers('authorization') authorization: string | undefined) {
     return this.releases.hostAssignments(bearer(authorization));
   }
 
   @Post('deployments/:deploymentId/status')
+  @OnpremMachineRateLimit()
   reportStatus(
     @Headers('authorization') authorization: string | undefined,
     @Param('deploymentId', ParseUUIDPipe) deploymentId: string,

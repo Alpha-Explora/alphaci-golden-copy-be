@@ -125,6 +125,27 @@ describe('Reusable machine assignment authorization', () => {
     await pool.query('DELETE FROM identity.app_users WHERE id=$1', [userId]);
     await pool.end();
   });
+  /** Enrolls a healthy machine, optionally replacing another; returns its id. */
+  const enroll = async (replacesMachineId?: string) => {
+    const code = hashMachineSecret(randomUUID());
+    await machines.createEnrollment(
+      workspaceId,
+      userId,
+      {
+        name: 'swap',
+        platform: 'ubuntu',
+        requestId: randomUUID(),
+        ...(replacesMachineId ? { replacesMachineId } : {}),
+      },
+      code,
+    );
+    return (
+      await machines.consume(code, hashMachineSecret(randomUUID()), 'p', {
+        agentVersion: 'test',
+        checks: [],
+      })
+    ).id;
+  };
   it('uses compare-and-set, replays the same request once, and allocates distinct host ports', async () => {
     const request = input();
     const result = await Promise.allSettled([
@@ -236,26 +257,6 @@ describe('Reusable machine assignment authorization', () => {
     await assignments.unassign(projectId, environmentId, changed.id);
   });
   it('moves active bindings to a replacement machine with the same ports', async () => {
-    const enroll = async (replacesMachineId?: string) => {
-      const code = hashMachineSecret(randomUUID());
-      await machines.createEnrollment(
-        workspaceId,
-        userId,
-        {
-          name: 'swap',
-          platform: 'ubuntu',
-          requestId: randomUUID(),
-          ...(replacesMachineId ? { replacesMachineId } : {}),
-        },
-        code,
-      );
-      return (
-        await machines.consume(code, hashMachineSecret(randomUUID()), 'p', {
-          agentVersion: 'test',
-          checks: [],
-        })
-      ).id;
-    };
     const old = await enroll();
     // Two healthy machines: a person must choose.
     await expect(
@@ -344,5 +345,51 @@ describe('Reusable machine assignment authorization', () => {
     await expect(assignments.authorizeAgent(hash, 'machine')).rejects.toThrow(
       /revoked/,
     );
+  });
+  it('frees a revoked machine without a replacement: its environment and ports become assignable again', async () => {
+    const lone = await enroll();
+    await assignments.assign({ ...input(), machineId: lone });
+    const reserved = (id: string) =>
+      pool.query(
+        'SELECT host_port FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+        [id],
+      );
+    expect((await reserved(lone)).rows).toHaveLength(1);
+    await machines.revoke(workspaceId, lone);
+    expect(await assignments.current(projectId, environmentId)).toBeNull();
+    expect((await reserved(lone)).rows).toEqual([]);
+    // No Unassign: the one healthy machine takes the environment straight away.
+    const healthy = await enroll();
+    const again = await assignments.assign({ ...input(), machineId: null });
+    expect(again.machineId).toBe(healthy);
+    await assignments.unassign(projectId, environmentId, again.id);
+  });
+  it('ends bindings that earlier revocations left active when the migration runs', async () => {
+    const stale = await enroll();
+    await assignments.assign({
+      ...input(),
+      machineId: stale,
+      environmentId: secondEnv,
+    });
+    // Written before revocation ended bindings: the machine is revoked, its binding is not.
+    await pool.query(
+      'UPDATE env_provisioning.onprem_machines SET revoked_at=NOW() WHERE id=$1',
+      [stale],
+    );
+    expect(await assignments.current(projectId, secondEnv)).not.toBeNull();
+    await pool.query(
+      readFileSync(
+        resolve(
+          'supabase/migrations/runtime/20261016010000_end_revoked_machine_bindings.sql',
+        ),
+        'utf8',
+      ),
+    );
+    expect(await assignments.current(projectId, secondEnv)).toBeNull();
+    const reserved = await pool.query(
+      'SELECT 1 FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
+      [stale],
+    );
+    expect(reserved.rows).toEqual([]);
   });
 });

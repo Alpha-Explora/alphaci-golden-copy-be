@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { appConfig } from '#kernel/config/app.config.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -23,6 +23,7 @@ import { BillingModule } from '#modules/billing/billing.module.js';
 import { PipelinesModule } from '#modules/pipelines/pipelines.module.js';
 import { ProjectsModule } from '#modules/projects/projects.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
+import { OnpremMachineThrottlerGuard } from '#modules/runtime/index.js';
 import { PlatformOpsModule } from '#modules/platform-ops/platform-ops.module.js';
 
 @Module({
@@ -54,7 +55,10 @@ import { PlatformOpsModule } from '#modules/platform-ops/platform-ops.module.js'
     PlatformOpsModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: OnpremMachineThrottlerGuard },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

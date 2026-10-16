@@ -5,7 +5,10 @@ import {
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '#kernel/db/database.service';
-import { moveMachineBindings } from './onprem-assignments.repository';
+import {
+  endMachineBindings,
+  moveMachineBindings,
+} from './onprem-assignments.repository';
 import type {
   EnrollmentInput,
   MachineCheckIn,
@@ -217,7 +220,8 @@ export class OnpremMachinesRepository {
 
   /**
    * Retire a machine. With a replacement, its active environments move there
-   * first, keeping host ports where they are free on the replacement.
+   * first, keeping host ports where they are free on the replacement. Without
+   * one, its bindings end, so the environments are free to assign again.
    */
   async revoke(
     workspaceId: string,
@@ -247,6 +251,8 @@ export class OnpremMachinesRepository {
             'Replacement machine must be an active machine in this workspace.',
           );
         moved = await moveMachineBindings(client, id, replacementId);
+      } else {
+        await endMachineBindings(client, id);
       }
       await client.query(
         `UPDATE env_provisioning.onprem_machines SET revoked_at=COALESCE(revoked_at,NOW()) WHERE workspace_id=$1 AND id=$2`,
@@ -254,6 +260,15 @@ export class OnpremMachinesRepository {
       );
       return { moved };
     });
+  }
+
+  /** The active machine holding this credential hash; null when unknown or revoked. */
+  async activeMachineId(hash: string): Promise<string | null> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM env_provisioning.onprem_machines WHERE token_sha256=$1 AND revoked_at IS NULL`,
+      [hash],
+    );
+    return result.rows[0]?.id ?? null;
   }
 
   async purgeWorkspace(workspaceId: string): Promise<{ removed: number }> {
@@ -266,8 +281,13 @@ export class OnpremMachinesRepository {
         `UPDATE env_provisioning.onprem_enrollments SET expires_at=LEAST(expires_at,NOW()) WHERE workspace_id=$1`,
         [workspaceId],
       );
+      // Machines first, then their bindings: the same lock order as assignment.
       const result = await client.query(
         `UPDATE env_provisioning.onprem_machines SET revoked_at=NOW() WHERE workspace_id=$1 AND revoked_at IS NULL`,
+        [workspaceId],
+      );
+      await client.query(
+        `UPDATE env_provisioning.onprem_hosts SET revoked_at=NOW() WHERE revoked_at IS NULL AND machine_id IN (SELECT id FROM env_provisioning.onprem_machines WHERE workspace_id=$1)`,
         [workspaceId],
       );
       return { removed: result.rowCount ?? 0 };

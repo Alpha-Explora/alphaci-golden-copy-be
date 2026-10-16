@@ -1,0 +1,3 @@
+-- Ended bindings stay ended. Reactivating them would reassign environments that
+-- were released on purpose, and the rows cannot be told apart from bindings an
+-- operator ended with Unassign. Revoked machines stay revoked.
