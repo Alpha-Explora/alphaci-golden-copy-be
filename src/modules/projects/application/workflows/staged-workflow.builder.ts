@@ -1,5 +1,7 @@
 import yaml from 'js-yaml';
 import { validateCiApiConnectivity } from '#kernel/config/ci-api-connectivity';
+import { resolvePlatformBaseUrl } from '#kernel/config/ci-api-base-url';
+import type { ReleaseSigner } from '#kernel/config/release-signing.config';
 
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
 import { ENV_GUARD_CHECK_CONTEXT } from '#kernel/ports/workflow-generation.port';
@@ -89,34 +91,6 @@ export function resolveDefaultCentralWorkflowRef(
 }
 
 const DEFAULT_CENTRAL_WORKFLOW_REF = resolveDefaultCentralWorkflowRef();
-
-const DEFAULT_LOCAL_PLATFORM_BASE_URL = 'http://localhost:4000';
-const GITHUB_CALLBACK_PATH = /\/api\/v1\/auth\/github\/callback\/?$/;
-const API_V1_PATH = /\/api\/v1\/?$/;
-
-function normalizePlatformBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, '').replace(API_V1_PATH, '');
-}
-
-export function resolvePlatformBaseUrl(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const explicit =
-    env['PLATFORM_PUBLIC_URL']?.trim() || env['API_PUBLIC_URL']?.trim();
-
-  if (explicit) {
-    return normalizePlatformBaseUrl(explicit);
-  }
-
-  const callbackUrl = env['GITHUB_CALLBACK_URL']?.trim();
-  if (callbackUrl) {
-    return normalizePlatformBaseUrl(
-      callbackUrl.replace(GITHUB_CALLBACK_PATH, ''),
-    );
-  }
-
-  return DEFAULT_LOCAL_PLATFORM_BASE_URL;
-}
 
 const PLATFORM_BASE_URL = resolvePlatformBaseUrl();
 
@@ -421,6 +395,11 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   environments?: StagedWorkflowEnvironment[];
   /** The deployment target of each environment and slot, for environments mode. */
   environmentTargets?: StagedEnvironmentTarget[];
+  /**
+   * Cloud KMS signer identity for the sign-release job of a host-delivered
+   * first environment. Undefined keeps the reusable workflow's own inputs.
+   */
+  releaseSigner?: ReleaseSigner;
 }
 
 export interface StagedWorkflowEnvironment {
@@ -1411,6 +1390,7 @@ function buildEnvironmentWorkflowBundle(
       registry,
       environments,
       targets,
+      dto.releaseSigner,
     ),
   ];
   if (dto.workflowVariant !== 'frontend') {
@@ -1503,6 +1483,7 @@ function buildEnvironmentPackageWorkflowFile(
   registry: WorkflowFragmentRegistry,
   environments: StagedWorkflowEnvironment[],
   targets: StagedEnvironmentTarget[],
+  releaseSigner: ReleaseSigner | undefined,
 ): StagedWorkflowFile {
   const { packageName, qualityName, fileSuffix } = ctx.names;
   const first = environments[0]!;
@@ -1656,6 +1637,11 @@ function buildEnvironmentPackageWorkflowFile(
           with: {
             'release-id': '${{ needs.register-release.outputs.release-id }}',
             'api-url': ALPHACI_API_URL,
+            ...(releaseSigner && {
+              'workload-identity-provider':
+                releaseSigner.workloadIdentityProvider,
+              'service-account': releaseSigner.serviceAccount,
+            }),
           },
           // Named, not `inherit`: inheriting only works between repositories
           // of one organization, and the central workflows live in another.

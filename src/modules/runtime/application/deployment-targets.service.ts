@@ -9,6 +9,7 @@ import {
   NotFoundException,
   Optional,
   UnauthorizedException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -28,6 +29,7 @@ import {
   type UsageQuotaPort,
 } from '#kernel/ports/usage-quota.port';
 import { canManageHosting } from '#kernel/rules/persona-access.rules';
+import { configureRepositoryReleaseSigning } from '#kernel/config/release-signing-provisioning';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
 import type { UpdateDeploymentTargetMetadataInput } from '../core/deployments.types';
 import {
@@ -205,10 +207,17 @@ export class DeploymentTargetsService
     }));
   }
 
+  /**
+   * Adds a target to a project. A user adding an on-prem target passes
+   * `signing`, and the repository's release signing is configured first. The
+   * provisioning path passes nothing: it configures signing once for the whole
+   * project before its targets are created.
+   */
   async createDeploymentTarget(
     projectId: string,
     userId: string,
     requested: CreateDeploymentTargetDto,
+    signing?: { githubAccessToken: string | null },
   ) {
     const project = await this.assertProjectLifecycleAccess(projectId, userId);
     // Environment checks run before quota, provider, and GitHub calls, so a
@@ -331,6 +340,13 @@ export class DeploymentTargetsService
       await this.provisionGithubEnvironment(project, userId, environment);
     }
 
+    if (hostDelivered && signing) {
+      await this.configureSigningForHostTarget(
+        project.repoFullName,
+        dto.provider,
+        signing.githubAccessToken,
+      );
+    }
     const hostLabel =
       dto.providerProjectName?.trim() || dto.projectName?.trim() || dto.slot;
     const target = hostDelivered
@@ -1504,6 +1520,42 @@ export class DeploymentTargetsService
       this.providerRegistry?.find(provider)?.capabilities.connectivity ===
       'indirect'
     );
+  }
+
+  /**
+   * A host verifies the releases its environment consumes, so an on-prem target
+   * is refused until the repository can sign them. The refusal names the step to
+   * take. No target is created when it is raised. The repository is written only
+   * after the trust check passes, so a refused target leaves no key material
+   * behind.
+   */
+  private async configureSigningForHostTarget(
+    repoFullName: string,
+    provider: string,
+    githubAccessToken: string | null,
+  ): Promise<void> {
+    if (!githubAccessToken) {
+      throw new UnauthorizedException(
+        'GitHub access token not found. Re-authenticate via GitHub OAuth.',
+      );
+    }
+    if (!this.githubActions) {
+      throw new UnprocessableEntityException(
+        'Release signing cannot be configured on this server, so the on-prem target was not added.',
+      );
+    }
+    const [owner = '', repo = ''] = repoFullName.split('/');
+    const problem = await configureRepositoryReleaseSigning({
+      github: this.githubActions,
+      read: (key) => this.configService.get<string>(key),
+      deliveredByHost: (name) => this.deliveredByHost(name),
+      accessToken: githubAccessToken,
+      owner,
+      repo,
+      targets: [{ provider }],
+      untrusted: 'refuse',
+    });
+    if (problem) throw new UnprocessableEntityException(problem);
   }
 
   /**

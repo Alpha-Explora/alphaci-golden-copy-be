@@ -1,11 +1,13 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
   Optional,
+  UnauthorizedException,
 } from '@nestjs/common';
 
 import {
@@ -32,8 +34,15 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 import {
+  findStaleCiWorkflowFiles,
+  isReachableFromGithubRunners,
+  resolvePlatformBaseUrl,
+  type StaleCiWorkflowFile,
+} from '#kernel/config/ci-api-base-url';
+import {
   PROTECTED_BRANCHES,
   WORKING_BRANCH,
+  projectPipelineBranches,
 } from '#kernel/config/pipeline-branches';
 import {
   canCreatePullRequest,
@@ -45,6 +54,19 @@ import { ProjectWorkflowsService } from '../workflows/project-workflows.service'
 
 /** Stand-in for the generated `alphaci/...` head: any non-pipeline branch. */
 const GENERATED_PR_HEAD = 'alphaci/drift-repair';
+
+/** The branch a CI repair proposes into, and the pull request it opens against dev. */
+const CI_REPAIR_BRANCH = 'alphaci/repair-ci-api-url';
+const CI_REPAIR_TITLE = 'ci: point ALPHACI checks at the public API URL';
+const CI_REPAIR_BODY =
+  "This repository's CI workflows still point at an old AlphaCI address. This pull request points them at this deployment. The repository secrets were already reset.";
+/** What the repair's installation token may do, and no more. */
+const CI_REPAIR_PERMISSIONS = {
+  contents: 'write',
+  workflows: 'write',
+  pull_requests: 'write',
+  secrets: 'write',
+} as const;
 
 type DriftRepairContext = {
   projectId: string;
@@ -142,6 +164,9 @@ export class ProjectDriftRepairService {
         return this.detachTarget(ctx);
       case 'repair_branch_protection':
         return this.repairBranchProtection(ctx, project.repo_full_name);
+      case 'repair_ci_api_url':
+        await this.assertLifecycleRole(ctx);
+        return this.repairCiApiUrl(ctx, project.repo_full_name);
       case 'regenerate_workflow_preview':
         await this.assertPullRequestRole(ctx);
         return this.regenerateWorkflowPreview(ctx);
@@ -347,6 +372,284 @@ export class ProjectDriftRepairService {
       'Deployment target detached from ALPHACI',
       { targetId: ctx.finding.targetId },
     );
+  }
+
+  /**
+   * Points the repository at this deployment's AlphaCI API.
+   *
+   * The two repository secrets are reset directly: a secret cannot be read back
+   * and carries no review. The workflow files change through a pull request into
+   * the project's base branch (its first environment's branch), so the change is
+   * reviewed, and promotion carries it on. The finding stays active until a drift
+   * check on the repository says it is clean, so this action never resolves it.
+   *
+   * The caller must be able to push to the repository on their own GitHub
+   * account. The App token used for the writes is narrowed to that repository
+   * and to CI_REPAIR_PERMISSIONS.
+   */
+  private async repairCiApiUrl(
+    ctx: DriftRepairContext,
+    repoFullName: string,
+  ): Promise<ProjectDriftRepairResponse> {
+    this.assertCode(ctx.finding, ['ci_api_url_stale'], ctx.action);
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo || !this.githubService) {
+      throw new BadRequestException(
+        'Project does not name a GitHub repository',
+      );
+    }
+    const apiUrl = resolvePlatformBaseUrl();
+    if (!isReachableFromGithubRunners(apiUrl)) {
+      throw new ConflictException(
+        'This deployment has no public API URL, so CI cannot be pointed at it. Set PLATFORM_PUBLIC_URL to an HTTPS address that GitHub runners can reach.',
+      );
+    }
+    const github = this.githubService;
+    await this.assertCanPush(github, ctx.githubAccessToken, repoFullName);
+    const token = await this.repairInstallationToken(github, repoFullName);
+
+    const environments = await this.projectsRepository.listProjectEnvironments(
+      ctx.projectId,
+    );
+    const { base } = projectPipelineBranches(environments);
+    // The change is built on the base head read here, and fails if it moves.
+    const baseHead = await github.getBranchHeadSha(token, repoFullName, base);
+    if (!baseHead) {
+      throw new BadRequestException(
+        `Branch ${base} does not exist in ${repoFullName}.`,
+      );
+    }
+    const baseStale = await findStaleCiWorkflowFiles(
+      github,
+      token,
+      repoFullName,
+      baseHead,
+      apiUrl,
+    );
+
+    const reportUrl = `${apiUrl}/api/v1/ci/report`;
+    const secrets = ['ALPHACI_API_URL', 'ALPHACI_REPORT_URL'];
+    await github.setActionsSecretStrict(
+      token,
+      owner,
+      repo,
+      'ALPHACI_API_URL',
+      apiUrl,
+    );
+    await github.setActionsSecretStrict(
+      token,
+      owner,
+      repo,
+      'ALPHACI_REPORT_URL',
+      reportUrl,
+    );
+
+    if (baseStale.length === 0) {
+      return this.completed(
+        ctx.findingId,
+        ctx.action,
+        `CI points at ${apiUrl}; ${base} already names it, so no workflow change was needed.`,
+        { apiUrl, reportUrl, secrets, baseBranch: base },
+      );
+    }
+
+    const pullRequest = await this.openWorkflowFixPullRequest(
+      github,
+      token,
+      repoFullName,
+      base,
+      baseHead,
+      baseStale,
+    );
+    const message = pullRequest.created
+      ? `Opened a pull request into ${base}: ${pullRequest.url}`
+      : `A pull request into ${base} is already open: ${pullRequest.url}`;
+    if (pullRequest.created) {
+      await this.recordRepairEvent({
+        userId: ctx.userId,
+        projectId: ctx.projectId,
+        eventCode: 'drift_repair_completed',
+        title: 'Drift repair pull request opened',
+        body: message,
+        metadata: {
+          findingId: ctx.findingId,
+          action: ctx.action,
+          findingCode: ctx.finding.code,
+          baseBranch: base,
+          pullRequestNumber: pullRequest.number,
+          pullRequestUrl: pullRequest.url,
+        },
+      });
+    }
+    return this.completed(ctx.findingId, ctx.action, message, {
+      apiUrl,
+      reportUrl,
+      secrets,
+      baseBranch: base,
+      branch: CI_REPAIR_BRANCH,
+      pullRequestUrl: pullRequest.url,
+      pullRequestNumber: pullRequest.number,
+      files: baseStale.map((file) => file.path),
+    });
+  }
+
+  /**
+   * One commit on the repair branch, cut from the base head that was read, then
+   * a pull request into the base. A branch left by an earlier run is reused when
+   * its pull request is still open. Otherwise it is moved to the new commit only
+   * if it holds nothing of its own; a branch with commits of its own is refused,
+   * so nothing is overwritten.
+   */
+  private async openWorkflowFixPullRequest(
+    github: GithubProjectPort,
+    token: string,
+    repoFullName: string,
+    base: string,
+    baseHead: string,
+    stale: StaleCiWorkflowFile[],
+  ): Promise<{ url: string; number: number; created: boolean }> {
+    const existing = await github.getBranchHeadSha(
+      token,
+      repoFullName,
+      CI_REPAIR_BRANCH,
+    );
+    let replaceExisting = false;
+    if (existing) {
+      const open = await this.openPullRequestFor(
+        github,
+        token,
+        repoFullName,
+        base,
+      );
+      if (open) return open;
+      const comparison = await github.compareBranches(
+        token,
+        repoFullName,
+        base,
+        CI_REPAIR_BRANCH,
+      );
+      if (!comparison || comparison.aheadBy > 0) {
+        throw new ConflictException(
+          `Branch ${CI_REPAIR_BRANCH} has commits of its own and no open pull request. Delete it on GitHub, then run the repair again.`,
+        );
+      }
+      replaceExisting = true;
+    }
+
+    const committed = await github.commitFilesToNewBranch(token, repoFullName, {
+      fromBranch: base,
+      fromSha: baseHead,
+      newBranch: CI_REPAIR_BRANCH,
+      message: CI_REPAIR_TITLE,
+      files: stale.map(({ path, content }) => ({ path, content })),
+      replaceExisting,
+    });
+    if (!committed.committed) {
+      if (committed.reason === 'branch_exists') {
+        const open = await this.openPullRequestFor(
+          github,
+          token,
+          repoFullName,
+          base,
+        );
+        if (open) return open;
+        throw new ConflictException(
+          `Branch ${CI_REPAIR_BRANCH} could not be updated and has no open pull request. Delete it on GitHub, then run the repair again.`,
+        );
+      }
+      if (committed.reason === 'base_moved') {
+        throw new ConflictException(
+          `${base} moved while the repair was being prepared. Run the repair again.`,
+        );
+      }
+      throw new BadGatewayException(committed.message);
+    }
+
+    const opened = await github.openPullRequest(token, repoFullName, {
+      title: CI_REPAIR_TITLE,
+      head: CI_REPAIR_BRANCH,
+      base,
+      body: CI_REPAIR_BODY,
+    });
+    if (!opened.created) {
+      throw new BadGatewayException(opened.message);
+    }
+    return {
+      url: opened.pullRequest.htmlUrl,
+      number: opened.pullRequest.number,
+      created: true,
+    };
+  }
+
+  /** The open pull request from the repair branch into `base`, as a result, if there is one. */
+  private async openPullRequestFor(
+    github: GithubProjectPort,
+    token: string,
+    repoFullName: string,
+    base: string,
+  ): Promise<{ url: string; number: number; created: boolean } | null> {
+    const open = await github.findOpenPullRequest(
+      token,
+      repoFullName,
+      CI_REPAIR_BRANCH,
+      base,
+    );
+    return open
+      ? { url: open.htmlUrl, number: open.number, created: false }
+      : null;
+  }
+
+  /**
+   * The repair writes on the caller's behalf, so the caller must be able to push.
+   * Checked with their own token, not the App's: a token that can reach the
+   * repository says nothing about whether this person may change it.
+   */
+  private async assertCanPush(
+    github: GithubProjectPort,
+    userToken: string | null,
+    repoFullName: string,
+  ): Promise<void> {
+    if (!userToken) {
+      throw new BadRequestException(
+        'A GitHub session is required to repair CI on this repository',
+      );
+    }
+    const access = await github.getRepoPermissions(userToken, repoFullName);
+    if (!access.read && access.reason === 'unauthorized') {
+      throw new UnauthorizedException(
+        'Your GitHub sign-in no longer works. Sign in to GitHub again, then retry.',
+      );
+    }
+    if (!access.read || !(access.push || access.admin)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'REPO_WRITE_REQUIRED',
+        message:
+          'Your GitHub account must be able to push to this repository to apply this repair.',
+      });
+    }
+  }
+
+  /**
+   * The App's installation token for this one repository, narrowed to
+   * CI_REPAIR_PERMISSIONS. Stored installation rows are not used: they can be
+   * empty, and a token minted from them could not be narrowed.
+   */
+  private async repairInstallationToken(
+    github: GithubProjectPort,
+    repoFullName: string,
+  ): Promise<string> {
+    const token = await github.getRepoInstallationAccessToken(
+      repoFullName,
+      CI_REPAIR_PERMISSIONS,
+    );
+    if (!token) {
+      throw new BadRequestException(
+        'The AlphaCI GitHub App is not installed on this repository, so its CI cannot be repaired from here.',
+      );
+    }
+    return token;
   }
 
   private async regenerateWorkflowPreview(

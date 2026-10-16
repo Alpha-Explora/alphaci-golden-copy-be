@@ -225,6 +225,7 @@ export class ProjectProvisioningSupport {
     return (this.workflowFilesLazy ??= new ProjectWorkflowFilesService(
       this.catalogService,
       this.workflowFragmentRegistry,
+      this.configService,
     ));
   }
 

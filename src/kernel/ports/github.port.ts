@@ -356,9 +356,37 @@ export type GitHubRepoPathsResult =
   | { read: true; paths: string[]; truncated: boolean }
   | { read: false; reason: 'unauthorized'; message: string };
 
+/**
+ * What the caller may do on a repository, as GitHub reports it to them.
+ * `unauthorized` is a sign-in GitHub no longer accepts; `unreadable` is any
+ * other answer that does not show the repository. Neither guesses at access.
+ */
+export type GitHubRepoPermissionsResult =
+  | { read: true; push: boolean; admin: boolean }
+  | { read: false; reason: 'unauthorized' | 'unreadable' };
+
+/**
+ * Permissions an installation token is narrowed to, by GitHub's own names
+ * (`contents`, `workflows`, `secrets`, `pull_requests`). Only what a
+ * repair needs, never the App's full set.
+ */
+export type GitHubTokenPermissions = Readonly<Record<string, 'read' | 'write'>>;
+
 export interface GitHubCommitFilesInput {
   /** Existing branch the new one starts from. */
   fromBranch: string;
+  /**
+   * The commit `fromBranch` was read at. When given, the new branch is built on
+   * it, and the commit fails with `base_moved` if the branch has moved since,
+   * rather than building on a head the caller never read.
+   */
+  fromSha?: string;
+  /**
+   * Move a branch of this name to the new commit when it exists, instead of
+   * failing. Only for a branch the caller has checked holds no commits of its
+   * own; the move is a fast-forward, so nothing is lost.
+   */
+  replaceExisting?: boolean;
   /** Branch to create. Created LAST, so a failure leaves nothing behind. */
   newBranch: string;
   message: string;
@@ -378,7 +406,12 @@ export type GitHubCommitFilesResult =
   | { committed: true; commitSha: string }
   | {
       committed: false;
-      reason: 'unauthorized' | 'forbidden' | 'branch_exists' | 'base_missing';
+      reason:
+        | 'unauthorized'
+        | 'forbidden'
+        | 'branch_exists'
+        | 'base_missing'
+        | 'base_moved';
       message: string;
     };
 
@@ -714,6 +747,30 @@ export interface GithubProjectPort {
     repoFullName: string,
     input: GitHubCommitFilesInput,
   ): Promise<GitHubCommitFilesResult>;
+  /** The commit a branch points at now; null when the branch does not exist. */
+  getBranchHeadSha(
+    accessToken: string,
+    repoFullName: string,
+    branch: string,
+  ): Promise<string | null>;
+  /**
+   * What the caller may do on the repository, as GitHub reports it to them.
+   * A repository GitHub will not show is reported as `read: false`, never
+   * as a guess.
+   */
+  getRepoPermissions(
+    accessToken: string,
+    repoFullName: string,
+  ): Promise<GitHubRepoPermissionsResult>;
+  /**
+   * An installation token for the App's installation on `repoFullName`, asked
+   * of GitHub itself and narrowed to that one repository and `permissions`.
+   * Null when the App is not installed there.
+   */
+  getRepoInstallationAccessToken(
+    repoFullName: string,
+    permissions: GitHubTokenPermissions,
+  ): Promise<string | null>;
   /**
    * Dispatch a `workflow_dispatch` run on a person's behalf — first caller:
    * QA automation's "Run Playwright" (re-dispatches the generated verify

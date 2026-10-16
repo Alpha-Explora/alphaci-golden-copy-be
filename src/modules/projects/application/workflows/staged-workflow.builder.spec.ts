@@ -1,4 +1,8 @@
 import yaml from 'js-yaml';
+import {
+  resolvePlatformBaseUrl,
+  rewriteCiApiBase,
+} from '#kernel/config/ci-api-base-url';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { renderWorkflowFragment } from '#modules/runtime/infrastructure/providers/render/render-workflow.fragment';
 import { vercelWorkflowFragment } from '#modules/runtime/infrastructure/providers/vercel/vercel-workflow.fragment';
@@ -7,7 +11,6 @@ import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
   buildStagedWorkflowBundle,
   resolveDefaultCentralWorkflowRef,
-  resolvePlatformBaseUrl,
 } from './staged-workflow.builder';
 
 const makeTemplate = (
@@ -2012,5 +2015,133 @@ describe('promotion PR pairing input (sibling-repo)', () => {
         .split('\n')
         .filter((l) => l.includes('sibling-repo')),
     ).toHaveLength(2);
+  });
+});
+
+describe('generated CI against a stale API base', () => {
+  const STALE = 'http://localhost:4000';
+  const CURRENT = 'https://api.alphaci.test';
+  const registry = new WorkflowFragmentRegistry([
+    renderWorkflowFragment,
+    vercelWorkflowFragment,
+  ]);
+
+  /**
+   * The builder reads its base once, at import, so the module is loaded fresh
+   * under `base` and the real bundle is generated from it.
+   */
+  function buildUnder(
+    base: string,
+    extra: Partial<Parameters<typeof buildStagedWorkflowBundle>[1]> = {},
+  ): ReturnType<typeof buildStagedWorkflowBundle> {
+    const previous = process.env['PLATFORM_PUBLIC_URL'];
+    process.env['PLATFORM_PUBLIC_URL'] = base;
+    try {
+      let built: ReturnType<typeof buildStagedWorkflowBundle> | undefined;
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const fresh =
+          require('./staged-workflow.builder') as typeof import('./staged-workflow.builder');
+        built = fresh.buildStagedWorkflowBundle(
+          makeTemplate(),
+          {
+            templateId: 'be-nestjs',
+            serviceName: 'orders-api',
+            ...extra,
+          },
+          registry,
+        );
+      });
+      if (!built) throw new Error('the builder did not produce a bundle');
+      return built;
+    } finally {
+      if (previous === undefined) {
+        delete process.env['PLATFORM_PUBLIC_URL'];
+      } else {
+        process.env['PLATFORM_PUBLIC_URL'] = previous;
+      }
+    }
+  }
+
+  it('leaves no trace of the stale base once every generated file is rewritten', () => {
+    const bundle = buildUnder(STALE);
+
+    expect(
+      bundle.workflowFiles.filter((file) => file.yaml.includes(STALE)).length,
+    ).toBeGreaterThan(0);
+    for (const file of bundle.workflowFiles) {
+      const rewritten = rewriteCiApiBase(file.yaml, CURRENT).content;
+      expect({ path: file.path, stale: rewritten.includes(STALE) }).toEqual({
+        path: file.path,
+        stale: false,
+      });
+    }
+  });
+
+  it('leaves no stale base in an environment pipeline, whose promote and release jobs name the base too', () => {
+    const bundle = buildUnder(STALE, {
+      environments: [
+        {
+          id: 'env-develop',
+          slug: 'develop',
+          sourceBranch: 'develop',
+          position: 0,
+          role: 'non_production',
+        },
+        {
+          id: 'env-staging',
+          slug: 'staging',
+          sourceBranch: 'staging',
+          position: 1,
+          role: 'non_production',
+        },
+        {
+          id: 'env-main',
+          slug: 'main',
+          sourceBranch: 'main',
+          position: 2,
+          role: 'production',
+        },
+      ],
+      environmentTargets: [
+        {
+          environmentId: 'env-develop',
+          slot: 'backend',
+          targetId: 'target-develop',
+          provider: 'render',
+        },
+        {
+          environmentId: 'env-staging',
+          slot: 'backend',
+          targetId: 'target-staging',
+          provider: 'render',
+        },
+        {
+          environmentId: 'env-main',
+          slot: 'backend',
+          targetId: 'target-main',
+          provider: 'render',
+        },
+      ],
+    });
+
+    expect(
+      bundle.workflowFiles.filter((file) => file.yaml.includes(STALE)).length,
+    ).toBeGreaterThan(0);
+    for (const file of bundle.workflowFiles) {
+      const rewritten = rewriteCiApiBase(file.yaml, CURRENT).content;
+      expect({ path: file.path, stale: rewritten.includes(STALE) }).toEqual({
+        path: file.path,
+        stale: false,
+      });
+    }
+  });
+
+  it('generates the current base when the builder runs under it', () => {
+    const bundle = buildUnder(CURRENT);
+
+    expect(
+      bundle.workflowFiles.some((file) => file.yaml.includes(CURRENT)),
+    ).toBe(true);
   });
 });
