@@ -3,6 +3,8 @@ import { DatabaseModule } from '#kernel/db/database.module';
 import { WORKSPACE_RUNTIME_DATA_CLEANUP } from '#kernel/ports/workspace-data-cleanup.port';
 import { WorkspacesModule } from '#modules/identity-access/workspaces/workspaces.module';
 import { OnpremMachinesRepository } from './infrastructure/repositories/onprem-machines.repository';
+import { OnpremInstallerReleaseClient } from './infrastructure/providers/onprem/onprem-installer-release.client';
+import { ONPREM_INSTALLER_RELEASE } from './application/ports/onprem-installer-release.port';
 import { OnpremHostsService } from './application/onprem/onprem-hosts.service';
 import { OnpremHostsController } from './api/onprem-hosts.controller';
 import { OnpremEnrollmentController } from './api/onprem-enrollment.controller';
@@ -15,6 +17,11 @@ import { SubscriptionModule } from '#modules/billing/subscription/subscription.m
   imports: [DatabaseModule, WorkspacesModule, SubscriptionModule],
   providers: [
     OnpremMachinesRepository,
+    OnpremInstallerReleaseClient,
+    {
+      provide: ONPREM_INSTALLER_RELEASE,
+      useExisting: OnpremInstallerReleaseClient,
+    },
     OnpremHostsService,
     SessionAuthGuard,
     SubscriptionGuard,
