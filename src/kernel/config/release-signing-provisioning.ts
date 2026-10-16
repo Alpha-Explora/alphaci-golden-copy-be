@@ -40,11 +40,12 @@ export interface ReleaseSigningWriter {
 
 /**
  * What happens when the trust setting would not verify the releases:
- * - `write-and-warn` (provisioning): the setting is written and the gap reported,
- *   so the repository is usable and the operator can fix the trust setting.
+ * - `write-and-warn` (provisioning): an untrusted Cloud KMS key version is written
+ *   and the gap reported, because the variable is harmless. An untrusted lab key
+ *   is still not written: a private key must not reach a repository that cannot
+ *   verify releases.
  * - `refuse` (a user adding an on-prem target): nothing is written, and the gap is
- *   returned so the caller can refuse. Key material never reaches a repository
- *   that cannot verify releases.
+ *   returned so the caller can refuse.
  */
 export type UntrustedSigning = 'write-and-warn' | 'refuse';
 
@@ -120,9 +121,15 @@ export async function configureRepositoryReleaseSigning(input: {
     );
   }
 
-  if (plan.trustProblem !== undefined && input.untrusted === 'refuse') {
+  // An untrusted lab key is never written, even by provisioning: it would copy a
+  // private key into the repository for releases that cannot verify. An untrusted
+  // Cloud KMS variable is harmless, so provisioning writes it and warns.
+  if (
+    plan.trustProblem !== undefined &&
+    (input.untrusted === 'refuse' || source.kind === 'lab')
+  ) {
     return warn(
-      `Releases from ${where} would not verify on their hosts. ${plan.trustProblem}`,
+      `Releases from ${where} would not verify on their hosts, so ${needed} was not written. ${plan.trustProblem}`,
     );
   }
 

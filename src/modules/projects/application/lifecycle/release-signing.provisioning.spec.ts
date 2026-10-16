@@ -232,7 +232,7 @@ describe('configureReleaseSigning', () => {
       ).not.toHaveBeenCalled();
     });
 
-    it('still sets the secret but warns when the lab key ID is not trusted', async () => {
+    it('does not write an untrusted lab key during provisioning, and warns instead', async () => {
       const pair = keyPair();
       const keyPath = join(tempDir, 'release-signing.key');
       writeFileSync(keyPath, pair.privateKey);
@@ -240,10 +240,10 @@ describe('configureReleaseSigning', () => {
 
       const warning = await configure(support, onprem);
 
-      expect(
-        support.githubService.setActionsSecretStrict,
-      ).toHaveBeenCalledTimes(1);
-      expect(warning).toContain('will not verify on their hosts yet');
+      expectNoWrites(support);
+      expect(warning).toContain(
+        'so the repository secret ALPHACI_RELEASE_SIGNING_KEY was not written',
+      );
       expect(warning).toContain(labSigningKeyId(pair.privateKey));
     });
 
@@ -261,6 +261,7 @@ describe('configureReleaseSigning', () => {
 
       const warning = await configure(support, onprem);
 
+      expectNoWrites(support);
       expect(warning).toContain('is not the public key of');
     });
 
@@ -283,7 +284,12 @@ describe('configureReleaseSigning', () => {
       const pair = keyPair();
       const keyPath = join(tempDir, 'release-signing.key');
       writeFileSync(keyPath, pair.privateKey);
-      const support = fakeSupport({ ONPREM_LAB_SIGNING_KEY_PATH: keyPath });
+      const support = fakeSupport({
+        ONPREM_LAB_SIGNING_KEY_PATH: keyPath,
+        ALPHACI_RELEASE_TRUST_KEYS_JSON: JSON.stringify({
+          [labSigningKeyId(pair.privateKey)]: pair.publicKey,
+        }),
+      });
       support.githubService.setActionsSecretStrict.mockRejectedValueOnce(
         new Error('GitHub 502'),
       );
