@@ -33,8 +33,10 @@ in the release registry contract. Keep the signing key in Cloud KMS (or, for lab
 hosts only, in CI's secret store). It never belongs on an enrolled machine.
 
 1. Build the preview package with `node scripts/package-onprem-agent.mjs`.
-2. Choose Add host and copy the checksum-verifying installation command for the
-   chosen platform. Paste the one-time code only at the installer's hidden prompt.
+2. Choose Add host and either download the install file for the chosen platform
+   (it already carries the one-time code: run it once, then delete it), or copy
+   the checksum-verifying installation command and paste the code only at the
+   installer's hidden prompt.
 3. On Ubuntu, install Docker Engine/Compose, curl, jq, OpenSSL, flock,
    ca-certificates, and iproute2 first. Enable systemd and leave at least 1 GiB
    free. The installer checks these prerequisites and keeps existing Docker configuration.
@@ -49,7 +51,8 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    Hosting is consumed only with `install.sh --enroll <API URL> --replace`
    (Windows: `-ReplaceCredential`), which sets the current credential aside and
    restores it if the code is not accepted. A changed API URL also requires
-   replacement. The timer starts only after a successful authenticated heartbeat.
+   replacement. The timer starts once enrollment succeeds; the first authenticated
+   check-in runs before it, and if that check-in fails the timer keeps retrying.
 6. Wait for Connected. While it is the workspace's only connected machine,
    new non-production on-prem environments are assigned to it automatically
    (container port 3000 for a frontend, 4000 for a backend, health at `/`);
@@ -541,7 +544,7 @@ page, then redeploy. Do not commit values to the repository.
 | `ONPREM_RELEASES_ENABLED` | `true` |
 | `ALPHACI_RELEASE_TRUST_KEYS_JSON` | The one-line JSON from Part 5, step 13. |
 | `ONPREM_INSTALLER_RELEASE_REPO` | The repository that publishes installer releases, as `owner/repo`. |
-| `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.1.0`. |
+| `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.2.0`. |
 | `ONPREM_INSTALLER_SHA256` | Recommended. The SHA-256 of `alphaci-agent-<version>.tar.gz`, copied from that release's `installer-release.json` after you have checked the release yourself. Enrollment then trusts this value rather than the release contents. |
 | `ONPREM_INSTALLER_RELEASE_TOKEN` | Optional. A GitHub token used only for API calls, to avoid the shared unauthenticated rate limit. Keep it secret. |
 

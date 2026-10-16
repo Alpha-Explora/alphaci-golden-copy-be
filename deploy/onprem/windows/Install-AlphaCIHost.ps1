@@ -16,7 +16,11 @@ It installs two scheduled tasks and one firewall rule per port:
 
 An enrolled machine (-ApiUrl) forwards no static ports unless -Ports is given.
 Add -ReplaceCredential with a replacement enrollment code to retire the current
-machine credential.
+machine credential. -EnrollCodeFile names a file holding the enrollment code
+(the one-click install file writes it). The code is checked up front. The file is
+deleted only after enrollment has taken the code, so a restart, a failed
+prerequisite or an unreachable server leaves it for a rerun. Enrollment gets a copy
+readable only by this account, deleted afterwards. Without it, the code is prompted for.
 
 Rerunning updates all of them in place. Nothing inside the distro is changed.
 
@@ -35,6 +39,7 @@ param(
     [int[]] $Ports,
     [string] $ServiceAccount = ($env:USERDOMAIN + '\' + $env:USERNAME),
     [string] $ApiUrl,
+    [string] $EnrollCodeFile,
     [switch] $ReplaceCredential,
     [switch] $OnlyWhenSignedIn
 )
@@ -49,6 +54,15 @@ if (-not $PSBoundParameters.ContainsKey('Ports')) {
     $Ports = if ($ApiUrl -or (Test-Path -LiteralPath (Join-Path $root 'installation-state.json'))) { @() } else { @(443) }
 }
 if ($ReplaceCredential -and -not $ApiUrl) { throw 'ReplaceCredential requires -ApiUrl.' }
+if ($EnrollCodeFile -and -not $ApiUrl) { throw 'EnrollCodeFile requires -ApiUrl.' }
+# Read and check the code now. The file stays until enrollment has taken the code (below),
+# so a restart, a failed prerequisite or an unreachable server leaves it for a rerun.
+$enrollCode = $null
+if ($EnrollCodeFile) {
+    if (-not (Test-Path -LiteralPath $EnrollCodeFile -PathType Leaf)) { throw 'The enrollment code file is missing.' }
+    $enrollCode = (Get-Content -Raw -LiteralPath $EnrollCodeFile).Trim()
+    if ($enrollCode -cnotmatch '^[A-Za-z0-9_-]{43}$') { throw 'Invalid enrollment code format.' }
+}
 
 New-Item -ItemType Directory -Force -Path $root, (Join-Path $root 'logs') | Out-Null
 if ($ApiUrl) {
@@ -82,7 +96,8 @@ if ($ApiUrl) {
     if ($restartRequired) {
         Save-InstallPhase 'restart_required'
         Write-Output 'Restart Windows, then rerun this command. The saved installation identity will be reused.'
-        return
+        # 3010 is the "restart required" code; the code file is still there for the rerun.
+        exit 3010
     }
     if ($ServiceAccount -ne $currentAccount) { throw 'Enroll while signed in as the Windows account that owns this WSL distro, then configure its startup task.' }
     $installedDistros = @((& wsl.exe -l -q) -replace [char]0, '' | Where-Object { $_.Trim() })
@@ -96,16 +111,36 @@ if ($ApiUrl) {
     $agentDirectory = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\agent')).Path -replace '\\', '/'
     $linuxInstallerDirectory = ((& wsl.exe -d $Distro -e wslpath -u $agentDirectory) -join '').Trim()
     if ($LASTEXITCODE -ne 0 -or -not $linuxInstallerDirectory) { throw 'Could not locate the extracted agent directory inside WSL.' }
-    # Enrollment reads its code interactively. No code or credential is passed in argv or state.
-    $enrollArguments = @(
-        '-d', $Distro, '-u', 'root', '-e', 'bash',
-        ('"' + $linuxInstallerDirectory + '/install.sh"'), '--enroll', $ApiUrl, 'windows')
-    # A replacement code retires the credential already on this machine.
-    if ($ReplaceCredential) { $enrollArguments += '--replace' }
-    # Start-Process hands wsl.exe the console itself; called with &, PowerShell captures its
-    # output line by line and the code prompt (no trailing newline) never appears.
-    $installer = Start-Process -FilePath 'wsl.exe' -NoNewWindow -Wait -PassThru -ArgumentList $enrollArguments
-    if ($installer.ExitCode -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
+    # Enrollment takes its code from a file that exists only for this run: written here,
+    # readable only by this account, deleted in finally. No code or credential is passed in argv.
+    $codeFile = $null
+    try {
+        $enrollArguments = @('-d', $Distro, '-u', 'root', '-e')
+        if ($enrollCode) {
+            $codeFile = Join-Path $env:TEMP ('alphaci-enroll-' + [guid]::NewGuid() + '.txt')
+            [IO.File]::WriteAllText($codeFile, $enrollCode + "`n", [Text.UTF8Encoding]::new($false))
+            # Grant by SID: an account name can be ambiguous, and a failed grant must not leave the code readable.
+            $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            & icacls.exe $codeFile /inheritance:r /grant:r ('*' + $currentSid + ':(R,WA,D)') | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not restrict the enrollment code file to this account.' }
+            $codeLinuxPath = ((& wsl.exe -d $Distro -e wslpath -u ($codeFile -replace '\\', '/')) -join '').Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $codeLinuxPath) { throw 'Could not pass the enrollment code to WSL.' }
+            $enrollArguments += @('env', ('"ALPHACI_ENROLL_CODE_FILE=' + $codeLinuxPath + '"'))
+        }
+        $enrollArguments += @('bash', ('"' + $linuxInstallerDirectory + '/install.sh"'), '--enroll', $ApiUrl, 'windows')
+        # A replacement code retires the credential already on this machine.
+        if ($ReplaceCredential) { $enrollArguments += '--replace' }
+        # Start-Process hands wsl.exe the console itself; called with &, PowerShell captures its
+        # output line by line and the code prompt (no trailing newline) never appears.
+        $installer = Start-Process -FilePath 'wsl.exe' -NoNewWindow -Wait -PassThru -ArgumentList $enrollArguments
+        # enroll.sh deletes its copy once AlphaCi has answered. A copy still there means the outcome
+        # is unknown, so the caller's file must stay for a rerun.
+        $codeConsumed = [bool]$codeFile -and -not (Test-Path -LiteralPath $codeFile)
+        if ($codeConsumed) { Remove-Item -Force -LiteralPath $EnrollCodeFile -ErrorAction SilentlyContinue }
+        if ($installer.ExitCode -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
+    } finally {
+        if ($codeFile) { Remove-Item -Force -LiteralPath $codeFile -ErrorAction SilentlyContinue }
+    }
     Write-Host 'Enrolled. Setting up startup and port forwarding...'
     Save-InstallPhase 'startup'
 }
@@ -189,3 +224,5 @@ Write-Output ('Distro address: ' + (Get-Content -LiteralPath (Join-Path $root 'w
 & netsh.exe interface portproxy show v4tov4
 Get-NetFirewallRule -Name 'AlphaCI TCP *' | Format-Table Name, Enabled, Direction, Action -AutoSize
 if ($ApiUrl) { Save-InstallPhase 'complete' }
+# A finished installation exits 0 explicitly, so an earlier native command never decides the result.
+exit 0
