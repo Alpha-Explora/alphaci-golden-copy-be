@@ -107,8 +107,11 @@ Ubuntu machines can install the agent as a package instead of running
    units. Installing it does not enroll the machine and does not start polling.
 3. Enroll once: `sudo alphaci-enroll https://YOUR-API`. The code is prompted for
    as usual. To enroll from an install file instead of pasting, run
-   `sudo env ALPHACI_ENROLL_CODE_FILE=/path/to/code-file alphaci-enroll https://YOUR-API`;
-   enrollment deletes the file. Use `--replace` with a replacement code, as step 5 describes.
+   `sudo env ALPHACI_ENROLL_CODE_FILE=/path/to/code-file alphaci-enroll https://YOUR-API`.
+   The file is deleted once AlphaCi answers: an accepted enrollment, or a refusal
+   because the code is invalid, used or expired. If the connection fails, or AlphaCi
+   is busy or throttling, the file stays, so the same command can be run again.
+   Use `--replace` with a replacement code, as step 5 describes.
 4. Wait for Connected in AlphaCI, as step 6 describes.
 
 Removing the package stops polling. Credentials, trust keys and assignment data

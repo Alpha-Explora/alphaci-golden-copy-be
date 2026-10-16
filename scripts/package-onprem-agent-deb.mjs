@@ -79,7 +79,7 @@ export function controlFile(version) {
     'Architecture: all',
     'Maintainer: AlphaCI <noreply@alphaexplora.com>',
     'Depends: bash, ca-certificates, coreutils, curl, iproute2, jq, openssl, systemd, util-linux',
-    'Recommends: docker-ce | docker.io',
+    'Recommends: docker-ce | docker.io, docker-compose-plugin | docker-compose-v2',
     'Description: AlphaCI on-prem machine agent',
     ' Polls AlphaCI for the environments assigned to this machine and runs them with',
     ' Docker Compose. Install the package, then enroll once: sudo alphaci-enroll <API URL>.',
