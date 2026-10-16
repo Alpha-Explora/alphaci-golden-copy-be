@@ -18,6 +18,8 @@ if [ "${1:-}" = --enroll ]; then
   [ -s /etc/ssl/certs/ca-certificates.crt ] || { echo 'Install ca-certificates first.' >&2; exit 1; }
   available=$(df -Pk /opt | awk 'NR==2 {print $4}')
   [ "$available" -ge 1048576 ] || { echo 'At least 1 GiB free disk space is required.' >&2; exit 1; }
+  # Set explicitly: a restrictive umask must not leave the tunnel user unable to traverse.
+  install -d -m 0755 /opt/alphaci
   install -d -m 0755 /opt/alphaci/bin
   install -d -m 0700 /opt/alphaci/secrets /opt/alphaci/assignments
   install -m 0755 alphaci-agent.sh /opt/alphaci/bin/alphaci-agent
@@ -26,7 +28,7 @@ if [ "${1:-}" = --enroll ]; then
   install -m 0755 tunnel-run.sh /opt/alphaci/bin/tunnel-run
   install -d -m 0755 /opt/alphaci/tunnels
   # The unit runs cloudflared as this user, which owns only its environment's directory.
-  id -u alphaci-tunnel > /dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin alphaci-tunnel
+  id -u alphaci-tunnel > /dev/null 2>&1 || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin alphaci-tunnel
   install -m 0644 alphaci-tunnel@.service /etc/systemd/system/alphaci-tunnel@.service
   [ ! -f render-assignment.sh ] || install -m 0755 render-assignment.sh /opt/alphaci/bin/render-assignment
   # API URL, optional platform and optional --replace pass through unchanged.
@@ -41,6 +43,7 @@ if [ "${1:-}" = --enroll ]; then
   exit 0
 fi
 
+install -d -m 0755 /opt/alphaci
 install -d -m 0755 /opt/alphaci/bin /opt/alphaci/trust /opt/alphaci/compose /opt/alphaci/releases /opt/alphaci/tls
 install -d -m 0700 /opt/alphaci/secrets /opt/alphaci/support
 install -m 0755 alphaci-agent.sh /opt/alphaci/bin/alphaci-agent

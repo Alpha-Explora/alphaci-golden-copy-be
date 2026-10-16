@@ -262,7 +262,8 @@ describe('Automatic HTTPS address (tunnel) with recording fixture', () => {
       join(f.work, 'heartbeat-reply.json'),
       JSON.stringify({ ports: [18162], tunnels: [tunnel] }),
     );
-    writeFileSync(join(f.work, 'tunnel-per-start'), '1');
+    // Only the first start prints an address: the restarted tunnel prints nothing.
+    writeFileSync(join(f.work, 'tunnel-once'), '1');
     f.run(
       `/work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; /work/host/bin/alphaci-supervisor --heartbeat-only; kill $(cat /work/units/${a.assignment.environmentId}.pid); sleep 2; /work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; /work/host/bin/alphaci-supervisor --heartbeat-only`,
     );
@@ -271,13 +272,59 @@ describe('Automatic HTTPS address (tunnel) with recording fixture', () => {
       'stop',
       startLine(a, 18162),
     ]);
-    // The second run's address replaces the first; the first is never reported again.
+    // Had the first address survived the restart, it would be reported as running.
     expect(stateOf(f, a)).toMatchObject({
-      status: 'running',
-      publicUrl: 'https://quiet-fox-blue-cloud-2.trycloudflare.com',
+      status: 'starting',
+      publicUrl: null,
     });
     const body = readFileSync(join(f.work, 'heartbeat-body.json'), 'utf8');
-    expect(body).not.toContain('quiet-fox-blue-cloud-1.trycloudflare.com');
+    expect(body).not.toContain('quiet-fox-blue-cloud.trycloudflare.com');
+  });
+  it('does not follow a symlink planted in run/', () => {
+    const f = shellFixture();
+    const { a, tunnel } = binding(f, 18163);
+    writeFileSync(
+      join(f.work, 'heartbeat-reply.json'),
+      JSON.stringify({ ports: [18163], tunnels: [tunnel] }),
+    );
+    // The victim holds a real quick-tunnel address; root must not take it from there.
+    writeFileSync(
+      join(f.work, 'victim-address'),
+      'https://quiet-fox-blue-cloud.trycloudflare.com\n',
+    );
+    const run = `/work/host/tunnels/${a.assignment.environmentId}/run`;
+    f.run(
+      `/work/host/bin/alphaci-supervisor --heartbeat-only; sleep 1; rm -f ${run}/address; ln -s /work/victim-address ${run}/address; /work/host/bin/alphaci-supervisor --heartbeat-only`,
+    );
+    expect(stateOf(f, a)).toMatchObject({
+      status: 'starting',
+      publicUrl: null,
+    });
+    expect(readFileSync(join(f.work, 'victim-address'), 'utf8')).toBe(
+      'https://quiet-fox-blue-cloud.trycloudflare.com\n',
+    );
+  });
+  it('never writes through a symlink in the environment directory', () => {
+    const f = shellFixture();
+    const { a, tunnel } = binding(f, 18164);
+    writeFileSync(
+      join(f.work, 'heartbeat-reply.json'),
+      JSON.stringify({ ports: [18164], tunnels: [tunnel] }),
+    );
+    writeFileSync(join(f.work, 'victim-state'), 'keep\n');
+    const dir = `/work/host/tunnels/${a.assignment.environmentId}`;
+    // A stale port forces tunnel.env to be rewritten; the links sit where root writes.
+    f.run(
+      `mkdir -p ${dir}/run; printf 'ALPHACI_TUNNEL_PORT=1\\n' > ${dir}/tunnel.env; ln -s /work/victim-state ${dir}/tunnel.env.new; ln -s /work/victim-state ${dir}/tunnel.json; ln -s /work/victim-state ${dir}/config.yml; /work/host/bin/alphaci-supervisor --heartbeat-only`,
+    );
+    expect(readFileSync(join(f.work, 'victim-state'), 'utf8')).toBe('keep\n');
+    expect(stateOf(f, a)).toMatchObject({ assignmentId: tunnel.assignmentId });
+    expect(
+      readFileSync(
+        join(f.work, 'host/tunnels', a.assignment.environmentId, 'tunnel.env'),
+        'utf8',
+      ),
+    ).toBe(`ALPHACI_TUNNEL_PORT=18164\n`);
   });
   it('starts no tunnel for direct or configured assignments', () => {
     const f = shellFixture();

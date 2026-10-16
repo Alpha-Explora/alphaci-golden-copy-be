@@ -92,8 +92,9 @@ Requirements on the machine:
 
 Each tunnel is its own systemd unit, `alphaci-tunnel@<environment UUID>.service`,
 configured by `/opt/alphaci/tunnels/<environment UUID>/tunnel.env`. It runs as the
-unprivileged user `alphaci-tunnel`, which can write only that directory, with no
-new privileges, no capabilities, and IPv4/IPv6 sockets only. systemd keeps
+unprivileged user `alphaci-tunnel`. It can write only its `run/` subdirectory; the
+directory that holds its settings is root-owned, so the unit cannot replace them. It runs with
+no new privileges, no capabilities, and IPv4/IPv6 sockets only. systemd keeps
 it running and restarts it after 15 seconds if it stops. The supervisor starts
 the unit when an assignment uses tunnel mode and stops it when the assignment
 leaves the machine. The unit runs with an empty cloudflared config, so a

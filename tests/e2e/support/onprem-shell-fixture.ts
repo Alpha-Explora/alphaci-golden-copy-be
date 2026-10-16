@@ -109,13 +109,13 @@ fi
 echo "start $*" >> /work/cloudflared-calls.log
 trap 'echo stop >> /work/cloudflared-calls.log; exit 0' TERM INT
 address=https://quiet-fox-blue-cloud.trycloudflare.com
-if [ -f /work/tunnel-per-start ]; then
-  n=$(( $(cat /work/tunnel-starts 2>/dev/null || echo 0) + 1 ))
-  echo "$n" > /work/tunnel-starts
-  address=https://quiet-fox-blue-cloud-$n.trycloudflare.com
-fi
+n=$(( $(cat /work/tunnel-starts 2>/dev/null || echo 0) + 1 ))
+echo "$n" > /work/tunnel-starts
+if [ -f /work/tunnel-per-start ]; then address=https://quiet-fox-blue-cloud-$n.trycloudflare.com; fi
 [ ! -f /work/tunnel-banner ] || address=$(cat /work/tunnel-banner)
-if [ -f /work/tunnel-nul ]; then
+if [ -f /work/tunnel-once ] && [ "$n" -gt 1 ]; then
+  :
+elif [ -f /work/tunnel-nul ]; then
   printf junk; head -c 1 /dev/zero; echo "|  $address  |"
 elif [ ! -f /work/tunnel-silent ]; then
   echo "|  $address  |"

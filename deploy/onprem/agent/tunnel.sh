@@ -33,9 +33,15 @@ tunnel_problem() {
 }
 
 # tunnel_address <environment>: the address the tunnel printed in its current
-# run, if it is an AlphaCI quick-tunnel address. Anything else is not reported.
+# run, if it is an AlphaCI quick-tunnel address. The tunnel user writes run/, so
+# root reads only a regular file directly in it, never through a link, and only
+# text that matches the pattern is used. Root never writes into run/.
 tunnel_address() {
-  head -c 300 "$TUNNEL_ROOT/$1/address" 2> /dev/null | tr -d '\r' |
+  local run="$TUNNEL_ROOT/$1/run" file="$TUNNEL_ROOT/$1/run/address" real
+  [ -f "$file" ] && [ ! -L "$file" ] || return 0
+  real=$(readlink -f -- "$file" 2> /dev/null || true)
+  [ "$real" = "$(readlink -f -- "$run")/address" ] || return 0
+  head -c 300 -- "$file" 2> /dev/null | tr -d '' |
     grep -axE "$TUNNEL_ADDRESS_PATTERN" | head -n 1 || true
 }
 
@@ -56,14 +62,16 @@ tunnel_record() {
 # tunnel_sync <environment> <assignment-id> <host-port>: keeps the environment's
 # tunnel unit running for its port and records what it observed.
 tunnel_sync() {
-  local environment="$1" id="$2" port="$3" dir unit wanted previous problem url
+  local environment="$1" id="$2" port="$3" dir unit wanted previous problem url tmp
   dir="$TUNNEL_ROOT/$environment"
   unit=$(tunnel_unit "$environment")
-  mkdir -p "$dir"
-  # The tunnel unit runs as its own user, which writes the address file here.
+  # The environment directory is root-owned: it holds this machine's settings,
+  # which only root writes. The tunnel user writes only run/, where the address is.
+  install -d -m 0755 "$dir"
+  chown root:root "$dir"
+  install -d -m 0750 "$dir/run"
   if id -u alphaci-tunnel > /dev/null 2>&1; then
-    chown alphaci-tunnel:alphaci-tunnel "$dir"
-    chmod 0750 "$dir"
+    chown alphaci-tunnel:alphaci-tunnel "$dir/run"
   fi
   previous=$(jq -r '.status // empty' "$dir/tunnel.json" 2> /dev/null || true)
   problem=$(tunnel_problem)
@@ -75,17 +83,20 @@ tunnel_sync() {
   # The unit reads its port when it starts, so a changed port restarts it.
   wanted="ALPHACI_TUNNEL_PORT=$port"
   if [ "$(cat "$dir/tunnel.env" 2> /dev/null || true)" != "$wanted" ]; then
-    printf '%s\n' "$wanted" > "$dir/tunnel.env.new"
-    chmod 0600 "$dir/tunnel.env.new"
-    mv "$dir/tunnel.env.new" "$dir/tunnel.env"
+    # Written under a fresh name and renamed into place: a link is replaced, never followed.
+    tmp=$(mktemp "$dir/tunnel.env.XXXXXX")
+    printf '%s\n' "$wanted" > "$tmp"
+    chmod 0600 "$tmp"
+    mv "$tmp" "$dir/tunnel.env"
     if systemctl is-active --quiet "$unit" < /dev/null; then
       systemctl stop "$unit" < /dev/null > /dev/null 2>&1 || true
     fi
   fi
   # An empty config file keeps ~/.cloudflared/config.yml from overriding --url.
   if [ ! -e "$dir/config.yml" ]; then
-    : > "$dir/config.yml"
-    chmod 0644 "$dir/config.yml"
+    tmp=$(mktemp "$dir/config.XXXXXX")
+    chmod 0644 "$tmp"
+    mv "$tmp" "$dir/config.yml"
   fi
   if ! systemctl is-active --quiet "$unit" < /dev/null; then
     if systemctl start "$unit" < /dev/null > /dev/null 2>&1; then
@@ -114,7 +125,7 @@ tunnel_sync() {
 # tunnel_stop <environment>: stops the environment's tunnel and forgets its report.
 tunnel_stop() {
   systemctl stop "$(tunnel_unit "$1")" < /dev/null > /dev/null 2>&1 || true
-  rm -f "$TUNNEL_ROOT/$1/tunnel.json" "$TUNNEL_ROOT/$1/address"
+  rm -f "$TUNNEL_ROOT/$1/tunnel.json" "$TUNNEL_ROOT/$1/run/address"
 }
 
 # tunnel_stop_all: stops every tunnel this machine runs. Used when the machine

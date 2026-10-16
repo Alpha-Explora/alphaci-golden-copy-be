@@ -36,16 +36,26 @@ if (Test-Path -LiteralPath $configPath) {
     $ports = @($config.Ports)
     if ($PSCmdlet.ShouldProcess($config.Distro, 'stop AlphaCI tunnels and polling timers, preserving containers and data')) {
         # Disable polling first, so no run can start a tunnel again. Then stop a
-        # run in progress, so it cannot start one after the tunnels stop. Hosts
-        # whose agent predates tunnels skip the last step: their supervisor does
-        # not know the flag and would run a full poll instead.
+        # run in progress, so it cannot start one after the tunnels stop. Each
+        # timer is disabled on its own: a host may have only one of them.
         $distro = $config.Distro
-        [void](Invoke-Native { & wsl.exe -d $distro -u root -- systemctl disable --now alphaci-machine.timer alphaci-agent.timer })
-        [void](Invoke-Native { & wsl.exe -d $distro -u root -- systemctl stop alphaci-machine.service })
-        if ((Invoke-Native { & wsl.exe -d $distro -u root -- test -f /opt/alphaci/bin/tunnel.sh }) -eq 0) {
-            if ((Invoke-Native { & wsl.exe -d $distro -u root -- /opt/alphaci/bin/alphaci-supervisor --stop-tunnels }) -ne 0) {
+        $code = Invoke-Native { & wsl.exe -d $distro -u root -- systemctl disable --now alphaci-machine.timer }
+        if ($code -ne 0) { Write-Warning "Could not disable alphaci-machine.timer in WSL (exit $code)." }
+        $code = Invoke-Native { & wsl.exe -d $distro -u root -- systemctl disable --now alphaci-agent.timer }
+        if ($code -ne 0) { Write-Warning "Could not disable alphaci-agent.timer in WSL (exit $code). It may not be installed." }
+        $code = Invoke-Native { & wsl.exe -d $distro -u root -- systemctl stop alphaci-machine.service }
+        if ($code -ne 0) { Write-Warning "Could not stop alphaci-machine.service in WSL (exit $code)." }
+        # test -f exits 1 when the file is absent. Any other code means WSL itself failed.
+        # Hosts whose agent predates tunnels have no tunnel.sh, so there is nothing to stop.
+        $present = Invoke-Native { & wsl.exe -d $distro -u root -- test -f /opt/alphaci/bin/tunnel.sh }
+        if ($present -eq 0) {
+            $code = Invoke-Native { & wsl.exe -d $distro -u root -- /opt/alphaci/bin/alphaci-supervisor --stop-tunnels }
+            if ($code -ne 0) {
                 Write-Warning 'The automatic-address tunnels could not be stopped. In WSL, run: sudo /opt/alphaci/bin/alphaci-supervisor --stop-tunnels'
             }
+        }
+        elseif ($present -ne 1) {
+            Write-Warning "Could not check WSL for the tunnel program (exit $present), so the automatic-address tunnels may still be running. In WSL, run: sudo /opt/alphaci/bin/alphaci-supervisor --stop-tunnels"
         }
     }
 }

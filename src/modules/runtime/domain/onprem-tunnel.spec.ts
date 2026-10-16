@@ -328,7 +328,7 @@ describe('parseTunnelReport message', () => {
     const parsed = parseTunnelReport({
       assignmentId: '3f2b1c4e-5d6a-4b7c-8d9e-0f1a2b3c4d5e',
       status: 'failed',
-      message: 'before after',
+      message: 'before\u0000after',
       publicUrl: null,
     });
     expect(parsed?.message).toBe('beforeafter');

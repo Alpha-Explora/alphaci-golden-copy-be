@@ -11,9 +11,10 @@ ENVIRONMENT="${1:?an environment id is required}"
 [[ "$ENVIRONMENT" =~ ^[0-9a-f-]{36}$ ]] || { echo 'Invalid environment id.' >&2; exit 1; }
 : "${ALPHACI_TUNNEL_PORT:?ALPHACI_TUNNEL_PORT is required}"
 DIR="$ROOT/tunnels/$ENVIRONMENT"
+RUN="$DIR/run"
 BIN="${ALPHACI_CLOUDFLARED:-cloudflared}"
 ADDRESS='https://[a-z0-9]+(-[a-z0-9]+)+\.trycloudflare\.com'
-: > "$DIR/address"
+: > "$RUN/address"
 child=""
 trap 'if [ -n "$child" ]; then kill "$child" 2> /dev/null || true; fi' TERM INT
 # --config names an empty file, so a ~/.cloudflared/config.yml cannot replace --url.
@@ -22,7 +23,7 @@ trap 'if [ -n "$child" ]; then kill "$child" 2> /dev/null || true; fi' TERM INT
     printf '%s\n' "$line"
     url=$(printf '%s\n' "$line" | grep -aoE "$ADDRESS" | head -n 1 || true)
     if [ -n "$url" ]; then
-      printf '%s\n' "$url" > "$DIR/address.new" && mv "$DIR/address.new" "$DIR/address"
+      printf '%s\n' "$url" > "$RUN/address.new" && mv "$RUN/address.new" "$RUN/address"
     fi
   done) 2>&1 &
 child=$!
