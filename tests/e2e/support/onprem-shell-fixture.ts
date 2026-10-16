@@ -6,6 +6,20 @@ import { join, resolve } from 'node:path';
 import { canonicalJson } from '../../../src/modules/runtime/domain/release-manifest';
 
 const image = 'alphaci-agent-e2e:1';
+
+/**
+ * Runs a container command, then hands the mounted work directory back to this
+ * process's user. The scripts run as container root with umask 077, so the
+ * files they create are root-owned and unreadable to this process on Linux.
+ * Windows has no uid to hand back to, so the command is returned unchanged.
+ */
+export function returnWorkToHostUser(command: string): string {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) return command;
+  return `${command}; status=$?; chown -R ${uid}:${gid} /work; exit $status`;
+}
+
 export function buildShellFixture() {
   execFileSync('docker', ['build', '-t', image, '-'], {
     input:
@@ -104,8 +118,10 @@ esac
         image,
         'bash',
         '-c',
-        'chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; ' +
-          command,
+        returnWorkToHostUser(
+          'chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; ' +
+            command,
+        ),
       ],
       { encoding: 'utf8', input, timeout: 60_000 },
     );

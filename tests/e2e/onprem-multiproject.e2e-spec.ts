@@ -4,7 +4,10 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { shellFixture } from './support/onprem-shell-fixture';
+import {
+  returnWorkToHostUser,
+  shellFixture,
+} from './support/onprem-shell-fixture';
 
 // Docker and HTTP health are real. The API recorder and host-network adapters
 // below replace only the fixture's control server and container namespace.
@@ -121,7 +124,9 @@ describe('Two projects on one real Docker daemon', () => {
         'alphaci-machine-live-test:1',
         'bash',
         '-c',
-        `chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; /work/host/bin/render-assignment /work/${file}`,
+        returnWorkToHostUser(
+          `chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; /work/host/bin/render-assignment /work/${file}`,
+        ),
       ],
       { encoding: 'utf8', timeout: 120_000 },
     );
