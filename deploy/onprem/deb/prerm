@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stops polling when the package is removed. Credentials, trust keys and assignment
+# data stay under /opt/alphaci until an operator deletes them.
+set -e
+case "$1" in
+  remove|deconfigure)
+    if [ -d /run/systemd/system ]; then
+      systemctl disable --now alphaci-machine.timer >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+exit 0

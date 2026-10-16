@@ -100,6 +100,30 @@ Separate machines are required for mutually untrusted workloads.
 A hosted backend that is not on a developer PC needs the settings in
 [Point customer machines at the deployed API](#point-customer-machines-at-the-deployed-api).
 
+## Ubuntu package (.deb)
+
+Ubuntu machines can install the agent as a package instead of running
+`install.sh`. Each `onprem-agent-v<version>` release attaches
+`alphaci-agent_<version>_all.deb` with its `.sha256` file.
+
+1. Download the package and its checksum file, then verify it:
+   `sha256sum -c alphaci-agent_<version>_all.deb.sha256`.
+2. Install Docker Engine first, as in Part 2. Otherwise apt installs `docker.io`
+   as a recommended package. Then run `sudo apt-get install ./alphaci-agent_<version>_all.deb`.
+   The package lays the agent out under `/opt/alphaci` and installs the machine
+   units. Installing it does not enroll the machine and does not start polling.
+3. Enroll once: `sudo alphaci-enroll https://YOUR-API`. The code is prompted for
+   as usual. To enroll from an install file instead of pasting, run
+   `sudo env ALPHACI_ENROLL_CODE_FILE=/path/to/code-file alphaci-enroll https://YOUR-API`.
+   The file is deleted once AlphaCi answers: an accepted enrollment, or a refusal
+   because the code is invalid, used or expired. If the connection fails, or AlphaCi
+   is busy or throttling, the file stays, so the same command can be run again.
+   Use `--replace` with a replacement code, as step 5 describes.
+4. Wait for Connected in AlphaCI, as step 6 describes.
+
+Removing the package stops polling. Credentials, trust keys and assignment data
+stay under `/opt/alphaci` until someone deletes them.
+
 The remainder of this runbook describes the retained legacy registration path.
 
 This runbook takes a fresh Windows PC to a running AlphaCI production host. The
