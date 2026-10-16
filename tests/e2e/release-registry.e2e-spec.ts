@@ -31,10 +31,29 @@ type Release = {
 
 const digest = (character: string) => 'sha256:' + character.repeat(64);
 const sha = (character: string) => character.repeat(40);
-const releaseKeyId = 'projects/e2e/keys/release/1';
+// The Cloud KMS key version that signs releases is also the trust key ID, so
+// the configured signer and the manifest signature name the same key.
+const releaseKeyId =
+  'projects/e2e/locations/global/keyRings/release/cryptoKeys/alphaci/cryptoKeyVersions/1';
 const releaseSigningKeys = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const previousTrustKeys = process.env['ALPHACI_RELEASE_TRUST_KEYS_JSON'];
 const previousOnpremFlag = process.env['ONPREM_RELEASES_ENABLED'];
+/**
+ * A backend with Cloud KMS signing configured. An on-prem target is refused
+ * without it, so every scenario that adds one runs with it.
+ */
+const signingEnvironment = {
+  ALPHACI_RELEASE_KMS_KEY_VERSION: releaseKeyId,
+  ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER:
+    'projects/123456789/locations/global/workloadIdentityPools/alphaci-signer/providers/github',
+  ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT:
+    'release-signer@e2e-project.iam.gserviceaccount.com',
+};
+/** The placeholder GitHub token a signed-in scenario session holds. */
+const githubAccessToken = 'e2e-github-token';
+const previousSigningEnvironment = Object.fromEntries(
+  Object.keys(signingEnvironment).map((key) => [key, process.env[key]]),
+);
 
 /**
  * Immutable releases, signed manifests, explicit promotion between ordered
@@ -332,7 +351,10 @@ describe('Release registry and promotion', () => {
           format: 'pem',
         }),
       });
-      e2e = await startApplication();
+      Object.assign(process.env, signingEnvironment);
+      // Quick-login has no GitHub token; a GitHub sign-in stores one, and the
+      // on-prem target's signing step needs it.
+      e2e = await startApplication({ githubAccessToken });
       ({ agent, userId } = await e2e.signIn('admin'));
     });
 
@@ -347,6 +369,13 @@ describe('Release registry and promotion', () => {
         delete process.env['ALPHACI_RELEASE_TRUST_KEYS_JSON'];
       } else {
         process.env['ALPHACI_RELEASE_TRUST_KEYS_JSON'] = previousTrustKeys;
+      }
+      for (const [key, value] of Object.entries(previousSigningEnvironment)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
       }
     });
 
@@ -835,7 +864,22 @@ describe('Release registry and promotion', () => {
         slot: 'frontend',
       }).expect(409);
 
-      expect(e2e.externalCalls.slice(start)).toEqual([]);
+      // The only write is the signing variable, so the host can verify releases.
+      // No provider or workflow is called.
+      const [owner, repo] = project.repo.split('/') as [string, string];
+      expect(e2e.externalCalls.slice(start)).toEqual([
+        {
+          port: 'githubActions',
+          method: 'setActionsVariableStrict',
+          args: [
+            githubAccessToken,
+            owner,
+            repo,
+            'ALPHACI_RELEASE_KMS_KEY_VERSION',
+            releaseKeyId,
+          ],
+        },
+      ]);
       expect(await onpremDiscovery(agent)).toMatchObject({ enabled: true });
     });
 
