@@ -142,7 +142,9 @@ describe('buildStagedWorkflowBundle', () => {
 
       expect(reportJob).toBeDefined();
       // must always run, even on failure or cancellation
-      expect(reportJob?.if).toBe('${{ always() }}');
+      expect(reportJob?.if).toBe(
+        "${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}",
+      );
     }
 
     // access: only needs validate-access
@@ -589,13 +591,18 @@ describe('buildStagedWorkflowBundle', () => {
         push: { branches: ['dev', 'uat', 'main'] },
         pull_request: { branches: ['dev', 'uat', 'main'] },
       });
-      expect(wf['permissions']).toEqual({
+      // read-only by default; the guard job grants itself the writes
+      expect(wf['permissions']).toEqual({ contents: 'read' });
+      // job id must match the branch-protection required context
+      const jobs = wf['jobs'] as Record<
+        string,
+        { permissions?: Record<string, string> }
+      >;
+      expect(Object.keys(jobs)).toEqual(['env-guard']);
+      expect(jobs['env-guard']?.permissions).toEqual({
         contents: 'write',
         issues: 'write',
       });
-      // job id must match the branch-protection required context
-      const jobs = wf['jobs'] as Record<string, unknown>;
-      expect(Object.keys(jobs)).toEqual(['env-guard']);
     });
 
     it('detects dotenv files but allows committable placeholders', () => {
