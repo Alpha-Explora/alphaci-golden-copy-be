@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # First boot of an AlphaCI on-prem image. Enrolls this machine with the one-time code
 # in /etc/alphaci/enrollment-code, then disables its own unit. enroll.sh deletes the
-# code file when it reads it; a run that fails before that leaves the file, so the
-# next boot retries. The code expires after 10 minutes.
+# code once AlphaCI has answered (accepted, or refused as invalid or expired). A failed
+# connection keeps the file, so starting the unit again retries with the same code.
+# The code expires after 10 minutes.
 set -euo pipefail
 ETC="${ALPHACI_IMAGE_ETC:-/etc/alphaci}"
 UNIT=alphaci-first-boot.service
@@ -11,9 +12,9 @@ UNIT=alphaci-first-boot.service
 : "${ALPHACI_ARCHIVE_SHA256:?first-boot.env must set ALPHACI_ARCHIVE_SHA256}"
 [ -s "$ETC/enrollment-code" ] || { echo "No enrollment code is waiting in $ETC/enrollment-code." >&2; exit 1; }
 
-# A boot can come before the network does. enroll.sh deletes the code as soon as it
-# reads it, so wait here for the API to answer. Only connection and DNS failures retry;
-# any other curl failure stops with the code still in place.
+# A boot can come before the network does. Wait here for the API to answer before the
+# installer runs, so the first attempt does not start while the network is still down.
+# Only connection and DNS failures retry; any other curl failure stops with the code in place.
 wait_for_api() {
   local attempts="${ALPHACI_REACH_ATTEMPTS:-40}" delay="${ALPHACI_REACH_DELAY:-15}" attempt status
   for attempt in $(seq 1 "$attempts"); do

@@ -134,6 +134,8 @@ it needs no code:
 
 Anyone holding the code can enroll the machine until it is used or expires. The
 user-data file, the enrollment code file and the copy inside the VM are all secrets
-until enrollment is complete, and the first-boot unit deletes the code once the
-installer reads it. Delete any copies you made. Keep the built WSL tarball, which
-has no code in it.
+until enrollment is complete. The installer deletes the code file once AlphaCi has
+answered: an accepted enrollment, or a refusal because the code is invalid or
+expired. If the connection failed, the file stays so that starting the unit again
+can use it. Delete any copies you made. Keep the built WSL tarball, which has no
+code in it.
