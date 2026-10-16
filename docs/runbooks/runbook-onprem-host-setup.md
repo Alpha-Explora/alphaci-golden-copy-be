@@ -29,8 +29,8 @@ Use the workspace **Hosts** screen for the machine workflow. Set a public HTTPS
 `PLATFORM_PUBLIC_URL`, enable `ONPREM_RELEASES_ENABLED`, configure P-256 public
 `ALPHACI_RELEASE_TRUST_KEYS_JSON`, apply the three `20261015` Runtime migrations,
 and configure the installer version, URL, hash, and local archive path described
-in the release registry contract. Keep the signing private key in CI's secret
-store. It never belongs on an enrolled machine.
+in the release registry contract. Keep the signing key in Cloud KMS (or, for lab
+hosts only, in CI's secret store). It never belongs on an enrolled machine.
 
 1. Build the preview package with `node scripts/package-onprem-agent.mjs`.
 2. Choose Add host and copy the checksum-verifying installation command for the
@@ -78,6 +78,9 @@ Uninstall disables polling timers and removes Windows startup/network rules;
 containers, credentials, and data remain until explicitly removed. Revoke access
 in AlphaCI too. Unassign/revoke cannot cancel Docker commands already executing.
 Separate machines are required for mutually untrusted workloads.
+
+A hosted backend that is not on a developer PC needs the settings in
+[Point customer machines at the deployed API](#point-customer-machines-at-the-deployed-api).
 
 The remainder of this runbook describes the retained legacy registration path.
 
@@ -163,9 +166,65 @@ On an Ubuntu machine without Windows, skip steps 1–5 and Part 8.
 
     The agent logs errors every 30 seconds until Part 7 is complete.
 
-## Part 4: Create the release signing key
+## Part 4: Set up release signing
 
-Do this once for the whole AlphaCI deployment. Later hosts reuse the same public key.
+Do this once for the whole AlphaCi deployment. Client hosts sign with Cloud KMS.
+The local lab key in steps 12–15 is for lab hosts only. Either way, AlphaCi
+configures each new on-prem project's signing itself (step 20).
+
+### Cloud KMS (client hosts)
+
+Use the AlphaCi release signing key in the client's Google Cloud project, as the
+client setup guide describes. It is an ECDSA P-256 key that signs with
+`EC_SIGN_P256_SHA256`. Its private key never leaves Cloud KMS.
+
+Name the key version. This exact resource name is also the release key ID, and
+its version must be a number:
+
+```text
+projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY/cryptoKeyVersions/VERSION
+```
+
+Export that version's public key:
+
+```bash
+gcloud kms keys versions get-public-key VERSION --key=KEY --keyring=RING --location=LOCATION --project=PROJECT --output-file=alphaci.pub
+```
+
+Build the backend trust setting. The key ID must be the resource name, exactly:
+
+```bash
+KMS_KEY_VERSION='projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY/cryptoKeyVersions/VERSION'
+jq -nc --arg id "$KMS_KEY_VERSION" --rawfile pem alphaci.pub '{($id):$pem}'
+```
+
+The sign-release job signs as a separate **signer identity**. Use a Workload
+Identity pool and GitHub provider for signing only. Do not reuse the Cloud Run
+runtime pool (`GCP_WORKLOAD_IDENTITY_PROVIDER`). In Google Cloud:
+
+- Grant the signer service account `roles/cloudkms.signerVerifier` on the key
+  version or key, and nothing broader.
+- Create the GitHub provider with issuer `https://token.actions.githubusercontent.com`,
+  map `google.subject` to `assertion.sub` and `attribute.repository` to
+  `assertion.repository`, and restrict it with an attribute condition to the
+  client's organization.
+- Let each project repository impersonate the signer. Grant
+  `roles/iam.workloadIdentityUser` on the signer service account to
+  `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/attribute.repository/OWNER/REPO`
+  for every repository that signs. This grant is manual, one per repository, or
+  one `attribute.repository_owner/OWNER` grant for the whole organization.
+
+Keep the output of the trust command and the resource name for step 17, and pin
+the same PEM on every host, as step 14 does: copy `alphaci.pub` to
+`/opt/alphaci/trust/release-signing.pub.pem`.
+
+Provisioning then sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION`
+on each new project with an on-prem target in any environment (step 20), and
+writes the signer identity into that project's sign-release job. Set the backend
+values before the project is created. If they change later, regenerate the
+project's workflows so the sign job carries the new identity.
+
+### Lab key (lab hosts only)
 
 12. **Ubuntu:** create the key pair:
 
@@ -185,7 +244,7 @@ Do this once for the whole AlphaCI deployment. Later hosts reuse the same public
     ```bash
     sudo cp ~/alphaci-keys/release-signing.pub.pem /opt/alphaci/trust/release-signing.pub.pem
     ```
-15. Store `release-signing.key` in the team password manager. It goes only into project repository secrets (step 20). This lab key is for test hosts; client hosts should use the Cloud KMS signer described in the client setup guide.
+15. Store `release-signing.key` in the team password manager. Lab only: make the PEM readable by the backend process (on Render, a secret file mounts under `/etc/secrets/`), and set `ONPREM_LAB_SIGNING_KEY_PATH` to that path (step 17). Provisioning copies the key into the project secret `ALPHACI_RELEASE_SIGNING_KEY` (step 20). Cloud KMS wins when `ALPHACI_RELEASE_KMS_KEY_VERSION` is also set. Client hosts must not use this key.
 
 ## Part 5: Enable on-prem in AlphaCI
 
@@ -202,7 +261,13 @@ Do this once per AlphaCI deployment.
     ```text
     ENV_PROVISIONING_ENABLED=true
     ONPREM_RELEASES_ENABLED=true
-    ALPHACI_RELEASE_TRUST_KEYS_JSON=<the one-line JSON from step 13>
+    ALPHACI_RELEASE_TRUST_KEYS_JSON=<the one-line trust JSON from Part 4>
+    # Choose one signing source. Cloud KMS for client hosts:
+    ALPHACI_RELEASE_KMS_KEY_VERSION=<the Cloud KMS key version from Part 4>
+    ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER=<the signer provider from Part 4>
+    ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT=<the signer service account from Part 4>
+    # Lab hosts only, instead of the line above:
+    # ONPREM_LAB_SIGNING_KEY_PATH=<path to release-signing.key from step 15>
     ```
 
 ## Part 6: Create the project
@@ -243,7 +308,11 @@ step uses the API from the browser console while signed in.
     ```
 
     Status `201` means the repository, environments, targets, and pipeline were created.
-20. **GitHub:** in the new repository, open **Settings**, **Secrets and variables**, **Actions**, and add the secret `ALPHACI_RELEASE_SIGNING_KEY` with the full contents of `release-signing.key`, including the BEGIN and END lines.
+20. **AlphaCI configures signing when it creates the project, if any environment deploys to the host.** With Cloud KMS, it sets the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION` and writes the signer identity into the sign-release job. With the lab key (lab hosts only), it writes the lab key as the repository secret `ALPHACI_RELEASE_SIGNING_KEY`. Two things stay manual: the identity-pool grant for this repository (Part 4), and the fix named by any `releaseSigningWarning` in the step 19 response. Find the warning type and fix it as follows:
+    - **Lab secret** (the warning names `ALPHACI_RELEASE_SIGNING_KEY`): the secret could not be written, or the lab key file could not be read or is not a P-256 key. Fix the path in `ONPREM_LAB_SIGNING_KEY_PATH` or the GitHub permission, then add the secret under **Settings**, **Secrets and variables**, **Actions**, **Secrets** with the full contents of `release-signing.key`, including the BEGIN and END lines.
+    - **Lab trust** (the warning says the releases would not verify and that `ALPHACI_RELEASE_SIGNING_KEY` was not written): the lab key was not written, because its key ID is not in the trust setting. Add its key ID and public PEM to `ALPHACI_RELEASE_TRUST_KEYS_JSON`, as in Part 4, then add the secret under **Settings**, **Secrets and variables**, **Actions**, **Secrets** with the full contents of `release-signing.key`.
+    - **KMS variable** (the warning names `ALPHACI_RELEASE_KMS_KEY_VERSION`): the variable could not be written, or the Cloud KMS settings in step 17 were incomplete. Complete the settings, regenerate this project's workflows so the sign-release job carries the signer identity, then add the variable under **Settings**, **Secrets and variables**, **Actions**, **Variables**.
+    - **KMS trust** (the warning says the releases will not verify and names `ALPHACI_RELEASE_KMS_KEY_VERSION`): the variable was written, but `ALPHACI_RELEASE_TRUST_KEYS_JSON` does not contain that key version. Add the entry as in Part 4. No repository change is needed.
 21. **AlphaCI:** open the project's **Hosting** tab. In the **Production** card, enter a host name such as `lab-pc` and choose **Register host**. Copy the token; it is shown once.
 
 ## Part 7: Configure the agent
@@ -356,10 +425,37 @@ register the host in the environment's card (step 21), then follow Parts 7–9.
 
 ## Adding another project
 
-Repeat steps 18–21 with the new repository name, and add the same
-`ALPHACI_RELEASE_SIGNING_KEY` secret to the new repository. A host serves one
-environment; a second project's production needs its own host or its own
+Repeat steps 18–21 with the new repository name. Grant the new repository access
+to the signer identity first (Part 4). Signing is then configured automatically
+(step 20). A host serves one environment; a second project's production needs its own host or its own
 Compose project and agent configuration.
+
+An on-prem target added to a project that already exists is refused until its
+repository can sign releases. Set the Cloud KMS settings on the backend (step 17),
+regenerate the project's workflows so the sign-release job carries the signer
+identity, and then add the target again. AlphaCI writes the repository variable
+when it accepts the target. A trust gap refuses the target before anything is
+written. It cannot see the pipeline's contents from there, so
+the regeneration step is yours to do.
+
+## Rotate the Cloud KMS signing key
+
+A new key version does not change the signer identity, so the sign-release job
+keeps working. It reads the repository variable at run time. Rotate in this order:
+
+1. Create the new key version and export its public PEM, as in Part 4.
+2. Backend: set `ALPHACI_RELEASE_KMS_KEY_VERSION` to the new resource name, and add
+   the new name to `ALPHACI_RELEASE_TRUST_KEYS_JSON`. Keep the old entry until no
+   release signed with the old key can still be promoted or deployed.
+3. Each on-prem project's repository: under **Settings**, **Secrets and variables**,
+   **Actions**, **Variables**, change `ALPHACI_RELEASE_KMS_KEY_VERSION` to the new
+   name. Existing repositories keep the old value, because provisioning runs only
+   when a project is created.
+4. Each host: the agent verifies with one pinned PEM. Pin the new PEM at
+   `/opt/alphaci/trust/release-signing.pub.pem` before the next release signed with
+   the new key is promoted to that host, and promote no older release after that.
+
+Regenerate workflows only when the signer identity itself changes.
 
 ## Troubleshooting
 
@@ -367,7 +463,8 @@ Compose project and agent configuration.
 |---|---|
 | Step 24 returns 401 | The token was copied incompletely, or the host was registered on another environment. Register a new host. |
 | Step 24 returns 503 | `ONPREM_RELEASES_ENABLED` or `ENV_PROVISIONING_ENABLED` is not `true` on the deployed backend. |
-| The sign-release job fails | The repository has no `ALPHACI_RELEASE_SIGNING_KEY` secret, or the backend's trust JSON does not contain the key ID from step 13. |
+| Readiness shows `release-signing` failed | Cloud KMS needs `ALPHACI_RELEASE_KMS_KEY_VERSION` and both signer settings, and the trust JSON must contain that exact key version. For lab hosts, `ONPREM_LAB_SIGNING_KEY_PATH` must be readable and its key ID trusted. |
+| The sign-release job fails | At **Authenticate to Google Cloud**: the generated workflow lacks the signer identity (regenerate after fixing the backend), or the identity pool does not allow this repository (Part 4). At signing: the repository variable `ALPHACI_RELEASE_KMS_KEY_VERSION` is missing (or, lab only, the `ALPHACI_RELEASE_SIGNING_KEY` secret). The step 19 response would have said so in `releaseSigningWarning`. Or the trust JSON lacks the key ID: for Cloud KMS, the exact key-version name; for the lab key, the ID from step 13. |
 | No **Promote** button on Production | Test has not reported a healthy release yet, or the account is not an admin or lead. |
 | Promotion stays pending | The agent is not polling. Run `systemctl list-timers alphaci-agent.timer` and `journalctl -u alphaci-agent.service -n 50`. |
 | Deployment failed: signature, hash, or project rejected | The host's `release-signing.pub.pem` does not match the key that signed the release. |
@@ -376,6 +473,9 @@ Compose project and agent configuration.
 | Previous release restored but deployment reports failed | The restored Compose services or the configured `ALPHACI_HEALTH_URL` failed the health check. Check the application logs and endpoint. |
 | Works on the PC but not from other machines | Run `netsh interface portproxy show v4tov4` in PowerShell and confirm the **AlphaCI TCP 443** firewall rule allows the caller's network. |
 | Stops after sign-out or reboot | The startup task runs only while signed in. Re-run step 27 with `-ServiceAccount`. |
+| Enrollment returns 503: "Publish or configure a verified installer release" | On the backend, check `ONPREM_INSTALLER_RELEASE_REPO` and `ONPREM_INSTALLER_VERSION`, and confirm the release `onprem-agent-v<version>` is public and has all three assets. The backend log names the failed check. |
+| Backend log: "The release is not immutable" | No hash is pinned, and the release is not marked immutable. Turn on immutable releases for the repository, or set `ONPREM_INSTALLER_SHA256` to the release's hash. |
+| Backend log: "Installer archive does not match its expected SHA-256" | The archive differs from the pinned hash, or from the hash in `installer-release.json`. Check the release assets, and confirm that the pin matches the release you intend to serve. |
 
 For anything else, run `sudo /opt/alphaci/bin/alphaci-agent support-bundle`. It
 writes an archive of agent logs, Compose state, and the running release to
@@ -406,3 +506,142 @@ from a new workflow run.
    sudo docker compose -p alphaci -f /opt/alphaci/compose/compose.yaml down
    ```
 3. Back up application data before deleting anything. `wsl --unregister Ubuntu-24.04` deletes the whole distro and everything in it.
+
+## Point customer machines at the deployed API
+
+Enrolled machines keep the API address in `/opt/alphaci/machine.json` (`apiUrl`)
+and call it on every check-in. A backend running on a developer PC stops
+answering when that PC is off, so host the API where it stays running and keep
+its public address stable.
+
+### Environment on the deployed backend
+
+Set these in the hosting service's environment, such as Render's Environment
+page, then redeploy. Do not commit values to the repository.
+
+| Variable | Value |
+|---|---|
+| `PLATFORM_PUBLIC_URL` | Public HTTPS origin, for example `https://api.example.com`, with no path, query, or credentials. |
+| `ONPREM_RELEASES_ENABLED` | `true` |
+| `ALPHACI_RELEASE_TRUST_KEYS_JSON` | The one-line JSON from Part 5, step 13. |
+| `ONPREM_INSTALLER_RELEASE_REPO` | The repository that publishes installer releases, as `owner/repo`. |
+| `ONPREM_INSTALLER_VERSION` | The installer version to serve, for example `0.1.0`. |
+| `ONPREM_INSTALLER_SHA256` | Recommended. The SHA-256 of `alphaci-agent-<version>.tar.gz`, copied from that release's `installer-release.json` after you have checked the release yourself. Enrollment then trusts this value rather than the release contents. |
+| `ONPREM_INSTALLER_RELEASE_TOKEN` | Optional. A GitHub token used only for API calls, to avoid the shared unauthenticated rate limit. Keep it secret. |
+
+Leave `ONPREM_INSTALLER_URL` and `ONPREM_INSTALLER_PATH` empty. A complete
+explicit URL and SHA-256 pair takes priority over the release lookup, and a URL
+without its hash refuses enrollment. `ONPREM_INSTALLER_PATH` serves a local
+archive from the same machine and has no use on a hosted backend. Set
+`ENV_PROVISIONING_ENABLED=true` as well when hosts also back project environments
+(Part 5).
+
+The release repository must be public. Customer machines download the archive
+without credentials, so a private repository breaks enrollment even when the
+backend can read the release with a token. Without a pin, the backend also
+requires the release to be immutable (see below). Otherwise enrollment returns
+503 and issues no code.
+
+### Apply the migrations
+
+If Part 5 has not run against this database, apply its migrations first. Then
+apply the four on-prem migrations in this order. Each one is idempotent, so
+running it again is a safe recovery step.
+
+```bash
+npm run db:apply -- 20260928210000_onprem_compose_provider.sql 20261015010000_one_active_onprem_host.sql 20261015020000_onprem_machines.sql 20261015030000_onprem_machine_assignments.sql
+```
+
+### Protect published releases
+
+Without a pin, the backend trusts the hash in a release's `installer-release.json`,
+so it refuses any release that GitHub does not mark immutable. Immutable releases
+stop a published release from being changed later. Protect the repository before
+the first customer enrolls. These are repository settings, so an administrator
+makes them. The pipeline does not:
+
+1. Turn on immutable releases for the repository, so a published release's
+   assets cannot be replaced.
+2. Add a tag ruleset for `onprem-agent-v*` that blocks updating and deleting
+   tags, so a published tag cannot be moved to another commit.
+3. Pin the hash. Set `ONPREM_INSTALLER_SHA256` on the deployed backend to the
+   value in the release's `installer-release.json`, after you have checked the
+   release. A pinned hash is checked against the archive bytes at most every
+   10 minutes, the cache window, and does not depend on release metadata. If the
+   release changes after you pin it, the check fails and enrollment stops.
+
+### Cut an installer release
+
+1. Merge a change that sets `version` in `deploy/onprem/agent/release-manifest.json`
+   to the new version. The tag must match this value, or the workflow fails.
+2. On the merged commit, create an annotated tag and push it. This example
+   publishes `0.1.1`:
+
+   ```bash
+   git tag -a onprem-agent-v0.1.1 -m "On-prem agent 0.1.1"
+   git push origin onprem-agent-v0.1.1
+   ```
+3. The **On-prem agent release** workflow packages the archive, checks its
+   checksum, and creates the GitHub Release. Confirm that the release has
+   `alphaci-agent-<version>.tar.gz`, `alphaci-agent-<version>.tar.gz.sha256`,
+   and `installer-release.json`. Manual dispatch from a branch only builds the
+   archive as a workflow artifact. Dispatch from the tag to publish it.
+4. Check the new release, then set `ONPREM_INSTALLER_VERSION` to the new version
+   and `ONPREM_INSTALLER_SHA256` to its hash, and redeploy. Codes issued
+   afterwards carry the new archive. A code issued earlier still points at the
+   release it was issued for, which stays unchanged while the release is
+   immutable.
+
+If a release is wrong, publish the next version. The workflow fails for a tag
+whose release already exists, but only the repository settings above stop an
+existing release from being edited. The archive is not signed. Its trust comes
+from the pinned SHA-256, or, without a pin, from an immutable release's
+`installer-release.json`.
+
+### Move an enrolled machine
+
+These commands run on Ubuntu. The Windows installer runs the same enrollment
+inside its WSL distro. `enroll.sh` checks the saved state before it changes
+anything:
+
+- The saved API address matches: it keeps the existing enrollment and changes
+  nothing.
+- The address differs: it refuses with "enrolled with a different API". The
+  script has no replace option, so the steps below move the machine by hand.
+- A saved pending enrollment response for another address is refused as well.
+
+**Same address and same database.** Nothing changes on the machine. The
+credential is stored by hash in the database, so the machine keeps connecting.
+Confirm that it shows Connected under Hosts after its next check-in.
+
+**New address, or a new database.** Re-enroll:
+
+1. In the deployed AlphaCI workspace, create a new enrollment for the machine.
+   If the deployed backend uses the same database as the old one, pass the old
+   machine's ID as `replacesMachineId` in `POST /workspaces/:workspaceId/onprem-host-enrollments`.
+   Consuming the code then revokes the old record. A different database has no
+   old record, so omit the field.
+2. On the machine, stop the timer and move the saved enrollment aside. The
+   files are root-only, so the loop runs under `sudo`. A saved pending response
+   for the old address would make `enroll.sh` refuse, so it is moved too. The
+   assignment directories and application data are not touched:
+
+   ```bash
+   sudo systemctl disable --now alphaci-machine.timer
+   sudo sh -c 'install -d -m 0700 /opt/alphaci/enrollment-backup
+   for file in machine.json trust.json secrets/machine-token secrets/enrollment-response.json; do
+     if [ -e "/opt/alphaci/$file" ]; then mv "/opt/alphaci/$file" /opt/alphaci/enrollment-backup/; fi
+   done'
+   ```
+3. Enroll with the new code. Paste it at the hidden prompt:
+
+   ```bash
+   sudo bash ~/onprem/agent/install.sh --enroll https://YOUR-BACKEND ubuntu
+   ```
+4. Wait for Connected under Hosts. Reassign any environment that does not show
+   the new machine. Then delete the backup, which holds the old machine token
+   and trust file:
+
+   ```bash
+   sudo rm -rf /opt/alphaci/enrollment-backup
+   ```

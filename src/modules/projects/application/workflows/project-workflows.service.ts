@@ -19,6 +19,8 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 import { QA_BRANCH, WORKING_BRANCH } from '#kernel/config/pipeline-branches';
+import { releaseSignerFor } from '#kernel/config/release-signing.config';
+import { ConfigService } from '@nestjs/config';
 import {
   canCreatePullRequest,
   selfServicePullRequestBase,
@@ -155,6 +157,8 @@ export class ProjectWorkflowsService {
     @Optional()
     @Inject(DEPLOYMENT_TARGETS_QUERY)
     private readonly deploymentTargets?: DeploymentTargetsQuery,
+    @Optional()
+    private readonly configService?: ConfigService,
   ) {}
 
   async getWorkflowSettings(
@@ -447,6 +451,11 @@ export class ProjectWorkflowsService {
           settings.projectId,
         )
       : [];
+    // A regenerated environment pipeline keeps the signer identity its sign job needs.
+    const releaseSigner =
+      environments.length && this.configService
+        ? releaseSignerFor((key) => this.configService?.get<string>(key))
+        : undefined;
     const targets = this.deploymentTargets
       ? await this.deploymentTargets.listDeploymentTargets(settings.projectId)
       : [];
@@ -472,6 +481,7 @@ export class ProjectWorkflowsService {
                 })),
             }
           : {}),
+        ...(releaseSigner && { releaseSigner }),
       },
       this.workflowFragmentRegistry,
     );

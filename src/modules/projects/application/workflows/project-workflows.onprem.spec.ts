@@ -7,6 +7,7 @@ import type { DeploymentTargetsQuery } from '#kernel/ports/deployment-runtime.po
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { onpremComposeWorkflowFragment } from '#modules/runtime/infrastructure/providers/onprem/onprem-compose-workflow.fragment';
 import type { CatalogService } from '../catalog/catalog.service';
+import type { ConfigService } from '@nestjs/config';
 import { ProjectWorkflowsService } from './project-workflows.service';
 
 it('regenerates persisted environment targets instead of dropping host delivery', async () => {
@@ -123,4 +124,106 @@ it('regenerates persisted environment targets instead of dropping host delivery'
   expect(
     Object.keys(parsed.jobs).filter((key) => key.startsWith('deploy-')),
   ).toEqual([]);
+});
+
+const SIGNER_PROVIDER =
+  'projects/123456789/locations/global/workloadIdentityPools/alphaci-release/providers/github';
+const SIGNER_ACCOUNT = 'release-signer@alphaci-prod.iam.gserviceaccount.com';
+const KMS_KEY_VERSION =
+  'projects/alphaci-prod/locations/europe-west1/keyRings/release/cryptoKeys/release-signing/cryptoKeyVersions/3';
+
+/** The sign-release job inputs of the package workflow a regeneration produces. */
+async function regeneratedSignJobWith(
+  env: Record<string, string | undefined>,
+): Promise<Record<string, unknown>> {
+  const environments = [
+    {
+      id: 'dev-id',
+      slug: 'dev',
+      sourceBranch: 'dev',
+      position: 0,
+      role: 'non_production',
+    },
+    {
+      id: 'main-id',
+      slug: 'main',
+      sourceBranch: 'main',
+      position: 1,
+      role: 'production',
+    },
+  ];
+  const repository = {
+    findByIdAndUser: jest.fn().mockResolvedValue({
+      id: 'project',
+      template_id: 'fe-nextjs',
+      service_name: 'eatta',
+      project_options: {},
+    }),
+    listProjectEnvironments: jest.fn().mockResolvedValue(environments),
+  };
+  const targets = {
+    listDeploymentTargets: jest.fn().mockResolvedValue(
+      environments.map((environment) => ({
+        id: environment.id + '-target',
+        environmentId: environment.id,
+        slot: 'frontend',
+        provider: 'onprem-compose',
+      })),
+    ),
+  };
+  const service = new ProjectWorkflowsService(
+    repository as unknown as ProjectsRepository,
+    {} as GithubProjectPort,
+    {
+      getTemplateById: jest
+        .fn()
+        .mockResolvedValue({ id: 'fe-nextjs', stack: 'nextjs' }),
+    } as unknown as CatalogService,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    new WorkflowFragmentRegistry([onpremComposeWorkflowFragment]),
+    {
+      deployment: () => new Set(['projects.workflow-settings-preview']),
+    } as unknown as CapabilityResolverPort,
+    targets as unknown as DeploymentTargetsQuery,
+    { get: (key: string) => env[key] } as unknown as ConfigService,
+  );
+  const preview = await service.previewWorkflowSettings(
+    'project',
+    'viewer',
+    {},
+  );
+  const packageFile = preview.workflowFiles.find(
+    (file) => file.stage === 'package',
+  );
+  const jobs = (
+    yaml.load(packageFile!.yaml) as {
+      jobs: Record<string, { with?: Record<string, unknown> }>;
+    }
+  ).jobs;
+  return jobs['sign-release']?.with ?? {};
+}
+
+it('keeps the signer identity when a regeneration rebuilds an environment pipeline', async () => {
+  await expect(
+    regeneratedSignJobWith({
+      ALPHACI_RELEASE_KMS_KEY_VERSION: KMS_KEY_VERSION,
+      ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER: SIGNER_PROVIDER,
+      ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT: SIGNER_ACCOUNT,
+    }),
+  ).resolves.toMatchObject({
+    'workload-identity-provider': SIGNER_PROVIDER,
+    'service-account': SIGNER_ACCOUNT,
+  });
+});
+
+it('leaves the signer inputs out of a regenerated pipeline when Cloud KMS is not complete', async () => {
+  const inputs = await regeneratedSignJobWith({
+    ALPHACI_RELEASE_KMS_KEY_VERSION: KMS_KEY_VERSION,
+  });
+
+  expect(Object.keys(inputs)).toEqual(['release-id', 'api-url']);
 });

@@ -14,6 +14,8 @@ import type { WorkflowUpdateRequestRecord } from '../../infrastructure/project-w
 
 export interface CreateProjectResponse {
   hostAssignmentError?: string;
+  /** Set when releases from this repository cannot be signed yet; says what to configure. */
+  releaseSigningWarning?: string;
   hostAssignments?: Array<{
     environmentId: string;
     status: 'assigned' | 'failed';

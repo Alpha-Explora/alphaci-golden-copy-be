@@ -80,8 +80,18 @@ explicit legacy registrations if downgrading. SQL never runs at application star
 `GET /onprem/installer/:version` serves only the configured archive whose bytes
 match `ONPREM_INSTALLER_SHA256`. Operator configuration also sets
 `ONPREM_INSTALLER_VERSION`, `ONPREM_INSTALLER_URL`, and `ONPREM_INSTALLER_PATH`.
+When the explicit URL is unset, `ONPREM_INSTALLER_RELEASE_REPO` (owner/repo)
+names a GitHub release tagged `onprem-agent-v<version>`. With
+`ONPREM_INSTALLER_SHA256` set, that hash is the pin: the archive is fetched from
+its release download URL, and enrollment proceeds only if its bytes match the
+pin. Without a pin, the hash comes from the release's `installer-release.json`,
+and the release must be marked immutable. Verified results are cached for ten
+minutes and served for up to a day during transient GitHub errors. If the
+archive cannot be verified, no enrollment code is issued.
 The packaging command is `node scripts/package-onprem-agent.mjs`; it creates a
-local archive and checksum manifest, without publishing a release.
+local archive and checksum manifest. The `On-prem agent release` workflow
+(`.github/workflows/onprem-agent-release.yml`) publishes those files as release
+assets when a matching tag is pushed.
 
 Optional project creation host bindings use the kernel `OnpremAssignmentPort`
 after project creation succeeds. Failures return `hostAssignments` or

@@ -6,6 +6,8 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import yaml from 'js-yaml';
+import type { ConfigService } from '@nestjs/config';
+import { releaseSignerFor } from '#kernel/config/release-signing.config';
 
 import { CatalogService } from '../catalog/catalog.service';
 import {
@@ -38,6 +40,7 @@ export class ProjectWorkflowFilesService {
   constructor(
     private readonly catalogService: CatalogService,
     private readonly workflowFragmentRegistry?: WorkflowFragmentRegistry,
+    private readonly configService?: ConfigService,
   ) {}
 
   async buildWorkflowBundle(options: {
@@ -94,6 +97,11 @@ export class ProjectWorkflowFilesService {
       throw new NotFoundException(`Template '${templateId}' not found`);
     }
 
+    // The signer identity only matters to an environment pipeline's sign job.
+    const releaseSigner =
+      environments?.length && this.configService
+        ? releaseSignerFor((key) => this.configService?.get<string>(key))
+        : undefined;
     const bundle = buildStagedWorkflowBundle(
       template,
       {
@@ -111,6 +119,7 @@ export class ProjectWorkflowFilesService {
         ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
         ...(environments?.length && { environments }),
         ...(environmentTargets && { environmentTargets }),
+        ...(releaseSigner && { releaseSigner }),
       },
       this.workflowFragmentRegistry,
     );

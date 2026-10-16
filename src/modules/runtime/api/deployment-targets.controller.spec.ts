@@ -69,6 +69,7 @@ describe('DeploymentTargetsController', () => {
       'project-1',
       'user-1',
       body,
+      { githubAccessToken: null },
     );
   });
 

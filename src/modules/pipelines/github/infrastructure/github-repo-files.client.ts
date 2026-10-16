@@ -169,38 +169,46 @@ export class GithubRepoFilesClient {
         body: JSON.stringify(body),
       });
 
-    // 1. The commit the new branch starts from.
-    const baseRes = await this.http.fetchWithRetry(
-      `${api}/git/ref/heads/${input.fromBranch
-        .split('/')
-        .map(encodeURIComponent)
-        .join('/')}`,
-      { headers: this.http.workspaceHeaders(accessToken) },
-    );
-    if (baseRes.status === 404) {
-      // 404 is also how GitHub hides a private repository from a token that
-      // cannot see it; the access message is the more useful of the two when
-      // the branch was just listed, but here the caller already read it.
-      return {
-        committed: false,
-        reason: 'base_missing',
-        message: `Branch '${input.fromBranch}' does not exist in ${repoFullName}.`,
-      };
+    // 1. The commit the new branch starts from: the head the caller read when
+    //    it has one, otherwise the branch's head now.
+    let baseSha: string;
+    if (input.fromSha) {
+      baseSha = input.fromSha;
+    } else {
+      const baseRes = await this.http.fetchWithRetry(
+        `${api}/git/ref/heads/${input.fromBranch
+          .split('/')
+          .map(encodeURIComponent)
+          .join('/')}`,
+        { headers: this.http.workspaceHeaders(accessToken) },
+      );
+      if (baseRes.status === 404) {
+        // 404 is also how GitHub hides a private repository from a token that
+        // cannot see it; the access message is the more useful of the two when
+        // the branch was just listed, but here the caller already read it.
+        return {
+          committed: false,
+          reason: 'base_missing',
+          message: `Branch '${input.fromBranch}' does not exist in ${repoFullName}.`,
+        };
+      }
+      const baseRefusal = refused(
+        baseRes.status,
+        baseRes.headers?.get('x-ratelimit-remaining') === '0',
+      );
+      if (baseRefusal) {
+        return baseRefusal;
+      }
+      baseSha = (
+        await this.requireOk<{ object: { sha: string } }>(
+          baseRes,
+          'branch lookup',
+        )
+      ).object.sha;
     }
-    const baseRefusal = refused(
-      baseRes.status,
-      baseRes.headers?.get('x-ratelimit-remaining') === '0',
-    );
-    if (baseRefusal) {
-      return baseRefusal;
-    }
-    const baseSha = await this.requireOk<{ object: { sha: string } }>(
-      baseRes,
-      'branch lookup',
-    );
 
     const commitRes = await this.http.fetchWithRetry(
-      `${api}/git/commits/${baseSha.object.sha}`,
+      `${api}/git/commits/${baseSha}`,
       { headers: this.http.workspaceHeaders(accessToken) },
     );
     const baseCommit = await this.requireOk<{ tree: { sha: string } }>(
@@ -253,19 +261,46 @@ export class GithubRepoFilesClient {
     const newCommitRes = await post(`${api}/git/commits`, {
       message: input.message,
       tree: tree.sha,
-      parents: [baseSha.object.sha],
+      parents: [baseSha],
     });
     const commit = await this.requireOk<{ sha: string }>(
       newCommitRes,
       'commit creation',
     );
 
-    // 5. The branch itself.
-    const refRes = await post(`${api}/git/refs`, {
-      ref: `refs/heads/${input.newBranch}`,
-      sha: commit.sha,
-    });
-    if (refRes.status === 422) {
+    // 5. The branch itself. A recorded head must still be the head: building on
+    //    an old one would revert whatever moved the branch.
+    if (input.fromSha) {
+      const headNow = await this.readBranchHead(
+        accessToken,
+        repoFullName,
+        input.fromBranch,
+      );
+      if (headNow !== input.fromSha) {
+        return {
+          committed: false,
+          reason: 'base_moved',
+          message: `Branch '${input.fromBranch}' moved while the change was being built. Run it again.`,
+        };
+      }
+    }
+    const refRes = input.replaceExisting
+      ? await this.http.fetchWithRetry(
+          `${api}/git/refs/heads/${input.newBranch
+            .split('/')
+            .map(encodeURIComponent)
+            .join('/')}`,
+          {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ sha: commit.sha }),
+          },
+        )
+      : await post(`${api}/git/refs`, {
+          ref: `refs/heads/${input.newBranch}`,
+          sha: commit.sha,
+        });
+    if (refRes.status === 422 || (input.replaceExisting && !refRes.ok)) {
       return {
         committed: false,
         reason: 'branch_exists',
@@ -275,6 +310,29 @@ export class GithubRepoFilesClient {
     await this.requireOk<unknown>(refRes, 'branch creation');
 
     return { committed: true, commitSha: commit.sha };
+  }
+
+  /** The commit a branch points at now; null when the branch does not exist. */
+  async readBranchHead(
+    accessToken: string,
+    repoFullName: string,
+    branch: string,
+  ): Promise<string | null> {
+    const response = await this.http.fetchWithRetry(
+      `https://api.github.com/repos/${repoFullName}/git/ref/heads/${branch
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}`,
+      { headers: this.http.workspaceHeaders(accessToken) },
+    );
+    if (response.status === 404) {
+      return null;
+    }
+    const ref = await this.requireOk<{ object: { sha: string } }>(
+      response,
+      'branch lookup',
+    );
+    return ref.object.sha;
   }
 
   private async requireOk<T>(
