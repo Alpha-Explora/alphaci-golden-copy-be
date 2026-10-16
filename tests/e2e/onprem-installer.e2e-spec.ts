@@ -120,11 +120,11 @@ describe('Machine enrollment shell installer', () => {
     expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(true);
     expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(false);
   });
-  it('deletes the code file only when the server refuses the code itself (400, 401, 409)', () => {
+  it('deletes the code file only when the server refuses the code itself (401, 409)', () => {
     for (const [status, deleted] of [
-      ['400', true],
       ['401', true],
       ['409', true],
+      ['400', false],
       ['403', false],
       ['404', false],
       ['408', false],

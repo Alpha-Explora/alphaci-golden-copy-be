@@ -17,9 +17,10 @@ It installs two scheduled tasks and one firewall rule per port:
 An enrolled machine (-ApiUrl) forwards no static ports unless -Ports is given.
 Add -ReplaceCredential with a replacement enrollment code to retire the current
 machine credential. -EnrollCodeFile names a file holding the enrollment code
-(the one-click install file writes it); the code is read and the file deleted
-before anything else runs, and enrollment gets a copy readable only by this
-account that is deleted again afterwards. Without it, the code is prompted for.
+(the one-click install file writes it). The code is checked up front. The file is
+deleted only after enrollment has taken the code, so a restart, a failed
+prerequisite or an unreachable server leaves it for a rerun. Enrollment gets a copy
+readable only by this account, deleted afterwards. Without it, the code is prompted for.
 
 Rerunning updates all of them in place. Nothing inside the distro is changed.
 
@@ -54,8 +55,8 @@ if (-not $PSBoundParameters.ContainsKey('Ports')) {
 }
 if ($ReplaceCredential -and -not $ApiUrl) { throw 'ReplaceCredential requires -ApiUrl.' }
 if ($EnrollCodeFile -and -not $ApiUrl) { throw 'EnrollCodeFile requires -ApiUrl.' }
-# Read and check the code now. The file itself is deleted only when enrollment is about to
-# run, so a restart or a failed prerequisite leaves the code in place for a rerun.
+# Read and check the code now. The file stays until enrollment has taken the code (below),
+# so a restart, a failed prerequisite or an unreachable server leaves it for a rerun.
 $enrollCode = $null
 if ($EnrollCodeFile) {
     if (-not (Test-Path -LiteralPath $EnrollCodeFile -PathType Leaf)) { throw 'The enrollment code file is missing.' }
@@ -116,8 +117,6 @@ if ($ApiUrl) {
     try {
         $enrollArguments = @('-d', $Distro, '-u', 'root', '-e')
         if ($enrollCode) {
-            # The caller's copy goes now that enrollment is about to read the code.
-            Remove-Item -Force -LiteralPath $EnrollCodeFile
             $codeFile = Join-Path $env:TEMP ('alphaci-enroll-' + [guid]::NewGuid() + '.txt')
             [IO.File]::WriteAllText($codeFile, $enrollCode + "`n", [Text.UTF8Encoding]::new($false))
             # Grant by SID: an account name can be ambiguous, and a failed grant must not leave the code readable.
@@ -134,6 +133,10 @@ if ($ApiUrl) {
         # Start-Process hands wsl.exe the console itself; called with &, PowerShell captures its
         # output line by line and the code prompt (no trailing newline) never appears.
         $installer = Start-Process -FilePath 'wsl.exe' -NoNewWindow -Wait -PassThru -ArgumentList $enrollArguments
+        # enroll.sh deletes its copy once AlphaCi has answered. A copy still there means the outcome
+        # is unknown, so the caller's file must stay for a rerun.
+        $codeConsumed = [bool]$codeFile -and -not (Test-Path -LiteralPath $codeFile)
+        if ($codeConsumed) { Remove-Item -Force -LiteralPath $EnrollCodeFile -ErrorAction SilentlyContinue }
         if ($installer.ExitCode -ne 0) { throw 'Ubuntu prerequisites or enrollment failed. Correct the reported issue and rerun; existing credentials are retained.' }
     } finally {
         if ($codeFile) { Remove-Item -Force -LiteralPath $codeFile -ErrorAction SilentlyContinue }
