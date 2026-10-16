@@ -27,6 +27,10 @@ import {
   BRANCHES_CREATED_ON_PROVISION,
   PROVISIONED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
+import {
+  configureReleaseSigning,
+  withReleaseSigningWarning,
+} from './release-signing.provisioning';
 
 export class SingleRepositoryProjectProvisioner {
   private readonly logger = new Logger(SingleRepositoryProjectProvisioner.name);
@@ -198,25 +202,39 @@ export class SingleRepositoryProjectProvisioner {
         ownerLogin,
         repoName,
       );
+      // Release signing matters to environment projects only, the only ones that
+      // have a release pipeline. Any host-delivered target in any environment needs it.
+      // It goes in before any workflow exists, so the first release finds its key.
+      const releaseSigningWarning = dto.environments
+        ? await configureReleaseSigning(this.support, {
+            accessToken: provisioningToken,
+            owner: ownerLogin,
+            repo: repoName,
+            targets: effectiveDeploymentProvisioning?.targets ?? [],
+          })
+        : undefined;
 
       if (dto.environments) {
-        return await this.completeEnvironmentProject({
-          userId,
-          dto,
-          row,
-          templateId,
-          repoShape,
-          provisioningToken,
-          ownerLogin,
-          repoName,
-          repoUrl,
-          repoFullName,
-          workflowPath,
-          deploymentProvisioning: effectiveDeploymentProvisioning,
-          markComplete: () => {
-            provisioningComplete = true;
-          },
-        });
+        return withReleaseSigningWarning(
+          await this.completeEnvironmentProject({
+            userId,
+            dto,
+            row,
+            templateId,
+            repoShape,
+            provisioningToken,
+            ownerLogin,
+            repoName,
+            repoUrl,
+            repoFullName,
+            workflowPath,
+            deploymentProvisioning: effectiveDeploymentProvisioning,
+            markComplete: () => {
+              provisioningComplete = true;
+            },
+          }),
+          releaseSigningWarning,
+        );
       }
 
       // 5. Push workflow YAML to main now that the secrets exist, then record

@@ -59,6 +59,7 @@ export class DeploymentTargetsController {
       projectId,
       req.session.user!.id,
       body,
+      { githubAccessToken: req.session.githubAccessToken ?? null },
     );
   }
 

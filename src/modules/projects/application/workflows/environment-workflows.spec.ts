@@ -283,3 +283,39 @@ describe('pipeline generated from project environments', () => {
     ).toContain('promote-to-uat');
   });
 });
+
+describe('release signer on the sign-release job', () => {
+  const signer = {
+    workloadIdentityProvider:
+      'projects/123456789/locations/global/workloadIdentityPools/alphaci-release/providers/github',
+    serviceAccount: 'release-signer@alphaci-prod.iam.gserviceaccount.com',
+  };
+  // The first environment deploys to a host, so its pipeline has the sign job.
+  const onpremFirst: StagedWorkflowOptions = {
+    ...options,
+    environmentTargets: (options.environmentTargets ?? []).map((target) =>
+      target.environmentId === ids.dev
+        ? { ...target, provider: 'onprem-compose' }
+        : target,
+    ),
+  };
+  const signJob = (bundleOptions: StagedWorkflowOptions) =>
+    workflows(bundleOptions).get('.github/workflows/20-alphaci-package.yml')!
+      .jobs['sign-release'] as Job;
+
+  it('passes the signer identity to the reusable sign-release workflow as inputs', () => {
+    expect(
+      signJob({ ...onpremFirst, releaseSigner: signer }).with,
+    ).toMatchObject({
+      'workload-identity-provider': signer.workloadIdentityProvider,
+      'service-account': signer.serviceAccount,
+    });
+  });
+
+  it('keeps the reusable workflow on its own variables when no signer is given', () => {
+    expect(Object.keys(signJob(onpremFirst).with ?? {})).toEqual([
+      'release-id',
+      'api-url',
+    ]);
+  });
+});
