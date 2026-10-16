@@ -31,7 +31,8 @@ sources:
 
 Runtime owns `onprem_workspace_lifecycle`, `onprem_machines`, `onprem_enrollments`,
 and `onprem_port_reservations`. Apply migrations `20261015020000` and
-`20261015030000` after `20261015010000` before activating this version. RLS and
+`20261015030000` after `20261015010000`, then `20261016010000`, before activating
+this version. RLS and
 explicit revokes deny direct `anon` and `authenticated` access. HTTP requests use
 the existing workspace visibility, application hosting role, and subscription gates.
 
@@ -45,8 +46,15 @@ the existing workspace visibility, application hosting role, and subscription ga
   cannot replay credentials. Issue a new enrollment or explicit replacement.
 - `POST /onprem/heartbeat` uses the machine bearer credential and reports agent
   version and prerequisite checks. A check-in older than 90 seconds is offline.
+  Heartbeat, assignment polling, and status reports are limited to 120 requests
+  per minute per machine credential, and to 300 per minute per client address
+  for requests that need a credential lookup.
 - `POST /workspaces/:workspaceId/onprem-hosts/:machineId/revoke` stops new
-  authorized work. It cannot stop offline containers or erase host data.
+  authorized work and ends the machine's bindings in the same transaction,
+  releasing their host ports. A named replacement takes the bindings over
+  instead. Revocation without a replacement also expires the machine's pending
+  replacement enrollments, so their codes stop working. It cannot stop offline
+  containers or erase host data.
 - `GET`, `POST`, and `DELETE /projects/:projectId/environments/:environmentId/host-assignment`
   read, explicitly assign/replace, and unassign. POST takes machine ID, request
   UUID, expected current assignment ID or null, ports, health paths, and ingress.

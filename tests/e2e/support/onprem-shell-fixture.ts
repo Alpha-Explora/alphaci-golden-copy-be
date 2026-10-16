@@ -8,6 +8,20 @@ import { canonicalJson } from '../../../src/modules/runtime/domain/release-manif
 const image = 'alphaci-agent-e2e:2';
 // Ubuntu, the agent's target OS: GNU coreutils buffer differently from Alpine's
 // busybox, and the tunnel path depends on that.
+
+/**
+ * Runs a container command, then gives the mounted work directory back the
+ * owner of its mount point. The scripts run as container root with umask 077,
+ * so the files they create are root-owned and unreadable to the host user on
+ * Linux. The trap runs on any exit, including `exit` or a failing command in
+ * the script, and it works with rootless Docker or Podman because it names
+ * the mount point's owner rather than a host uid. Failure is ignored: some
+ * Windows bind mounts cannot change ownership, and there the tests never needed it.
+ */
+export function restoreWorkOwnership(command: string): string {
+  return `trap 'chown -R --reference=/work /work 2>/dev/null || true' EXIT; ${command}`;
+}
+
 export function buildShellFixture() {
   execFileSync('docker', ['build', '-t', image, '-'], {
     input:
@@ -174,8 +188,10 @@ esac
         image,
         'bash',
         '-c',
-        'chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; ' +
-          command,
+        restoreWorkOwnership(
+          'chmod +x /work/bin/* /work/host/bin/*; export PATH=/work/bin:$PATH ALPHACI_HOME=/work/host; ' +
+            command,
+        ),
       ],
       { encoding: 'utf8', input, timeout: 60_000 },
     );

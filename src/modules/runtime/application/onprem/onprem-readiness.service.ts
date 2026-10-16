@@ -304,7 +304,7 @@ export class OnpremReadinessService {
       'host',
       !host.revoked && host.fresh ? 'passed' : 'failed',
       host.revoked
-        ? 'Machine access was revoked. Replace the assignment.'
+        ? 'Machine access was revoked. Assign this environment to another machine.'
         : host.fresh
           ? 'Machine checked in within 90 seconds.'
           : 'Machine is offline. Start its agent and check connectivity.',
