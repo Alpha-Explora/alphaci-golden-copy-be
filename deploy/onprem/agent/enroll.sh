@@ -14,17 +14,21 @@ API="${ARGS[0]:?Usage: enroll.sh https://api.example.com [ubuntu|windows] [--rep
 PLATFORM="${ARGS[1]:-ubuntu}"
 [[ "$API" =~ ^https://[^[:space:]]+$ ]] || { echo 'Use the public HTTPS API address.' >&2; exit 1; }
 API="${API%/}"; API="${API%/api/v1}"
-# An installer hands the code over in a file. Read it and delete the file before
-# anything else can exit, so a run that fails here never leaves the code behind.
-CODE=""; CODE_FROM_FILE=0
-if [ -n "${ALPHACI_ENROLL_CODE_FILE:-}" ]; then
-  CODE_FILE="$ALPHACI_ENROLL_CODE_FILE"
-  unset ALPHACI_ENROLL_CODE_FILE
-  [ -f "$CODE_FILE" ] && [ ! -L "$CODE_FILE" ] || { rm -f -- "$CODE_FILE"; echo 'The enrollment code file is missing.' >&2; exit 1; }
+# An installer hands the code over in a file. The file is read here but kept until the
+# server answers: a success or a 4xx rejection deletes it, while a network, timeout or
+# 5xx failure keeps it so the next run (or the first-boot retry) can use it. Any other
+# exit that never reached the server deletes it too, so the code is not left behind.
+CODE=""; CODE_FROM_FILE=0; KEEP_CODE_FILE=0
+CODE_FILE="${ALPHACI_ENROLL_CODE_FILE:-}"
+unset ALPHACI_ENROLL_CODE_FILE
+discard_code_file() { [ -n "$CODE_FILE" ] && [ "$KEEP_CODE_FILE" != 1 ] && rm -f -- "$CODE_FILE" || true; }
+trap 'discard_code_file' EXIT
+if [ -n "$CODE_FILE" ]; then
+  [ -f "$CODE_FILE" ] && [ ! -L "$CODE_FILE" ] || { echo 'The enrollment code file is missing.' >&2; exit 1; }
   CODE=$(<"$CODE_FILE")
-  rm -f -- "$CODE_FILE"
-  unset CODE_FILE
   CODE_FROM_FILE=1
+  # Interrupted while the request is in flight: the outcome is unknown, so keep the file.
+  trap 'KEEP_CODE_FILE=1; exit 130' INT TERM
 fi
 install -d -m 0700 "$ROOT/secrets"
 PENDING="$ROOT/secrets/enrollment-response.json"
@@ -49,7 +53,7 @@ restore_retired() {
   rmdir "$RETIRED"
   echo 'Replacement failed; the existing credential was restored.' >&2
 }
-trap 'unset CODE; rm -rf "$WORK"; restore_retired' EXIT
+trap 'unset CODE; rm -rf "$WORK"; restore_retired; discard_code_file' EXIT
 if [ ! -s "$PENDING" ]; then
 if [ "$CODE_FROM_FILE" = 1 ]; then
   printf 'Code received from the install file. Enrolling this machine...\n' >&2
@@ -63,9 +67,26 @@ CODE="${CODE//[[:space:]]/}"
 [[ "$CODE" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo 'Invalid code format.' >&2; exit 1; }
 printf '%s' "$CODE" | jq -Rs '{code:.,agentVersion:"0.2.0",checks:[]}' > "$WORK/request.json"
 unset CODE
-curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/json' \
-  --data-binary "@$WORK/request.json" "$API/api/v1/onprem/enroll" -o "$WORK/response.json"
+# -w reports 000 when no response arrived at all, so a failed connection is told apart from a refusal.
+http_status=$(curl --silent --show-error --max-time 30 -H 'Content-Type: application/json' \
+  --data-binary "@$WORK/request.json" -o "$WORK/response.json" -w '%{http_code}' \
+  "$API/api/v1/onprem/enroll") || true
+case "$http_status" in
+  2??) ;;
+  4??)
+    # A definitive refusal: the code is invalid or expired, so the file goes.
+    discard_code_file
+    echo "AlphaCI rejected the enrollment code (HTTP $http_status).$([ "$CODE_FROM_FILE" = 1 ] && echo ' The code file has been deleted.')" >&2
+    exit 1 ;;
+  *)
+    # No answer or a server error: the outcome is unknown, so the file stays for a retry.
+    KEEP_CODE_FILE=1
+    echo "AlphaCI did not answer the enrollment request (HTTP ${http_status:-none}).$([ "$CODE_FROM_FILE" = 1 ] && echo ' The code file has been kept for a retry.')" >&2
+    exit 1 ;;
+esac
 mv "$WORK/response.json" "$PENDING"
+# Accepted: the code is used up, so the file goes.
+discard_code_file
 fi
 cp "$PENDING" "$WORK/response.json"
 jq -e '.credential|test("^onprem_machine_[A-Za-z0-9_-]{43}$")' "$WORK/response.json" >/dev/null

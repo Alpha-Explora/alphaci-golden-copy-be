@@ -72,13 +72,52 @@ describe('Machine enrollment shell installer', () => {
     expect(existsSync(join(f.work, 'requests.log'))).toBe(false);
 
     writeFileSync(join(f.work, 'host/enroll-code'), f.code + '\n');
-    writeFileSync(join(f.work, 'fail-enroll'), '1');
+    writeFileSync(join(f.work, 'enroll-status'), '401');
     expect(() =>
       f.run(
         'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
       ),
     ).toThrow();
     expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(false);
+    expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(false);
+  });
+  it('keeps the code file when the server cannot be reached, so a retry can use it', () => {
+    const f = shellFixture();
+    rmSync(join(f.work, 'host/machine.json'));
+    rmSync(join(f.work, 'host/secrets/machine-token'));
+    writeFileSync(join(f.work, 'host/enroll-code'), f.code + '\n');
+    writeFileSync(join(f.work, 'fail-enroll'), '1');
+    expect(() =>
+      f.run(
+        'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+      ),
+    ).toThrow();
+    expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(true);
+    expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(false);
+    expect(existsSync(join(f.work, 'requests.log'))).toBe(false);
+
+    rmSync(join(f.work, 'fail-enroll'));
+    const retry = f.run(
+      'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+    );
+    expect(retry).toContain('Machine enrolled');
+    expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(false);
+    expect(
+      readFileSync(join(f.work, 'requests.log'), 'utf8').trim().split('\n'),
+    ).toEqual(['enroll']);
+  });
+  it('keeps the code file on a server error', () => {
+    const f = shellFixture();
+    rmSync(join(f.work, 'host/machine.json'));
+    rmSync(join(f.work, 'host/secrets/machine-token'));
+    writeFileSync(join(f.work, 'host/enroll-code'), f.code + '\n');
+    writeFileSync(join(f.work, 'enroll-status'), '503');
+    expect(() =>
+      f.run(
+        'ALPHACI_ENROLL_CODE_FILE=/work/host/enroll-code bash /work/host/bin/enroll https://fixture.invalid 2>&1',
+      ),
+    ).toThrow();
+    expect(existsSync(join(f.work, 'host/enroll-code'))).toBe(true);
     expect(existsSync(join(f.work, 'host/secrets/machine-token'))).toBe(false);
   });
   it('consumes a replacement code only with --replace and restores the old credential when it fails', () => {
