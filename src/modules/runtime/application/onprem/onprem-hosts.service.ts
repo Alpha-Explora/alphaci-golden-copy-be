@@ -29,8 +29,9 @@ import type {
   HeartbeatReply,
   InstallerRelease,
   MachineCheckIn,
-  MachineHeartbeat,
+  MachineHeartbeatInput,
 } from './onprem-host.contracts';
+import { parseTunnelReport } from '../../domain/onprem-tunnel';
 
 export const MACHINE_TOKEN_PREFIX = 'onprem_machine_';
 export const hashMachineSecret = (value: string): string =>
@@ -117,12 +118,22 @@ export class OnpremHostsService {
    */
   async heartbeat(
     credential: string,
-    input: MachineHeartbeat,
+    input: MachineHeartbeatInput,
   ): Promise<HeartbeatReply> {
     this.enabled();
     if (!credential.startsWith(MACHINE_TOKEN_PREFIX))
       throw new UnauthorizedException('Machine credential is invalid.');
-    return this.machines.heartbeat(hashMachineSecret(credential), input);
+    // An unacceptable tunnel entry is recorded as a failed tunnel with its reason;
+    // it never fails the check-in, so the machine keeps its place and ports.
+    const tunnels = input.tunnels?.flatMap((entry) => {
+      const report = parseTunnelReport(entry);
+      return report ? [report] : [];
+    });
+    return this.machines.heartbeat(hashMachineSecret(credential), {
+      agentVersion: input.agentVersion,
+      checks: input.checks,
+      ...(tunnels ? { tunnels } : {}),
+    });
   }
   async revoke(
     workspaceId: string,

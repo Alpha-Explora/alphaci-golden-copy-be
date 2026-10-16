@@ -1,0 +1,12 @@
+[Unit]
+Description=AlphaCI automatic HTTPS address for environment %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+UMask=0077
+EnvironmentFile=/opt/alphaci/tunnels/%i/tunnel.env
+ExecStart=/opt/alphaci/bin/tunnel-run %i
+Restart=always
+RestartSec=15

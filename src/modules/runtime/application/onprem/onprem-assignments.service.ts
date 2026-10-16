@@ -29,6 +29,7 @@ import type {
 import { canManageHosting } from '#kernel/rules/persona-access.rules';
 import {
   effectivePublicAddress,
+  servedSlot,
   tunnelReport,
 } from '../../domain/onprem-tunnel';
 import {
@@ -318,10 +319,13 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
   async publicAddress(
     projectId: string,
     environmentId: string,
+    slot: string,
   ): Promise<string | null> {
     if (this.config.get('ONPREM_RELEASES_ENABLED') !== 'true') return null;
     const current = await this.repository.current(projectId, environmentId);
-    if (!current?.config) return null;
+    // The address belongs to the slot the tunnel serves, not to every slot.
+    if (!current?.config || servedSlot(current.config.ports) !== slot)
+      return null;
     return effectivePublicAddress(current.config.ingress, current.tunnel);
   }
   async unassign(

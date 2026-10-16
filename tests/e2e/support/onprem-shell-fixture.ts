@@ -29,6 +29,7 @@ export function shellFixture() {
     ['alphaci-supervisor.sh', 'alphaci-supervisor'],
     ['enroll.sh', 'enroll'],
     ['tunnel.sh', 'tunnel.sh'],
+    ['tunnel-run.sh', 'tunnel-run'],
   ])
     writeFileSync(
       join(work, 'host/bin', destination!),
@@ -82,26 +83,72 @@ export function shellFixture() {
 printf '%s\\n' "$@" >> /work/curl-arguments.log
 url=""; output=""; data=""
 while (($#)); do
- case "$1" in -o) output="$2"; shift;; --data-binary|-d) data="$2"; shift;; http*) url="$1";; esac
+ case "$1" in -o) output="$2"; shift;; --data-binary|-d) data="$2"; shift;; -w) wantcode=1; shift;; http*) url="$1";; esac
  shift
 done
 case "$url" in
  */enroll) test ! -f /work/fail-enroll || exit 22; cp /work/receipt.json "$output"; echo enroll >> /work/requests.log;;
- */heartbeat) test ! -f /work/revoked || exit 22; echo heartbeat >> /work/requests.log; case "$data" in @*) cp "\${data#@}" /work/heartbeat-body.json;; esac; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi;;
+ */heartbeat) case "$data" in @*) cp "\${data#@}" /work/heartbeat-body.json;; esac; if [ -f /work/revoked ]; then [ -z "$wantcode" ] || printf 401; exit 0; fi; echo heartbeat >> /work/requests.log; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi; [ -z "$wantcode" ] || printf 200;;
  */assignments) cp /work/assignments.json "$output"; echo assignments >> /work/requests.log;;
  */status) case "$data" in @*) cat "\${data#@}" >> /work/statuses.log;; *) printf '%s' "$data" >> /work/statuses.log;; esac; printf '\\n' >> /work/statuses.log;;
 esac
 `,
   );
-  // A stand-in for cloudflared: it records each start and stop, prints a quick
-  // tunnel address unless /work/tunnel-silent exists, and runs until terminated.
+  // Stand-ins for cloudflared and systemd. cloudflared reports its version
+  // (/work/cloudflared-old makes it old), records each quick-tunnel start and
+  // stop, prints the banner (or /work/tunnel-banner), and ends on TERM.
   writeFileSync(
     join(work, 'bin/cloudflared'),
     `#!/bin/bash
+if [ "$1" = --version ]; then
+  if [ -f /work/cloudflared-old ]; then echo 'cloudflared version 2025.1.0'; else echo 'cloudflared version 2026.10.0 (built 2026-10-05T08:39 UTC)'; fi
+  exit 0
+fi
 echo "start $*" >> /work/cloudflared-calls.log
 trap 'echo stop >> /work/cloudflared-calls.log; exit 0' TERM INT
-[ -f /work/tunnel-silent ] || echo 'https://quiet-fox-blue-cloud.trycloudflare.com'
+if [ ! -f /work/tunnel-silent ]; then
+  banner=https://quiet-fox-blue-cloud.trycloudflare.com
+  [ ! -f /work/tunnel-banner ] || banner=$(cat /work/tunnel-banner)
+  printf '|  %s  |\n' "$banner"
+fi
+[ ! -f /work/tunnel-nul ] || { printf junk; head -c 1 /dev/zero; echo '|  https://quiet-fox-blue-cloud.trycloudflare.com  |'; }
 while :; do sleep 1; done
+`,
+  );
+  // A stand-in for systemd's unit control: alphaci-tunnel@<id>.service starts
+  // tunnel-run in the background with the unit's EnvironmentFile, and stop ends
+  // it. Every call is recorded in systemctl.log.
+  writeFileSync(
+    join(work, 'bin/systemctl'),
+    `#!/bin/bash
+echo "$*" >> /work/systemctl.log
+action=""; unit=""
+for arg in "$@"; do
+  case "$arg" in
+    is-active|start|stop) action="$arg";;
+    *.service) unit="$arg";;
+  esac
+done
+id="\${unit#alphaci-tunnel@}"; id="\${id%.service}"
+pidfile="/work/units/$id.pid"
+mkdir -p /work/units
+running() {
+  [ -f "$pidfile" ] || return 1
+  pid=$(cat "$pidfile")
+  [ -d "/proc/$pid" ] && [ "$(awk '/^State:/{print $2}' "/proc/$pid/status")" != Z ]
+}
+case "$action" in
+  is-active) running ;;
+  start)
+    running || {
+      set -a; . "/work/host/tunnels/$id/tunnel.env"; set +a
+      nohup /work/host/bin/tunnel-run "$id" > "/work/units/$id.log" 2>&1 < /dev/null &
+      echo $! > "$pidfile"
+    } ;;
+  stop)
+    running && kill "$(cat "$pidfile")" 2> /dev/null
+    rm -f "$pidfile" ;;
+esac
 `,
   );
   function run(command: string, input = '') {

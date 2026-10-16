@@ -222,6 +222,7 @@ export class DeploymentTargetsService
       (await this.onpremAssignment?.publicAddress(
         target.projectId,
         target.environmentId,
+        target.slot,
       )) ?? null
     );
   }
@@ -566,7 +567,7 @@ export class DeploymentTargetsService
     }
     return {
       ...target,
-      publicUrl: this.providerPublicUrl(target),
+      publicUrl: await this.targetPublicUrl(target),
       dashboardUrl: this.providerDashboardUrl(target),
     };
   }

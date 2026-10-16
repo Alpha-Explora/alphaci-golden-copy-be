@@ -275,19 +275,42 @@ describe('tunnel presentation', () => {
         reportedAt: null,
       },
     });
-    expect(await service().publicAddress('project', 'env')).toBe(
+    expect(await service().publicAddress('project', 'env', 'frontend')).toBe(
       'https://quiet-fox-blue-cloud.trycloudflare.com',
     );
     repository.current.mockResolvedValue({ ...tunnelRow, tunnel: null });
-    expect(await service().publicAddress('project', 'env')).toBeNull();
+    expect(
+      await service().publicAddress('project', 'env', 'frontend'),
+    ).toBeNull();
+  });
+  it('gives the address only to the slot the tunnel serves', async () => {
+    repository.current.mockResolvedValue({
+      ...tunnelRow,
+      tunnel: {
+        status: 'running',
+        publicUrl: 'https://quiet-fox-blue-cloud.trycloudflare.com',
+        message: 'Ready.',
+        reportedAt: null,
+      },
+    });
+    expect(await service().publicAddress('project', 'env', 'frontend')).toBe(
+      'https://quiet-fox-blue-cloud.trycloudflare.com',
+    );
+    expect(
+      await service().publicAddress('project', 'env', 'backend'),
+    ).toBeNull();
   });
   it('returns no address when on-prem delivery is disabled or the host is legacy', async () => {
-    expect(await service('false').publicAddress('project', 'env')).toBeNull();
+    expect(
+      await service('false').publicAddress('project', 'env', 'frontend'),
+    ).toBeNull();
     repository.current.mockResolvedValue({
       id: 'legacy',
       machineId: null,
       config: null,
     });
-    expect(await service().publicAddress('project', 'env')).toBeNull();
+    expect(
+      await service().publicAddress('project', 'env', 'frontend'),
+    ).toBeNull();
   });
 });

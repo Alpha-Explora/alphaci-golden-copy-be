@@ -184,7 +184,8 @@ describe('On-prem readiness', () => {
         expect.objectContaining({
           id: 'ingress',
           status: 'failed',
-          message: 'Waiting for the machine to report its address.',
+          message:
+            'Waiting for the HTTPS address. Production is not deployed until the machine reports one.',
         }),
       );
       const unavailable = await ingress('production', {
@@ -197,7 +198,8 @@ describe('On-prem readiness', () => {
         expect.objectContaining({
           id: 'ingress',
           status: 'failed',
-          message: 'cloudflared is not installed on this machine.',
+          message:
+            'Waiting for the HTTPS address. cloudflared is not installed on this machine.',
         }),
       );
     });

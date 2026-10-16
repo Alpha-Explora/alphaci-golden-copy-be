@@ -68,6 +68,7 @@ export interface OnpremAssignmentPort {
   publicAddress(
     projectId: string,
     environmentId: string,
+    slot: string,
   ): Promise<string | null>;
 }
 export const ONPREM_ASSIGNMENT = Symbol('OnpremAssignmentPort');

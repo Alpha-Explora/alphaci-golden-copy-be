@@ -19,6 +19,8 @@ if (Test-Path -LiteralPath $configPath) {
     $ports = @($config.Ports)
     if ($PSCmdlet.ShouldProcess($config.Distro, 'disable AlphaCI polling timers, preserving containers and data')) {
         & wsl.exe -d $config.Distro -u root -- systemctl disable --now alphaci-machine.timer alphaci-agent.timer 2>$null
+        # Stops the automatic-address tunnels; a host without them ignores this.
+        & wsl.exe -d $config.Distro -u root -- /opt/alphaci/bin/alphaci-supervisor --stop-tunnels 2>$null
     }
 }
 

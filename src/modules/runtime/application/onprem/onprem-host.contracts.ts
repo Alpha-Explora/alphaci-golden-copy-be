@@ -1,4 +1,5 @@
 import type { ReadinessCheck } from './onprem-readiness.service';
+import type { TunnelReportInput } from '../../domain/onprem-tunnel';
 
 export interface MachineSummary {
   id: string;
@@ -25,15 +26,13 @@ export interface MachineCheckIn {
   agentVersion: string;
   checks: ReadinessCheck[];
 }
-/** The machine's observed state of one tunnel-mode assignment. */
-export interface TunnelReportInput {
-  assignmentId: string;
-  status: 'starting' | 'running' | 'unavailable' | 'failed';
-  message: string;
-  publicUrl: string | null;
-}
-export interface MachineHeartbeat extends MachineCheckIn {
+/** A heartbeat as the machine sent it: tunnel entries are validated by the service. */
+export interface MachineHeartbeatInput extends MachineCheckIn {
   /** Every tunnel-mode assignment on the machine; absent from older agents. */
+  tunnels?: unknown[];
+}
+/** A heartbeat with its tunnel entries validated. */
+export interface MachineHeartbeat extends MachineCheckIn {
   tunnels?: TunnelReportInput[];
 }
 /** A tunnel-mode assignment the machine must keep an HTTPS tunnel open for. */

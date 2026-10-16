@@ -14,7 +14,11 @@ import type {
   TunnelReport,
   TunnelStatus,
 } from '#kernel/ports/onprem-assignment.port';
-import { TUNNEL_REPORT_WINDOW, tunnelReport } from '../../domain/onprem-tunnel';
+import {
+  TUNNEL_REPORT_WINDOW,
+  tunnelReady,
+  tunnelReport,
+} from '../../domain/onprem-tunnel';
 import {
   allowedDeploymentTransitions,
   toDeployment,
@@ -456,7 +460,7 @@ export class OnpremAssignmentsRepository {
         );
     }
     const bindings = await client.query<AssignmentRow>(
-      `SELECT * FROM env_provisioning.onprem_hosts WHERE revoked_at IS NULL AND ${kind === 'machine' ? 'machine_id=$1' : 'token_sha256=$1'} ORDER BY id FOR UPDATE`,
+      `SELECT *, tunnel_reported_at > NOW() - INTERVAL '${TUNNEL_REPORT_WINDOW}' AS tunnel_fresh FROM env_provisioning.onprem_hosts WHERE revoked_at IS NULL AND ${kind === 'machine' ? 'machine_id=$1' : 'token_sha256=$1'} ORDER BY id FOR UPDATE`,
       [machineId ?? hash],
     );
     if (kind === 'legacy' && !bindings.rowCount)
@@ -470,6 +474,14 @@ export class OnpremAssignmentsRepository {
         projectId: row.project_id,
         environmentId: row.environment_id,
         machine: row.machine_id ? assignment(row) : null,
+        /** A running tunnel with a fresh address: production may be handed out. */
+        tunnelReady: tunnelReady({
+          status: row.tunnel_status,
+          url: row.tunnel_url,
+          message: row.tunnel_message,
+          reportedAt: row.tunnel_reported_at,
+          fresh: row.tunnel_fresh === true,
+        }),
       })),
     };
   }
