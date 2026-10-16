@@ -217,6 +217,7 @@ function buildNodeQualityJobs(
           ...profile.extraWith(context, stack),
           'node-version': Number(context.runtimeVersion),
           'coverage-threshold': `\${{ fromJson(needs.${context.policyJobId}.outputs.coverage-threshold) }}`,
+          'promotion-coverage-threshold': `\${{ fromJson(needs.${context.policyJobId}.outputs.promotion-coverage-threshold) }}`,
           'enforce-coverage': true,
           'test-command': profile.testCommand,
           'checkout-ref': context.checkoutRef,

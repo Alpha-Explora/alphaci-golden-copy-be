@@ -175,6 +175,7 @@ function buildDotnetQualityJobs(
         with: {
           ...shared,
           'coverage-threshold': `\${{ fromJson(needs.${context.policyJobId}.outputs.coverage-threshold) }}`,
+          'promotion-coverage-threshold': `\${{ fromJson(needs.${context.policyJobId}.outputs.promotion-coverage-threshold) }}`,
           'enforce-coverage': true,
         },
       },
