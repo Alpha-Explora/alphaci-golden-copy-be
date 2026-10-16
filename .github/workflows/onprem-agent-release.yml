@@ -4,8 +4,9 @@ name: On-prem agent release
 #
 # Push a tag named onprem-agent-v<version>, for example onprem-agent-v0.1.0.
 # The <version> must equal deploy/onprem/agent/release-manifest.json. Each
-# release attaches the archive, its .sha256 file, and installer-release.json.
-# The backend resolves ONPREM_INSTALLER_VERSION from these assets.
+# release attaches the archive, its .sha256 file, installer-release.json, and the
+# Ubuntu package alphaci-agent_<version>_all.deb with its .sha256 file.
+# The backend resolves ONPREM_INSTALLER_VERSION from the archive and its metadata.
 #
 # This workflow refuses to publish over an existing release, but it cannot
 # stop someone from editing or deleting a release later. Enable immutable
@@ -54,6 +55,18 @@ jobs:
         working-directory: artifacts/onprem
         run: sha256sum -c alphaci-agent-*.tar.gz.sha256
 
+      - name: Package the Ubuntu package
+        run: node scripts/package-onprem-agent-deb.mjs
+
+      - name: Verify the Ubuntu package
+        working-directory: artifacts/onprem
+        run: |
+          sha256sum -c alphaci-agent_*_all.deb.sha256
+          dpkg-deb --info alphaci-agent_*_all.deb
+          test "$(dpkg-deb --field alphaci-agent_*_all.deb Package)" = alphaci-agent
+          test "$(dpkg-deb --field alphaci-agent_*_all.deb Architecture)" = all
+          dpkg-deb --contents alphaci-agent_*_all.deb | grep -q ' ./usr/bin/alphaci-enroll$'
+
       - uses: actions/upload-artifact@v4
         with:
           name: onprem-agent-installer
@@ -61,6 +74,8 @@ jobs:
             artifacts/onprem/alphaci-agent-*.tar.gz
             artifacts/onprem/alphaci-agent-*.tar.gz.sha256
             artifacts/onprem/installer-release.json
+            artifacts/onprem/alphaci-agent_*_all.deb
+            artifacts/onprem/alphaci-agent_*_all.deb.sha256
           if-no-files-found: error
 
   publish:
@@ -90,7 +105,9 @@ jobs:
           gh release create "$TAG" \
             --verify-tag \
             --title "AlphaCI on-prem agent ${TAG#onprem-agent-v}" \
-            --notes "Installer for the AlphaCI on-prem agent. Verify the archive with the attached .sha256 file." \
+            --notes "Installer for the AlphaCI on-prem agent. Verify the archive or the Ubuntu package with its attached .sha256 file." \
             alphaci-agent-*.tar.gz \
             alphaci-agent-*.tar.gz.sha256 \
-            installer-release.json
+            installer-release.json \
+            alphaci-agent_*_all.deb \
+            alphaci-agent_*_all.deb.sha256

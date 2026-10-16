@@ -83,12 +83,13 @@ export function shellFixture() {
 printf '%s\\n' "$@" >> /work/curl-arguments.log
 url=""; output=""; data=""
 while (($#)); do
- case "$1" in -o) output="$2"; shift;; --data-binary|-d) data="$2"; shift;; -w) wantcode=1; shift;; http*) url="$1";; esac
+ case "$1" in -o) output="$2"; shift;; -w) wfmt="$2"; shift;; --data-binary|-d) data="$2"; shift;; http*) url="$1";; esac
  shift
 done
 case "$url" in
- */enroll) test ! -f /work/fail-enroll || exit 22; cp /work/receipt.json "$output"; echo enroll >> /work/requests.log;;
- */heartbeat) case "$data" in @*) cp "\${data#@}" /work/heartbeat-body.json;; esac; if [ -f /work/revoked ]; then [ -z "$wantcode" ] || printf 401; exit 0; fi; echo heartbeat >> /work/requests.log; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi; [ -z "$wantcode" ] || printf 200;;
+ */enroll) if [ -f /work/fail-enroll ]; then test -z "$wfmt" || printf '000'; exit 6; fi; code=200; test ! -f /work/enroll-status || code=$(cat /work/enroll-status); if [ "$code" = 200 ]; then if [ -f /work/enroll-truncate ]; then head -c 40 /work/receipt.json > "$output"; else cp /work/receipt.json "$output"; fi; echo enroll >> /work/requests.log; fi; test -z "$wfmt" || printf '%s' "$code"; exit 0;;
+ */heartbeat) case "$data" in @*) cp "\${data#@}" /work/heartbeat-body.json;; esac; if [ -f /work/revoked ]; then [ -z "$wfmt" ] || printf 401; exit 0; fi; echo heartbeat >> /work/requests.log; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi; [ -z "$wfmt" ] || printf 200;;
+
  */assignments) cp /work/assignments.json "$output"; echo assignments >> /work/requests.log;;
  */status) case "$data" in @*) cat "\${data#@}" >> /work/statuses.log;; *) printf '%s' "$data" >> /work/statuses.log;; esac; printf '\\n' >> /work/statuses.log;;
 esac
