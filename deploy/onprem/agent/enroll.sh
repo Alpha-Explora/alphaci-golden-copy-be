@@ -67,21 +67,39 @@ CODE="${CODE//[[:space:]]/}"
 [[ "$CODE" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo 'Invalid code format.' >&2; exit 1; }
 printf '%s' "$CODE" | jq -Rs '{code:.,agentVersion:"0.2.0",checks:[]}' > "$WORK/request.json"
 unset CODE
-# -w reports 000 when no response arrived at all, so a failed connection is told apart from a refusal.
+# -w reports 000 when no response arrived at all. Only an HTTP answer is judged below.
+curl_status=0
 http_status=$(curl --silent --show-error --max-time 30 -H 'Content-Type: application/json' \
   --data-binary "@$WORK/request.json" -o "$WORK/response.json" -w '%{http_code}' \
-  "$API/api/v1/onprem/enroll") || true
+  "$API/api/v1/onprem/enroll") || curl_status=$?
+# The server's own message, when its response has one. It never contains the code.
+server_message() {
+  jq -r '(.message // .error // empty) | if type == "array" then join("; ") else tostring end' "$WORK/response.json" 2>/dev/null | head -c 300 || true
+}
+# The file note appears only for a run that read the code from a file.
+code_note() { if [ "$CODE_FROM_FILE" = 1 ]; then echo "$1"; fi; }
+if [ "$curl_status" -ne 0 ] || [ "$http_status" = 000 ]; then
+  KEEP_CODE_FILE=1
+  echo "AlphaCI could not be reached (curl exit $curl_status).$(code_note ' The code file has been kept for a retry.')" >&2
+  exit 1
+fi
 case "$http_status" in
-  2??) ;;
-  4??)
-    # A definitive refusal: the code is invalid or expired, so the file goes.
+  2??)
+    # Accept only a complete response: a truncated body must never reach $PENDING.
+    if ! jq -e '(.credential | type == "string" and test("^onprem_machine_[A-Za-z0-9_-]{43}$")) and (.trustKeys | type == "object" and length > 0) and (.machine.id | type == "string" and length > 0)' "$WORK/response.json" >/dev/null 2>&1; then
+      KEEP_CODE_FILE=1
+      echo "AlphaCI sent an incomplete enrollment response.$(code_note ' The code file has been kept for a retry.')" >&2
+      exit 1
+    fi ;;
+  400|401|409)
+    # The server refuses the code itself: invalid, already used or expired. The file goes.
+    echo "AlphaCI rejected the enrollment code (HTTP $http_status).$(code_note ' The code file has been deleted.') $(server_message)" >&2
     discard_code_file
-    echo "AlphaCI rejected the enrollment code (HTTP $http_status).$([ "$CODE_FROM_FILE" = 1 ] && echo ' The code file has been deleted.')" >&2
     exit 1 ;;
   *)
-    # No answer or a server error: the outcome is unknown, so the file stays for a retry.
+    # Throttled, disabled or failing server: the code may still be valid, so the file stays.
     KEEP_CODE_FILE=1
-    echo "AlphaCI did not answer the enrollment request (HTTP ${http_status:-none}).$([ "$CODE_FROM_FILE" = 1 ] && echo ' The code file has been kept for a retry.')" >&2
+    echo "AlphaCI did not accept the enrollment request (HTTP $http_status).$(code_note ' The code file has been kept for a retry.') $(server_message)" >&2
     exit 1 ;;
 esac
 mv "$WORK/response.json" "$PENDING"
