@@ -30,7 +30,7 @@ export class FixedWindowThrottlerStorage implements ThrottlerStorage {
     limit: number,
     blockDuration: number,
   ): Promise<ThrottlerStorageRecord> {
-    const now = Date.now();
+    const now = performance.now();
     if (++this.increments % SWEEP_EVERY === 0) this.sweep(now);
     let window = this.windows.get(key);
     if (window && window.blockedUntil > now)

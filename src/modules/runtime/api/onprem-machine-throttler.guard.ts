@@ -7,10 +7,12 @@ import {
   ThrottlerGuard,
   type ThrottlerModuleOptions,
   type ThrottlerOptions,
+  type ThrottlerRequest,
   type ThrottlerStorage,
 } from '@nestjs/throttler';
 import {
   hashMachineSecret,
+  MACHINE_TOKEN_PREFIX,
   OnpremHostsService,
 } from '../application/onprem/onprem-hosts.service';
 
@@ -23,12 +25,16 @@ import {
 export const ONPREM_MACHINE_RATE_LIMIT = { limit: 120, ttl: 60_000 };
 /**
  * Requests one client address may make to each agent endpoint per minute, from
- * any credential. It bounds the work a flood can cause, and it sits well above
- * a NAT shared by dozens of machines (about five requests a minute each).
+ * any credential. Only requests that need a credential lookup count, so one
+ * machine's rejected traffic cannot use up its NAT neighbours' allowance. The
+ * cap bounds the lookup and handler work a flood can cause.
  */
 export const ONPREM_AGENT_IP_RATE_LIMIT = { limit: 300, ttl: 60_000 };
-/** Credential lookups one client address may make per minute that find no machine. */
-const FAILED_LOOKUP_BUDGET = 30;
+/**
+ * Lookups one client address may make per minute that find no machine. Once it
+ * is spent, the address is no longer looked up at all.
+ */
+export const FAILED_LOOKUP_BUDGET = 30;
 /** How long a verified credential keeps its machine id. */
 const VERIFIED_TTL_MS = 60_000;
 const CACHE_MAX_ENTRIES = 10_000;
@@ -81,8 +87,10 @@ export const OnpremMachineRateLimit = () =>
  * credential verifiably belongs to. Anything else, including an unknown or
  * revoked credential, is keyed on the client IP, so random tokens cannot open
  * fresh buckets. Verified machine ids are cached for a minute, so an agent costs
- * one lookup a minute. Each address gets only a small budget of failed lookups,
- * and once that is spent it is not looked up at all.
+ * one lookup a minute. Requests served from a live cache entry do not count
+ * against the address cap. Each address gets a small budget of lookups that find
+ * no machine. Once that is spent, only an already verified machine keeps its own
+ * bucket, and anything else is keyed on the address.
  *
  * The cache only chooses a bucket. Authorization stays with the handler, which
  * checks the credential inside its own transaction, so a stale entry can only
@@ -108,6 +116,22 @@ export class OnpremMachineThrottlerGuard extends ThrottlerGuard {
     super(options, storage, reflector);
   }
 
+  protected override async handleRequest(
+    requestProps: ThrottlerRequest,
+  ): Promise<boolean> {
+    // A request a live verified machine serves needs no lookup, so it does not
+    // spend the address cap that protects lookups from a flood.
+    if (
+      requestProps.throttler.name === ONPREM_AGENT_IP_THROTTLER &&
+      isOnpremMachineRoute(requestProps.context)
+    ) {
+      const req = requestProps.context.switchToHttp().getRequest<Request>();
+      const credential = bearerCredential(req.headers.authorization);
+      if (credential && this.liveMachineId(credential)) return true;
+    }
+    return super.handleRequest(requestProps);
+  }
+
   protected override async getTracker(
     req: Request,
     context?: ExecutionContext,
@@ -121,13 +145,22 @@ export class OnpremMachineThrottlerGuard extends ThrottlerGuard {
     return machineId ? `machine:${machineId}` : ip;
   }
 
+  /** The verified machine for a credential whose cache entry is still live. */
+  private liveMachineId(credential: string): string | null {
+    const entry = this.verified.get(hashMachineSecret(credential));
+    return entry && entry.expiresAt > performance.now()
+      ? entry.machineId
+      : null;
+  }
+
   private async machineFor(
     ip: string,
     credential: string | null,
   ): Promise<string | null> {
-    if (!credential) return null;
+    // Only machine credentials can be looked up; anything else is keyed on the address.
+    if (!credential?.startsWith(MACHINE_TOKEN_PREFIX)) return null;
     const key = hashMachineSecret(credential);
-    const now = Date.now();
+    const now = performance.now();
     const verified = this.verified.get(key);
     if (verified && verified.expiresAt > now) return verified.machineId;
     const failures = this.failedLookups.get(ip);
@@ -136,7 +169,8 @@ export class OnpremMachineThrottlerGuard extends ThrottlerGuard {
       failures.resetsAt > now &&
       failures.count >= FAILED_LOOKUP_BUDGET
     )
-      return null;
+      // The budget is spent: a machine verified earlier keeps its own bucket.
+      return verified?.machineId ?? null;
     const machineId = await this.hosts.machineIdForCredential(credential);
     if (machineId) {
       boundedSet(this.verified, key, {

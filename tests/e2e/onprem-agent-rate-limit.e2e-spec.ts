@@ -85,7 +85,8 @@ describe('Per-machine rate limits on agent endpoints', () => {
     const second = (await enrollMachine()).credential;
     // supertest reaches the app from one loopback address for both machines.
     for (let sent = 0; sent < limit; sent++) await heartbeat(first).expect(201);
-    await heartbeat(first).expect(429);
+    const limited = await heartbeat(first).expect(429);
+    expect(limited.headers['retry-after']).toBe('60');
     await heartbeat(second).expect(201);
   });
 

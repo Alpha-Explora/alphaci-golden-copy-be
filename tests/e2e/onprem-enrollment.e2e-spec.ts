@@ -150,6 +150,17 @@ describe('One-time machine enrollment and revocation', () => {
       repository.heartbeat(hashMachineSecret('second-token'), checkIn),
     ).rejects.toThrow(/revoked/);
   });
+  it('refuses a replacement enrollment for a machine that has already been revoked', async () => {
+    const { code, workspaceId } = await enroll();
+    const retired = await repository.consume(
+      hashMachineSecret(code),
+      hashMachineSecret('retired-token'),
+      'prefix',
+      checkIn,
+    );
+    await repository.revoke(workspaceId, retired.id);
+    await expect(enroll(retired.id)).rejects.toThrow(/active machine/);
+  });
   it('workspace deletion expires codes, revokes credentials and blocks concurrent new enrollment', async () => {
     const { workspaceId, code } = await enroll();
     await repository.purgeWorkspace(workspaceId);

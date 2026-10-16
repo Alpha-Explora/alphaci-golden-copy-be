@@ -5,13 +5,17 @@ const LIMIT = 2;
 const BLOCK = 60_000;
 
 describe('FixedWindowThrottlerStorage', () => {
-  const START = 1_000_000;
+  let clock: number;
+  const advance = (ms: number) => {
+    clock += ms;
+  };
 
   beforeEach(() => {
-    jest.useFakeTimers({ now: START });
+    clock = 1_000;
+    jest.spyOn(performance, 'now').mockImplementation(() => clock);
   });
   afterEach(() => {
-    jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   it('blocks a key past its limit and unblocks it after the block ends', async () => {
@@ -24,7 +28,7 @@ describe('FixedWindowThrottlerStorage', () => {
     expect(blocked.timeToBlockExpire).toBe(BLOCK / 1000);
     // Hits while blocked do not count.
     expect(await hit()).toMatchObject({ isBlocked: true, totalHits: 3 });
-    jest.setSystemTime(START + BLOCK);
+    advance(BLOCK);
     expect(await hit()).toMatchObject({ isBlocked: false, totalHits: 1 });
   });
 
@@ -35,18 +39,18 @@ describe('FixedWindowThrottlerStorage', () => {
     expect(await hit('a')).toMatchObject({ totalHits: 1 });
 
     // Key B is blocked late in that window, so its block outlives A's window.
-    jest.setSystemTime(START + 50_000);
+    advance(50_000);
     await hit('b');
     await hit('b');
     expect(await hit('b')).toMatchObject({ isBlocked: true, totalHits: 3 });
 
     // A's window has elapsed, so A starts again from one; B is still blocked.
-    jest.setSystemTime(START + TTL + 11_000);
+    advance(11_000);
     expect(await hit('a')).toMatchObject({ totalHits: 1, isBlocked: false });
     expect(await hit('b')).toMatchObject({ isBlocked: true, totalHits: 3 });
 
     // Once B's block ends, B starts again from one.
-    jest.setSystemTime(START + 50_000 + BLOCK);
+    advance(49_000);
     expect(await hit('b')).toMatchObject({ totalHits: 1, isBlocked: false });
   });
 
@@ -55,7 +59,7 @@ describe('FixedWindowThrottlerStorage', () => {
     expect(await storage.increment('a', TTL, LIMIT, BLOCK)).toMatchObject({
       timeToExpire: TTL / 1000,
     });
-    jest.setSystemTime(START + 10_000);
+    advance(10_000);
     expect(await storage.increment('a', TTL, LIMIT, BLOCK)).toMatchObject({
       timeToExpire: 50,
     });

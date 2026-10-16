@@ -100,12 +100,12 @@ export class OnpremMachinesRepository {
       await this.lockWorkspace(client, workspaceId);
       if (input.replacesMachineId) {
         const machine = await client.query(
-          `SELECT id FROM env_provisioning.onprem_machines WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
+          `SELECT id FROM env_provisioning.onprem_machines WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL FOR UPDATE`,
           [input.replacesMachineId, workspaceId],
         );
         if (!machine.rowCount)
           throw new ConflictException(
-            'Replacement machine does not belong to this workspace.',
+            'Replacement machine must be an active machine in this workspace.',
           );
       }
       const result = await client.query<{ id: string; expires_at: Date }>(
@@ -252,17 +252,14 @@ export class OnpremMachinesRepository {
           );
         moved = await moveMachineBindings(client, id, replacementId);
       } else {
-        // A pending replacement moves these environments when it is consumed.
-        // Ending them now would leave it nothing to move, so wait for it instead.
-        // The machine row lock above also serializes this with enrollment creation.
-        const pending = await client.query(
-          `SELECT 1 FROM env_provisioning.onprem_enrollments WHERE replaces_machine_id=$1 AND consumed_at IS NULL AND expires_at > NOW() LIMIT 1`,
+        // Revoking is the emergency stop for a compromised credential, so it always
+        // succeeds. A pending replacement enrollment for this machine can no longer
+        // be used, and the machine row lock above serializes this with enrollment
+        // creation.
+        await client.query(
+          `UPDATE env_provisioning.onprem_enrollments SET expires_at=LEAST(expires_at,NOW()) WHERE replaces_machine_id=$1 AND consumed_at IS NULL`,
           [id],
         );
-        if (pending.rowCount)
-          throw new ConflictException(
-            'A replacement enrollment for this machine is still pending. Its environments move to the replacement when that enrollment is used, so revoke once it is used or has expired.',
-          );
         await endMachineBindings(client, id);
       }
       await client.query(

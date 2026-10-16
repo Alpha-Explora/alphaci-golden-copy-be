@@ -64,9 +64,10 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    replacement ends those environments' bindings and releases their host ports.
    The environments then have no host until you assign them from Hosting; no
    Unassign is needed. Automatic assignment runs only when an environment is
-   provisioned or its target is created, not after a revocation. Revoking is
-   refused while a replacement enrollment for the machine is pending: consume
-   that enrollment, or wait for it to expire (10 minutes), then revoke.
+   provisioned, or when a target is created or attached to it, not after a
+   revocation. Revoking also ends the machine's pending replacement enrollment,
+   so that code stops working. To keep the environments on the replacement,
+   consume its enrollment before revoking.
 
 The Windows test command uses sign-in startup. The agent publishes every host
 port AlphaCI reserved on the machine (returned by each heartbeat) and the host
@@ -569,17 +570,19 @@ per minute:
   deployment status report adds one more, so 120 leaves room for bursts and
   retries.
 - **300 requests per client address** per endpoint, across every credential.
-  This bounds the work a flood can cause. A NAT shared by more than about 60
-  machines reaches it, so keep such machines on separate networks.
+  Only requests that need a credential lookup count, so a machine's own
+  rejected traffic cannot use up its NAT neighbours' share. This bounds the work
+  a flood can cause. A NAT shared by more than about 60 machines that all
+  reconnect at once can reach it, so keep such machines on separate networks.
 
 Each count is a fixed window that starts with the first request of the minute.
 A machine over its limit gets `429 Too Many Requests` with `Retry-After: 60`.
 It is accepted again within a minute, and it needs no action.
 
-Requests with an unknown or revoked credential count only against their client
-address. Each address gets 30 credential lookups a minute that find no machine.
-After that, its such requests are not looked up again, so a flood of made-up
-tokens cannot load the database.
+Requests with an unknown or revoked credential count against their client
+address. Each address gets 30 lookups a minute that find no machine. After that,
+such requests are not looked up again, so a flood of made-up tokens cannot load
+the database. A machine verified earlier keeps its own bucket meanwhile.
 
 `POST /onprem/enroll` takes no credential, so it stays limited per client IP:
 5 requests per minute. Enroll machines one at a time when several sit behind one

@@ -392,9 +392,9 @@ describe('Reusable machine assignment authorization', () => {
     );
     expect(reserved.rows).toEqual([]);
   });
-  it('refuses to revoke a machine while its replacement enrollment is pending, then allows it once that expires', async () => {
-    const pendingFor = await enroll();
-    await assignments.assign({ ...input(), machineId: pendingFor });
+  it('revokes a machine with a pending replacement enrollment and makes that enrollment unusable', async () => {
+    const compromised = await enroll();
+    await assignments.assign({ ...input(), machineId: compromised });
     const code = hashMachineSecret(randomUUID());
     await machines.createEnrollment(
       workspaceId,
@@ -403,22 +403,19 @@ describe('Reusable machine assignment authorization', () => {
         name: 'pending',
         platform: 'ubuntu',
         requestId: randomUUID(),
-        replacesMachineId: pendingFor,
+        replacesMachineId: compromised,
       },
       code,
     );
-    await expect(machines.revoke(workspaceId, pendingFor)).rejects.toThrow(
-      /replacement enrollment for this machine is still pending/,
-    );
-    expect(await assignments.current(projectId, environmentId)).toMatchObject({
-      machineId: pendingFor,
-    });
-    await pool.query(
-      "UPDATE env_provisioning.onprem_enrollments SET expires_at=NOW()-INTERVAL '1 second' WHERE code_sha256=$1",
-      [code],
-    );
-    await machines.revoke(workspaceId, pendingFor);
+    // Emergency revocation always succeeds, and the pending code can no longer be used.
+    await machines.revoke(workspaceId, compromised);
     expect(await assignments.current(projectId, environmentId)).toBeNull();
+    await expect(
+      machines.consume(code, hashMachineSecret(randomUUID()), 'p', {
+        agentVersion: 'test',
+        checks: [],
+      }),
+    ).rejects.toThrow(/Enrollment expired/);
   });
   it('never leaves an active binding on a revoked machine when a revoke races an assignment', async () => {
     for (let round = 0; round < 5; round++) {

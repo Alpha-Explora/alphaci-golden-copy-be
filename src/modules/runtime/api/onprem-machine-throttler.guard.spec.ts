@@ -8,6 +8,7 @@ import {
 import { FixedWindowThrottlerStorage } from '#kernel/http/throttling/fixed-window-throttler.storage';
 import type { OnpremHostsService } from '../application/onprem/onprem-hosts.service';
 import {
+  FAILED_LOOKUP_BUDGET,
   isOnpremMachineRoute,
   ONPREM_AGENT_IP_RATE_LIMIT,
   ONPREM_AGENT_THROTTLERS,
@@ -29,6 +30,8 @@ class AgentFixture {
 
 const CLIENT_IP = '203.0.113.7';
 const DEFAULT_LIMIT = 60;
+/** Longer than the verified cache keeps an entry. */
+const PAST_CACHE_TTL_MS = 61_000;
 
 /** Credentials containing "known" belong to a machine; the rest do not. */
 function hostsFake() {
@@ -92,6 +95,19 @@ async function spend(
 }
 
 describe('OnpremMachineThrottlerGuard', () => {
+  let clock: number;
+  const advance = (ms: number) => {
+    clock += ms;
+  };
+
+  beforeEach(() => {
+    clock = 1_000;
+    jest.spyOn(performance, 'now').mockImplementation(() => clock);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('gives each machine its own bucket, even when they share an IP', async () => {
     const { guard } = setup();
     await guard.onModuleInit();
@@ -123,12 +139,12 @@ describe('OnpremMachineThrottlerGuard', () => {
     const unknown = (index: number) =>
       call('heartbeat', `Bearer onprem_machine_random${index}`);
     await spend(guard, ONPREM_MACHINE_RATE_LIMIT.limit, unknown);
-    // Only the first 30 misses reach the database; the rest share the IP bucket.
-    expect(machineIdForCredential).toHaveBeenCalledTimes(30);
+    // Only the first lookups reach the database; the rest share the IP bucket.
+    expect(machineIdForCredential).toHaveBeenCalledTimes(FAILED_LOOKUP_BUDGET);
     await expect(
       guard.canActivate(call('heartbeat', 'Bearer onprem_machine_another')),
     ).rejects.toThrow(ThrottlerException);
-    expect(machineIdForCredential).toHaveBeenCalledTimes(30);
+    expect(machineIdForCredential).toHaveBeenCalledTimes(FAILED_LOOKUP_BUDGET);
   });
 
   it('checks the per-address cap before it looks any credential up', async () => {
@@ -143,6 +159,62 @@ describe('OnpremMachineThrottlerGuard', () => {
       guard.canActivate(call('heartbeat', 'Bearer onprem_machine_known_over')),
     ).rejects.toThrow(ThrottlerException);
     expect(machineIdForCredential).toHaveBeenCalledTimes(lookups);
+  });
+
+  it('does not charge the address cap for requests a verified machine serves, so a runaway neighbour cannot starve the NAT', async () => {
+    const { guard } = setup();
+    await guard.onModuleInit();
+    const runaway = 'Bearer onprem_machine_known_runaway';
+    await spend(guard, ONPREM_MACHINE_RATE_LIMIT.limit, () =>
+      call('heartbeat', runaway),
+    );
+    // The runaway's further requests are rejected by its own bucket, and they
+    // are served from the cache, so they cost the address cap nothing.
+    for (let sent = 0; sent < 2 * ONPREM_AGENT_IP_RATE_LIMIT.limit; sent++)
+      await expect(
+        guard.canActivate(call('heartbeat', runaway)),
+      ).rejects.toThrow(ThrottlerException);
+    await expect(
+      guard.canActivate(
+        call('heartbeat', 'Bearer onprem_machine_known_healthy'),
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it('charges the failed-lookup budget only for real lookups, not for legacy or malformed tokens', async () => {
+    const { guard, machineIdForCredential } = setup();
+    await guard.onModuleInit();
+    await spend(guard, 40, (index) =>
+      call('heartbeat', `Bearer aoh_legacy_${index}`),
+    );
+    expect(machineIdForCredential).not.toHaveBeenCalled();
+    await spend(guard, FAILED_LOOKUP_BUDGET, (index) =>
+      call('heartbeat', `Bearer onprem_machine_random${index}`),
+    );
+    expect(machineIdForCredential).toHaveBeenCalledTimes(FAILED_LOOKUP_BUDGET);
+  });
+
+  it('serves an expired-cache machine from its own bucket once the failed-lookup budget is spent', async () => {
+    const { guard, machineIdForCredential } = setup();
+    await guard.onModuleInit();
+    const machine = 'Bearer onprem_machine_known_expired';
+    await expect(guard.canActivate(call('heartbeat', machine))).resolves.toBe(
+      true,
+    );
+    advance(PAST_CACHE_TTL_MS);
+    // Spend the address's lookup budget; its remaining requests fill the
+    // address's bucket for credentials that resolve to no machine.
+    await spend(guard, ONPREM_MACHINE_RATE_LIMIT.limit, (index) =>
+      call('heartbeat', `Bearer onprem_machine_random${index}`),
+    );
+    // Keyed on the address, this request would be the 121st in that bucket.
+    // Keyed on its own machine, it is allowed.
+    await expect(guard.canActivate(call('heartbeat', machine))).resolves.toBe(
+      true,
+    );
+    expect(machineIdForCredential).toHaveBeenCalledTimes(
+      FAILED_LOOKUP_BUDGET + 1,
+    );
   });
 
   it('keeps routes without a machine credential on the client IP', async () => {
