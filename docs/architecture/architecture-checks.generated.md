@@ -32,9 +32,9 @@ This snapshot is generated from the current source tree. It is descriptive evide
 | `pipelines` | 84 | 31 | 1 | 1 | 0 | 0 |
 | `platform-ops` | 31 | 6 | 0 | 0 | 0 | 0 |
 | `projects` | 303 | 114 | 20 | 5 | 0 | 0 |
-| `runtime` | 200 | 68 | 10 | 4 | 0 | 0 |
+| `runtime` | 204 | 71 | 10 | 4 | 0 | 0 |
 
-| Total | 786 | 257 | 40 | 15 | 0 | 0 |
+| Total | 790 | 260 | 40 | 15 | 0 | 0 |
 
 Dead in-process adapters measured by the source report: **0**.
 

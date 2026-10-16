@@ -72,7 +72,9 @@ transaction. Revocation either follows an authorized operation's commit or
 causes that operation to fail. Workspace deletion revokes machines and expires
 codes before deleting Identity's workspace; cleanup failure aborts deletion.
 
-Production assignment requires explicitly configured HTTPS ingress. Each target
+Production assignment requires an HTTPS address: configured HTTPS ingress, or the
+machine's tunnel address (`tunnel` ingress), which exists once the machine reports it.
+Each target
 slot has a container port, a distinct machine host port, and a health path or
 explicit null. Null records missing health evidence; the agent reports the
 deployment failed without pulling or applying it until health is configured.

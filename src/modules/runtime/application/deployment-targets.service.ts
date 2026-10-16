@@ -200,11 +200,31 @@ export class DeploymentTargetsService
 
     // Enrich with copyable links: the live service URL and the provider
     // dashboard, so the UI never has to re-derive provider URL conventions.
-    return targets.map((target) => ({
-      ...target,
-      publicUrl: this.providerPublicUrl(target),
-      dashboardUrl: this.providerDashboardUrl(target),
-    }));
+    return Promise.all(
+      targets.map(async (target) => ({
+        ...target,
+        publicUrl: await this.targetPublicUrl(target),
+        dashboardUrl: this.providerDashboardUrl(target),
+      })),
+    );
+  }
+
+  /**
+   * An on-prem target is reached at its environment's address, which the
+   * machine reports for a tunnel; other providers derive it from their presentation.
+   */
+  private async targetPublicUrl(
+    target: DeploymentTargetSummary,
+  ): Promise<string | null> {
+    if (!target.environmentId || !this.deliveredByHost(target.provider))
+      return this.providerPublicUrl(target);
+    return (
+      (await this.onpremAssignment?.publicAddress(
+        target.projectId,
+        target.environmentId,
+        target.slot,
+      )) ?? null
+    );
   }
 
   /**
@@ -547,7 +567,7 @@ export class DeploymentTargetsService
     }
     return {
       ...target,
-      publicUrl: this.providerPublicUrl(target),
+      publicUrl: await this.targetPublicUrl(target),
       dashboardUrl: this.providerDashboardUrl(target),
     };
   }

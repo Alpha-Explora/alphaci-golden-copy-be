@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { canonicalJson } from '../../../src/modules/runtime/domain/release-manifest';
 
-const image = 'alphaci-agent-e2e:1';
+const image = 'alphaci-agent-e2e:2';
+// Ubuntu, the agent's target OS: GNU coreutils buffer differently from Alpine's
+// busybox, and the tunnel path depends on that.
 
 /**
  * Runs a container command, then gives the mounted work directory back the
@@ -23,7 +25,7 @@ export function restoreWorkOwnership(command: string): string {
 export function buildShellFixture() {
   execFileSync('docker', ['build', '-t', image, '-'], {
     input:
-      'FROM alpine:3.20\nRUN apk add --no-cache bash jq openssl curl coreutils\n',
+      'FROM ubuntu:24.04\nRUN apt-get update && apt-get install -y --no-install-recommends bash jq openssl curl coreutils ca-certificates && rm -rf /var/lib/apt/lists/*\n',
     stdio: ['pipe', 'ignore', 'inherit'],
   });
 }
@@ -42,6 +44,8 @@ export function shellFixture() {
     ['render-assignment.sh', 'render-assignment'],
     ['alphaci-supervisor.sh', 'alphaci-supervisor'],
     ['enroll.sh', 'enroll'],
+    ['tunnel.sh', 'tunnel.sh'],
+    ['tunnel-run.sh', 'tunnel-run'],
   ])
     writeFileSync(
       join(work, 'host/bin', destination!),
@@ -100,9 +104,75 @@ while (($#)); do
 done
 case "$url" in
  */enroll) if [ -f /work/fail-enroll ]; then test -z "$wfmt" || printf '000'; exit 6; fi; code=200; test ! -f /work/enroll-status || code=$(cat /work/enroll-status); if [ "$code" = 200 ]; then if [ -f /work/enroll-truncate ]; then head -c 40 /work/receipt.json > "$output"; else cp /work/receipt.json "$output"; fi; echo enroll >> /work/requests.log; fi; test -z "$wfmt" || printf '%s' "$code"; exit 0;;
- */heartbeat) test ! -f /work/revoked || exit 22; echo heartbeat >> /work/requests.log; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi;;
+ */heartbeat) case "$data" in @*) cp "\${data#@}" /work/heartbeat-body.json;; esac; if [ -f /work/revoked ]; then [ -z "$wfmt" ] || printf 401; exit 0; fi; echo heartbeat >> /work/requests.log; if [ -f /work/heartbeat-reply.json ]; then cp /work/heartbeat-reply.json "\${output:-/dev/stdout}"; else echo '{"ports":[]}' > "\${output:-/dev/stdout}"; fi; [ -z "$wfmt" ] || printf 200;;
+
  */assignments) cp /work/assignments.json "$output"; echo assignments >> /work/requests.log;;
  */status) case "$data" in @*) cat "\${data#@}" >> /work/statuses.log;; *) printf '%s' "$data" >> /work/statuses.log;; esac; printf '\\n' >> /work/statuses.log;;
+esac
+`,
+  );
+  // Stand-in for cloudflared. It reports its version (/work/cloudflared-old makes
+  // it old), records each quick-tunnel start and stop, and ends on TERM. Its
+  // output is the banner: NUL bytes around the address when /work/tunnel-nul
+  // exists, nothing when /work/tunnel-silent exists. /work/tunnel-banner replaces
+  // the address, and /work/tunnel-per-start gives every start its own address.
+  writeFileSync(
+    join(work, 'bin/cloudflared'),
+    `#!/bin/bash
+if [ "$1" = --version ]; then
+  if [ -f /work/cloudflared-old ]; then echo 'cloudflared version 2025.1.0'; else echo 'cloudflared version 2026.10.0 (built 2026-10-05T08:39 UTC)'; fi
+  exit 0
+fi
+echo "start $*" >> /work/cloudflared-calls.log
+trap 'echo stop >> /work/cloudflared-calls.log; exit 0' TERM INT
+address=https://quiet-fox-blue-cloud.trycloudflare.com
+n=$(( $(cat /work/tunnel-starts 2>/dev/null || echo 0) + 1 ))
+echo "$n" > /work/tunnel-starts
+if [ -f /work/tunnel-per-start ]; then address=https://quiet-fox-blue-cloud-$n.trycloudflare.com; fi
+[ ! -f /work/tunnel-banner ] || address=$(cat /work/tunnel-banner)
+if [ -f /work/tunnel-once ] && [ "$n" -gt 1 ]; then
+  :
+elif [ -f /work/tunnel-nul ]; then
+  printf junk; head -c 1 /dev/zero; echo "|  $address  |"
+elif [ ! -f /work/tunnel-silent ]; then
+  echo "|  $address  |"
+fi
+while :; do sleep 1; done
+`,
+  );
+  // A stand-in for systemd's unit control: alphaci-tunnel@<id>.service starts
+  // tunnel-run in the background with the unit's EnvironmentFile, and stop ends
+  // it. Every call is recorded in systemctl.log.
+  writeFileSync(
+    join(work, 'bin/systemctl'),
+    `#!/bin/bash
+echo "$*" >> /work/systemctl.log
+action=""; unit=""
+for arg in "$@"; do
+  case "$arg" in
+    is-active|start|stop) action="$arg";;
+    *.service) unit="$arg";;
+  esac
+done
+id="\${unit#alphaci-tunnel@}"; id="\${id%.service}"
+pidfile="/work/units/$id.pid"
+mkdir -p /work/units
+running() {
+  [ -f "$pidfile" ] || return 1
+  pid=$(cat "$pidfile")
+  [ -d "/proc/$pid" ] && [ "$(awk '/^State:/{print $2}' "/proc/$pid/status")" != Z ]
+}
+case "$action" in
+  is-active) running ;;
+  start)
+    running || {
+      set -a; . "/work/host/tunnels/$id/tunnel.env"; set +a
+      nohup /work/host/bin/tunnel-run "$id" > "/work/units/$id.log" 2>&1 < /dev/null &
+      echo $! > "$pidfile"
+    } ;;
+  stop)
+    running && kill "$(cat "$pidfile")" 2> /dev/null
+    rm -f "$pidfile" ;;
 esac
 `,
   );

@@ -16,7 +16,15 @@ import {
   labTrustProblem,
   readLabSigningKey,
 } from '#kernel/config/release-signing-key';
-import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
+import type {
+  AssignmentConfig,
+  TunnelStatus,
+} from '#kernel/ports/onprem-assignment.port';
+import {
+  TUNNEL_REPORT_WINDOW,
+  ingressReadiness,
+  tunnelReport,
+} from '../../domain/onprem-tunnel';
 
 export interface ReadinessCheck {
   id: string;
@@ -67,6 +75,7 @@ export class OnpremReadinessService {
         hosts: string | null;
         active_host_index: boolean;
         machine_schema: boolean;
+        tunnel_schema: boolean;
       }>(
         `SELECT to_regclass('env_provisioning.releases') AS releases,
                 to_regclass('env_provisioning.onprem_hosts') AS hosts,
@@ -77,7 +86,8 @@ export class OnpremReadinessService {
                  AND to_regclass('env_provisioning.onprem_enrollments') IS NOT NULL
                  AND to_regclass('env_provisioning.onprem_workspace_lifecycle') IS NOT NULL
                  AND to_regclass('env_provisioning.onprem_port_reservations') IS NOT NULL
-                 AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('env_provisioning.onprem_hosts') AND attname='machine_id' AND NOT attisdropped)) AS machine_schema`,
+                 AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('env_provisioning.onprem_hosts') AND attname='machine_id' AND NOT attisdropped)) AS machine_schema,
+                EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('env_provisioning.onprem_hosts') AND attname='tunnel_reported_at' AND NOT attisdropped) AS tunnel_schema`,
       );
       const schema = result.rows[0];
       const missing = [
@@ -87,6 +97,8 @@ export class OnpremReadinessService {
           '20261015010000_one_active_onprem_host.sql: onprem_hosts_one_active_per_environment',
         !schema?.machine_schema &&
           '20261015020000_onprem_machines.sql and 20261015030000_onprem_machine_assignments.sql',
+        !schema?.tunnel_schema &&
+          '20261017010000_onprem_tunnel_reports.sql: onprem_hosts tunnel columns',
       ].filter(Boolean);
       check(
         'schema',
@@ -95,7 +107,7 @@ export class OnpremReadinessService {
           ? 'Missing schema objects: ' + missing.join(', ')
           : 'Required release and host schema objects exist.',
       );
-      if (schema?.machine_schema) {
+      if (schema?.machine_schema && schema.tunnel_schema) {
         await this.machineChecks(
           projectId,
           environmentId,
@@ -259,11 +271,19 @@ export class OnpremReadinessService {
       revoked: boolean;
       fresh: boolean;
       checks: ReadinessCheck[];
+      agent_version: string | null;
       assignment_config: AssignmentConfig | null;
+      tunnel_status: TunnelStatus | null;
+      tunnel_url: string | null;
+      tunnel_message: string | null;
+      tunnel_reported_at: Date | null;
+      tunnel_fresh: boolean;
     }>(
       `SELECT h.machine_id, m.revoked_at IS NOT NULL AS revoked,
                 m.last_seen_at > NOW()-INTERVAL '90 seconds' AS fresh,
-                m.checks, h.assignment_config
+                m.checks, m.agent_version, h.assignment_config,
+                h.tunnel_status, h.tunnel_url, h.tunnel_message, h.tunnel_reported_at,
+                h.tunnel_reported_at > NOW()-INTERVAL '${TUNNEL_REPORT_WINDOW}' AS tunnel_fresh
            FROM env_provisioning.onprem_hosts h
            LEFT JOIN env_provisioning.onprem_machines m ON m.id=h.machine_id
           WHERE h.project_id=$1 AND h.environment_id=$2 AND h.revoked_at IS NULL`,
@@ -303,17 +323,23 @@ export class OnpremReadinessService {
         : 'failed',
       'Every deployed slot needs an explicit health path before the agent can deploy it.',
     );
-    check(
-      'ingress',
-      production &&
-        (config?.ingress.mode !== 'configured' ||
-          !config.ingress.publicUrl?.startsWith('https://'))
-        ? 'failed'
-        : 'unverified',
-      production
-        ? 'Verify the configured HTTPS ingress from a client device.'
-        : 'Verify access through the configured host ports from a client device.',
-    );
+    const ingress = config
+      ? ingressReadiness(
+          config.ingress,
+          config.ingress.mode === 'tunnel'
+            ? tunnelReport({
+                status: host.tunnel_status,
+                url: host.tunnel_url,
+                message: host.tunnel_message,
+                reportedAt: host.tunnel_reported_at,
+                fresh: host.tunnel_fresh,
+              })
+            : null,
+          production,
+          host.agent_version,
+        )
+      : { status: 'failed' as const, message: 'No assignment configuration.' };
+    check('ingress', ingress.status, ingress.message);
     check(
       'host-ports',
       'unverified',

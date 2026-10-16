@@ -7,6 +7,7 @@ import type { AssignmentConfig } from '../../src/kernel/ports/onprem-assignment.
 import {
   ONPREM_PORT_RANGE,
   OnpremAssignmentsRepository,
+  type CurrentMachineAssignment,
   type MachineAssignment,
 } from '../../src/modules/runtime/infrastructure/repositories/onprem-assignments.repository';
 import { OnpremMachinesRepository } from '../../src/modules/runtime/infrastructure/repositories/onprem-machines.repository';
@@ -59,6 +60,14 @@ describe('Reusable machine assignment authorization', () => {
     requestId: randomUUID(),
     config,
   });
+  /** The tunnel report of the environment's machine assignment. */
+  const currentTunnel = async () =>
+    (
+      (await assignments.current(
+        projectId,
+        environmentId,
+      )) as CurrentMachineAssignment
+    ).tunnel;
   beforeAll(async () => {
     await pool.query(
       'INSERT INTO identity.app_users(id,login,github_user_id) VALUES($1::uuid,$1::text,$1::text)',
@@ -288,6 +297,63 @@ describe('Reusable machine assignment authorization', () => {
     )) as MachineAssignment;
     expect(back.machineId).toBe(machineId);
     await assignments.unassign(projectId, secondEnv, back.id);
+  });
+  it('stores the tunnel report per assignment, keeps it for older agents, and clears it on an empty snapshot', async () => {
+    const tunnelConfig: AssignmentConfig = {
+      ports: [{ slot: 'frontend', hostPort: 18210, containerPort: 3000 }],
+      health: [{ slot: 'frontend', path: '/' }],
+      ingress: { mode: 'tunnel', publicUrl: null },
+    };
+    const address = 'https://quiet-fox-blue-cloud.trycloudflare.com';
+    const bound = await assignments.assign({
+      ...input(),
+      config: tunnelConfig,
+    });
+    expect(await currentTunnel()).toMatchObject({
+      status: 'waiting',
+      publicUrl: null,
+    });
+    const reply = await machines.heartbeat(hash, {
+      agentVersion: 'test',
+      checks: [],
+      tunnels: [
+        {
+          assignmentId: bound.id,
+          status: 'running',
+          message: 'Ready.',
+          publicUrl: address,
+        },
+      ],
+    });
+    expect(reply.tunnels).toEqual([
+      {
+        assignmentId: bound.id,
+        projectId,
+        environmentId,
+        hostPort: bound.config.ports[0]!.hostPort,
+      },
+    ]);
+    expect(await currentTunnel()).toMatchObject({
+      status: 'running',
+      publicUrl: address,
+    });
+    // An agent that predates tunnels omits the field; its reports stay as they are.
+    await machines.heartbeat(hash, { agentVersion: 'test', checks: [] });
+    expect(await currentTunnel()).toMatchObject({
+      status: 'running',
+      publicUrl: address,
+    });
+    // A snapshot without this binding means its tunnel is gone.
+    await machines.heartbeat(hash, {
+      agentVersion: 'test',
+      checks: [],
+      tunnels: [],
+    });
+    expect(await currentTunnel()).toMatchObject({
+      status: 'waiting',
+      publicUrl: null,
+    });
+    await assignments.unassign(projectId, environmentId, bound.id);
   });
   it('holds credential authority through a status transaction, then denies revoked credentials', async () => {
     await assignments.assign(input());

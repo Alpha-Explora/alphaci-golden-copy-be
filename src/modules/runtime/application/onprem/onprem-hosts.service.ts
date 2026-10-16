@@ -26,9 +26,12 @@ import type {
   EnrollmentInput,
   EnrollmentReceipt,
   EnrollmentResult,
+  HeartbeatReply,
   InstallerRelease,
   MachineCheckIn,
+  MachineHeartbeatInput,
 } from './onprem-host.contracts';
+import { parseTunnelReport } from '../../domain/onprem-tunnel';
 
 export const MACHINE_TOKEN_PREFIX = 'onprem_machine_';
 export const hashMachineSecret = (value: string): string =>
@@ -109,15 +112,28 @@ export class OnpremHostsService {
       trustKeys,
     };
   }
-  /** The supervisor forwards and opens exactly the returned host ports. */
+  /**
+   * The supervisor forwards and opens exactly the returned host ports, and
+   * keeps a tunnel open for each returned tunnel binding.
+   */
   async heartbeat(
     credential: string,
-    input: MachineCheckIn,
-  ): Promise<{ ports: number[] }> {
+    input: MachineHeartbeatInput,
+  ): Promise<HeartbeatReply> {
     this.enabled();
     if (!credential.startsWith(MACHINE_TOKEN_PREFIX))
       throw new UnauthorizedException('Machine credential is invalid.');
-    return this.machines.heartbeat(hashMachineSecret(credential), input);
+    // An unacceptable tunnel entry is recorded as a failed tunnel with its reason;
+    // it never fails the check-in, so the machine keeps its place and ports.
+    const tunnels = input.tunnels?.flatMap((entry) => {
+      const report = parseTunnelReport(entry);
+      return report ? [report] : [];
+    });
+    return this.machines.heartbeat(hashMachineSecret(credential), {
+      agentVersion: input.agentVersion,
+      checks: input.checks,
+      ...(tunnels ? { tunnels } : {}),
+    });
   }
   /** The active machine a credential belongs to; null for any other credential. */
   async machineIdForCredential(

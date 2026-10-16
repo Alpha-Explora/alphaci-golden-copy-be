@@ -4,7 +4,11 @@
 set -e
 case "$1" in
   configure)
+    install -d -m 0755 /opt/alphaci
     install -d -m 0755 /opt/alphaci/bin /opt/alphaci/trust
+    install -d -m 0755 /opt/alphaci/tunnels
+    # Every tunnel unit runs as this user; each writes only its own run/ directory.
+    id -u alphaci-tunnel >/dev/null 2>&1 || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin alphaci-tunnel
     install -d -m 0700 /opt/alphaci/secrets /opt/alphaci/assignments
     if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
     if [ -z "$2" ]; then

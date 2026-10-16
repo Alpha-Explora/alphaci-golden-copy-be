@@ -58,9 +58,10 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    (container port 3000 for a frontend, 4000 for a backend, health at `/`);
    adjust them from Hosting if the application differs. With several connected
    machines, Hosting asks which one to use. AlphaCI picks each host port
-   (from 8080 upward, distinct per machine). Production requires an existing
-   HTTPS ingress, so it is assigned from Hosting. No reverse proxy or
-   certificate is invented.
+   (from 8080 upward, distinct per machine). Production needs an HTTPS address,
+   so it is assigned from Hosting: either an existing HTTPS ingress URL, or the
+   automatic HTTPS address described below. No reverse proxy or certificate is
+   invented.
 7. To retire a machine, enroll its replacement with a replacement code (or
    revoke it naming the replacement): its environments move to the new
    machine with the same host ports where they are free. Revoking without a
@@ -71,6 +72,75 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    revocation. Revoking also ends the machine's pending replacement enrollment,
    so that code stops working. To keep the environments on the replacement,
    consume its enrollment before revoking.
+
+## Automatic HTTPS address (tunnel)
+
+Choose **Automatic HTTPS address (tunnel)** for "How users reach it" in Hosting
+(or in the create wizard) when the machine has no DNS name or certificate. The
+machine then runs a Cloudflare quick tunnel from the environment's frontend host
+port to the internet and reports its `https://<words>-<words>.trycloudflare.com`
+address to AlphaCI with each check-in. Hosting shows the address under "Reached
+at", and the frontend target's address becomes that link.
+
+Production waits for the tunnel. Until a running tunnel reports its address,
+AlphaCI does not hand production releases to the machine, and Hosting says
+"Waiting for the HTTPS address." Other environments deploy without waiting, and
+their readiness says "Waiting for the machine to report its address."
+
+Requirements on the machine:
+
+- An agent of version 0.3.0 or newer. Readiness asks for an update otherwise.
+- `cloudflared` 2026.10.0 or newer on the `PATH` of root (`command -v cloudflared`
+  must succeed, and `cloudflared --version` must print a version). 2026.10.0 is
+  the release AlphaCI was tested with, and the agent refuses older releases.
+  An older or missing binary is reported as a plain message in Hosting; nothing
+  else on the machine is affected. When a newer release is tested, the agent's
+  minimum version is raised in `deploy/onprem/agent/tunnel.sh`.
+- Outbound HTTPS only. The tunnel makes outbound connections; no inbound port opens.
+- The environment's Compose stack must answer on its host port. The tunnel forwards
+  to it whether or not a release is healthy, so check the application separately.
+
+Each tunnel is its own systemd unit, `alphaci-tunnel@<environment UUID>.service`,
+configured by `/opt/alphaci/tunnels/<environment UUID>/tunnel.env`. It runs as the
+unprivileged user `alphaci-tunnel`. It can write only its `run/` subdirectory; the
+directory that holds its settings is root-owned, so the unit cannot replace them. It runs with
+no new privileges, no capabilities, and IPv4/IPv6 sockets only. systemd keeps
+it running and restarts it after 15 seconds if it stops. The supervisor starts
+the unit when an assignment uses tunnel mode and stops it when the assignment
+leaves the machine. The unit runs with an empty cloudflared config, so a
+`~/.cloudflared/config.yml` on the machine cannot change the quick tunnel.
+
+Logs are in the journal, not in files:
+
+    journalctl -u 'alphaci-tunnel@*' -n 200 --no-pager
+
+The support bundle (`alphaci-supervisor support-bundle`) includes the same output.
+AlphaCI only reports addresses that match the quick-tunnel form. An address of
+any other host, such as `api.trycloudflare.com` or an IP address, is not reported.
+
+**A quick-tunnel address changes when the tunnel restarts.** A restart happens
+after a machine reboot, after cloudflared exits, or after the assignment's port
+changes. The old address stops working, and the new one appears on the next
+check-in, about a minute later. Tell users, and update any link, bookmark,
+webhook, or OAuth redirect that uses it. Cloudflare documents quick tunnels for
+testing, not as a service level.
+
+Stopping tunnels:
+
+- A machine that is revoked, or whose credential is rejected at check-in, stops
+  every tunnel at its next check-in.
+- Linux uninstall: run `sudo ./uninstall.sh` from the agent directory of the installer archive,
+  or `sudo /opt/alphaci/bin/alphaci-supervisor --stop-tunnels` on its own. It disables the polling timers, then stops every tunnel. Containers,
+  credentials, and data remain.
+- Windows uninstall (`Uninstall-AlphaCIHost.ps1`) does the same through WSL.
+
+For production, use a **named tunnel on the customer's own domain**: create it
+with `cloudflared tunnel create` on the machine, route a hostname in the customer's
+DNS zone to it, keep its credentials on the machine, and run it as its own service
+pointing at the environment's frontend host port (Hosting lists it as "port N → 3000").
+Then choose **Through an existing proxy or domain** and enter that HTTPS hostname.
+AlphaCI does not create or rotate named tunnels yet; the hostname and its
+credentials stay with the customer.
 
 The Windows test command uses sign-in startup. The agent publishes every host
 port AlphaCI reserved on the machine (returned by each heartbeat) and the host

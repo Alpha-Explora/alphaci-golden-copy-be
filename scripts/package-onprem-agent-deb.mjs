@@ -53,6 +53,15 @@ export const PACKAGE_FILES = [
     'usr/lib/systemd/system/alphaci-machine.timer',
     0o644,
   ],
+  // The automatic-address tunnels: each unit runs tunnel-run, which runs cloudflared.
+  // cloudflared itself is installed on the machine separately; this package does not ship it.
+  ['deploy/onprem/agent/tunnel.sh', 'opt/alphaci/bin/tunnel.sh', 0o644],
+  ['deploy/onprem/agent/tunnel-run.sh', 'opt/alphaci/bin/tunnel-run', 0o755],
+  [
+    'deploy/onprem/agent/alphaci-tunnel@.service',
+    'usr/lib/systemd/system/alphaci-tunnel@.service',
+    0o644,
+  ],
 ];
 // [source, name under DEBIAN/]
 export const MAINTAINER_SCRIPTS = [

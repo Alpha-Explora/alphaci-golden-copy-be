@@ -33,6 +33,16 @@ export class MachineCheckInDto {
   @Type(() => HostCheckDto)
   checks!: HostCheckDto[];
 }
+export class HeartbeatDto extends MachineCheckInDto {
+  /**
+   * Tunnel reports, validated one by one by the service: an invalid entry is
+   * recorded as a failed tunnel, so it must not fail the whole check-in.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  tunnels?: unknown[];
+}
 export class ConsumeEnrollmentDto extends MachineCheckInDto {
   @Matches(/^[A-Za-z0-9_-]{43}$/) code!: string;
 }

@@ -9,6 +9,7 @@ describe('Host assignment after project creation', () => {
   const listProjectEnvironments = jest.fn();
   const assignProvisionedEnvironment = jest.fn();
   const ensureAutomaticAssignment = jest.fn();
+  const publicAddress = jest.fn();
   let create: jest.SpyInstance;
   beforeEach(() => {
     jest
@@ -100,7 +101,11 @@ describe('Host assignment after project creation', () => {
       undefined,
       undefined,
       undefined,
-      { assignProvisionedEnvironment, ensureAutomaticAssignment },
+      {
+        assignProvisionedEnvironment,
+        ensureAutomaticAssignment,
+        publicAddress,
+      },
     );
   }
   it('returns the created project with a retryable binding failure, without creating another repository', async () => {

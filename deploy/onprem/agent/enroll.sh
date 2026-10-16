@@ -65,7 +65,7 @@ printf 'Code received. Enrolling this machine...\n' >&2
 fi
 CODE="${CODE//[[:space:]]/}"
 [[ "$CODE" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo 'Invalid code format.' >&2; exit 1; }
-printf '%s' "$CODE" | jq -Rs '{code:.,agentVersion:"0.2.0",checks:[]}' > "$WORK/request.json"
+printf '%s' "$CODE" | jq -Rs '{code:.,agentVersion:"0.3.0",checks:[]}' > "$WORK/request.json"
 unset CODE
 # -w reports 000 when no response arrived at all. Only an HTTP answer is judged below.
 curl_status=0
@@ -113,7 +113,7 @@ jq -e '.trustKeys|type=="object" and length>0' "$WORK/response.json" >/dev/null
 jq -e --arg api "$API" '.apiUrl|rtrimstr("/")|rtrimstr("/api/v1")==$api' "$WORK/response.json" >/dev/null || { echo 'Pending enrollment belongs to a different API. Resolve it before changing servers.' >&2; exit 1; }
 jq -er '.credential' "$WORK/response.json" > "$WORK/machine-token"
 jq '.trustKeys' "$WORK/response.json" > "$WORK/trust.json"
-jq --arg root "$ROOT" '. as $r | {id:$r.machine.id,apiUrl:$r.apiUrl,agentVersion:"0.2.0",tokenFile:($root+"/secrets/machine-token"),trustFile:($root+"/trust.json")}' "$WORK/response.json" > "$WORK/machine.json"
+jq --arg root "$ROOT" '. as $r | {id:$r.machine.id,apiUrl:$r.apiUrl,agentVersion:"0.3.0",tokenFile:($root+"/secrets/machine-token"),trustFile:($root+"/trust.json")}' "$WORK/response.json" > "$WORK/machine.json"
 # Publish config last. An interrupted write never starts the timer.
 install -m 0600 "$WORK/machine-token" "$ROOT/secrets/machine-token"
 install -m 0600 "$WORK/trust.json" "$ROOT/trust.json"

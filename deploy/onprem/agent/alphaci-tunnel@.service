@@ -1,0 +1,30 @@
+[Unit]
+Description=AlphaCI automatic HTTPS address for environment %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Every alphaci-tunnel@ unit runs as this one user. Each unit may write only its own
+# run/ directory; the environment directory, which holds its settings, is root-owned.
+User=alphaci-tunnel
+Group=alphaci-tunnel
+UMask=0077
+EnvironmentFile=/opt/alphaci/tunnels/%i/tunnel.env
+Environment=HOME=/opt/alphaci/tunnels/%i/run
+ExecStart=/opt/alphaci/bin/tunnel-run %i
+Restart=always
+RestartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/alphaci/tunnels/%i/run
+ProtectHome=yes
+# PrivateTmp is left out: it failed the mount-namespace setup in the WSL test host.
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -28,8 +28,15 @@ import type {
 } from '#kernel/ports/onprem-assignment.port';
 import { canManageHosting } from '#kernel/rules/persona-access.rules';
 import {
+  effectivePublicAddress,
+  servedSlot,
+  tunnelReport,
+} from '../../domain/onprem-tunnel';
+import {
   OnpremAssignmentsRepository,
   requestedConfig,
+  type CurrentMachineAssignment,
+  type MachineAssignment,
 } from '../../infrastructure/repositories/onprem-assignments.repository';
 
 const ONPREM_COMPOSE = 'onprem-compose';
@@ -105,10 +112,17 @@ export function validateAssignmentConfig(
   }
   if (
     !config.ingress ||
-    !['direct', 'configured'].includes(config.ingress.mode)
+    !(['direct', 'configured', 'tunnel'] as string[]).includes(
+      config.ingress.mode,
+    )
   )
     throw new BadRequestException(
-      'Select direct access or configured ingress.',
+      'Select direct access, configured ingress, or the automatic HTTPS address.',
+    );
+  // The machine reports a tunnel's address; a client never sets it.
+  if (config.ingress.mode === 'tunnel' && config.ingress.publicUrl !== null)
+    throw new BadRequestException(
+      'The automatic HTTPS address is reported by the machine, so no public URL can be set.',
     );
   if (config.ingress.publicUrl !== null) {
     let url: URL;
@@ -126,14 +140,34 @@ export function validateAssignmentConfig(
         'Ingress URL must be HTTP or HTTPS without credentials.',
       );
   }
+  // A tunnel's HTTPS address exists once the machine reports it, so the
+  // requirement is checked then, by readiness, not when the assignment is saved.
   if (
     production &&
+    config.ingress.mode !== 'tunnel' &&
     (config.ingress.mode !== 'configured' ||
       !config.ingress.publicUrl?.startsWith('https://'))
   )
     throw new BadRequestException(
-      'Production requires an explicitly configured HTTPS ingress URL.',
+      'Production requires an HTTPS address: a configured HTTPS ingress URL or the automatic HTTPS address.',
     );
+}
+
+/** A just-saved assignment has no tunnel report yet. */
+function presented(assignment: MachineAssignment): CurrentMachineAssignment {
+  return {
+    ...assignment,
+    tunnel:
+      assignment.config.ingress.mode === 'tunnel'
+        ? tunnelReport({
+            status: null,
+            url: null,
+            message: null,
+            reportedAt: null,
+            fresh: false,
+          })
+        : null,
+  };
 }
 
 @Injectable()
@@ -186,7 +220,7 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
       slots,
       environment.role === 'production',
     );
-    return this.repository.assign({
+    const result = await this.repository.assign({
       ...input,
       machineId,
       config: requestedConfig(input.config),
@@ -195,6 +229,7 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
       userId,
       workspaceId: membership.workspaceId,
     });
+    return presented(result);
   }
   async ensureAutomaticAssignment(
     projectId: string,
@@ -275,6 +310,23 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
     )
       return null;
     return targets.map((target) => target.slot);
+  }
+  /**
+   * The address users reach the environment at: the machine's reported tunnel
+   * address or the configured URL. Null when there is none yet, and null rather
+   * than an error when on-prem delivery is off, so target listings still load.
+   */
+  async publicAddress(
+    projectId: string,
+    environmentId: string,
+    slot: string,
+  ): Promise<string | null> {
+    if (this.config.get('ONPREM_RELEASES_ENABLED') !== 'true') return null;
+    const current = await this.repository.current(projectId, environmentId);
+    // The address belongs to the slot the tunnel serves, not to every slot.
+    if (!current?.config || servedSlot(current.config.ports) !== slot)
+      return null;
+    return effectivePublicAddress(current.config.ingress, current.tunnel);
   }
   async unassign(
     projectId: string,

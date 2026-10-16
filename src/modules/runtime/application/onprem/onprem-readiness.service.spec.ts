@@ -6,6 +6,7 @@ import { labSigningKeyId } from '#kernel/config/release-signing-key';
 import { ConfigService } from '@nestjs/config';
 import type { DatabaseService } from '#kernel/db/database.service';
 import type { DeploymentProjectReferenceLookup } from '#kernel/ports/deployment-runtime.port';
+import { UPDATE_AGENT_MESSAGE } from '../../domain/onprem-tunnel';
 import { OnpremReadinessService } from './onprem-readiness.service';
 
 describe('On-prem readiness', () => {
@@ -74,6 +75,7 @@ describe('On-prem readiness', () => {
               hosts: 'hosts',
               active_host_index: true,
               machine_schema: true,
+              tunnel_schema: true,
             },
           ],
         })
@@ -114,6 +116,117 @@ describe('On-prem readiness', () => {
       );
     },
   );
+
+  describe('automatic HTTPS address (tunnel) ingress', () => {
+    const ingress = (
+      role: 'production' | 'non_production',
+      report: Record<string, unknown>,
+    ) => {
+      projects.findProjectEnvironment.mockResolvedValue({ id: 'env', role });
+      query
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              releases: 'releases',
+              hosts: 'hosts',
+              active_host_index: true,
+              machine_schema: true,
+              tunnel_schema: true,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              machine_id: 'machine',
+              fresh: true,
+              revoked: false,
+              checks: [{ id: 'docker', status: 'passed', message: 'Docker.' }],
+              assignment_config: {
+                ports: [
+                  { slot: 'frontend', hostPort: 8080, containerPort: 3000 },
+                ],
+                health: [{ slot: 'frontend', path: '/' }],
+                ingress: { mode: 'tunnel', publicUrl: null },
+              },
+              agent_version: '0.3.0',
+              tunnel_status: null,
+              tunnel_url: null,
+              tunnel_message: null,
+              tunnel_reported_at: null,
+              tunnel_fresh: false,
+              ...report,
+            },
+          ],
+        });
+      return service().read('project', 'env', 'viewer');
+    };
+    const reportedAt = new Date();
+    it('passes ingress for production once the machine reports an HTTPS address', async () => {
+      const result = await ingress('production', {
+        tunnel_status: 'running',
+        tunnel_url: 'https://quiet-fox-blue.trycloudflare.com',
+        tunnel_message: 'Ready.',
+        tunnel_reported_at: reportedAt,
+        tunnel_fresh: true,
+      });
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'ingress',
+          status: 'unverified',
+          message: expect.stringContaining(
+            'https://quiet-fox-blue.trycloudflare.com',
+          ),
+        }),
+      );
+    });
+    it('fails production until a report arrives, then shows the plain reason from the machine', async () => {
+      const waiting = await ingress('production', {});
+      expect(waiting.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'ingress',
+          status: 'failed',
+          message:
+            'Waiting for the HTTPS address. Production is not deployed until the machine reports one.',
+        }),
+      );
+      const unavailable = await ingress('production', {
+        tunnel_status: 'unavailable',
+        tunnel_message: 'cloudflared is not installed on this machine.',
+        tunnel_reported_at: reportedAt,
+        tunnel_fresh: true,
+      });
+      expect(unavailable.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'ingress',
+          status: 'failed',
+          message:
+            'Waiting for the HTTPS address. cloudflared is not installed on this machine.',
+        }),
+      );
+    });
+    it('asks for an agent update when the machine runs an agent without tunnels', async () => {
+      const result = await ingress('production', { agent_version: '0.2.0' });
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'ingress',
+          status: 'failed',
+          message: `Waiting for the HTTPS address. ${UPDATE_AGENT_MESSAGE}`,
+        }),
+      );
+    });
+    it('treats a stale report as waiting', async () => {
+      const result = await ingress('non_production', {
+        tunnel_status: 'running',
+        tunnel_url: 'https://quiet-fox-blue.trycloudflare.com',
+        tunnel_reported_at: reportedAt,
+        tunnel_fresh: false,
+      });
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({ id: 'ingress', status: 'failed' }),
+      );
+    });
+  });
 
   describe('release-signing check', () => {
     const KEY_VERSION =

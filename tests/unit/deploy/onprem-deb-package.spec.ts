@@ -32,6 +32,9 @@ it('lays the agent out under /opt/alphaci with the machine units and the enrollm
     'usr/bin/alphaci-enroll',
     'usr/lib/systemd/system/alphaci-machine.service',
     'usr/lib/systemd/system/alphaci-machine.timer',
+    'opt/alphaci/bin/tunnel.sh',
+    'opt/alphaci/bin/tunnel-run',
+    'usr/lib/systemd/system/alphaci-tunnel@.service',
     'DEBIAN/control',
     'DEBIAN/postinst',
     'DEBIAN/prerm',
@@ -53,6 +56,12 @@ it('ships every /opt/alphaci/bin program that the shipped scripts run', () => {
     'opt/alphaci/bin/enroll',
     'opt/alphaci/bin/ubuntu-prerequisites.sh',
     'usr/bin/alphaci-enroll',
+    // Maintainer scripts and the tunnel unit call programs too; each must be packaged.
+    'usr/lib/systemd/system/alphaci-tunnel@.service',
+    'opt/alphaci/bin/tunnel.sh',
+    'opt/alphaci/bin/tunnel-run',
+    'DEBIAN/postinst',
+    'DEBIAN/prerm',
   ];
   const called = new Set<string>();
   for (const file of shipped)
@@ -87,12 +96,31 @@ it('does not enroll or start polling on install', () => {
   );
 });
 
+it('creates the tunnel user and directory on install, and ends tunnels on removal', () => {
+  const postinst = read('DEBIAN/postinst');
+  expect(postinst).toContain(
+    'useradd --system --user-group --no-create-home --shell /usr/sbin/nologin alphaci-tunnel',
+  );
+  expect(postinst).toMatch(/id -u alphaci-tunnel .*\|\| useradd/);
+  expect(postinst).toContain('install -d -m 0755 /opt/alphaci/tunnels');
+  expect(read('DEBIAN/prerm')).toContain(
+    '/opt/alphaci/bin/alphaci-supervisor --stop-tunnels',
+  );
+});
+it('packages the program that each tunnel unit starts', () => {
+  const unit = read('usr/lib/systemd/system/alphaci-tunnel@.service');
+  expect(unit).toContain('ExecStart=/opt/alphaci/bin/tunnel-run %i');
+  expect(existsSync(join(stage, 'opt/alphaci/bin/tunnel-run'))).toBe(true);
+});
+
 linuxOnly('shell files in the package', () => {
   it('have valid syntax and the expected permissions', () => {
     for (const file of [
       'usr/bin/alphaci-enroll',
       'opt/alphaci/bin/ubuntu-prerequisites.sh',
       'opt/alphaci/bin/enroll',
+      'opt/alphaci/bin/tunnel-run',
+      'opt/alphaci/bin/tunnel.sh',
     ]) {
       expect(spawnSync('bash', ['-n', join(stage, file)]).status).toBe(0);
     }
@@ -107,6 +135,9 @@ linuxOnly('shell files in the package', () => {
       0o755,
     );
     expect(statSync(join(stage, 'DEBIAN/postinst')).mode & 0o777).toBe(0o755);
+    expect(
+      statSync(join(stage, 'opt/alphaci/bin/tunnel-run')).mode & 0o777,
+    ).toBe(0o755);
   });
   it('refuses to run without root before touching anything', () => {
     if (process.getuid?.() === 0) return;

@@ -589,6 +589,19 @@ export class ReleaseRegistryService {
         async (auth, client) => {
           const result = [];
           for (const binding of auth.bindings) {
+            // Production is not handed to a machine whose tunnel is not running yet:
+            // its HTTPS address is what makes production reachable.
+            if (
+              binding.machine?.config.ingress.mode === 'tunnel' &&
+              !binding.tunnelReady &&
+              (
+                await this.projects.findProjectEnvironment(
+                  binding.projectId,
+                  binding.environmentId,
+                )
+              )?.role === 'production'
+            )
+              continue;
             const assignments = await this.releases.listHostAssignments(
               binding.environmentId,
               client,

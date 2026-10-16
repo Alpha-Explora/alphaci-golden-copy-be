@@ -5,5 +5,7 @@ After=network-online.target docker.service
 
 [Service]
 Type=oneshot
+# A stuck run must not hold the oneshot unit (and its check-in) forever.
+TimeoutStartSec=120
 UMask=0077
 ExecStart=/opt/alphaci/bin/alphaci-supervisor --once

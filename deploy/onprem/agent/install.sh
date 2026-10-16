@@ -8,10 +8,18 @@ if [ "${1:-}" = --enroll ]; then
   [ "$EUID" -eq 0 ] || { echo 'Run this installer with sudo.' >&2; exit 1; }
   . ./ubuntu-prerequisites.sh
   check_ubuntu_prerequisites
+  # Set explicitly: a restrictive umask must not leave the tunnel user unable to traverse.
+  install -d -m 0755 /opt/alphaci
   install -d -m 0755 /opt/alphaci/bin
   install -d -m 0700 /opt/alphaci/secrets /opt/alphaci/assignments
   install -m 0755 alphaci-agent.sh /opt/alphaci/bin/alphaci-agent
   install -m 0755 alphaci-supervisor.sh /opt/alphaci/bin/alphaci-supervisor
+  install -m 0644 tunnel.sh /opt/alphaci/bin/tunnel.sh
+  install -m 0755 tunnel-run.sh /opt/alphaci/bin/tunnel-run
+  install -d -m 0755 /opt/alphaci/tunnels
+  # Every alphaci-tunnel@ unit runs as this user; each may write only its run/ directory.
+  id -u alphaci-tunnel > /dev/null 2>&1 || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin alphaci-tunnel
+  install -m 0644 alphaci-tunnel@.service /etc/systemd/system/alphaci-tunnel@.service
   [ ! -f render-assignment.sh ] || install -m 0755 render-assignment.sh /opt/alphaci/bin/render-assignment
   # API URL, optional platform and optional --replace pass through unchanged. So does
   # ALPHACI_ENROLL_CODE_FILE, which enroll.sh reads the code from when it is set.
@@ -33,6 +41,7 @@ if [ "${1:-}" = --enroll ]; then
   exit 0
 fi
 
+install -d -m 0755 /opt/alphaci
 install -d -m 0755 /opt/alphaci/bin /opt/alphaci/trust /opt/alphaci/compose /opt/alphaci/releases /opt/alphaci/tls
 install -d -m 0700 /opt/alphaci/secrets /opt/alphaci/support
 install -m 0755 alphaci-agent.sh /opt/alphaci/bin/alphaci-agent
