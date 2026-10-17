@@ -335,9 +335,12 @@ describe('buildStagedWorkflowBundle', () => {
     const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
     const policy = bundle.workflowFiles[1]!.yaml;
 
-    // strict profile (uat/main) bumps coverage by 10; baseline stays at 80
-    expect(policy).toContain('COVERAGE_THRESHOLD=90');
-    expect(policy).toContain('COVERAGE_THRESHOLD=80');
+    // One coverage threshold on every branch: dev, uat and main all need 80,
+    // so a commit that passes dev cannot fail the same bar on promotion.
+    expect(policy.match(/COVERAGE_THRESHOLD=\d+/g)).toEqual([
+      'COVERAGE_THRESHOLD=80',
+    ]);
+    expect(policy).not.toContain('COVERAGE_THRESHOLD=90');
     // branch resolution must use the originating branch, not ref_name alone
     expect(policy).toContain(
       'github.event.workflow_run.head_branch || github.ref_name',
@@ -346,9 +349,10 @@ describe('buildStagedWorkflowBundle', () => {
     expect(quality.jobs['backend-tests']?.with?.['coverage-threshold']).toBe(
       '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
     );
-    // The strict bar on every branch: on dev it is above the gate and warns,
-    // on uat and main it equals the gate and says nothing.
-    expect(policy).toContain('echo "promotion-coverage-threshold=90"');
+    // Still published for the central test workflows, equal to the gate.
+    expect(policy).toContain(
+      'echo "promotion-coverage-threshold=$COVERAGE_THRESHOLD"',
+    );
     expect(
       quality.jobs['branch-policy']?.outputs?.['promotion-coverage-threshold'],
     ).toBe('${{ steps.resolve.outputs.promotion-coverage-threshold }}');
@@ -378,17 +382,18 @@ describe('buildStagedWorkflowBundle', () => {
     );
   });
 
-  it('caps the strict coverage threshold at 95', () => {
+  it('keeps a high Project threshold as is on every branch, with no uat/main bonus', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
       coverageThreshold: 92,
     });
 
-    expect(bundle.workflowFiles[1]!.yaml).toContain('COVERAGE_THRESHOLD=95');
-    expect(bundle.workflowFiles[1]!.yaml).toContain(
-      'echo "promotion-coverage-threshold=95"',
-    );
+    const quality = bundle.workflowFiles[1]!.yaml;
+    expect(quality.match(/COVERAGE_THRESHOLD=\d+/g)).toEqual([
+      'COVERAGE_THRESHOLD=92',
+    ]);
+    expect(quality).not.toContain('COVERAGE_THRESHOLD=95');
   });
 
   it('adds a secret-gated SonarCloud job that consumes the coverage artifact', () => {

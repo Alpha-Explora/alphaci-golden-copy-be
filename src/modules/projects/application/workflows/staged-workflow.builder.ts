@@ -352,10 +352,6 @@ function branchIsOneOfAndDeployed(
   return `\${{ (${test}) && needs.${RESOLVE_TARGETS_JOB_ID}.outputs.${kind}-skipped != 'true' }}`;
 }
 
-/** Extra coverage demanded on uat/main on top of the baseline, capped. */
-const STRICT_COVERAGE_BONUS = 10;
-const STRICT_COVERAGE_CAP = 95;
-
 export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   /**
    * Distinguishes co-located pipelines in a single repository (microservices
@@ -458,7 +454,6 @@ interface StagedWorkflowContext {
   servicePath: string;
   runtimeVersion: string;
   coverageThreshold: number;
-  strictCoverageThreshold: number;
   centralWorkflowRef: string;
   requireProductionApproval: boolean;
   stack: WorkflowTemplate['stack'];
@@ -543,10 +538,6 @@ function resolveStagedContext(
     // which is every Node stack. See ADR-0006.
     runtimeVersion: template.runtimeVersion ?? dto.nodeVersion ?? '24',
     coverageThreshold,
-    strictCoverageThreshold: Math.min(
-      coverageThreshold + STRICT_COVERAGE_BONUS,
-      STRICT_COVERAGE_CAP,
-    ),
     centralWorkflowRef: dto.centralWorkflowRef ?? DEFAULT_CENTRAL_WORKFLOW_REF,
     requireProductionApproval:
       dto.enhancements?.includes('strictProductionApproval') ?? false,
@@ -694,10 +685,7 @@ function buildQualityWorkflowFile(
           if: CHAINED_STAGE_GATE,
           ...validationJob('quality'),
         },
-        [BRANCH_POLICY_JOB_ID]: branchPolicyJob(
-          ctx.coverageThreshold,
-          ctx.strictCoverageThreshold,
-        ),
+        [BRANCH_POLICY_JOB_ID]: branchPolicyJob(ctx.coverageThreshold),
         // Test, lint, typecheck and security are the toolchain's to define:
         // every one of them names a language runtime. Sonar below is not, and
         // stays here so one job serves every stack.
@@ -2217,16 +2205,18 @@ function validationJob(stage: WorkflowStage) {
 
 /**
  * Resolves the per-branch governance policy once so every downstream job
- * consumes the same decision. Pull-request source refs get the baseline;
- * direct `uat` and `main` runs get the strict profile. Sonar participation is
- * detected from secret presence (job-level `if` cannot read secrets context).
+ * consumes the same decision. Coverage is the Project's one threshold on
+ * every branch: a commit that passes on dev must not fail the same bar on
+ * uat or main, which is what a stricter uat/main threshold (it used to add
+ * 10 points) did. `uat` and `main` stay strict in the other ways: warnings
+ * fail and the Sonar gate is awaited. Sonar participation is detected from
+ * secret presence (job-level `if` cannot read secrets context).
  *
- * `promotion-coverage-threshold` is the strict bar on every branch. The test
- * jobs only warn when coverage clears their own threshold but not this one,
- * so it says something on dev and nothing on uat and main, where the two are
- * equal. Without it a dev commit met the strict bar only when promotion failed.
+ * `promotion-coverage-threshold` is still published, equal to the gate, for
+ * the central test workflows that read it: they warn only when coverage clears
+ * the gate but not the promotion bar, which can no longer happen.
  */
-function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
+function branchPolicyJob(coverageThreshold: number) {
   return {
     needs: ['validate-access'],
     runs_on: 'ubuntu-latest',
@@ -2249,19 +2239,18 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
         },
         run: [
           `BRANCH="\${{ ${BRANCH_EXPR} }}"`,
+          `COVERAGE_THRESHOLD=${coverageThreshold}`,
           'if [ "$BRANCH" = "uat" ] || [ "$BRANCH" = "main" ]; then',
-          `  COVERAGE_THRESHOLD=${strictCoverage}`,
           '  FAIL_ON_WARNING=true',
           '  SONAR_GATE_WAIT=true',
           'else',
-          `  COVERAGE_THRESHOLD=${baseCoverage}`,
           '  FAIL_ON_WARNING=false',
           '  SONAR_GATE_WAIT=false',
           'fi',
           '{',
           '  echo "branch=$BRANCH"',
           '  echo "coverage-threshold=$COVERAGE_THRESHOLD"',
-          `  echo "promotion-coverage-threshold=${strictCoverage}"`,
+          '  echo "promotion-coverage-threshold=$COVERAGE_THRESHOLD"',
           '  echo "fail-on-warning=$FAIL_ON_WARNING"',
           '  echo "sonar-enabled=$SONAR_CONFIGURED"',
           '  echo "sonar-gate-wait=$SONAR_GATE_WAIT"',
