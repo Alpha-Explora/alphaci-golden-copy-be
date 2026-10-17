@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import type { SessionUserLookup } from '#kernel/auth/session-user-lookup.contract';
 import type { SessionUser } from '#kernel/auth/session-user.interface';
 import { DatabaseService } from '#kernel/db/database.service';
 
@@ -57,8 +58,14 @@ export interface ArchivedUserLookup {
   githubUserId: string | null;
 }
 
+/**
+ * Also serves as the SESSION_USER_LOOKUP adapter (AuthIdentityModule aliases
+ * the token to this class with useExisting). Nest does not type-check an
+ * alias against its contract, so `implements` is what makes the compiler
+ * hold this class to it.
+ */
 @Injectable()
-export class UsersRepository {
+export class UsersRepository implements SessionUserLookup {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async upsertGitHubUser(input: UpsertGitHubUserInput): Promise<SessionUser> {
@@ -281,6 +288,11 @@ export class UsersRepository {
 
     const row = result.rows[0];
     return row ? this.toSessionUser(row) : null;
+  }
+
+  /** SessionUserLookup: the session guard and the GitHub access sync resolve a user by id. */
+  findSessionUser(userId: string): Promise<SessionUser | null> {
+    return this.findById(userId);
   }
 
   async markOnboardingComplete(userId: string): Promise<void> {

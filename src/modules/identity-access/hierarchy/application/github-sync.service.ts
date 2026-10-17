@@ -7,9 +7,16 @@ import {
   SESSION_USER_LOOKUP,
   type SessionUserLookup,
 } from '#kernel/auth/session-user-lookup.contract';
+import type { SessionUser } from '#kernel/auth/session-user.interface';
 import { OutboxRepository } from '#kernel/events/outbox.repository';
-import { AssignmentsRepository } from '../infrastructure/assignments.repository';
-import { RepositoriesRepository } from '../infrastructure/repositories.repository';
+import {
+  AssignmentsRepository,
+  type AssignmentRecord,
+} from '../infrastructure/assignments.repository';
+import {
+  RepositoriesRepository,
+  type RepositoryRecord,
+} from '../infrastructure/repositories.repository';
 import { GithubAccessSyncRepository } from '../infrastructure/github-access-sync.repository';
 import { GithubTeamAccessProvider } from './github-team-access.provider';
 import {
@@ -23,6 +30,20 @@ const MAX_SYNC_RETRIES_DEFAULT = 5;
 export interface HierarchyOutboxJobPayload {
   assignmentId: string;
   actingUserId: string;
+}
+
+/** The repository and the person a grant or revoke job acts on. */
+type JobTarget =
+  | {
+      resolved: true;
+      repository: RepositoryRecord;
+      repoFullName: string;
+      user: SessionUser;
+    }
+  | { resolved: false; error: string; groupId?: string };
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -220,39 +241,35 @@ export class GithubSyncService {
     if (!assignment || assignment.desiredState !== 'assigned') {
       return; // superseded by a later revoke — nothing to do.
     }
-    const repository = await this.repositoriesRepository.findById(
-      assignment.repositoryId,
-    );
-    const user = await this.sessionUserLookup.findSessionUser(
-      assignment.userId,
-    );
-    if (!repository?.repoFullName || !user) {
+    const target = await this.resolveJobTarget(assignment);
+    if (!target.resolved) {
       await this.failGrant(
         assignmentId,
-        'Repository or user could not be resolved for grant',
-        repository?.groupId,
+        `${target.error} for grant`,
+        target.groupId,
         actingUserId,
       );
       return;
     }
+    const { repository, repoFullName, user } = target;
 
     try {
       await this.syncRepository.markSyncing(assignmentId);
-      const [orgLogin] = repository.repoFullName.split('/');
+      const [orgLogin] = repoFullName.split('/');
       const team = await this.provider.ensureTeam({
         repositoryId: repository.id,
-        repoFullName: repository.repoFullName,
+        repoFullName,
         actingUserId,
       });
       await this.provider.addMember({
         orgLogin: orgLogin ?? '',
         githubTeamSlug: team.githubTeamSlug,
         githubLogin: user.login,
-        repoFullName: repository.repoFullName,
+        repoFullName,
         actingUserId,
       });
       const verification = await this.provider.verifyEffectivePermission({
-        repoFullName: repository.repoFullName,
+        repoFullName,
         githubLogin: user.login,
         expectedPermission: 'write',
         expectedTeamSlug: team.githubTeamSlug,
@@ -294,7 +311,7 @@ export class GithubSyncService {
     } catch (error) {
       await this.failGrant(
         assignmentId,
-        error instanceof Error ? error.message : String(error),
+        errorMessage(error),
         repository.groupId,
         actingUserId,
       );
@@ -309,33 +326,28 @@ export class GithubSyncService {
     if (!assignment || assignment.desiredState !== 'unassigned') {
       return;
     }
-    const repository = await this.repositoriesRepository.findById(
-      assignment.repositoryId,
-    );
-    const user = await this.sessionUserLookup.findSessionUser(
-      assignment.userId,
-    );
-    const sync = await this.syncRepository.findByAssignmentId(assignmentId);
-
-    if (!repository?.repoFullName || !user) {
+    const target = await this.resolveJobTarget(assignment);
+    if (!target.resolved) {
       await this.failRevoke(
         assignmentId,
-        'Repository or user could not be resolved for revoke',
-        repository?.groupId,
+        `${target.error} for revoke`,
+        target.groupId,
         actingUserId,
       );
       return;
     }
+    const { repository, repoFullName, user } = target;
 
     try {
+      const sync = await this.syncRepository.findByAssignmentId(assignmentId);
       await this.syncRepository.markSyncing(assignmentId);
-      const [orgLogin] = repository.repoFullName.split('/');
+      const [orgLogin] = repoFullName.split('/');
       const teamSlug =
         sync?.githubTeamSlug ??
         (
           await this.provider.ensureTeam({
             repositoryId: repository.id,
-            repoFullName: repository.repoFullName,
+            repoFullName,
             actingUserId,
           })
         ).githubTeamSlug;
@@ -344,11 +356,11 @@ export class GithubSyncService {
         orgLogin: orgLogin ?? '',
         githubTeamSlug: teamSlug,
         githubLogin: user.login,
-        repoFullName: repository.repoFullName,
+        repoFullName,
         actingUserId,
       });
       const verification = await this.provider.verifyEffectivePermission({
-        repoFullName: repository.repoFullName,
+        repoFullName,
         githubLogin: user.login,
         expectedPermission: 'write',
         expectedTeamSlug: teamSlug,
@@ -390,10 +402,51 @@ export class GithubSyncService {
     } catch (error) {
       await this.failRevoke(
         assignmentId,
-        error instanceof Error ? error.message : String(error),
+        errorMessage(error),
         repository.groupId,
         actingUserId,
       );
+    }
+  }
+
+  /**
+   * Resolves the repository and the person for a job. A lookup that throws is
+   * returned as unresolved instead of escaping: an escaped error skipped
+   * failGrant, so the outbox retried the event until it was quarantined and
+   * the assignment stayed 'pending', which Re-sync treats as live and never
+   * retries. Through failGrant/failRevoke the job lands in the failed state
+   * that the bounded requeue and Re-sync recover.
+   */
+  private async resolveJobTarget(
+    assignment: AssignmentRecord,
+  ): Promise<JobTarget> {
+    let repository: RepositoryRecord | null = null;
+    try {
+      repository = await this.repositoriesRepository.findById(
+        assignment.repositoryId,
+      );
+      const user = await this.sessionUserLookup.findSessionUser(
+        assignment.userId,
+      );
+      if (repository?.repoFullName && user) {
+        return {
+          resolved: true,
+          repository,
+          repoFullName: repository.repoFullName,
+          user,
+        };
+      }
+      return {
+        resolved: false,
+        error: 'Repository or user could not be resolved',
+        ...(repository && { groupId: repository.groupId }),
+      };
+    } catch (error) {
+      return {
+        resolved: false,
+        error: `Repository or user lookup failed (${errorMessage(error)})`,
+        ...(repository && { groupId: repository.groupId }),
+      };
     }
   }
 
