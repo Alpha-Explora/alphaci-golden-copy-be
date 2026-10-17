@@ -295,6 +295,69 @@ describe('GithubSyncService — assignment state machine (hierarchy state-machin
     );
   });
 
+  it('marks a grant failed, instead of throwing, when the user lookup throws', async () => {
+    // A throw here used to escape processJob: the outbox quarantined the event
+    // and the assignment stayed 'pending', which Re-sync never retries.
+    assignmentsRepository.findById.mockResolvedValue(baseAssignment());
+    sessionUserLookup.findSessionUser.mockRejectedValue(
+      new TypeError('this.sessionUserLookup.findSessionUser is not a function'),
+    );
+    syncRepository.markFailed.mockResolvedValue(1);
+
+    await expect(
+      service.processJob(HIERARCHY_OUTBOX_TOPICS.grant, {
+        assignmentId: 'assignment-1',
+        actingUserId: 'pm-1',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(assignmentsRepository.markGrantFailed).toHaveBeenCalledWith(
+      'assignment-1',
+    );
+    expect(syncRepository.markFailed).toHaveBeenCalledWith({
+      assignmentId: 'assignment-1',
+      error: expect.stringContaining(
+        'findSessionUser is not a function',
+      ) as string,
+    });
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 'group-1' }),
+    );
+    expect(provider.addMember).not.toHaveBeenCalled();
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.grant }),
+    );
+  });
+
+  it('keeps a revoke in revoking, instead of throwing, when the user lookup throws', async () => {
+    assignmentsRepository.findById.mockResolvedValue(
+      baseAssignment({
+        desiredState: 'unassigned',
+        effectiveState: 'revoking',
+      }),
+    );
+    sessionUserLookup.findSessionUser.mockRejectedValue(
+      new Error('connection reset'),
+    );
+    syncRepository.markFailed.mockResolvedValue(1);
+
+    await expect(
+      service.processJob(HIERARCHY_OUTBOX_TOPICS.revoke, {
+        assignmentId: 'assignment-1',
+        actingUserId: 'pm-1',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(assignmentsRepository.markRevokeFailed).toHaveBeenCalledWith(
+      'assignment-1',
+    );
+    expect(assignmentsRepository.markGrantFailed).not.toHaveBeenCalled();
+    expect(provider.removeMember).not.toHaveBeenCalled();
+    expect(outboxRepository.publishDurably).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: HIERARCHY_OUTBOX_TOPICS.revoke }),
+    );
+  });
+
   it('transition #3: requestRevoke sets desired_state=unassigned and enqueues a revoke job', async () => {
     assignmentsRepository.setDesiredUnassigned.mockResolvedValue(
       baseAssignment({

@@ -2588,6 +2588,9 @@ describe('GithubService', () => {
 
       expect(result.merged).toBe(false);
       expect(result.message).toContain('does not have write access to o/r');
+      expect(result.message).toContain(
+        'Ask your Product owner to add you to this Project as a Developer.',
+      );
     });
 
     it('does not blame the person for a rate limit that outlasted the retries', async () => {

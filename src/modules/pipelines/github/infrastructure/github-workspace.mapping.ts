@@ -313,6 +313,10 @@ export function validationMessage(text: string): string {
  * - 403 / 404: the person lacks write access (GitHub answers 404 for a private
  *   repository it will not reveal). A rate-limit 403 that outlasted the
  *   retries is GitHub being busy, so it is NOT reported as missing access.
+ *   A Developer gets Write by being a Developer member of the repository's
+ *   Project, which a Product owner manages in ALPHACI, so that is the next
+ *   step named. Only a repository ALPHACI did not create needs a grant on
+ *   GitHub itself.
  */
 export function userWriteRefusal(
   status: number,
@@ -323,7 +327,7 @@ export function userWriteRefusal(
     return 'GitHub no longer accepts your sign-in, which happens when it has been revoked or replaced by a newer one. Sign out and sign in again, then retry.';
   }
   if ((status === 403 && !rateLimited) || status === 404) {
-    return `Your GitHub account does not have write access to ${repoFullName}. Ask a repository admin to grant it.`;
+    return `Your GitHub account does not have write access to ${repoFullName}. Ask your Product owner to add you to this Project as a Developer. If ALPHACI did not create this repository, a repository admin has to grant access on GitHub.`;
   }
   return null;
 }
