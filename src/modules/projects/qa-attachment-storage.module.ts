@@ -9,6 +9,8 @@ import {
   type QaAttachmentStoragePort,
 } from './application/qa-runs/qa-attachment-storage.port';
 import { PostgresQaAttachmentStorage } from './infrastructure/qa-attachment-storage.postgres';
+import { PostgresQaAttachmentOrphanSweep } from './infrastructure/qa-attachment-orphan-sweep.postgres';
+import { QaAttachmentOrphanSweepWorker } from './infrastructure/qa-attachment-orphan-sweep.worker';
 import { QaAttachmentStorage } from './infrastructure/qa-attachment-storage';
 
 /**
@@ -17,6 +19,8 @@ import { QaAttachmentStorage } from './infrastructure/qa-attachment-storage';
  *
  *   supabase  the private `qa-attachments` Storage bucket (service role key)
  *   postgres  bytea rows in projects.qa_attachment_objects, served by the backend
+ *
+ * It also schedules the orphaned-bytes sweep, which only the postgres driver needs.
  *
  * A module of its own, rather than a provider of QaRunsModule, because
  * application code may not import infrastructure classes
@@ -28,6 +32,9 @@ import { QaAttachmentStorage } from './infrastructure/qa-attachment-storage';
   providers: [
     QaAttachmentStorage,
     PostgresQaAttachmentStorage,
+    PostgresQaAttachmentOrphanSweep,
+    // Runs only when STORAGE_DRIVER=postgres (see the worker).
+    QaAttachmentOrphanSweepWorker,
     {
       provide: QA_ATTACHMENT_STORAGE,
       inject: [ConfigService, QaAttachmentStorage, PostgresQaAttachmentStorage],
