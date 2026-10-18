@@ -67,12 +67,23 @@ ALTER TABLE projects.qa_run_item_attachments ENABLE ROW LEVEL SECURITY;
 -- Private bucket: 3 MB per object, images only. public = false means the object
 -- URLs are not readable without a signed URL; there are deliberately no
 -- storage.objects policies, so only the service role (the backend) can touch it.
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'qa-attachments',
-  'qa-attachments',
-  false,
-  3145728,
-  ARRAY['image/png', 'image/jpeg', 'image/webp']
-)
-ON CONFLICT (id) DO NOTHING;
+--
+-- Guarded: storage.buckets exists only where Supabase Storage is installed. On
+-- a plain PostgreSQL database (self-hosted) the bucket is skipped, and the
+-- table itself is still created above. Where the table exists, the insert is
+-- the same as before.
+DO $$
+BEGIN
+  IF to_regclass('storage.buckets') IS NOT NULL THEN
+    INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    VALUES (
+      'qa-attachments',
+      'qa-attachments',
+      false,
+      3145728,
+      ARRAY['image/png', 'image/jpeg', 'image/webp']
+    )
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END
+$$;
