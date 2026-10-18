@@ -14,6 +14,12 @@ sources:
   - id: env
     resource: "deploy/selfhost/alphaci.env.example"
     title: "Settings reference"
+  - id: host-enroll
+    resource: "deploy/onprem/agent/enroll.sh"
+    title: "Host enrollment and trust file"
+  - id: host-render
+    resource: "deploy/onprem/agent/render-assignment.sh"
+    title: "Per-assignment release key check"
 ---
 # Self-hosted AlphaCI install (phase 1)
 
@@ -158,9 +164,121 @@ Store the backup encrypted and off the server. Restore a dump with `pg_restore -
 
 To go back to the previous release, set the previous digests and run `up -d` again. Schema changes are not reversed. If a migration must be undone, restore the backup taken before the upgrade.
 
-## Known limitation: existing on-prem hosts must re-enroll
+## Switching an existing host to the install's signing key
 
-Phase 1 signs releases with the customer-held key that `init` generated. An on-prem host that was set up before this key existed trusts a different key, so it rejects the new releases. Each such host must be re-enrolled so that it trusts the new key ID that `init` printed. The enrollment steps are in the on-prem host runbook (`docs/runbooks/runbook-onprem-host-setup.md`). The re-enroll-for-a-new-trust-key procedure is not written up yet, so confirm it with Alpha Explora before the rollout. Until a host is re-enrolled, it keeps running the release it already has.
+An on-prem host runs only releases whose signing key ID is in its trust file. This section shows how to make an existing host trust the key that this install signs with. For enrollment in general, see the [on-prem host setup runbook](runbook-onprem-host-setup.md).
+
+This procedure has not been run on a live host. The steps follow the code paths named below. Test one host before you switch a fleet.
+
+### When you need this
+
+Do this when:
+
+- You switch the install to file signing (`ALPHACI_RELEASE_SIGNER=file`), and the host was enrolled before the switch.
+- You rotate the signing key.
+- You move a host from another AlphaCI API, such as the SaaS service, to this install.
+
+A host enrolled after the switch needs nothing. Enrollment gives it the install's trust keys.
+
+### Before you start
+
+1. Find the key ID. Run `./alphaci-ctl doctor` in the install directory. The check `release signing key is readable and P-256` prints `key ID sha256:<hex>`. The host must trust exactly that ID.
+2. Confirm that the install can enroll hosts. Enrollment returns 503 with `Configure P-256 public release trust keys before enrollment.` when no trust keys are configured. It is refused unless `ONPREM_RELEASES_ENABLED=true`. The install's `alphaci.env.example` sets neither. The installer release must also be configured, as the on-prem host setup runbook describes.
+
+### What an unknown key ID does
+
+Each host reads the `envelope.signature.keyId` of every release it receives, and looks it up in `/opt/alphaci/trust.json` (`deploy/onprem/agent/render-assignment.sh`). If the key ID is missing:
+
+- The host pulls no image and changes no Compose project. The running release keeps running.
+- The host reports the deployment as `failed` with this detail: `Release key is not pinned on this host. Nothing was deployed.`
+- A `failed` deployment is final. Re-enrolling does not retry it. Start a new deployment, as [Verify the switch](#verify-the-switch) describes.
+- The Hosts screen still shows the machine as Connected. Check-ins report Docker only, so the trust gap does not appear on the machine card.
+- The environment operations panel shows the deployment as Failed, with the detail text.
+
+### Option A: replace the host's credential
+
+Use this option first. Enrollment writes the whole `trust.json` from the install's trust keys (`deploy/onprem/agent/enroll.sh`), so the new key is added in the same step.
+
+1. In **Hosts**, open the host's card and choose **Replace credential**. Then choose **Confirm new credential**. AlphaCI shows a new enrollment code. The old credential keeps working until the new code is used.
+2. On the host, run the install file or the command for its platform. Each one already includes the replacement flag, so do not add it yourself.
+
+   | Install method | What to run |
+   |---|---|
+   | Ubuntu, install file | Run the downloaded `alphaci-install-<machine>.sh`, as the Hosts screen describes. |
+   | Ubuntu, command | Run the command from Hosts. It ends with `install.sh --enroll <API URL> --replace`. Paste the code at the hidden prompt. |
+   | Ubuntu, `.deb` | Run `sudo alphaci-enroll https://YOUR-API --replace`. Paste the code, or set `ALPHACI_ENROLL_CODE_FILE` as the on-prem host setup runbook describes. |
+   | Windows with WSL | Run the downloaded `alphaci-install-<machine>.cmd`, or the PowerShell command from Hosts, as the Windows account that owns the WSL distro. Both end with `-ReplaceCredential`. |
+
+3. Wait for **Connected** on the Hosts screen. A check-in runs at most 30 seconds after the host writes its new credential.
+
+Running workloads during the switch:
+
+- Enrollment does not stop or restart containers. It writes only the credential, `machine.json`, and `trust.json`, all under `/opt/alphaci` (`deploy/onprem/agent/enroll.sh`).
+- The host's environments move to the new machine record, and each keeps its host ports where they are free (`moveMachineBindings` in `onprem-assignments.repository.ts`). Assignments stay as they are.
+- In each cycle, the host acts only on deployments that are pending or deploying. An application with no such deployment is not touched. A pending or deploying deployment is picked up again on the next cycle.
+- A check-in that runs after the old credential stops working, and before the host writes the new one, returns 401. The supervisor then stops every automatic HTTPS tunnel on the host (`deploy/onprem/agent/alphaci-supervisor.sh`). The next check-in starts them again. The tunnel status says the address changes when the tunnel restarts (`deploy/onprem/agent/tunnel.sh`).
+- For a tunnel-mode host, AlphaCI does not hand out a production deployment until the tunnel reports a running address (`hostAssignments` in `release-registry.service.ts`).
+
+### Revoke and add a new host instead
+
+Use this only when you cannot replace the credential. It differs from Option A because the environments lose their host.
+
+- **Revoke access** ends the machine's environment bindings and releases their host ports (`endMachineBindings` and the `onprem_ports_release` trigger). Running applications stay on the host. AlphaCI does not manage them until you assign each environment again in Hosting.
+- The machine still holds its old credential on disk. A fresh enrollment on that machine needs the replacement flag, so add `--replace` (or `-ReplaceCredential` on Windows) yourself. The Hosts command adds the flag only for a replacement from a host card. Without it, `enroll.sh` prints `Existing machine enrollment retained`, exits 0, and the installer starts the timer with the revoked credential.
+
+### Option B: add the trust entry by hand
+
+Use this option only when Option A is not possible. The host reads `trust.json` on every timer run, so an edit takes effect on the next run. No restart is needed (`render-assignment.sh`). The file is a JSON object that maps each key ID to its PEM public key. Enrollment writes it with owner root and mode 0600.
+
+Read these limits before you edit:
+
+- The host does not check that the PEM matches its key ID. A wrong PEM fails signature verification, so the release is refused. It is not accepted.
+- Take the PEM from this install's key only.
+- Re-enrolling replaces the whole file. A key you added by hand survives only when the install still lists it in `ALPHACI_RELEASE_TRUST_KEYS_JSON`.
+- AlphaCI does not record the change, and Hosting does not show it.
+
+1. On the appliance, write the public key and print its key ID. The key file belongs to the backend user, so use `sudo`:
+
+   ```bash
+   cd /opt/alphaci
+   sudo openssl pkey -in secrets/release_signing_key -pubout -out release-signing.pub.pem
+   echo "sha256:$(sudo openssl pkey -in secrets/release_signing_key -pubout -outform DER | sha256sum | cut -d' ' -f1)"
+   ```
+
+2. Copy `release-signing.pub.pem` to the host. Compare the key ID from step 1 with the key ID from `alphaci-ctl doctor`. Stop if they differ.
+3. On the host, add the entry under the key ID. The command writes to a temporary file first, then installs it with mode 0600:
+
+   ```bash
+   KEY_ID='sha256:<hex from alphaci-ctl doctor>'
+   sudo jq --arg id "$KEY_ID" --rawfile pem ./release-signing.pub.pem '. + {($id): $pem}' /opt/alphaci/trust.json > /tmp/trust.json.new
+   sudo install -m 0600 /tmp/trust.json.new /opt/alphaci/trust.json
+   rm -f /tmp/trust.json.new ./release-signing.pub.pem
+   ```
+
+4. Confirm the entry: `sudo jq -r 'keys[]' /opt/alphaci/trust.json` lists the key ID.
+
+The single-environment agent (`alphaci-agent.timer` with `agent.env`) does not read `trust.json`. It verifies each release with the PEM at `ALPHACI_TRUST_KEY`, read on every run, and it does not compare key IDs (`deploy/onprem/agent/alphaci-agent.sh`). On that host, replace the PEM file at `ALPHACI_TRUST_KEY` with the install's public key. No restart is needed. The on-prem host setup runbook pins this file at `/opt/alphaci/trust/release-signing.pub.pem`.
+
+### Verify the switch
+
+1. On the host, `sudo jq -r 'keys[]' /opt/alphaci/trust.json` lists the key ID from `alphaci-ctl doctor`.
+2. Start a new deployment:
+   - For a later environment, choose **Promote** on the release that the previous environment runs.
+   - For the first environment, a release deploys when it is registered. Registration needs a new workflow run, because a workflow run registers one release (`release-registry.service.ts`).
+3. Check the result:
+   - The environment operations panel shows **Healthy** for the deployment.
+   - On the host, `sudo tail -n 5 /opt/alphaci/assignments/<project-id>/<environment-id>/worker.log` shows `deployment <deployment-id> healthy`.
+
+If the deployment shows **Failed**, read its detail:
+
+| Detail | Meaning and action |
+|---|---|
+| `Release key is not pinned on this host. Nothing was deployed.` | `trust.json` has no entry for the key ID. Repeat Option A or Option B. The same text appears in `journalctl -u alphaci-machine.service`. |
+| `The host rejected the release signature, manifest hash, or project, so nothing was pulled.` | The key ID is trusted, but the signature, manifest hash, or project check failed. Compare the entry with the key that signs the release, and check that the release belongs to this project. |
+
+### Key rotation
+
+Keep the old key's entry in `ALPHACI_RELEASE_TRUST_KEYS_JSON` for as long as a release that the old key signed can still be deployed. The rotation section of the on-prem host setup runbook gives the same rule for the Cloud KMS path.
 
 ## Open decisions
 

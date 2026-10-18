@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-19
+
+- **Update**: Added the self-hosted install runbook section "Switching an existing host to the install's signing key": when a host needs it, how to replace its credential, the manual `trust.json` entry, and how to verify the switch. The on-prem host setup runbook now links to it and states that `enroll.sh --replace` handles an address change.
+
 ## 2026-10-15
 
 - **Creation**: Recorded local on-prem acceptance, targeted remote schema verification, temporary tunnel/installer checks, the read-only eatta workflow preview, real Docker two-project rollback evidence, and the remaining GitHub permissions and Windows runtime checks in `docs/operations/onprem-local-acceptance.md`.
