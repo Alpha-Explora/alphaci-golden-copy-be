@@ -89,7 +89,7 @@ Run each step from the install directory.
    ./alphaci-ctl init alphaci.acme.example --tls auto
    ```
 
-   `--tls` takes `auto` (Caddy's automatic public certificates), `internal` (Caddy's private CA, for a lab), or `custom` (place `fullchain.pem` and `privkey.pem` in `certs/`). `init` writes `alphaci.env` and four secrets under `secrets/`: session secret, database password, database URL and the P-256 release signing key. It never overwrites a file that exists. It prints the release signing key ID. Keep a copy of that ID, because customer hosts trust it.
+   `--tls` takes `auto` (Caddy's automatic public certificates), `internal` (Caddy's private CA, for a lab), or `custom` (place `fullchain.pem` and `privkey.pem` in `certs/`). `init` writes `alphaci.env` and five generated secrets under `secrets/`: session secret, database password, database URL, the P-256 release signing key, and the environment-token encryption key (`env_provisioning_encryption_key`, 32 random bytes). It never overwrites a file that exists. It prints the release signing key ID. Keep a copy of that ID, because customer hosts trust it.
 
 2. **Place the three GitHub secrets** in `secrets/`, with these exact names and no extension:
 
@@ -98,6 +98,8 @@ Run each step from the install directory.
    | `secrets/github_app_private_key` | The App's `.pem` file. |
    | `secrets/github_oauth_client_secret` | The OAuth App client secret. |
    | `secrets/github_app_webhook_secret` | The webhook secret from step 3 above. |
+
+   Back up `secrets/env_provisioning_encryption_key` with the database. The backend uses it to decrypt stored environment tokens, so a restored database cannot read them without this key.
 
    Make them readable only by uid 1001: `sudo chown 1001:1001 secrets/* && sudo chmod 600 secrets/*`.
 
@@ -165,7 +167,7 @@ Phase 1 signs releases with the customer-held key that `init` generated. An on-p
 - The customer's GitHub plan (Enterprise Cloud or a lower tier) decides which GitHub features the App can use. Confirm it before the install.
 - Offline licensing is not part of phase 1. The appliance needs outbound HTTPS to GitHub.
 - `GITHUB_INTERNAL_ORG` is not set in `alphaci.env.example`. Set it to the organization name if sign-in should require membership of that organization.
-- The backend still requires the Supabase client settings at boot until WP-A lands. The env template says what to set in the meantime.
+- Image digests and the release signing key are per install. Keep the signing key ID that `init` printed with the customer record, because existing hosts trust it.
 
 ## Troubleshooting
 
