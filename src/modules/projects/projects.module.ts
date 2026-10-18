@@ -32,6 +32,7 @@ import { LocalCiRunsProvider } from './application/ci-runs/local-ci-runs.provide
 import { ProjectDashboardSnapshotsRepository } from './infrastructure/project-dashboard-snapshots.repository';
 import { ProjectCiRunsService } from './application/ci-runs/project-ci-runs.service';
 import { ProjectPreviewsService } from './application/dashboard/project-previews.query-service';
+import { DeployCommitMessages } from './application/dashboard/deploy-commit-messages';
 import { UrlEmbeddabilityProbe } from './application/dashboard/url-embeddability.probe';
 import { ProjectDriftRepairService } from './application/drift/project-drift-repair.handler';
 import { ProjectDashboardService } from './application/dashboard/project-dashboard.service';
@@ -121,6 +122,7 @@ import { ProjectVisibilityModule } from './project-visibility.module';
     ProjectFolderService,
     ProjectCiRunsService,
     ProjectPreviewsService,
+    DeployCommitMessages,
     UrlEmbeddabilityProbe,
     ProjectDriftRepairService,
     LocalCiRunsProvider,
