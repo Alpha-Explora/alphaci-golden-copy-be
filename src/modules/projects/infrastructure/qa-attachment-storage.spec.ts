@@ -102,4 +102,10 @@ describe('QaAttachmentStorage', () => {
       QaAttachmentStorageError,
     );
   });
+
+  it('never serves signed links itself: Supabase answers its own URLs', async () => {
+    const { storage } = setup();
+
+    await expect(storage.readSignedLink()).resolves.toBeNull();
+  });
 });
