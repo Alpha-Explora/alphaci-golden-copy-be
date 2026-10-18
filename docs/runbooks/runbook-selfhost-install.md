@@ -183,7 +183,9 @@ A host enrolled after the switch needs nothing. Enrollment gives it the install'
 ### Before you start
 
 1. Find the key ID. Run `./alphaci-ctl doctor` in the install directory. The check `release signing key is readable and P-256` prints `key ID sha256:<hex>`. The host must trust exactly that ID.
-2. Confirm that the install can enroll hosts. Enrollment returns 503 with `Configure P-256 public release trust keys before enrollment.` when no trust keys are configured. It is refused unless `ONPREM_RELEASES_ENABLED=true`. The install's `alphaci.env.example` sets neither. The installer release must also be configured, as the on-prem host setup runbook describes.
+2. Turn on on-prem hosts in `alphaci.env`. Edit the file in the install directory and set the on-prem block from `deploy/selfhost/alphaci.env.example`: `ONPREM_RELEASES_ENABLED=true`, `ENV_PROVISIONING_ENABLED=true`, and one installer source (`ONPREM_INSTALLER_RELEASE_REPO`, or `ONPREM_INSTALLER_URL` with `ONPREM_INSTALLER_SHA256`). Then run `./alphaci-ctl doctor`. The check `on-prem settings are present and valid` names each setting that is missing or malformed. The check `release trust key for on-prem hosts is available` prints the key ID that enrollment trusts. Both checks run only while `ONPREM_RELEASES_ENABLED=true`.
+
+   Merge the server-side file signing change (PR #208) before you use this procedure. Without it, the install does not trust its own signing key, and enrollment returns 503 (`Configure P-256 public release trust keys before enrollment.`) until `ALPHACI_RELEASE_TRUST_KEYS_JSON` lists the key ID.
 
 ### What an unknown key ID does
 

@@ -1,3 +1,5 @@
+import { createPublicKey } from 'node:crypto';
+
 import type { MigrationFile } from '../scripts/selfhost-migrations';
 
 import {
@@ -5,9 +7,13 @@ import {
   DoctorProbes,
   formatResults,
   migrationsCheck,
+  onpremChecks,
+  onpremSettingsProblems,
+  onpremTrustKeyCheck,
   runDoctor,
   settingProblems,
   signingKeyCheck,
+  trustKeyIds,
 } from './doctor';
 import { generateP256PrivateKeyPem, releaseKeyId } from './release-key';
 
@@ -298,5 +304,188 @@ describe('formatResults', () => {
       '[FAIL] c: also broken',
       'doctor: 2 check(s) failed',
     ]);
+  });
+});
+
+const INSTALLER_URL =
+  'https://github.com/acme/alphaci-agent/releases/download/onprem-agent-v0.2.0/alphaci-agent-0.2.0.tar.gz';
+
+/** A correctly set up on-prem install: on-prem on, file signer, explicit installer. */
+function onpremEnv(): NodeJS.ProcessEnv {
+  return {
+    ...goodEnv(),
+    ONPREM_RELEASES_ENABLED: 'true',
+    ENV_PROVISIONING_ENABLED: 'true',
+    ONPREM_INSTALLER_URL: INSTALLER_URL,
+    ONPREM_INSTALLER_SHA256: 'a'.repeat(64),
+  };
+}
+
+function publicPemOf(privatePem: string): string {
+  return createPublicKey(privatePem)
+    .export({ type: 'spki', format: 'pem' })
+    .toString();
+}
+
+describe('onpremChecks', () => {
+  it('returns nothing when on-prem is off, unset or not exactly "true"', () => {
+    const readFile = () => generateP256PrivateKeyPem();
+    for (const value of [undefined, 'false', 'TRUE', '1', ' true']) {
+      const env = { ...onpremEnv(), ONPREM_RELEASES_ENABLED: value };
+      expect(onpremChecks(env, readFile)).toEqual([]);
+    }
+  });
+
+  it('passes with the file signer and an explicit installer, and prints the key ID', () => {
+    const key = generateP256PrivateKeyPem();
+    const results = onpremChecks(onpremEnv(), () => key);
+
+    expect(results.map((result) => result.ok)).toEqual([true, true]);
+    expect(results[1]?.detail).toContain(`key ID ${releaseKeyId(key)}`);
+    expect(results[1]?.detail).toContain('ALPHACI_RELEASE_SIGNER=file');
+    expect(results.map((result) => result.detail).join('\n')).not.toContain(
+      '-----BEGIN',
+    );
+  });
+
+  it('accepts a release repository in place of an explicit installer URL', () => {
+    const env = onpremEnv();
+    delete env['ONPREM_INSTALLER_URL'];
+    delete env['ONPREM_INSTALLER_SHA256'];
+    env['ONPREM_INSTALLER_RELEASE_REPO'] = 'acme/alphaci-agent';
+
+    expect(onpremSettingsProblems(env)).toEqual([]);
+  });
+
+  it('fails when ENV_PROVISIONING_ENABLED is not "true"', () => {
+    const env = onpremEnv();
+    env['ENV_PROVISIONING_ENABLED'] = 'false';
+
+    expect(onpremSettingsProblems(env)).toEqual([
+      'ENV_PROVISIONING_ENABLED must be "true": releases, and so host deployments, need it',
+    ]);
+  });
+
+  it('names both installer sources when neither is configured', () => {
+    const env = onpremEnv();
+    delete env['ONPREM_INSTALLER_URL'];
+    delete env['ONPREM_INSTALLER_SHA256'];
+
+    expect(onpremSettingsProblems(env)).toEqual([
+      'set ONPREM_INSTALLER_RELEASE_REPO to owner/repo, or ONPREM_INSTALLER_URL with ONPREM_INSTALLER_SHA256',
+    ]);
+  });
+
+  it('refuses a URL without an https scheme or a valid hash', () => {
+    const env = onpremEnv();
+    env['ONPREM_INSTALLER_URL'] = 'http://example.com/agent.tar.gz';
+    expect(onpremSettingsProblems(env)).toHaveLength(1);
+
+    env['ONPREM_INSTALLER_URL'] = INSTALLER_URL;
+    env['ONPREM_INSTALLER_SHA256'] = 'ABC';
+    expect(onpremSettingsProblems(env)[0]).toContain(
+      'ONPREM_INSTALLER_URL needs',
+    );
+  });
+
+  it('checks the repository and version formats the backend uses', () => {
+    const env = onpremEnv();
+    delete env['ONPREM_INSTALLER_URL'];
+    delete env['ONPREM_INSTALLER_SHA256'];
+    env['ONPREM_INSTALLER_RELEASE_REPO'] = 'no-slash';
+    expect(onpremSettingsProblems(env)).toEqual([
+      'ONPREM_INSTALLER_RELEASE_REPO must be owner/repo',
+    ]);
+
+    env['ONPREM_INSTALLER_RELEASE_REPO'] = 'acme/alphaci-agent';
+    env['ONPREM_INSTALLER_VERSION'] = '0.2';
+    expect(onpremSettingsProblems(env)).toEqual([
+      'ONPREM_INSTALLER_VERSION must be x.y.z',
+    ]);
+  });
+
+  it('fails the trust check when the signing key file cannot be read, naming the path only', () => {
+    const results = onpremChecks(onpremEnv(), () => {
+      throw new Error('ENOENT');
+    });
+
+    expect(results[1]?.ok).toBe(false);
+    expect(results[1]?.detail).toBe(
+      'cannot read /run/secrets/release_signing_key',
+    );
+  });
+
+  it('uses the listed trust keys without the file signer', () => {
+    const key = generateP256PrivateKeyPem();
+    const env = onpremEnv();
+    env['ALPHACI_RELEASE_SIGNER'] = 'runner';
+    env['ALPHACI_RELEASE_TRUST_KEYS_JSON'] = JSON.stringify({
+      'sha256:old': publicPemOf(key),
+    });
+
+    const trust = onpremTrustKeyCheck(env, () => key);
+    expect(trust.ok).toBe(true);
+    expect(trust.detail).toBe('trusted key IDs: sha256:old');
+  });
+
+  it('fails without the file signer and without any trust key', () => {
+    const env = onpremEnv();
+    env['ALPHACI_RELEASE_SIGNER'] = 'runner';
+    delete env['ALPHACI_RELEASE_TRUST_KEYS_JSON'];
+
+    expect(onpremTrustKeyCheck(env, () => '').ok).toBe(false);
+  });
+
+  it('rejects a trust setting that enrollment would refuse, without echoing the key', () => {
+    const key = generateP256PrivateKeyPem();
+    const env = onpremEnv();
+    env['ALPHACI_RELEASE_TRUST_KEYS_JSON'] = JSON.stringify({
+      'sha256:bad': key,
+    });
+
+    const trust = onpremTrustKeyCheck(env, () => key);
+    expect(trust.ok).toBe(false);
+    expect(trust.detail).toBe('trust entry sha256:bad is not a PEM public key');
+    expect(trust.detail).not.toContain('PRIVATE');
+  });
+});
+
+describe('trustKeyIds', () => {
+  it('rejects a value that is not JSON, not an object, or not a readable PEM', () => {
+    const rsa = `-----BEGIN PUBLIC KEY-----\n${'A'.repeat(64)}\n-----END PUBLIC KEY-----`;
+
+    expect(trustKeyIds('not json')).toEqual({
+      problem: 'ALPHACI_RELEASE_TRUST_KEYS_JSON is not JSON',
+    });
+    expect(trustKeyIds('[]')).toMatchObject({ problem: expect.any(String) });
+    expect(trustKeyIds(JSON.stringify({ 'sha256:x': rsa }))).toEqual({
+      problem: 'trust entry sha256:x is not a readable PEM public key',
+    });
+  });
+
+  it('returns the IDs of a valid P-256 trust set', () => {
+    const pem = publicPemOf(generateP256PrivateKeyPem());
+    expect(trustKeyIds(JSON.stringify({ 'sha256:one': pem }))).toEqual({
+      ids: ['sha256:one'],
+    });
+  });
+});
+
+describe('runDoctor with on-prem hosts', () => {
+  it('adds no on-prem lines when on-prem is off', async () => {
+    const results = await runDoctor(goodEnv(), fakeProbes());
+
+    expect(results.some((result) => /on-prem/i.test(result.name))).toBe(false);
+    expect(formatResults(results)).not.toMatch(/on-prem/i);
+  });
+
+  it('adds the two on-prem checks and passes them when configured', async () => {
+    const results = await runDoctor(onpremEnv(), fakeProbes());
+
+    expect(
+      results.filter((result) => /on-prem/i.test(result.name)),
+    ).toHaveLength(2);
+    expect(byName(results, 'on-prem settings').ok).toBe(true);
+    expect(byName(results, 'release trust key for on-prem').ok).toBe(true);
   });
 });

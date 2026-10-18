@@ -1,3 +1,5 @@
+import { createPublicKey } from 'node:crypto';
+
 import { validateCiApiConnectivity } from '../kernel/config/ci-api-connectivity';
 import {
   planMigrations,
@@ -153,6 +155,150 @@ export function signingKeyCheck(
   return { name, ok: true, detail: `key ID ${releaseKeyId(pem)}` };
 }
 
+/**
+ * On-prem host checks. They run only when ONPREM_RELEASES_ENABLED is exactly
+ * "true", the same test the backend makes, and return nothing otherwise, so an
+ * install without on-prem hosts sees no extra lines.
+ */
+export function onpremChecks(
+  env: NodeJS.ProcessEnv,
+  readFile: (path: string) => string,
+): CheckResult[] {
+  if (env['ONPREM_RELEASES_ENABLED'] !== 'true') return [];
+  return [onpremSettingsCheck(env), onpremTrustKeyCheck(env, readFile)];
+}
+
+/** Settings enrollment and host deployments read, with the formats the backend accepts. */
+export function onpremSettingsProblems(env: NodeJS.ProcessEnv): string[] {
+  const problems: string[] = [];
+  if (env['ENV_PROVISIONING_ENABLED'] !== 'true') {
+    problems.push(
+      'ENV_PROVISIONING_ENABLED must be "true": releases, and so host deployments, need it',
+    );
+  }
+  const url = env['ONPREM_INSTALLER_URL']?.trim();
+  const sha = env['ONPREM_INSTALLER_SHA256']?.trim();
+  const repo = env['ONPREM_INSTALLER_RELEASE_REPO']?.trim();
+  const shaValid = sha !== undefined && /^[0-9a-f]{64}$/.test(sha);
+  if (!blank(url)) {
+    if (!(/^https:\/\//.test(url as string) && shaValid)) {
+      problems.push(
+        'ONPREM_INSTALLER_URL needs an https URL and ONPREM_INSTALLER_SHA256 with 64 lowercase hex characters',
+      );
+    }
+  } else if (blank(repo)) {
+    problems.push(
+      'set ONPREM_INSTALLER_RELEASE_REPO to owner/repo, or ONPREM_INSTALLER_URL with ONPREM_INSTALLER_SHA256',
+    );
+  } else if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo as string)) {
+    problems.push('ONPREM_INSTALLER_RELEASE_REPO must be owner/repo');
+  } else if (!blank(sha) && !shaValid) {
+    problems.push(
+      'ONPREM_INSTALLER_SHA256 must be 64 lowercase hex characters',
+    );
+  }
+  const version = env['ONPREM_INSTALLER_VERSION']?.trim();
+  if (!blank(version) && !/^\d+\.\d+\.\d+$/.test(version as string)) {
+    problems.push('ONPREM_INSTALLER_VERSION must be x.y.z');
+  }
+  return problems;
+}
+
+/** The key IDs in ALPHACI_RELEASE_TRUST_KEYS_JSON, or why enrollment would refuse them. */
+export function trustKeyIds(
+  json: string,
+): { ids: string[] } | { problem: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return { problem: 'ALPHACI_RELEASE_TRUST_KEYS_JSON is not JSON' };
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    Object.keys(parsed).length === 0
+  ) {
+    return {
+      problem:
+        'ALPHACI_RELEASE_TRUST_KEYS_JSON must be a non-empty object of key ID to PEM public key',
+    };
+  }
+  for (const [id, pem] of Object.entries(parsed)) {
+    if (
+      !id ||
+      typeof pem !== 'string' ||
+      !pem.startsWith('-----BEGIN PUBLIC KEY-----')
+    ) {
+      return {
+        problem: `trust entry ${id || '(blank)'} is not a PEM public key`,
+      };
+    }
+    try {
+      const key = createPublicKey(pem);
+      if (
+        key.asymmetricKeyType !== 'ec' ||
+        key.asymmetricKeyDetails?.namedCurve !== 'prime256v1'
+      ) {
+        return { problem: `trust entry ${id} is not a P-256 key` };
+      }
+    } catch {
+      return { problem: `trust entry ${id} is not a readable PEM public key` };
+    }
+  }
+  return { ids: Object.keys(parsed) };
+}
+
+/**
+ * A key enrollment can hand out: the install's signing key when it signs with
+ * the key file, or the listed trust keys otherwise. The key material is never
+ * returned. The key ID is.
+ */
+export function onpremTrustKeyCheck(
+  env: NodeJS.ProcessEnv,
+  readFile: (path: string) => string,
+): CheckResult {
+  const name = 'release trust key for on-prem hosts is available';
+  const trust = env['ALPHACI_RELEASE_TRUST_KEYS_JSON'];
+  let trustIds: string[] = [];
+  if (!blank(trust)) {
+    const parsed = trustKeyIds(trust as string);
+    if ('problem' in parsed) return { name, ok: false, detail: parsed.problem };
+    trustIds = parsed.ids;
+  }
+  if (env['ALPHACI_RELEASE_SIGNER'] === 'file') {
+    const signing = signingKeyCheck(env, readFile);
+    if (!signing.ok) return { name, ok: false, detail: signing.detail };
+    const also =
+      trustIds.length > 0 ? `; also trusted: ${trustIds.join(', ')}` : '';
+    return {
+      name,
+      ok: true,
+      detail: `signing ${signing.detail}, trusted with ALPHACI_RELEASE_SIGNER=file${also}`,
+    };
+  }
+  if (trustIds.length === 0) {
+    return {
+      name,
+      ok: false,
+      detail:
+        'set ALPHACI_RELEASE_SIGNER=file, or list the signing key ID in ALPHACI_RELEASE_TRUST_KEYS_JSON',
+    };
+  }
+  return { name, ok: true, detail: `trusted key IDs: ${trustIds.join(', ')}` };
+}
+
+function onpremSettingsCheck(env: NodeJS.ProcessEnv): CheckResult {
+  const name = 'on-prem settings are present and valid';
+  const problems = onpremSettingsProblems(env);
+  return {
+    name,
+    ok: problems.length === 0,
+    detail: problems.length === 0 ? 'all present' : problems.join('; '),
+  };
+}
+
 /** Ledger against the migration files: nothing pending, nothing edited, no gaps. */
 export function migrationsCheck(
   files: readonly MigrationFile[],
@@ -232,6 +378,7 @@ export async function runDoctor(
   }
 
   results.push(signingKeyCheck(env, (path) => probes.readFile(path)));
+  results.push(...onpremChecks(env, (path) => probes.readFile(path)));
 
   for (const host of ['api.github.com', 'ghcr.io']) {
     const url =
