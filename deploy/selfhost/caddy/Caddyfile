@@ -16,6 +16,11 @@
 {$ALPHACI_HOSTNAME} {
 	tls {$ALPHACI_TLS_DIRECTIVE}
 
+	# Plain HTTP on port 80 only redirects to the HTTPS origin. Port 80 stays
+	# published for ACME (automatic mode), and it must never serve the app.
+	@plain expression {scheme} == 'http'
+	redir @plain https://{$ALPHACI_HOSTNAME}{uri} permanent
+
 	encode zstd gzip
 
 	header {
@@ -43,8 +48,3 @@
 	}
 }
 
-# Plain HTTP only redirects to the HTTPS origin. Port 80 is published for ACME
-# (automatic mode), and it must never serve the application.
-http://{$ALPHACI_HOSTNAME} {
-	redir https://{$ALPHACI_HOSTNAME}{uri} permanent
-}
