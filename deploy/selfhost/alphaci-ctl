@@ -1,0 +1,57 @@
+#!/bin/sh
+# alphaci-ctl: thin wrapper for the self-hosted AlphaCI appliance.
+#
+# The logic lives in dist/src/cli/alphaci-ctl.js inside the backend image. This
+# script only picks the right docker invocation:
+#
+#   init     runs the image directly, because compose cannot start until the
+#            secrets exist. It mounts this directory at /selfhost.
+#   others   run in the api service's environment with compose, so they see the
+#            same alphaci.env, secrets and network as the running stack.
+#
+# Usage: ./alphaci-ctl init <hostname> [--tls auto|internal|custom]
+#        ./alphaci-ctl admin-grant --github-login <login>
+#        ./alphaci-ctl doctor
+set -eu
+
+DIR=$(cd "$(dirname "$0")" && pwd)
+CLI=dist/src/cli/alphaci-ctl.js
+
+if [ "$#" -eq 0 ]; then
+  set -- help
+fi
+
+command=$1
+shift
+
+case "$command" in
+  init)
+    if [ ! -f "$DIR/.env" ]; then
+      echo "Missing $DIR/.env. Copy .env.example to .env and set the image digests first." >&2
+      exit 2
+    fi
+    image=$(sed -n 's/^ALPHACI_API_IMAGE=//p' "$DIR/.env" | tail -n 1)
+    if [ -z "$image" ]; then
+      echo "ALPHACI_API_IMAGE is not set in $DIR/.env." >&2
+      exit 2
+    fi
+    # The container user is uid 1001, the same user the api runs as, so the
+    # files it writes are readable by the api. The directory must be writable
+    # by that uid; see the install runbook.
+    exec docker run --rm -v "$DIR:/selfhost" "$image" \
+      node "$CLI" init --dir /selfhost "$@"
+    ;;
+  help|-h|--help)
+    cat <<'USAGE'
+alphaci-ctl - setup helper for the self-hosted AlphaCI appliance
+
+  init <hostname> [--tls auto|internal|custom]   write alphaci.env and secrets/ (existing files are kept)
+  admin-grant --github-login <login>             make an existing user a platform super-admin
+  doctor                                         check the database, migrations, signing key, settings and outbound HTTPS
+USAGE
+    ;;
+  *)
+    cd "$DIR"
+    exec docker compose run --rm -T --no-deps api node "$CLI" "$command" "$@"
+    ;;
+esac

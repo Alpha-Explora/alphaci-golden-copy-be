@@ -1,0 +1,44 @@
+# AlphaCI self-hosted edge. One origin: /api/* to the backend, everything else
+# to the frontend. The address and the TLS mode come from alphaci.env, written
+# by alphaci-ctl init:
+#
+#   ALPHACI_HOSTNAME        the public DNS name, for example alphaci.acme.example
+#   ALPHACI_TLS_DIRECTIVE   empty      Caddy's automatic HTTPS (needs public DNS
+#                                      and inbound 80 and 443)
+#                           internal   Caddy's private CA (lab or internal use)
+#                           /certs/fullchain.pem /certs/privkey.pem
+#                                      the customer's certificate, from ./certs
+#
+# The global options block is kept empty on purpose: no admin listener changes
+# and no email for ACME, so nothing here reaches outside the customer network
+# except the ACME exchange itself when auto mode is used.
+
+{$ALPHACI_HOSTNAME} {
+	tls {$ALPHACI_TLS_DIRECTIVE}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	# The backend owns /api/v1, including the /api/v1/ci/* endpoints that
+	# GitHub-hosted runners call. Keep the path intact: the backend does not
+	# strip a prefix.
+	handle /api/* {
+		reverse_proxy api:4000 {
+			header_up X-Forwarded-Proto https
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
