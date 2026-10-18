@@ -75,6 +75,11 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       reason: 'unauthenticated health probe',
       routes: [{ handler: 'getHealth', method: 'GET' }],
     },
+    'src/modules/projects/api/qa-attachment-content.controller.ts': {
+      reason:
+        'signed QA screenshot bytes (HMAC link, postgres storage driver); the link is the authorization',
+      routes: [{ handler: 'getContent', method: 'GET' }],
+    },
     'src/modules/billing/subscription/api/subscription.controller.ts': {
       reason: 'billing-owned subscription lifecycle',
       routes: [

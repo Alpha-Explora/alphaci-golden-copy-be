@@ -33,6 +33,8 @@ const testPrivateKey = privateKey.export({
 }) as string;
 
 const appConfig: AppConfig = {
+  deploymentMode: 'saas',
+  storage: { driver: 'postgres' },
   frontendUrl: 'http://localhost:3000',
   trustProxyHops: 1,
   auth: {

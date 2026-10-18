@@ -78,6 +78,14 @@ export class QaAttachmentStorage implements QaAttachmentStoragePort {
     return urls;
   }
 
+  /**
+   * Supabase answers its own signed URLs, so the backend never receives one to
+   * serve. Always null; the postgres driver is the one that serves links.
+   */
+  readSignedLink(): Promise<null> {
+    return Promise.resolve(null);
+  }
+
   private bucket() {
     const client = this.supabase.getClient();
     if (!client) {

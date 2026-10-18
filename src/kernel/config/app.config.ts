@@ -9,6 +9,7 @@ import {
 import type { AppConfig } from './app.config.types';
 import { resolveCentralWorkflowRepo } from './central-workflow';
 import { parseCompositionConfig } from '#kernel/composition/composition-config.js';
+import { parseDeploymentMode, resolveStorageDriver } from './deployment-mode';
 
 export { authConfig, githubConfig, provisioningConfig, subscriptionConfig };
 export type { AppConfig, GithubTeamRoleSyncMode } from './app.config.types';
@@ -150,7 +151,9 @@ function supabaseConfig(env: NodeJS.ProcessEnv): AppConfig['supabase'] {
     // into the connection string and could corrupt the parsed dbname or
     // password — surfacing as a confusing "password authentication failed"
     // in one environment but not another with a visually-identical value.
-    dbUrl: env['SUPABASE_DB_URL']?.trim(),
+    // DATABASE_URL is the provider-neutral name. SUPABASE_DB_URL is still read
+    // so existing SaaS environments keep working unchanged.
+    dbUrl: env['DATABASE_URL']?.trim() || env['SUPABASE_DB_URL']?.trim(),
     ...(dbCaCert ? { dbCaCert } : {}),
   };
 }
@@ -264,8 +267,11 @@ function directoryConfig(
 export const appConfig = registerAs('app', (): AppConfig => {
   const env = process.env;
   const github = githubConfig(env);
+  const deploymentMode = parseDeploymentMode(env);
 
   return {
+    deploymentMode,
+    storage: { driver: resolveStorageDriver(env, deploymentMode) },
     frontendUrl: env['FRONTEND_URL'] ?? 'http://localhost:3000',
     trustProxyHops: trustProxyHops(env),
     auth: authConfig(env),
