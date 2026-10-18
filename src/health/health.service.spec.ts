@@ -1,11 +1,17 @@
+import { ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { HealthService } from './health.service.js';
-import { SupabaseService } from '#kernel/db/supabase/supabase.service.js';
+import { DatabaseService } from '#kernel/db/database.service.js';
 
-const makeSupabaseMock = (pingResult: boolean): Partial<SupabaseService> => ({
-  ping: jest.fn().mockResolvedValue(pingResult),
+/** A DatabaseService whose SELECT 1 resolves (true) or rejects (false). */
+const makeDatabaseMock = (reachable: boolean): Partial<DatabaseService> => ({
+  query: reachable
+    ? jest.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] })
+    : jest
+        .fn()
+        .mockRejectedValue(new ServiceUnavailableException('unreachable')),
 });
 
 const configServiceMock: Partial<ConfigService> = {
@@ -15,11 +21,13 @@ const configServiceMock: Partial<ConfigService> = {
 };
 
 describe('HealthService', () => {
-  async function createService(dbPing: boolean): Promise<HealthService> {
+  async function createService(
+    database: Partial<DatabaseService>,
+  ): Promise<HealthService> {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HealthService,
-        { provide: SupabaseService, useValue: makeSupabaseMock(dbPing) },
+        { provide: DatabaseService, useValue: database },
         { provide: ConfigService, useValue: configServiceMock },
       ],
     }).compile();
@@ -28,12 +36,12 @@ describe('HealthService', () => {
   }
 
   it('should be defined', async () => {
-    const service = await createService(true);
+    const service = await createService(makeDatabaseMock(true));
     expect(service).toBeDefined();
   });
 
   it('returns ok when database check passes', async () => {
-    const service = await createService(true);
+    const service = await createService(makeDatabaseMock(true));
     const result = await service.getStatus();
 
     expect(result.status).toBe('ok');
@@ -42,13 +50,52 @@ describe('HealthService', () => {
     expect(result.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
+  it('probes the database with SELECT 1 and no application table', async () => {
+    const database = makeDatabaseMock(true);
+    const service = await createService(database);
+
+    await service.getStatus();
+
+    expect(database.query).toHaveBeenCalledWith('SELECT 1');
+  });
+
   it('returns error when database check fails', async () => {
-    const service = await createService(false);
+    const service = await createService(makeDatabaseMock(false));
     const result = await service.getStatus();
 
     expect(result.status).toBe('error');
     expect(result.checks.database).toBe(false);
     expect(result.checks.apiCenter).toBe(true);
+  });
+
+  it('returns error without a pool when DATABASE_URL is not configured', async () => {
+    // DatabaseService throws synchronously-wrapped ServiceUnavailable from
+    // query() when the pool is null; the probe must read that as unhealthy.
+    const service = await createService({
+      query: jest.fn().mockImplementation(() => {
+        throw new ServiceUnavailableException('Database is not configured');
+      }),
+    });
+    const result = await service.getStatus();
+
+    expect(result.status).toBe('error');
+    expect(result.checks.database).toBe(false);
+  });
+
+  it('returns error when the probe does not answer within the timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      const service = await createService({
+        query: jest.fn().mockReturnValue(new Promise(() => undefined)),
+      });
+      const pending = service.getStatus();
+      await jest.advanceTimersByTimeAsync(3_000);
+      const result = await pending;
+
+      expect(result.checks.database).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -67,7 +114,7 @@ describe('HealthService, provider configuration', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HealthService,
-        { provide: SupabaseService, useValue: makeSupabaseMock(true) },
+        { provide: DatabaseService, useValue: makeDatabaseMock(true) },
         {
           provide: ConfigService,
           useValue: {

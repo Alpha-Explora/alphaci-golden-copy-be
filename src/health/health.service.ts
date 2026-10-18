@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SupabaseService } from '#kernel/db/supabase/supabase.service.js';
+import { DatabaseService } from '#kernel/db/database.service.js';
 import type { AppConfig } from '#kernel/config/app.config.js';
+
+/** A probe that has not answered by then counts as a failed database check. */
+const DATABASE_PROBE_TIMEOUT_MS = 3_000;
 
 export type HealthStatus = 'ok' | 'degraded' | 'error';
 
@@ -69,14 +72,12 @@ export interface HealthResponse {
 @Injectable()
 export class HealthService {
   constructor(
-    private readonly supabaseService: SupabaseService,
+    private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
   ) {}
 
   async getStatus(): Promise<HealthResponse> {
-    const [dbResult] = await Promise.allSettled([this.supabaseService.ping()]);
-
-    const database = dbResult.status === 'fulfilled' ? dbResult.value : false;
+    const database = await this.pingDatabase();
 
     const status: HealthStatus = database ? 'ok' : 'error';
     const github = this.configService.get<AppConfig>('app')?.github;
@@ -102,5 +103,27 @@ export class HealthService {
         ),
       },
     };
+  }
+
+  /**
+   * `SELECT 1` through the app's own pg pool: proves the configured database
+   * answers, with no provider SDK and no application table involved. A missing
+   * DATABASE_URL (pool not configured) and a timeout both read as unhealthy.
+   */
+  private async pingDatabase(): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), DATABASE_PROBE_TIMEOUT_MS);
+    });
+    const probe = Promise.resolve()
+      .then(() => this.databaseService.query('SELECT 1'))
+      .then(() => true)
+      .catch(() => false);
+
+    try {
+      return await Promise.race([probe, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
