@@ -34,6 +34,7 @@ import {
   type GithubOrganizationPort,
   type GitHubCommitListQuery,
   type GitHubCommitPage,
+  type GitHubPathCommits,
   type GithubBranchProtectionOutcome,
   type GithubBranchProtectionSummary,
   type GithubPullRequestProtectionOptions,
@@ -50,6 +51,7 @@ import type { CreateRepoDto } from '../api/dto/create-repo.dto';
 import { GithubActivityClient } from './github-activity.client';
 import { GithubRepoFilesClient } from './github-repo-files.client';
 import { ensurePullRequestProtection } from './github-branch-protection';
+import { listPathCommits } from './github-path-commits';
 import { GithubHttp } from './github-http';
 import { GithubInstallationLinker } from './github-installation-linker';
 import {
@@ -1596,6 +1598,23 @@ export class GithubService
    * asked for until the answer arrives, and modelling both here means the
    * browser makes one request per click rather than guessing first.
    */
+  listPathCommits(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+    dirPath: string,
+    entryPaths: readonly string[],
+  ): Promise<GitHubPathCommits> {
+    return listPathCommits(
+      this.http,
+      accessToken,
+      repoFullName,
+      ref,
+      dirPath,
+      entryPaths,
+    );
+  }
+
   async listRepoContents(
     accessToken: string,
     repoFullName: string,

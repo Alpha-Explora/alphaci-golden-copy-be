@@ -29,7 +29,7 @@ This snapshot is generated from the current source tree. It is descriptive evide
 |---|---:|---:|---:|---:|---:|---:|
 | `billing` | 21 | 5 | 0 | 0 | 0 | 0 |
 | `identity-access` | 148 | 34 | 9 | 5 | 0 | 0 |
-| `pipelines` | 84 | 31 | 1 | 1 | 0 | 0 |
+| `pipelines` | 86 | 32 | 1 | 1 | 0 | 0 |
 | `platform-ops` | 31 | 6 | 0 | 0 | 0 | 0 |
 | `projects` | 305 | 115 | 20 | 5 | 0 | 0 |
 | `runtime` | 204 | 71 | 10 | 4 | 0 | 0 |

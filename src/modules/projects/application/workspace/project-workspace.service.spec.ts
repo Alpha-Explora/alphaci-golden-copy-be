@@ -334,6 +334,110 @@ describe('ProjectWorkspaceService', () => {
     });
   });
 
+  describe('listFileCommits', () => {
+    const latest = {
+      sha: 'abc1234567',
+      shortSha: 'abc1234',
+      message: 'Gate FE Sonar quality on main PRs',
+      committedAt: '2026-10-01T00:00:00Z',
+      authorLogin: 'antoneeeeems',
+      authorName: 'Anton',
+      authorAvatarUrl: null,
+    };
+
+    it('asks for the folder and every entry the listing shows, at the ref', async () => {
+      const listPathCommits = jest.fn(() =>
+        Promise.resolve({
+          latest,
+          totalCommits: 288,
+          entries: { 'src/app.ts': latest, 'src/lib': null },
+        }),
+      );
+      const { service, github } = build({
+        github: {
+          listRepoContents: jest.fn(() =>
+            Promise.resolve({
+              path: 'src',
+              ref: 'dev',
+              entries: [
+                {
+                  name: 'lib',
+                  path: 'src/lib',
+                  type: 'dir',
+                  size: 0,
+                  sha: 'd1',
+                },
+                {
+                  name: 'app.ts',
+                  path: 'src/app.ts',
+                  type: 'file',
+                  size: 10,
+                  sha: 'f1',
+                },
+              ],
+              file: null,
+            }),
+          ),
+          listPathCommits,
+        },
+      });
+
+      await expect(
+        service.listFileCommits('p1', 'u1', null, 'src', 'dev'),
+      ).resolves.toEqual({
+        path: 'src',
+        ref: 'dev',
+        latest,
+        totalCommits: 288,
+        entries: { 'src/app.ts': latest, 'src/lib': null },
+      });
+      expect(github.listBranches).not.toHaveBeenCalled();
+      expect(listPathCommits).toHaveBeenCalledWith(
+        expect.any(String),
+        ROW.repo_full_name,
+        'dev',
+        'src',
+        ['src/lib', 'src/app.ts'],
+      );
+    });
+
+    it("asks about an opened file's own history, with no entries", async () => {
+      const listPathCommits = jest.fn(() =>
+        Promise.resolve({ latest, totalCommits: 3, entries: {} }),
+      );
+      const { service } = build({
+        github: {
+          listRepoContents: jest.fn(() =>
+            Promise.resolve({
+              path: 'README.md',
+              ref: 'main',
+              entries: [],
+              file: {
+                name: 'README.md',
+                path: 'README.md',
+                size: 5,
+                sha: 'r1',
+                content: 'hello',
+                truncated: false,
+                htmlUrl: null,
+              },
+            }),
+          ),
+          listPathCommits,
+        },
+      });
+
+      await service.listFileCommits('p1', 'u1', null, 'README.md', null);
+      expect(listPathCommits).toHaveBeenCalledWith(
+        expect.any(String),
+        ROW.repo_full_name,
+        'main',
+        'README.md',
+        [],
+      );
+    });
+  });
+
   describe('job logs', () => {
     it('reports an expired log as unavailable rather than throwing', async () => {
       const { service } = build({
