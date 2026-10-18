@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-19
+
+- **Update**: Documented backend release signing (`ALPHACI_RELEASE_SIGNER=file`) in the release registry contract. The runner signing default is unchanged.
+
 ## 2026-10-15
 
 - **Creation**: Recorded local on-prem acceptance, targeted remote schema verification, temporary tunnel/installer checks, the read-only eatta workflow preview, real Docker two-project rollback evidence, and the remaining GitHub permissions and Windows runtime checks in `docs/operations/onprem-local-acceptance.md`.
