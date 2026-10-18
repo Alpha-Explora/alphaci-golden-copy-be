@@ -29,18 +29,25 @@ import { QaPromotionService } from '../application/qa-runs/qa-promotion.service'
 import { QaReportService } from '../application/qa-runs/qa-report.service';
 import { buildQaReportFilename } from '../application/qa-runs/qa-report.filename';
 import { renderQaReportMarkdown } from '../application/qa-runs/qa-report.markdown';
+import {
+  QA_REPORT_XLSX_CONTENT_TYPE,
+  renderQaReportWorkbook,
+} from '../application/qa-runs/qa-report.workbook';
 import type { QaReportFormat } from '../application/qa-runs/qa-report.contracts';
 
 /** `format` query param on GET .../report: defaults to 'json', anything else is a 400. */
-function parseReportFormat(raw: string | undefined): QaReportFormat {
+export function parseReportFormat(raw: string | undefined): QaReportFormat {
   if (raw === undefined || raw === 'json') {
     return 'json';
   }
   if (raw === 'md' || raw === 'markdown') {
     return 'md';
   }
+  if (raw === 'xlsx' || raw === 'excel') {
+    return 'xlsx';
+  }
   throw new BadRequestException(
-    `Unsupported report format "${raw}"; use "json" or "md".`,
+    `Unsupported report format "${raw}"; use "json", "md" or "xlsx".`,
   );
 }
 
@@ -148,7 +155,7 @@ export class ProjectQaRunsController {
   }
 
   /**
-   * QA report export (Slice 4): JSON or Markdown, downloaded as an
+   * QA report export (Slice 4): JSON, Markdown or Excel, downloaded as an
    * attachment. StreamableFile's `type`/`disposition` set Content-Type /
    * Content-Disposition verbatim on the response (see
    * ExpressAdapter.reply) -- no @Res({ passthrough: false }) needed.
@@ -174,6 +181,12 @@ export class ProjectQaRunsController {
         Buffer.from(renderQaReportMarkdown(report), 'utf8'),
         { type: 'text/markdown; charset=utf-8', disposition },
       );
+    }
+    if (format === 'xlsx') {
+      return new StreamableFile(await renderQaReportWorkbook(report), {
+        type: QA_REPORT_XLSX_CONTENT_TYPE,
+        disposition,
+      });
     }
     return new StreamableFile(
       Buffer.from(JSON.stringify(report, null, 2), 'utf8'),

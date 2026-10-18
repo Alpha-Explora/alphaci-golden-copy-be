@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -29,22 +28,16 @@ import {
   renderQaProjectReportMarkdown,
 } from '../application/qa-runs/qa-project-report';
 import { QaProjectRunsService } from '../application/qa-runs/qa-project-runs.service';
-import { actorContext, parseLimit, requireUserId } from './qa-runs.controller';
-
-type ProjectReportFormat = 'json' | 'md';
-
-/** `format` query param on GET .../report: defaults to 'json'; 'markdown' and 'md' both mean Markdown. */
-function parseReportFormat(raw: string | undefined): ProjectReportFormat {
-  if (raw === undefined || raw === 'json') {
-    return 'json';
-  }
-  if (raw === 'md' || raw === 'markdown') {
-    return 'md';
-  }
-  throw new BadRequestException(
-    `Unsupported report format "${raw}"; use "json" or "markdown".`,
-  );
-}
+import {
+  QA_REPORT_XLSX_CONTENT_TYPE,
+  renderQaReportWorkbook,
+} from '../application/qa-runs/qa-report.workbook';
+import {
+  actorContext,
+  parseLimit,
+  parseReportFormat,
+  requireUserId,
+} from './qa-runs.controller';
 
 /**
  * Project QA runs: QA verifies once per Project, against the uat head of every
@@ -118,7 +111,7 @@ export class DeliveryProjectQaRunsController {
     );
   }
 
-  /** qa-report/v2, JSON or Markdown, downloaded as an attachment. */
+  /** qa-report/v2, JSON, Markdown or Excel, downloaded as an attachment. */
   @Get(':runId/report')
   async report(
     @Req() req: Request,
@@ -139,6 +132,12 @@ export class DeliveryProjectQaRunsController {
         Buffer.from(renderQaProjectReportMarkdown(report), 'utf8'),
         { type: 'text/markdown; charset=utf-8', disposition },
       );
+    }
+    if (format === 'xlsx') {
+      return new StreamableFile(await renderQaReportWorkbook(report), {
+        type: QA_REPORT_XLSX_CONTENT_TYPE,
+        disposition,
+      });
     }
     return new StreamableFile(
       Buffer.from(JSON.stringify(report, null, 2), 'utf8'),

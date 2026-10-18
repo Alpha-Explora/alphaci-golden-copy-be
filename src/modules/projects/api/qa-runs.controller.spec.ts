@@ -254,6 +254,28 @@ describe('ProjectQaRunsController.report', () => {
     );
   });
 
+  it('streams an Excel workbook for format=xlsx, with the .xlsx filename', async () => {
+    const controller = await compileController(
+      makeRunsService(),
+      makeReportService(),
+    );
+
+    const file = await controller.report(
+      makeRequest(),
+      'project-1',
+      'run-1',
+      'xlsx',
+    );
+
+    const headers = file.getHeaders();
+    expect(headers.type).toBe(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    expect(headers.disposition).toBe(
+      'attachment; filename="QA-Report-alphaci-golden-copy-be-main-abcdef0.xlsx"',
+    );
+  });
+
   it('400s on an unsupported format without calling the report service', async () => {
     const reportService = makeReportService();
     const controller = await compileController(

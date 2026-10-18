@@ -1,6 +1,6 @@
 /**
  * API-facing shapes for the QA report export (Slice 4): GET
- * .../qa-runs/:runId/report?format=json|md. Kept free of Nest/pg imports,
+ * .../qa-runs/:runId/report?format=json|md|xlsx. Kept free of Nest/pg imports,
  * same rule as qa-runs.contracts.ts -- this is the exact JSON body returned
  * for format=json, and the source the Markdown renderer reads from for
  * format=md.
@@ -18,7 +18,7 @@ import type {
 
 export const QA_REPORT_SCHEMA_VERSION = 'qa-report/v1' as const;
 
-export const QA_REPORT_FORMATS = ['json', 'md'] as const;
+export const QA_REPORT_FORMATS = ['json', 'md', 'xlsx'] as const;
 export type QaReportFormat = (typeof QA_REPORT_FORMATS)[number];
 
 /** The item statuses that make an item a "defect" in the report. */

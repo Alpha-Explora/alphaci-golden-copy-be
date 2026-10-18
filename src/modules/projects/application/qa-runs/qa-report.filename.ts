@@ -26,7 +26,7 @@ function repoNameFrom(repoFullName: string): string {
   return repoFullName.split('/').pop() || repoFullName;
 }
 
-/** `QA-Report-<repo>-<branch>-<sha7>.<json|md>`, every part sanitised to [A-Za-z0-9._-]. */
+/** `QA-Report-<repo>-<branch>-<sha7>.<json|md|xlsx>`, every part sanitised to [A-Za-z0-9._-]. */
 export function buildQaReportFilename(
   report: QaReport,
   format: QaReportFormat,

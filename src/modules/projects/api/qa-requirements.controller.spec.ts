@@ -391,6 +391,14 @@ describe('requirements and Project run controllers', () => {
       expect(md.text).toContain('# QA Report - Checkout');
     }
 
+    const xlsx = await http()
+      .get(`/delivery-projects/${ID}/qa-runs/r1/report?format=xlsx`)
+      .expect(200);
+    expect(xlsx.headers['content-type']).toContain('spreadsheetml.sheet');
+    expect(xlsx.headers['content-disposition']).toContain(
+      'QA-Report-Checkout-abcdef0.xlsx',
+    );
+
     await http()
       .get(`/delivery-projects/${ID}/qa-runs/r1/report?format=xml`)
       .expect(400);
