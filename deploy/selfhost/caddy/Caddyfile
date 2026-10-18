@@ -42,3 +42,9 @@
 		format json
 	}
 }
+
+# Plain HTTP only redirects to the HTTPS origin. Port 80 is published for ACME
+# (automatic mode), and it must never serve the application.
+http://{$ALPHACI_HOSTNAME} {
+	redir https://{$ALPHACI_HOSTNAME}{uri} permanent
+}
