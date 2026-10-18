@@ -154,7 +154,51 @@ export class VercelCiSecretsService implements ProviderCiSecretsInstaller {
       githubSecrets.automationBypassSecret = automationBypassSecretName;
     }
 
+    if (input.target.ownershipMode === 'flowci_managed') {
+      await this.makePreviewsPublic(
+        input.target,
+        vercelToken,
+        `${owner}/${repo}`,
+      );
+    }
+
     return { githubSecrets, githubVariables: variableNames };
+  }
+
+  /**
+   * An ALPHACI-managed project's previews (uat included) must open without a
+   * Vercel account: QA works in QA Studio, which frames them, and testers
+   * have no seat on ALPHACI's Vercel team. A project the customer connected
+   * with their own account is left exactly as they configured it.
+   *
+   * Best effort like the bypass secret: a refusal must not stop the
+   * repository's deployment secrets from installing. Runs on provisioning
+   * and again on "Reinstall deployment secrets", which is how an existing
+   * project is brought in line.
+   */
+  private async makePreviewsPublic(
+    target: DeploymentTargetSummary,
+    vercelToken: string,
+    repoFullName: string,
+  ): Promise<void> {
+    try {
+      const outcome = await this.vercelEnvClient.ensurePublicPreviews({
+        token: vercelToken,
+        targetId: target.providerProjectId,
+        ...this.vercelTeamScope(target),
+      });
+      if (outcome === 'disabled') {
+        this.logger.log(
+          `Vercel Authentication turned off for ${target.providerProjectName} (${repoFullName}); its previews are public.`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Vercel Authentication was not turned off for ${repoFullName} (${target.slot}): ` +
+          `${error instanceof Error ? error.message : String(error)}. ` +
+          'QA Studio cannot show its previews until it is turned off under Settings > Deployment Protection.',
+      );
+    }
   }
 
   /**
