@@ -15,6 +15,35 @@ export type ReleaseSignatureResult =
   | { valid: true }
   | { valid: false; reason: ReleaseSignatureFailure };
 
+/**
+ * The trust set with the backend's own signing key added under its key ID, so a
+ * file-signed release verifies without hand-maintaining the setting. The derived
+ * key wins over a configured entry with the same ID; an unparseable setting is
+ * returned unchanged, so it still fails verification loudly.
+ */
+export function trustKeysWithSigner(
+  trustKeysJson: string | undefined,
+  signer: { keyId: string; publicKeyPem: string } | undefined,
+): string | undefined {
+  if (!signer) return trustKeysJson;
+  if (!trustKeysJson?.trim()) {
+    return JSON.stringify({ [signer.keyId]: signer.publicKeyPem });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trustKeysJson);
+  } catch {
+    return trustKeysJson;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return trustKeysJson;
+  }
+  return JSON.stringify({
+    ...(parsed as Record<string, unknown>),
+    [signer.keyId]: signer.publicKeyPem,
+  });
+}
+
 const BASE64 =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 

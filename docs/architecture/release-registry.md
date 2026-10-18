@@ -115,6 +115,15 @@ that built it. The first environment is the only one that deploys
 automatically; registration records that deployment. Every later environment
 receives a release only through an explicit, signed-in promotion.
 
+With `ALPHACI_RELEASE_SIGNER=file` the backend signs instead of CI. Right after
+a release is registered, the backend builds the manifest the sign job would have
+built, signs it with its own P-256 key, and attaches it through the same
+verification and persistence as CI's attach. The signing key's public half joins
+the trust set and enrollment's `trustKeys`. A verified release is never signed
+again. If signing fails for a host-delivered release, its unsigned deployment is
+failed. The generated pipeline then has no sign-release job and no signing
+secret. Runner mode is unchanged.
+
 Release verification (a signed manifest) and each environment's deployment
 state are separate records. Database triggers refuse any change to a
 release's identity or artifacts, and to a verified release's manifest.
