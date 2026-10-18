@@ -1,5 +1,10 @@
 import { createPublicKey } from 'node:crypto';
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '#kernel/db/database.service';
 import {
@@ -10,6 +15,8 @@ import { validateCiApiConnectivity } from '#kernel/config/ci-api-connectivity';
 import {
   RELEASE_TRUST_KEYS_ENV,
   resolveReleaseSigningSource,
+  resolveServerSigning,
+  serverSignsReleases,
 } from '#kernel/config/release-signing.config';
 import {
   kmsTrustProblem,
@@ -25,6 +32,11 @@ import {
   ingressReadiness,
   tunnelReport,
 } from '../../domain/onprem-tunnel';
+import { trustKeysWithSigner } from '../../domain/release-signature';
+import {
+  RELEASE_SIGNER,
+  type ReleaseSigner,
+} from '../ports/release-signer.port';
 
 export interface ReadinessCheck {
   id: string;
@@ -42,6 +54,9 @@ export class OnpremReadinessService {
     @Inject(DEPLOYMENT_PROJECT_REFERENCE_LOOKUP)
     private readonly projects: DeploymentProjectReferenceLookup,
     private readonly config: ConfigService,
+    @Optional()
+    @Inject(RELEASE_SIGNER)
+    private readonly releaseSigner?: ReleaseSigner,
   ) {}
 
   async read(
@@ -156,7 +171,10 @@ export class OnpremReadinessService {
     );
     try {
       const keys: unknown = JSON.parse(
-        this.config.get<string>('ALPHACI_RELEASE_TRUST_KEYS_JSON') || '{}',
+        trustKeysWithSigner(
+          this.config.get<string>('ALPHACI_RELEASE_TRUST_KEYS_JSON'),
+          this.releaseSigner?.identity,
+        ) || '{}',
       );
       if (
         !keys ||
@@ -189,11 +207,19 @@ export class OnpremReadinessService {
     }
     const signing = await this.releaseSigningStatus();
     check('release-signing', signing.status, signing.message);
-    check(
-      'ci-signing-secret',
-      'unverified',
-      'CI signing secret access and a matching signature must be verified by the signing workflow.',
-    );
+    if (serverSignsReleases((key) => this.config.get<string>(key))) {
+      check(
+        'ci-signing-secret',
+        'passed',
+        'Not needed: this AlphaCI backend signs releases, so no signing key or secret is in GitHub.',
+      );
+    } else {
+      check(
+        'ci-signing-secret',
+        'unverified',
+        'CI signing secret access and a matching signature must be verified by the signing workflow.',
+      );
+    }
     check(
       'registry',
       'unverified',
@@ -212,12 +238,28 @@ export class OnpremReadinessService {
     message: string;
   }> {
     const read = (key: string) => this.config.get<string>(key);
-    const source = resolveReleaseSigningSource(read);
-    const trustKeys = read(RELEASE_TRUST_KEYS_ENV);
     const failed = (message: string) => ({
       status: 'failed' as const,
       message,
     });
+    const server = resolveServerSigning(read);
+    if (server.mode === 'invalid') {
+      return failed(`Releases cannot be signed: ${server.problem}`);
+    }
+    if (server.mode === 'file') {
+      const signer = this.releaseSigner;
+      if (!signer || signer.problem !== undefined || !signer.identity) {
+        return failed(
+          `Releases cannot be signed by this backend: ${signer?.problem ?? 'the signer is not available.'}`,
+        );
+      }
+      return {
+        status: 'passed',
+        message: `Releases are signed by this AlphaCI backend with key ${signer.identity.keyId}, which is trusted. No signing setting is pushed to GitHub.`,
+      };
+    }
+    const source = resolveReleaseSigningSource(read);
+    const trustKeys = read(RELEASE_TRUST_KEYS_ENV);
     switch (source.kind) {
       case 'none':
         return failed(
