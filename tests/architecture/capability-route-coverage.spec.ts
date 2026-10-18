@@ -325,6 +325,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       routes: [
         { handler: 'listBranches', method: 'GET' },
         { handler: 'listFiles', method: 'GET' },
+        { handler: 'listFileCommits', method: 'GET' },
         { handler: 'listRuns', method: 'GET' },
         { handler: 'listRunJobs', method: 'GET' },
         { handler: 'getRunFailureLog', method: 'GET' },

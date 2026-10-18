@@ -15,6 +15,7 @@ import type {
   GitHubBranchComparison,
   GitHubBranchSummary,
   GitHubContentListing,
+  GitHubPathCommits,
   GitHubPullRequestCheck,
   GitHubPullRequestDetail,
   GitHubPullRequestFile,
@@ -71,6 +72,16 @@ async function mapWithConcurrency<T, R>(
     Array.from({ length: Math.min(limit, items.length) }, () => lane()),
   );
   return results;
+}
+
+/**
+ * The Code tab's commit column for one path at one ref: the latest commit
+ * of the folder (or file) itself, how many commits touched it, and the
+ * latest commit of each entry the listing shows.
+ */
+export interface ProjectFileCommitsResponse extends GitHubPathCommits {
+  path: string;
+  ref: string;
 }
 
 export interface ProjectBranchesResponse {
@@ -296,6 +307,47 @@ export class ProjectWorkspaceService {
       path,
       resolvedRef,
     );
+  }
+
+  /**
+   * The last commit of the listed path and of every entry in it, for the
+   * Code tab's commit column. Asked for after the listing has rendered, so a
+   * slow history lookup never delays the files themselves.
+   *
+   * The entries are re-read here rather than accepted from the browser: the
+   * listing is one cheap call, and the server decides what it asks GitHub.
+   */
+  async listFileCommits(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+    path: string,
+    ref: string | null,
+  ): Promise<ProjectFileCommitsResponse> {
+    const { repoFullName, token } = await this.context(
+      projectId,
+      userId,
+      oauthToken,
+    );
+    const resolvedRef =
+      ref ??
+      this.pickDefaultBranch(
+        await this.githubService.listBranches(token, repoFullName),
+      );
+    const listing = await this.githubService.listRepoContents(
+      token,
+      repoFullName,
+      path,
+      resolvedRef,
+    );
+    const commits = await this.githubService.listPathCommits(
+      token,
+      repoFullName,
+      resolvedRef,
+      listing.file?.path ?? listing.path ?? path,
+      listing.entries.map((entry) => entry.path),
+    );
+    return { path: listing.path ?? path, ref: resolvedRef, ...commits };
   }
 
   async listWorkflowRuns(

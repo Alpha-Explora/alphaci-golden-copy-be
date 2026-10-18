@@ -108,6 +108,7 @@ GET /api/v1/projects/{projectId}/workspace/branches
 GET /api/v1/projects/{projectId}/workspace/browser-tests
 GET /api/v1/projects/{projectId}/workspace/compare
 GET /api/v1/projects/{projectId}/workspace/files
+GET /api/v1/projects/{projectId}/workspace/files/commits
 GET /api/v1/projects/{projectId}/workspace/jobs/{jobId}/logs
 GET /api/v1/projects/{projectId}/workspace/playwright-live
 GET /api/v1/projects/{projectId}/workspace/pull-requests
