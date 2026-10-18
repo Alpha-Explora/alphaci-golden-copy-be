@@ -9,6 +9,7 @@
  *
  * Environment:
  *   DATABASE_URL          plain PostgreSQL connection string (preferred)
+ *   DATABASE_URL_FILE     the same, read from a file (secret mount)
  *   SUPABASE_DB_URL       fallback, for parity with the SaaS scripts
  *   DATABASE_CA_CERT      optional PEM for TLS; falls back to SUPABASE_DB_CA_CERT
  *
@@ -20,6 +21,7 @@
 
 import { Client } from 'pg';
 
+import { applyFileEnv } from '../kernel/config/file-env';
 import { postgresSslConfig } from '../kernel/db/postgres-ssl.config';
 
 import {
@@ -113,12 +115,18 @@ function safeHost(databaseUrl: string): string {
 }
 
 if (require.main === module) {
-  main(process.argv.slice(2), process.env)
-    .then((code) => {
-      process.exitCode = code;
-    })
-    .catch((error: unknown) => {
-      console.error(describe(error));
-      process.exitCode = 1;
-    });
+  try {
+    applyFileEnv(process.env);
+    main(process.argv.slice(2), process.env)
+      .then((code) => {
+        process.exitCode = code;
+      })
+      .catch((error: unknown) => {
+        console.error(describe(error));
+        process.exitCode = 1;
+      });
+  } catch (error) {
+    console.error(describe(error));
+    process.exitCode = 2;
+  }
 }

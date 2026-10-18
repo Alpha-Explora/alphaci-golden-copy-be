@@ -1,0 +1,193 @@
+# =============================================================================
+# AlphaCI self-hosted appliance (phase 1): one server, one HTTPS origin.
+#
+#   proxy    Caddy. /api/* goes to api, everything else to web. The only
+#            published ports are 80 (HTTP redirect, and ACME in auto TLS mode)
+#            and 443.
+#   web      Next.js frontend image (ALPHACI_WEB_IMAGE).
+#   api      NestJS backend image (ALPHACI_API_IMAGE). Serves /api/v1, including
+#            the /api/v1/ci/* routes that GitHub-hosted runners call.
+#   migrate  The same backend image, run once. It applies the migration tree
+#            and exits. api starts only after it exits with status 0.
+#   db       PostgreSQL 16 on a named volume. Not published to the host.
+#
+# Images are pinned by digest in .env (see .env.example). Secrets are files under
+# secrets/, mounted at /run/secrets/<name>. alphaci.env holds the non-secret
+# settings. Day-to-day commands go through ./alphaci-ctl.
+#
+# Networks: "edge" carries proxy, web and api. "data" carries api, migrate and
+# db, and is internal, so the database has no route out. api also sits on edge,
+# which is how it reaches GitHub.
+# =============================================================================
+name: alphaci
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+services:
+  db:
+    image: ${ALPHACI_DB_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: alphaci
+      POSTGRES_USER: alphaci
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs once, on an empty data directory: creates the anon and
+      # authenticated roles. migrate runs the same file on every start.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U alphaci -d alphaci']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - data
+
+  migrate:
+    image: ${ALPHACI_API_IMAGE:?Set ALPHACI_API_IMAGE in .env to the pinned backend image digest}
+    command: ['node', 'dist/src/scripts/migrate-selfhost.js']
+    restart: 'no'
+    logging: *logging
+    env_file:
+      - alphaci.env
+    # migrate needs the database URL only. The other *_FILE settings from
+    # alphaci.env are blanked, so the runner does not read secrets it has no mount for.
+    environment:
+      SESSION_SECRET_FILE: ''
+      ENV_PROVISIONING_ENCRYPTION_KEY_FILE: ''
+      GITHUB_CLIENT_SECRET_FILE: ''
+      GITHUB_APP_PRIVATE_KEY_FILE: ''
+      GITHUB_APP_WEBHOOK_SECRET_FILE: ''
+    secrets:
+      - database_url
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - data
+
+  api:
+    image: ${ALPHACI_API_IMAGE:?Set ALPHACI_API_IMAGE in .env to the pinned backend image digest}
+    restart: unless-stopped
+    logging: *logging
+    env_file:
+      - alphaci.env
+    secrets:
+      - session_secret
+      - database_url
+      - github_oauth_client_secret
+      - github_app_private_key
+      - github_app_webhook_secret
+      - release_signing_key
+      - env_provisioning_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const p = process.env.PORT || 4000; require('http').get('http://127.0.0.1:' + p + '/api/v1/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1));"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - edge
+      - data
+
+  web:
+    # Built with NEXT_PUBLIC_API_BASE_URL=/api/v1, ALPHACI_EDITION=enterprise and
+    # ALPHACI_BUILD_PROFILE=enterprise, the same for every customer. Those are
+    # build-time values, so nothing here sets them. The frontend uses the
+    # relative /api/v1 base, so proxy must serve /api/* on the same origin.
+    # Serves on 3000 and answers GET /healthz with 200.
+    image: ${ALPHACI_WEB_IMAGE:?Set ALPHACI_WEB_IMAGE in .env to the pinned frontend image digest}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:3000/healthz', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1));"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - edge
+
+  proxy:
+    image: ${ALPHACI_PROXY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    logging: *logging
+    # ALPHACI_HOSTNAME and ALPHACI_TLS_DIRECTIVE come from alphaci.env, so the
+    # Caddyfile and the app share one source for the address.
+    env_file:
+      - alphaci.env
+    ports:
+      - '${ALPHACI_HTTP_PORT:-80}:80'
+      - '${ALPHACI_HTTPS_PORT:-443}:443'
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Customer certificate, used when ALPHACI_TLS_DIRECTIVE names the files.
+      - ./certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    # Caddy's admin API answers on localhost:2019 when the process is up.
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - edge
+
+networks:
+  edge: {}
+  data:
+    internal: true
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
+  caddy_config: {}
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  database_url:
+    file: ./secrets/database_url
+  session_secret:
+    file: ./secrets/session_secret
+  release_signing_key:
+    file: ./secrets/release_signing_key
+  env_provisioning_encryption_key:
+    file: ./secrets/env_provisioning_encryption_key
+  github_app_private_key:
+    file: ./secrets/github_app_private_key
+  github_oauth_client_secret:
+    file: ./secrets/github_oauth_client_secret
+  github_app_webhook_secret:
+    file: ./secrets/github_app_webhook_secret

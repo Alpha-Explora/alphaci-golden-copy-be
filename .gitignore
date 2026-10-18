@@ -64,3 +64,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # SonarCloud
 .sonar/
 .scannerwork/
+
+# Self-hosted appliance: generated secrets and per-install settings.
+/deploy/selfhost/alphaci.env
+/deploy/selfhost/.env
+/deploy/selfhost/secrets/
+/deploy/selfhost/certs/

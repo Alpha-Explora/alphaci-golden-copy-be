@@ -756,10 +756,15 @@ inside its WSL distro. `enroll.sh` checks the saved state before it changes
 anything:
 
 - The saved API address matches: it keeps the existing enrollment and changes
-  nothing.
-- The address differs: it refuses with "enrolled with a different API". The
-  script has no replace option, so the steps below move the machine by hand.
+  nothing. With `--replace` and a replacement code, it re-enrolls the machine.
+- The address differs: it refuses with "enrolled with a different API" unless
+  you pass `--replace` with a code from the new API. The steps below make the
+  same move by hand.
 - A saved pending enrollment response for another address is refused as well.
+
+To replace the credential of a machine that is already enrolled, to switch it to
+the install's signing key, or to add a trust entry by hand, follow
+[Switching an existing host to the install's signing key](runbook-selfhost-install.md#switching-an-existing-host-to-the-installs-signing-key).
 
 **Same address and same database.** Nothing changes on the machine. The
 credential is stored by hash in the database, so the machine keeps connecting.
