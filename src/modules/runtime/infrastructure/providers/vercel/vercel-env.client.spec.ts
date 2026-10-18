@@ -1282,6 +1282,81 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  describe('ensurePublicPreviews', () => {
+    it('turns off Vercel Authentication, and only that, in the target team', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              id: 'prj_1',
+              ssoProtection: { deploymentType: 'all_except_custom_domains' },
+              passwordProtection: { deploymentType: 'preview' },
+            }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+
+      await expect(
+        new VercelEnvClient().ensurePublicPreviews({
+          token: 'vercel',
+          targetId: 'prj_1',
+          vercelTeamId: 'team_alphaci',
+        }),
+      ).resolves.toBe('disabled');
+
+      const [url, init] = (fetch as jest.Mock).mock.calls[1] as [
+        string,
+        { method: string; body: string },
+      ];
+      expect(url).toBe(
+        'https://api.vercel.com/v9/projects/prj_1?teamId=team_alphaci',
+      );
+      expect(init.method).toBe('PATCH');
+      // Password protection is a paid feature someone chose: not touched.
+      expect(JSON.parse(init.body)).toEqual({ ssoProtection: null });
+    });
+
+    it('writes nothing when Vercel Authentication is already off', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ id: 'prj_1', ssoProtection: null }),
+      });
+
+      await expect(
+        new VercelEnvClient().ensurePublicPreviews({
+          token: 'vercel',
+          targetId: 'prj_1',
+        }),
+      ).resolves.toBe('unchanged');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws without the token when Vercel refuses', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ ssoProtection: { deploymentType: 'preview' } }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          text: () => Promise.resolve('{"error":{"code":"forbidden"}}'),
+        });
+
+      const failure = await new VercelEnvClient()
+        .ensurePublicPreviews({
+          token: 'vercel-secret-token',
+          targetId: 'prj_1',
+        })
+        .catch((error: Error) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).not.toContain('vercel-secret-token');
+    });
+  });
+
   describe('recoverable refusals on project creation', () => {
     const nameTaken = {
       ok: false,

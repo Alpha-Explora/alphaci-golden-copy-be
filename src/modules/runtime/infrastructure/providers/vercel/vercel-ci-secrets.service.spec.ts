@@ -23,6 +23,7 @@ describe('VercelCiSecretsService', () => {
   };
   const vercelEnvClient = {
     ensureAutomationBypassSecret: jest.fn(),
+    ensurePublicPreviews: jest.fn(),
   };
 
   const makeService = () =>
@@ -53,6 +54,7 @@ describe('VercelCiSecretsService', () => {
     vercelEnvClient.ensureAutomationBypassSecret.mockResolvedValue(
       'bypass-secret-value',
     );
+    vercelEnvClient.ensurePublicPreviews.mockResolvedValue('disabled');
   });
 
   it('installs per-slot Vercel secrets for BYO CI-pushed targets', async () => {
@@ -378,5 +380,71 @@ describe('VercelCiSecretsService', () => {
         },
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  describe('public previews', () => {
+    const target = (ownershipMode: 'flowci_managed' | 'byo') => ({
+      id: 'target-1',
+      projectId: 'project-1',
+      slot: 'frontend' as const,
+      ownershipMode,
+      provider: 'vercel',
+      providerConnectionId: ownershipMode === 'byo' ? 'connection-1' : null,
+      providerProjectId: 'prj_1',
+      providerProjectName: 'web',
+      repoFullName: 'owner/web',
+      branchName: 'uat',
+      rootDirectory: null,
+      buildCommand: null,
+      startCommand: null,
+      environmentMap: {},
+      deploymentStrategy: 'vercel_ci_pushed' as const,
+      providerMetadata: {
+        vercelOrgId: 'team_flowci',
+        vercelTeamId: 'team_flowci',
+        vercelTeamSlug: 'alphaci',
+      },
+      status: 'active' as const,
+    });
+    const install = (ownershipMode: 'flowci_managed' | 'byo') =>
+      makeService().installForTarget({
+        githubAccessToken: 'github-token',
+        repoFullName: 'owner/web',
+        userId: 'user-1',
+        providerConnectionId: ownershipMode === 'byo' ? 'connection-1' : null,
+        target: target(ownershipMode),
+      });
+
+    it('turns off Vercel Authentication on an ALPHACI-managed project, in its team', async () => {
+      await install('flowci_managed');
+
+      expect(vercelEnvClient.ensurePublicPreviews).toHaveBeenCalledWith({
+        token: 'flowci-vercel-token',
+        targetId: 'prj_1',
+        vercelTeamId: 'team_flowci',
+        vercelTeamSlug: 'alphaci',
+      });
+    });
+
+    it('leaves a project the customer connected with their own Vercel account alone', async () => {
+      await install('byo');
+
+      expect(vercelEnvClient.ensurePublicPreviews).not.toHaveBeenCalled();
+    });
+
+    it('still installs every secret when Vercel refuses the change', async () => {
+      vercelEnvClient.ensurePublicPreviews.mockRejectedValue(
+        new Error('Vercel Authentication could not be turned off (403)'),
+      );
+
+      await expect(install('flowci_managed')).resolves.toEqual(
+        expect.objectContaining({
+          githubSecrets: expect.objectContaining({
+            token: 'VERCEL_FRONTEND_TOKEN',
+            automationBypassSecret: 'VERCEL_FRONTEND_AUTOMATION_BYPASS_SECRET',
+          }) as Record<string, string>,
+        }),
+      );
+    });
   });
 });

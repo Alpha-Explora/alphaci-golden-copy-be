@@ -547,6 +547,44 @@ export class VercelEnvClient implements DeploymentProvider {
     return created;
   }
 
+  /**
+   * Turns off Vercel Authentication on this project, so its preview
+   * deployments (where uat and every other non-production branch land) open
+   * without a Vercel sign-in. Vercel's default, Standard Protection, puts
+   * every preview behind vercel.com/sso-api: QA Studio cannot frame it and a
+   * QA tester without a seat on the Vercel team cannot open it at all.
+   *
+   * Only Vercel Authentication (`ssoProtection`) is cleared. Password
+   * protection and trusted IPs are paid features someone chose on purpose,
+   * and the automation bypass secrets stay. `unchanged` when it was already
+   * off, so a reinstall writes nothing.
+   */
+  async ensurePublicPreviews(
+    input: ProviderTargetStatusInput,
+  ): Promise<'disabled' | 'unchanged'> {
+    const url = this.withInputScope(
+      `${VERCEL_API_URL}/v9/projects/${encodeURIComponent(input.targetId)}`,
+      input,
+    );
+    const current = await fetch(url, { headers: this.headers(input.token) });
+    await this.assertOk(current, 'Vercel project could not be loaded');
+    const project = (await current.json()) as { ssoProtection?: unknown };
+    if (project.ssoProtection === null || project.ssoProtection === undefined) {
+      return 'unchanged';
+    }
+
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: this.headers(input.token),
+      body: JSON.stringify({ ssoProtection: null }),
+    });
+    await this.assertOk(
+      response,
+      'Vercel Authentication could not be turned off for this project',
+    );
+    return 'disabled';
+  }
+
   /** Every scope: 'automation-bypass' entry, keyed by the secret itself. */
   private async protectionBypassEntries(
     input: ProviderTargetStatusInput,
