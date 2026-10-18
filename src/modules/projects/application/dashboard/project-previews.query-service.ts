@@ -17,11 +17,16 @@ import {
   type DeploymentProviderCatalogPort,
 } from '#kernel/ports/deployment-provider-catalog.port';
 import { resolvePreviewSurface } from '../../domain/preview-surface.rule';
+import { DeployCommitMessages, messageFor } from './deploy-commit-messages';
 import type {
   ProjectBranchPreview,
+  ProjectPreviewDeploy,
   ProjectPreviewsResponse,
 } from './project-previews.types';
 import { UrlEmbeddabilityProbe } from './url-embeddability.probe';
+
+/** How many of an environment's deploys its Overview card lists. */
+export const RECENT_DEPLOYS_PER_ENVIRONMENT = 5;
 
 @Injectable()
 export class ProjectPreviewsService {
@@ -39,6 +44,10 @@ export class ProjectPreviewsService {
     @Optional()
     @Inject(DEPLOYMENT_PROVIDER_CATALOG)
     private readonly providerCatalog?: DeploymentProviderCatalogPort,
+    // Optional: without it a deploy the provider sent no message for keeps a
+    // bare commit SHA, which is what the Overview showed before.
+    @Optional()
+    private readonly commitMessages?: DeployCommitMessages,
   ) {}
 
   /**
@@ -78,16 +87,21 @@ export class ProjectPreviewsService {
     );
 
     const isProduction = productionBranchRule(environments);
-    const newestPerBranch = this.newestPerBranch(history.deployments);
+    const recentPerBranch = await this.withCommitMessages(
+      project,
+      this.recentPerBranch(history.deployments),
+    );
     const branches = await Promise.all(
-      newestPerBranch.map((deployment) =>
-        this.toBranchPreview(
+      [...recentPerBranch.values()].map((recent) => {
+        const deployment = recent[0] as DeploymentHistoryItem;
+        return this.toBranchPreview(
           deployment,
+          recent,
           stableUrls.get(`${deployment.targetId}::${deployment.branch}`) ??
             null,
           isProduction(deployment),
-        ),
-      ),
+        );
+      }),
     );
 
     /*
@@ -141,14 +155,15 @@ export class ProjectPreviewsService {
   }
 
   /**
-   * One entry per (target, branch) pair. Two targets can deploy the same
-   * branch — a frontend and a backend slot on the same repo — and those are
-   * genuinely different previews, so the target is part of the key.
+   * Each (target, branch) pair's newest deploys, newest first. Two targets can
+   * deploy the same branch — a frontend and a backend slot on the same repo —
+   * and those are genuinely different previews, so the target is part of the
+   * key. The first entry is the branch's current deployment.
    */
-  private newestPerBranch(
+  private recentPerBranch(
     deployments: DeploymentHistoryItem[],
-  ): DeploymentHistoryItem[] {
-    const newest = new Map<string, DeploymentHistoryItem>();
+  ): Map<string, DeploymentHistoryItem[]> {
+    const groups = new Map<string, DeploymentHistoryItem[]>();
 
     for (const deployment of deployments) {
       if (!deployment.branch) {
@@ -158,17 +173,68 @@ export class ProjectPreviewsService {
       }
 
       const key = `${deployment.targetId}::${deployment.branch}`;
-      const existing = newest.get(key);
-      if (!existing || isNewer(deployment, existing)) {
-        newest.set(key, deployment);
-      }
+      groups.set(key, [...(groups.get(key) ?? []), deployment]);
     }
 
-    return [...newest.values()];
+    for (const [key, group] of groups) {
+      groups.set(
+        key,
+        group
+          .sort((a, b) => (isNewer(a, b) ? -1 : isNewer(b, a) ? 1 : 0))
+          .slice(0, RECENT_DEPLOYS_PER_ENVIRONMENT),
+      );
+    }
+    return groups;
+  }
+
+  /**
+   * Fills in the commit message a provider did not send (a Render image deploy
+   * knows its commit only from the image tag), one branch read per branch that
+   * needs it.
+   */
+  private async withCommitMessages(
+    project: DeploymentProjectReference,
+    groups: Map<string, DeploymentHistoryItem[]>,
+  ): Promise<Map<string, DeploymentHistoryItem[]>> {
+    const lookup = this.commitMessages;
+    if (!lookup || !project.repoFullName) return groups;
+    const filled = new Map<string, DeploymentHistoryItem[]>();
+    await Promise.all(
+      [...groups].map(async ([key, group]) => {
+        const branch = group[0]?.branch;
+        const missing = group.some(
+          (deployment) => deployment.commitSha && !deployment.commitMessage,
+        );
+        if (!branch || !missing) {
+          filled.set(key, group);
+          return;
+        }
+        const messages = await lookup.forBranch(
+          project.repoFullName,
+          project.userId,
+          branch,
+        );
+        filled.set(
+          key,
+          group.map((deployment) =>
+            deployment.commitMessage
+              ? deployment
+              : {
+                  ...deployment,
+                  commitMessage: messageFor(messages, deployment.commitSha),
+                },
+          ),
+        );
+      }),
+    );
+    return new Map(
+      [...groups.keys()].map((key) => [key, filled.get(key) ?? []]),
+    );
   }
 
   private async toBranchPreview(
     deployment: DeploymentHistoryItem,
+    recent: DeploymentHistoryItem[],
     stableUrl: string | null,
     isProduction: boolean,
   ): Promise<ProjectBranchPreview> {
@@ -201,11 +267,14 @@ export class ProjectPreviewsService {
       commitMessage: deployment.commitMessage,
       pullRequestNumber: deployment.pullRequestNumber,
       createdBy: deployment.createdBy,
+      trigger: deployment.trigger ?? null,
       previewUrl,
       deploymentUrl: deployment.deploymentUrl,
       inspectorUrl: deployment.inspectorUrl,
       createdAt: deployment.createdAt,
+      startedAt: deployment.startedAt ?? null,
       readyAt: deployment.readyAt,
+      recentDeploys: recent.map(toPreviewDeploy),
       embeddable: verdict.embeddable,
       embedBlockedReason: verdict.reason,
     };
@@ -292,6 +361,21 @@ function isNewer(
   return Date.parse(candidate.createdAt) > Date.parse(incumbent.createdAt);
 }
 
+function toPreviewDeploy(
+  deployment: DeploymentHistoryItem,
+): ProjectPreviewDeploy {
+  return {
+    id: deployment.id,
+    status: deployment.status,
+    commitSha: deployment.commitSha,
+    commitMessage: deployment.commitMessage,
+    trigger: deployment.trigger ?? null,
+    createdAt: deployment.createdAt,
+    startedAt: deployment.startedAt ?? null,
+    readyAt: deployment.readyAt,
+  };
+}
+
 /** An environment that exists but has never been released to. */
 function toPendingPreview(
   environment: DeploymentEnvironment,
@@ -316,6 +400,7 @@ function toPendingPreview(
     commitMessage: null,
     pullRequestNumber: null,
     createdBy: null,
+    trigger: null,
     deploymentUrl: null,
     // The address it will answer on. Shown, not linked: until something is
     // released there it resolves to nothing, and a link that 404s reads as a
@@ -324,7 +409,9 @@ function toPendingPreview(
     inspectorUrl:
       environment.dashboardUrl === '' ? null : environment.dashboardUrl,
     createdAt: null,
+    startedAt: null,
     readyAt: null,
+    recentDeploys: [],
     // Never framed: there is nothing to frame, and probing an address with no
     // deployment behind it would spend a request to learn that.
     embeddable: false,

@@ -197,6 +197,33 @@ const SAME_REPOSITORY_RUN =
   'github.event.workflow_run.head_repository.full_name == github.repository';
 
 /**
+ * False for the second chain a pipeline branch starts when it is also a pull
+ * request's head.
+ *
+ * The access workflow runs on push and on pull_request. While a uat → main
+ * pull request is open, one push to uat therefore starts two chains for the
+ * same commit, and both build, test and release it - Render showed every uat
+ * commit deployed twice, the first copy replaced a minute later. The push
+ * chain already covers that commit (its quality status is the one the pull
+ * request waits for, being on the same SHA), so the pull_request chain stops
+ * here. A pull request from a feature branch still runs: no push chain exists
+ * for it.
+ *
+ * The head branch is read from the pull request, never from
+ * workflow_run.head_branch, which names the default branch once the chain has
+ * gone through a second hop. An empty pull_requests list (GitHub leaves it
+ * empty for a fork, which SAME_REPOSITORY_RUN already refuses) matches no
+ * branch, so the stage runs as before.
+ */
+const NOT_DUPLICATE_PULL_REQUEST_RUN =
+  "github.event_name != 'workflow_run' || " +
+  "github.event.workflow_run.event != 'pull_request' || " +
+  `!contains(fromJSON('${JSON.stringify([...PIPELINE_BRANCHES])}'), github.event.workflow_run.pull_requests[0].head.ref)`;
+
+/** A chained stage runs for this repository's own code, once per commit. */
+const CHAIN_RUN_ALLOWED = `(${SAME_REPOSITORY_RUN}) && (${NOT_DUPLICATE_PULL_REQUEST_RUN})`;
+
+/**
  * Resolves the originating branch and commit, and republishes them for the
  * stage after this one.
  *
@@ -248,9 +275,10 @@ function pipelineContextJob() {
     /*
      * Skipped, not failed, for a fork's run: every other job needs this one,
      * so the whole stage skips with it, and a fork pull request does not
-     * leave a red run on whatever branch name the fork happened to use.
+     * leave a red run on whatever branch name the fork happened to use. The
+     * duplicate chain of a pipeline branch's pull request skips the same way.
      */
-    if: `\${{ ${SAME_REPOSITORY_RUN} }}`,
+    if: `\${{ ${CHAIN_RUN_ALLOWED} }}`,
     runs_on: 'ubuntu-latest',
     permissions: {
       contents: 'read',
@@ -3061,8 +3089,8 @@ function reportingJob(
 
   return {
     // `always()` would otherwise run it, with ALPHACI_TOKEN, after a fork's
-    // run skipped the whole stage (see SAME_REPOSITORY_RUN).
-    if: `\${{ always() && (${SAME_REPOSITORY_RUN}) }}`,
+    // run skipped the whole stage (see CHAIN_RUN_ALLOWED).
+    if: `\${{ always() && (${CHAIN_RUN_ALLOWED}) }}`,
     needs,
     runs_on: 'ubuntu-latest',
     /*
