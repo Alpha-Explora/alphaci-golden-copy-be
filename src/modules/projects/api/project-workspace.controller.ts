@@ -32,6 +32,7 @@ import { CreatePullRequestDto } from './dto/create-pull-request.dto';
  *   GET jobs/:jobId/logs      — on open only, never polled
  *   GET runs/:runId/failure-log — on open only, never polled
  *   GET compare               — on open only, never polled
+ *   GET files/commits         — once per opened folder or file, never polled
  */
 @Controller('projects/:projectId/workspace')
 @UseGuards(SessionAuthGuard)
@@ -63,6 +64,26 @@ export class ProjectWorkspaceController {
     @Query('ref') ref?: string,
   ) {
     return this.workspaceService.listFiles(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+      path,
+      ref?.trim() ? ref.trim() : null,
+    );
+  }
+
+  /**
+   * The latest commit for the path and for each entry the Code tab lists.
+   * Asked for once per opened folder or file, after its listing, never polled.
+   */
+  @Get('files/commits')
+  listFileCommits(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Query('path') path = '',
+    @Query('ref') ref?: string,
+  ) {
+    return this.workspaceService.listFileCommits(
       projectId,
       this.requireUserId(req),
       this.oauthToken(req),

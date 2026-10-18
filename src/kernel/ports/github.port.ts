@@ -96,6 +96,30 @@ export interface GitHubFileContent {
   htmlUrl: string | null;
 }
 
+/** The most recent commit that touched a path, as a file browser shows it. */
+export interface GitHubPathCommit {
+  sha: string;
+  shortSha: string;
+  /** First line of the commit message. */
+  message: string;
+  committedAt: string;
+  authorLogin: string | null;
+  authorName: string | null;
+  authorAvatarUrl: string | null;
+}
+
+export interface GitHubPathCommits {
+  /** The latest commit under the listed path itself (the folder, or the file). */
+  latest: GitHubPathCommit | null;
+  /** Commits that touched that path; for the repository root, the branch's. */
+  totalCommits: number | null;
+  /**
+   * Keyed by entry path. Null when GitHub found none, or when the entry is
+   * past the per-request cap and was not asked about.
+   */
+  entries: Record<string, GitHubPathCommit | null>;
+}
+
 export interface GitHubWorkflowRunSummary {
   id: number;
   name: string;
@@ -624,6 +648,18 @@ export interface GithubProjectPort {
     path: string,
     ref: string,
   ): Promise<GitHubContentListing>;
+  /**
+   * The latest commit for `dirPath` and for each of `entryPaths` at `ref`,
+   * in batched GraphQL requests rather than one REST call per entry. Throws
+   * on API failure; callers degrade.
+   */
+  listPathCommits(
+    accessToken: string,
+    repoFullName: string,
+    ref: string,
+    dirPath: string,
+    entryPaths: readonly string[],
+  ): Promise<GitHubPathCommits>;
   listWorkflowRuns(
     accessToken: string,
     repoFullName: string,
