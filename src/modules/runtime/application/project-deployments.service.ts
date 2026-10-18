@@ -318,7 +318,9 @@ export class ProjectDeploymentsService implements DeploymentHistoryQuery {
         createdBy: event.createdBy,
         status: this.provider.normalizeStatus(event.status),
         createdAt: event.createdAt,
+        startedAt: event.startedAt ?? null,
         readyAt: event.readyAt,
+        trigger: event.trigger,
         // Per-deployment hostname where the provider issues one, otherwise
         // the target's stable public URL.
         deploymentUrl:

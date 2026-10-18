@@ -36,6 +36,12 @@ describe('LocalDeploymentHistoryProvider', () => {
   it('normalizes Render-like deployment statuses', () => {
     const provider = new LocalDeploymentHistoryProvider();
 
+    expect(provider.normalizeStatus('deactivated')).toBe('superseded');
+    expect(provider.normalizeStatus('update_in_progress')).toBe('building');
+    expect(provider.normalizeStatus('pre_deploy_in_progress')).toBe('building');
+    expect(provider.normalizeStatus('update_failed')).toBe('failed');
+    expect(provider.normalizeStatus('pre_deploy_failed')).toBe('failed');
+
     expect(provider.normalizeStatus('live')).toBe('ready');
     expect(provider.normalizeStatus('build_in_progress')).toBe('building');
     expect(provider.normalizeStatus('build_failed')).toBe('failed');

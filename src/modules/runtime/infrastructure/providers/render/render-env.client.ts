@@ -33,6 +33,15 @@ import {
 
 const RENDER_API_URL = 'https://api.render.com/v1';
 
+/**
+ * The commit an image was built from, read from its `sha-<commit>` tag (the
+ * tag the ALPHACI pipeline pushes). Null for any other tag or a digest.
+ */
+export function commitFromImageRef(ref: string | undefined): string | null {
+  const match = /:sha-([0-9a-f]{7,40})$/i.exec(ref?.trim() ?? '');
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
 @Injectable()
 export class RenderEnvClient implements DeploymentProvider {
   readonly provider = 'render' as const;
@@ -287,8 +296,10 @@ export class RenderEnvClient implements DeploymentProvider {
         status?: string;
         trigger?: string;
         createdAt?: string;
+        startedAt?: string;
         finishedAt?: string;
         commit?: { id?: string; message?: string };
+        image?: { ref?: string };
       };
     }>;
 
@@ -301,8 +312,11 @@ export class RenderEnvClient implements DeploymentProvider {
         id: deploy.id as string,
         status: deploy.status ?? 'unknown',
         createdAt: deploy.createdAt ?? new Date().toISOString(),
+        startedAt: deploy.startedAt ?? null,
         readyAt: deploy.finishedAt ?? null,
-        commitSha: deploy.commit?.id ?? null,
+        // An image-backed service has no commit of its own; the pipeline tags
+        // every image it pushes with the commit it built (`sha-<commit>`).
+        commitSha: deploy.commit?.id || commitFromImageRef(deploy.image?.ref),
         commitMessage: deploy.commit?.message ?? null,
         // Render's deploy payload names the trigger, not a person.
         createdBy: null,

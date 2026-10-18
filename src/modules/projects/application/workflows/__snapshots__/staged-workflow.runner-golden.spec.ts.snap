@@ -4,20 +4,20 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
 {
   "files": {
     ".github/workflows/00-alphaci-access.yml": {
-      "bytes": 15350,
-      "sha256": "1279c61888080d70215ea1f19da9298581bf748fc0b793b7ffde6c44d96b162c",
+      "bytes": 15546,
+      "sha256": "98b3ff1cd9ef146080f9e1c581ce0ab1c31a868c6b0b6f69dbbf9debc0760ef6",
     },
     ".github/workflows/05-alphaci-env-guard.yml": {
       "bytes": 4192,
       "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 33996,
-      "sha256": "c7ef476da6396a8b846dac641a38c3ed1ca19f9a9d1fd2254d7d5c81d943c406",
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 26551,
-      "sha256": "cb7f2dfca4dc77df7db87bc3b688d538a51fec603d33a4d01731a430b91d9241",
+      "bytes": 26943,
+      "sha256": "e737eeb0a2e1f5680a6d12d9a39ed6739d9757636da242d6509564c36bf491d3",
     },
     ".github/workflows/30-alphaci-promote.yml": {
       "bytes": 4316,
@@ -40,7 +40,7 @@ env:
   ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
 jobs:
   pipeline-context:
-    if: \${{ github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -351,7 +351,7 @@ jobs:
           curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg status "$STATUS" '{repoFullName:$repo,status:$status}')"
           [ "$STATUS" = healthy ]
   report-results:
-    if: \${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
     needs:
       - pipeline-context
       - validate-access
@@ -556,20 +556,20 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
 {
   "files": {
     ".github/workflows/00-alphaci-access.yml": {
-      "bytes": 15350,
-      "sha256": "1279c61888080d70215ea1f19da9298581bf748fc0b793b7ffde6c44d96b162c",
+      "bytes": 15546,
+      "sha256": "98b3ff1cd9ef146080f9e1c581ce0ab1c31a868c6b0b6f69dbbf9debc0760ef6",
     },
     ".github/workflows/05-alphaci-env-guard.yml": {
       "bytes": 4192,
       "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 33996,
-      "sha256": "c7ef476da6396a8b846dac641a38c3ed1ca19f9a9d1fd2254d7d5c81d943c406",
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 25601,
-      "sha256": "216517f5fd5a573947408c4c83a2af25f254a4943065609743fd4f31ecb14bd1",
+      "bytes": 25993,
+      "sha256": "c3a57624c78a97f8bf9eecb748bdeba6b8f2f18f98eda444fbf4f09cd30d80ec",
     },
     ".github/workflows/30-alphaci-promote.yml": {
       "bytes": 4316,
@@ -592,7 +592,7 @@ env:
   ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
 jobs:
   pipeline-context:
-    if: \${{ github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -881,7 +881,7 @@ jobs:
           set -euo pipefail
           curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"failed",detail:"Release signing failed or was cancelled before host delivery."}')"
   report-results:
-    if: \${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
     needs:
       - pipeline-context
       - validate-access
@@ -1085,20 +1085,20 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
 {
   "files": {
     ".github/workflows/00-alphaci-access.yml": {
-      "bytes": 15350,
-      "sha256": "1279c61888080d70215ea1f19da9298581bf748fc0b793b7ffde6c44d96b162c",
+      "bytes": 15546,
+      "sha256": "98b3ff1cd9ef146080f9e1c581ce0ab1c31a868c6b0b6f69dbbf9debc0760ef6",
     },
     ".github/workflows/05-alphaci-env-guard.yml": {
       "bytes": 4192,
       "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 33996,
-      "sha256": "c7ef476da6396a8b846dac641a38c3ed1ca19f9a9d1fd2254d7d5c81d943c406",
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 25801,
-      "sha256": "e25a54fa0309cb7e2d2c321e54330a53329f90dcdbb5ef921e2f44b0aa510af1",
+      "bytes": 26193,
+      "sha256": "a9f45f8bccbc7e7bb396deb1dd0f129d3cdc056e3db800c3dea9afa4f57b6b3c",
     },
     ".github/workflows/30-alphaci-promote.yml": {
       "bytes": 4316,
@@ -1121,7 +1121,7 @@ env:
   ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
 jobs:
   pipeline-context:
-    if: \${{ github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1412,7 +1412,7 @@ jobs:
           set -euo pipefail
           curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"failed",detail:"Release signing failed or was cancelled before host delivery."}')"
   report-results:
-    if: \${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
     needs:
       - pipeline-context
       - validate-access
@@ -1616,20 +1616,20 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
 {
   "files": {
     ".github/workflows/00-alphaci-access.yml": {
-      "bytes": 15374,
-      "sha256": "a7f1c9dd19799d11741ea3f6c54ae1b2c963b1673a948ee260e982c76292804f",
+      "bytes": 15570,
+      "sha256": "2bdd27d92ea82e02057ea8a4c5e0a08d870e16525aebf9b6ccec7c3a0e43ce0d",
     },
     ".github/workflows/05-alphaci-env-guard.yml": {
       "bytes": 4216,
       "sha256": "e46ba999af6c9c62152910807d3257de0bf969ab4891573e31ec6bffc23bf37f",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 33996,
-      "sha256": "c7ef476da6396a8b846dac641a38c3ed1ca19f9a9d1fd2254d7d5c81d943c406",
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 23664,
-      "sha256": "7e099905a09fcd1c7a7e750457a383f052aedc52ad36a8e3018588c33bb9b863",
+      "bytes": 24056,
+      "sha256": "4ee5dc8afc71f9fb1bb1ea569d91664728ebfb7913992601fede1fe91a9d20c7",
     },
   },
   "packageStage": "name: ALPHACI 3 Build and Deploy
@@ -1648,7 +1648,7 @@ env:
   ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
 jobs:
   pipeline-context:
-    if: \${{ github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1906,7 +1906,7 @@ jobs:
     secrets:
       PR_TOKEN: \${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}
   report-results:
-    if: \${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
     needs:
       - pipeline-context
       - validate-access
