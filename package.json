@@ -54,6 +54,7 @@
     "boundaries:graph": "depcruise src --config .dependency-cruiser.cjs --output-type dot > dependency-graph.dot",
     "boundaries:new": "depcruise src tests --config .dependency-cruiser.cjs",
     "db:apply:all": "node scripts/apply-all-migrations.mjs",
+    "db:migrate:selfhost": "node -r ts-node/register src/scripts/migrate-selfhost.ts",
     "check:schema-ownership": "node ./scripts/check-schema-ownership.cjs",
     "check:capabilities": "node ./scripts/check-capabilities.cjs",
     "generate:composition": "node ./scripts/generate-composition-source.mjs",

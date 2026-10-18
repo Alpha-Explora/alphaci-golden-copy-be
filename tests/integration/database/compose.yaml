@@ -1,6 +1,7 @@
 # Disposable local PostgreSQL fixture for the E2E suite (npm run test:e2e) and
 # opt-in database integration tests. Database files stay in tmpfs; the only
-# host bind mount is the read-only Supabase-role bootstrap script.
+# host bind mount is the read-only role bootstrap shared with the self-hosted
+# runner (deploy/selfhost/postgres-init/00-roles.sql).
 # The published port is loopback-only and the credentials are test-only.
 services:
   migration-test-postgres:
@@ -13,7 +14,7 @@ services:
     ports:
       - '127.0.0.1:55432:5432'
     volumes:
-      - ./init/01-supabase-roles.sql:/docker-entrypoint-initdb.d/01-supabase-roles.sql:ro
+      - ../../../deploy/selfhost/postgres-init/00-roles.sql:/docker-entrypoint-initdb.d/00-roles.sql:ro
     tmpfs:
       - /var/lib/postgresql/data
     healthcheck:
