@@ -25,6 +25,8 @@ export type DeploymentHistoryStatus =
   | 'ready'
   | 'failed'
   | 'canceled'
+  /** Went live, then a newer deploy replaced it (Render's `deactivated`). */
+  | 'superseded'
   | 'unknown';
 export type DeploymentHistoryMode = 'local_mock' | 'live' | 'unavailable';
 export type DeploymentDriftSeverity = 'info' | 'warning' | 'error';
@@ -260,7 +262,11 @@ export interface DeploymentHistoryItem {
   createdBy: string | null;
   status: DeploymentHistoryStatus;
   createdAt: string;
+  /** When the provider began the deploy, where it reports that apart from `createdAt`. */
+  startedAt?: string | null;
   readyAt: string | null;
+  /** What started it, in the provider's word (Render: api, deploy_hook, new_commit, manual…). */
+  trigger?: string | null;
   deploymentUrl: string | null;
   pullRequestNumber: number | null;
   inspectorUrl: string | null;

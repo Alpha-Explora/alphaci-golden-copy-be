@@ -182,7 +182,7 @@ describe('ProjectPreviewsService', () => {
     );
   });
 
-  it('keeps only the newest deployment per branch', async () => {
+  it('keeps only the newest deployment per branch, listing it first among its recent deploys', async () => {
     deploymentsService.listDeployments.mockResolvedValue({
       enabled: true,
       mode: 'live',
@@ -208,6 +208,91 @@ describe('ProjectPreviewsService', () => {
       deploymentId: 'dpl_new',
       commitSha: 'new',
     });
+    expect(
+      result.branches[0]?.recentDeploys.map((deploy) => deploy.id),
+    ).toEqual(['dpl_new', 'dpl_old']);
+  });
+
+  it('lists at most five recent deploys per environment, with their trigger and start', async () => {
+    deploymentsService.listDeployments.mockResolvedValue({
+      enabled: true,
+      mode: 'live',
+      liveProvidersEnabled: true,
+      deployments: Array.from({ length: 7 }, (_, index) =>
+        deployment({
+          id: `dpl_${String(index)}`,
+          createdAt: `2026-07-12T1${String(index)}:00:00.000Z`,
+          startedAt: `2026-07-12T1${String(index)}:00:04.000Z`,
+          trigger: 'api',
+          status: index === 6 ? 'ready' : 'superseded',
+        }),
+      ),
+    });
+
+    const [preview] = (await createService().listPreviews(projectReference))
+      .branches;
+
+    expect(preview?.recentDeploys).toHaveLength(5);
+    expect(preview?.recentDeploys[0]).toMatchObject({
+      id: 'dpl_6',
+      status: 'ready',
+      trigger: 'api',
+      startedAt: '2026-07-12T16:00:04.000Z',
+    });
+    expect(preview?.recentDeploys[1]?.status).toBe('superseded');
+    expect(preview).toMatchObject({ trigger: 'api' });
+  });
+
+  it('names the commits a provider sent no message for, with one branch read', async () => {
+    deploymentsService.listDeployments.mockResolvedValue({
+      enabled: true,
+      mode: 'live',
+      liveProvidersEnabled: true,
+      deployments: [
+        deployment({
+          id: 'dpl_a',
+          branch: 'uat',
+          commitSha: 'b0f1855e663b',
+          commitMessage: null,
+        }),
+        deployment({
+          id: 'dpl_b',
+          branch: 'uat',
+          commitSha: 'eeee',
+          commitMessage: null,
+          createdAt: '2026-07-12T10:00:00.000Z',
+        }),
+      ],
+    });
+    const commitMessages = {
+      forBranch: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([
+            ['b0f1855e663bf792b11703477999d5e825d3eb56', 'fix(a11y): labels'],
+          ]),
+        ),
+    };
+    const service = new ProjectPreviewsService(
+      deploymentsService,
+      embeddabilityProbe as never,
+      capabilityResolver as never,
+      providerCatalog as never,
+      commitMessages as never,
+    );
+
+    const [preview] = (await service.listPreviews(projectReference)).branches;
+
+    expect(commitMessages.forBranch).toHaveBeenCalledTimes(1);
+    expect(commitMessages.forBranch).toHaveBeenCalledWith(
+      'tone/orders-api',
+      'user-1',
+      'uat',
+    );
+    expect(preview?.commitMessage).toBe('fix(a11y): labels');
+    expect(
+      preview?.recentDeploys.map((deploy) => deploy.commitMessage),
+    ).toEqual(['fix(a11y): labels', null]);
   });
 
   it('keeps the same branch separate per deployment target', async () => {

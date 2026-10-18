@@ -1,5 +1,5 @@
 import { ProviderRateLimitedError } from '../../../core/provider-rate-limited.error';
-import { RenderEnvClient } from './render-env.client';
+import { commitFromImageRef, RenderEnvClient } from './render-env.client';
 
 function jsonResponse(json: unknown) {
   return { ok: true, json: () => Promise.resolve(json) };
@@ -779,6 +779,7 @@ describe('RenderEnvClient', () => {
           id: 'dep-2',
           status: 'live',
           createdAt: '2026-07-12T11:45:00.000Z',
+          startedAt: null,
           readyAt: '2026-07-12T11:48:00.000Z',
           commitSha: 'ea73844',
           commitMessage: 'feat: add logs endpoint',
@@ -797,6 +798,7 @@ describe('RenderEnvClient', () => {
           id: 'dep-1',
           status: 'build_failed',
           createdAt: '2026-07-12T11:30:00.000Z',
+          startedAt: null,
           readyAt: null,
           commitSha: null,
           commitMessage: null,
@@ -832,6 +834,51 @@ describe('RenderEnvClient', () => {
           targetId: 'srv-missing',
         }),
       ).resolves.toEqual([]);
+    });
+
+    it('reads an image deploy’s commit from its sha- tag, and keeps when it started', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve([
+            {
+              deploy: {
+                id: 'dep-img',
+                status: 'deactivated',
+                trigger: 'api',
+                createdAt: '2026-10-17T17:41:05.204Z',
+                startedAt: '2026-10-17T17:41:09.000Z',
+                finishedAt: '2026-10-17T17:41:39.399Z',
+                commit: null,
+                image: {
+                  ref: 'ghcr.io/acme/api:sha-B0F1855E663BF792B11703477999D5E825D3EB56',
+                },
+              },
+            },
+          ]),
+      });
+
+      const [deploy] = await new RenderEnvClient().getDeployHistory({
+        token: 'rnd',
+        targetId: 'srv-1',
+      });
+
+      expect(deploy).toMatchObject({
+        commitSha: 'b0f1855e663bf792b11703477999d5e825d3eb56',
+        startedAt: '2026-10-17T17:41:09.000Z',
+        readyAt: '2026-10-17T17:41:39.399Z',
+        trigger: 'api',
+      });
+    });
+
+    it('leaves the commit empty for an image tag that names none', () => {
+      expect(commitFromImageRef('ghcr.io/acme/api:latest')).toBeNull();
+      expect(commitFromImageRef('ghcr.io/acme/api@sha256:abc')).toBeNull();
+      expect(commitFromImageRef(undefined)).toBeNull();
+      expect(commitFromImageRef('ghcr.io/acme/api:sha-0d7caa9')).toBe(
+        '0d7caa9',
+      );
     });
   });
 

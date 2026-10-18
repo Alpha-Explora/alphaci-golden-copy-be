@@ -69,19 +69,34 @@ export class LocalDeploymentHistoryProvider {
     const normalized = status?.toLowerCase() ?? '';
     if (['queued', 'pending', 'created'].includes(normalized)) return 'queued';
     if (
-      ['building', 'build_in_progress', 'in_progress', 'initializing'].includes(
-        normalized,
-      )
+      [
+        'building',
+        'build_in_progress',
+        'in_progress',
+        'initializing',
+        'pre_deploy_in_progress',
+        'update_in_progress',
+      ].includes(normalized)
     ) {
       return 'building';
     }
     if (['ready', 'live', 'succeeded', 'success'].includes(normalized)) {
       return 'ready';
     }
-    if (['failed', 'error', 'build_failed'].includes(normalized)) {
+    if (
+      [
+        'failed',
+        'error',
+        'build_failed',
+        'pre_deploy_failed',
+        'update_failed',
+      ].includes(normalized)
+    ) {
       return 'failed';
     }
     if (['canceled', 'cancelled'].includes(normalized)) return 'canceled';
+    // Render's word for a deploy that went live and was then replaced.
+    if (normalized === 'deactivated') return 'superseded';
     return 'unknown';
   }
 
