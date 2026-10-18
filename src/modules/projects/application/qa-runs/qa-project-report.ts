@@ -9,6 +9,7 @@
 
 import type {
   QaReportDefect,
+  QaReportFormat,
   QaReportSignoffHistoryEntry,
   QaReportSummary,
 } from './qa-report.contracts';
@@ -108,10 +109,10 @@ function sanitizeFilenamePart(value: string): string {
   return cleaned || 'unknown';
 }
 
-/** `QA-Report-<project>-<run7>.<json|md>`, every part sanitised to [A-Za-z0-9._-]. */
+/** `QA-Report-<project>-<run7>.<json|md|xlsx>`, every part sanitised to [A-Za-z0-9._-]. */
 export function buildQaProjectReportFilename(
   report: QaProjectReport,
-  format: 'json' | 'md',
+  format: QaReportFormat,
 ): string {
   const project = sanitizeFilenamePart(report.project.name);
   const run = sanitizeFilenamePart(report.run.id.slice(0, 7));
