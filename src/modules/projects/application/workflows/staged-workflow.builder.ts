@@ -396,6 +396,11 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
    * first environment. Undefined keeps the reusable workflow's own inputs.
    */
   releaseSigner?: ReleaseSigner;
+  /**
+   * Who signs release manifests. Undefined or `runner` keeps the sign-release
+   * job. `server` means the AlphaCI backend signs, so no signing job is generated.
+   */
+  releaseSigning?: 'runner' | 'server';
 }
 
 export interface StagedWorkflowEnvironment {
@@ -1379,6 +1384,7 @@ function buildEnvironmentWorkflowBundle(
       environments,
       targets,
       dto.releaseSigner,
+      dto.releaseSigning === 'server',
     ),
   ];
   if (dto.workflowVariant !== 'frontend') {
@@ -1472,6 +1478,7 @@ function buildEnvironmentPackageWorkflowFile(
   environments: StagedWorkflowEnvironment[],
   targets: StagedEnvironmentTarget[],
   releaseSigner: ReleaseSigner | undefined,
+  serverSigned: boolean,
 ): StagedWorkflowFile {
   const { packageName, qualityName, fileSuffix } = ctx.names;
   const first = environments[0]!;
@@ -1617,52 +1624,59 @@ function buildEnvironmentPackageWorkflowFile(
             },
           ],
         },
-        'sign-release': {
-          needs: ['register-release'],
-          // Keyless Cloud KMS signing exchanges the job's OIDC token.
-          permissions: { contents: 'read', 'id-token': 'write' },
-          uses: `${CENTRAL_WORKFLOW_BASE}/sign-release.yml@${ctx.centralWorkflowRef}`,
-          with: {
-            'release-id': '${{ needs.register-release.outputs.release-id }}',
-            'api-url': ALPHACI_API_URL,
-            ...(releaseSigner && {
-              'workload-identity-provider':
-                releaseSigner.workloadIdentityProvider,
-              'service-account': releaseSigner.serviceAccount,
+        ...(serverSigned
+          ? {}
+          : {
+              'sign-release': {
+                needs: ['register-release'],
+                // Keyless Cloud KMS signing exchanges the job's OIDC token.
+                permissions: { contents: 'read', 'id-token': 'write' },
+                uses: `${CENTRAL_WORKFLOW_BASE}/sign-release.yml@${ctx.centralWorkflowRef}`,
+                with: {
+                  'release-id':
+                    '${{ needs.register-release.outputs.release-id }}',
+                  'api-url': ALPHACI_API_URL,
+                  ...(releaseSigner && {
+                    'workload-identity-provider':
+                      releaseSigner.workloadIdentityProvider,
+                    'service-account': releaseSigner.serviceAccount,
+                  }),
+                },
+                // Named, not `inherit`: inheriting only works between repositories
+                // of one organization, and the central workflows live in another.
+                secrets: {
+                  ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                  ALPHACI_RELEASE_SIGNING_KEY:
+                    '${{ secrets.ALPHACI_RELEASE_SIGNING_KEY }}',
+                },
+              },
             }),
-          },
-          // Named, not `inherit`: inheriting only works between repositories
-          // of one organization, and the central workflows live in another.
-          secrets: {
-            ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
-            ALPHACI_RELEASE_SIGNING_KEY:
-              '${{ secrets.ALPHACI_RELEASE_SIGNING_KEY }}',
-          },
-        },
         ...deployJobs,
         ...(hostDelivered
-          ? {
-              'report-signing-failure': {
-                needs: ['register-release', 'sign-release'],
-                if: "${{ always() && needs.register-release.result == 'success' && needs.sign-release.result != 'success' }}",
-                runs_on: 'ubuntu-latest',
-                steps: [
-                  {
-                    name: 'Clear the unsigned host deployment after signing fails',
-                    env: {
-                      ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
-                      ALPHACI_API_URL,
-                      RELEASE_ID:
-                        '${{ needs.register-release.outputs.release-id }}',
+          ? serverSigned
+            ? {}
+            : {
+                'report-signing-failure': {
+                  needs: ['register-release', 'sign-release'],
+                  if: "${{ always() && needs.register-release.result == 'success' && needs.sign-release.result != 'success' }}",
+                  runs_on: 'ubuntu-latest',
+                  steps: [
+                    {
+                      name: 'Clear the unsigned host deployment after signing fails',
+                      env: {
+                        ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+                        ALPHACI_API_URL,
+                        RELEASE_ID:
+                          '${{ needs.register-release.outputs.release-id }}',
+                      },
+                      run: [
+                        'set -euo pipefail',
+                        `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"failed",detail:"Release signing failed or was cancelled before host delivery."}')"`,
+                      ].join('\n'),
                     },
-                    run: [
-                      'set -euo pipefail',
-                      `curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" ${CI_REQUEST_HEADERS} -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"failed",detail:"Release signing failed or was cancelled before host delivery."}')"`,
-                    ].join('\n'),
-                  },
-                ],
-              },
-            }
+                  ],
+                },
+              }
           : {
               'report-deployment': {
                 needs: ['register-release', ...deployJobIds],
@@ -1695,7 +1709,7 @@ function buildEnvironmentPackageWorkflowFile(
             'validate-access',
             'build',
             'register-release',
-            'sign-release',
+            ...(serverSigned ? [] : ['sign-release']),
             ...deployJobIds,
           ],
           { workJobIds: ['build'] },

@@ -19,7 +19,10 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 import { QA_BRANCH, WORKING_BRANCH } from '#kernel/config/pipeline-branches';
-import { releaseSignerFor } from '#kernel/config/release-signing.config';
+import {
+  releaseSignerFor,
+  serverSignsReleases,
+} from '#kernel/config/release-signing.config';
 import { ConfigService } from '@nestjs/config';
 import {
   canCreatePullRequest,
@@ -482,6 +485,13 @@ export class ProjectWorkflowsService {
             }
           : {}),
         ...(releaseSigner && { releaseSigner }),
+        ...(environments.length > 0 &&
+          this.configService &&
+          serverSignsReleases((key) =>
+            this.configService?.get<string>(key),
+          ) && {
+            releaseSigning: 'server' as const,
+          }),
       },
       this.workflowFragmentRegistry,
     );

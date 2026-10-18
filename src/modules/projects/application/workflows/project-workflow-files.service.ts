@@ -7,7 +7,10 @@ import {
 } from '@nestjs/common';
 import yaml from 'js-yaml';
 import type { ConfigService } from '@nestjs/config';
-import { releaseSignerFor } from '#kernel/config/release-signing.config';
+import {
+  releaseSignerFor,
+  serverSignsReleases,
+} from '#kernel/config/release-signing.config';
 
 import { CatalogService } from '../catalog/catalog.service';
 import {
@@ -120,6 +123,13 @@ export class ProjectWorkflowFilesService {
         ...(environments?.length && { environments }),
         ...(environmentTargets && { environmentTargets }),
         ...(releaseSigner && { releaseSigner }),
+        ...(environments?.length &&
+          this.configService &&
+          serverSignsReleases((key) =>
+            this.configService?.get<string>(key),
+          ) && {
+            releaseSigning: 'server' as const,
+          }),
       },
       this.workflowFragmentRegistry,
     );
