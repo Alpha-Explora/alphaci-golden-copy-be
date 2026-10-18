@@ -7,11 +7,20 @@
 # during the build stage so the templates and catalog are baked into the image.
 # Set TEMPLATE_REPO_SLUG to point at a different repository or fork, and keep it
 # in step with the runtime CENTRAL_WORKFLOW_REPO setting.
+#
+# One image serves three roles: the API (default CMD), the one-shot migration
+# runner (self-hosted `migrate` service) and the CLI (`alphaci-ctl`). The
+# self-hosted appliance under deploy/selfhost/ runs it; SaaS (Render) runs the
+# same CMD.
 # =============================================================================
 
 # ── Stage 1: compile TypeScript + fetch templates ────────────────────────────
 FROM node:22-alpine AS builder
 
+# Only this stage sees the token. The runtime stage copies the cloned templates
+# and nothing else from here, so the token is not in any layer of the final
+# image. The clone step removes .git (which holds the credentialed remote) in
+# the same RUN.
 ARG TEMPLATE_CLONE_TOKEN
 # Git ref (branch/tag) of the central workflow repo whose catalog + templates
 # get baked into this image. Defaults to main; set to `test`/`uat` on
@@ -53,7 +62,7 @@ FROM node:22-alpine AS runner
 ENV NODE_ENV=production
 # Absolute path — CatalogService reads from TEMPLATE_REPO_PATH/TEMPLATE_WORKFLOW_DIR
 ENV TEMPLATE_REPO_PATH=/app/templates
-# TEMPLATE_WORKFLOW_DIR defaults to 'workflow-templates' in app.config.ts
+# TEMPLATE_WORKFLOW_DIR defaults to 'workflow-templates/customer' in app.config.ts
 
 WORKDIR /app
 
@@ -75,14 +84,23 @@ COPY --chown=nestjs:nodejs scripts/process-outbox.cjs ./scripts/process-outbox.c
 COPY --chown=nestjs:nodejs --from=builder /tmp/central-workflow/workflow-templates ./templates/workflow-templates
 COPY --chown=nestjs:nodejs --from=builder /tmp/central-workflow/catalog ./templates/catalog
 
+# Self-hosted runtime assets. The migration runner (dist/src/scripts/
+# migrate-selfhost.js) walks up from its own directory to find
+# supabase/migrations, and reads the role bootstrap from
+# deploy/selfhost/postgres-init. SaaS does not run either.
+COPY --chown=nestjs:nodejs supabase/migrations ./supabase/migrations
+COPY --chown=nestjs:nodejs deploy/selfhost/postgres-init ./deploy/selfhost/postgres-init
+
 USER nestjs
 
-EXPOSE 3000
+# The app listens on PORT (default 4000, see src/main.ts). The probe reads the
+# same variable instead of assuming a number.
+EXPOSE 4000
 
 # start-period:20s — connect-pg-simple runs CREATE TABLE IF NOT EXISTS on boot
 # which can take 8-12s on Render shared tier cold starts
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:3000/api/v1/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
+  CMD node -e "const port = process.env.PORT || 4000; require('http').get('http://127.0.0.1:' + port + '/api/v1/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
 
 # TypeScript's rootDir is the repository root, so Nest emits the entry point
 # under dist/src. Keep the web process and the cron runner on the same compiled
