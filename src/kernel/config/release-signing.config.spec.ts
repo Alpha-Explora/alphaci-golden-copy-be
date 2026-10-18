@@ -1,6 +1,8 @@
 import {
   releaseSignerFor,
   resolveReleaseSigningSource,
+  resolveServerSigning,
+  serverSignsReleases,
   RELEASE_SIGNER_SERVICE_ACCOUNT_ENV,
   RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER_ENV,
   RELEASE_SIGNING_KMS_KEY_VERSION_ENV,
@@ -224,5 +226,60 @@ describe('releaseSignerFor', () => {
         (key) => ({ [RELEASE_SIGNING_KMS_KEY_VERSION_ENV]: KEY_VERSION })[key],
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('server signing mode', () => {
+  const env = (values: Record<string, string>) => (key: string) => values[key];
+  const KEY_FILE = 'ALPHACI_RELEASE_SIGNING_KEY_FILE';
+  const MODE = 'ALPHACI_RELEASE_SIGNER';
+
+  it('is runner mode when unset, blank, or named runner', () => {
+    expect(resolveServerSigning(env({}))).toEqual({ mode: 'runner' });
+    expect(resolveServerSigning(env({ [MODE]: '  ' }))).toEqual({
+      mode: 'runner',
+    });
+    expect(resolveServerSigning(env({ [MODE]: 'runner' }))).toEqual({
+      mode: 'runner',
+    });
+    expect(serverSignsReleases(env({}))).toBe(false);
+    expect(serverSignsReleases(env({ [MODE]: 'runner' }))).toBe(false);
+  });
+
+  it('is file mode with its key path, which is not the lab path', () => {
+    const values = { [MODE]: 'file', [KEY_FILE]: '/etc/alphaci/sign.key' };
+    expect(resolveServerSigning(env(values))).toEqual({
+      mode: 'file',
+      keyPath: '/etc/alphaci/sign.key',
+    });
+    expect(serverSignsReleases(env(values))).toBe(true);
+  });
+
+  it('is invalid for an unknown mode, or file mode without a key file', () => {
+    expect(resolveServerSigning(env({ [MODE]: 'kms' }))).toMatchObject({
+      mode: 'invalid',
+      problem: 'ALPHACI_RELEASE_SIGNER must be runner or file.',
+    });
+    expect(resolveServerSigning(env({ [MODE]: 'file' }))).toMatchObject({
+      mode: 'invalid',
+      problem: expect.stringContaining(
+        'ALPHACI_RELEASE_SIGNING_KEY_FILE must name',
+      ),
+    });
+  });
+
+  it('refuses file mode alongside any Cloud KMS setting', () => {
+    expect(
+      resolveServerSigning(
+        env({
+          [MODE]: 'file',
+          [KEY_FILE]: '/etc/alphaci/sign.key',
+          [RELEASE_SIGNING_KMS_KEY_VERSION_ENV]: KEY_VERSION,
+        }),
+      ),
+    ).toMatchObject({
+      mode: 'invalid',
+      problem: expect.stringContaining('cannot be combined with Cloud KMS'),
+    });
   });
 });

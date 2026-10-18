@@ -21,6 +21,14 @@ export const RELEASE_SIGNER_SERVICE_ACCOUNT_ENV =
   'ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT';
 export const RELEASE_SIGNING_LAB_KEY_PATH_ENV = 'ONPREM_LAB_SIGNING_KEY_PATH';
 export const RELEASE_TRUST_KEYS_ENV = 'ALPHACI_RELEASE_TRUST_KEYS_JSON';
+/**
+ * Who signs release manifests. `runner` (default, SaaS) signs in the generated
+ * sign-release job. `file` makes the AlphaCI backend sign with a customer-held
+ * P-256 key file, so no signing job or signing secret reaches GitHub.
+ */
+export const RELEASE_SIGNER_MODE_ENV = 'ALPHACI_RELEASE_SIGNER';
+/** The P-256 private key file the backend signs with when the mode is `file`. */
+export const RELEASE_SIGNING_KEY_FILE_ENV = 'ALPHACI_RELEASE_SIGNING_KEY_FILE';
 
 /** Matches the check in the sign-release workflow: the version number is digits. */
 const KMS_KEY_VERSION_NAME =
@@ -122,6 +130,58 @@ function resolveReleaseSigner(
   return {
     signer: { workloadIdentityProvider: provider, serviceAccount },
   };
+}
+
+/** Where release manifests are signed: CI (`runner`) or this backend (`file`). */
+export type ServerSigning =
+  | { mode: 'runner' }
+  | { mode: 'file'; keyPath: string }
+  /** The mode or its settings are unusable. Readiness reports the problem. */
+  | { mode: 'invalid'; problem: string };
+
+/**
+ * Resolves the release signer mode. Unset or blank means `runner`. `file` needs
+ * its key file and no Cloud KMS setting, so one deployment never has two signers.
+ */
+export function resolveServerSigning(
+  read: (key: string) => string | undefined,
+): ServerSigning {
+  const mode = nonBlank(read(RELEASE_SIGNER_MODE_ENV));
+  if (mode === null || mode === 'runner') return { mode: 'runner' };
+  if (mode !== 'file') {
+    return {
+      mode: 'invalid',
+      problem: `${RELEASE_SIGNER_MODE_ENV} must be runner or file.`,
+    };
+  }
+  const keyPath = nonBlank(read(RELEASE_SIGNING_KEY_FILE_ENV));
+  if (keyPath === null) {
+    return {
+      mode: 'invalid',
+      problem: `${RELEASE_SIGNING_KEY_FILE_ENV} must name the P-256 private key file when ${RELEASE_SIGNER_MODE_ENV}=file.`,
+    };
+  }
+  const kmsSet =
+    nonBlank(read(RELEASE_SIGNING_KMS_KEY_VERSION_ENV)) !== null ||
+    nonBlank(read(RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER_ENV)) !== null ||
+    nonBlank(read(RELEASE_SIGNER_SERVICE_ACCOUNT_ENV)) !== null;
+  if (kmsSet) {
+    return {
+      mode: 'invalid',
+      problem: `${RELEASE_SIGNER_MODE_ENV}=file cannot be combined with Cloud KMS settings. Remove ${RELEASE_SIGNING_KMS_KEY_VERSION_ENV} and its signer settings.`,
+    };
+  }
+  return { mode: 'file', keyPath };
+}
+
+/**
+ * True when the backend signs releases itself. Intent-based: a misconfigured
+ * `file` mode still means no CI signing job, and readiness reports the problem.
+ */
+export function serverSignsReleases(
+  read: (key: string) => string | undefined,
+): boolean {
+  return nonBlank(read(RELEASE_SIGNER_MODE_ENV)) === 'file';
 }
 
 function nonBlank(value: string | undefined): string | null {
