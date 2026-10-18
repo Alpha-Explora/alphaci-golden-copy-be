@@ -31,7 +31,7 @@ describe('DatabaseService', () => {
     jest.clearAllMocks();
   });
 
-  it('sets pool to null and warns when SUPABASE_DB_URL is missing', async () => {
+  it('sets pool to null and warns when the database URL is missing', async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DatabaseService,

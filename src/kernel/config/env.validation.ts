@@ -22,6 +22,10 @@
  */
 
 import { parseCompositionConfig } from '#kernel/composition/composition-config.js';
+import {
+  parseDeploymentMode,
+  resolveStorageDriver,
+} from '#kernel/config/deployment-mode.js';
 
 export interface EnvironmentVariables {
   NODE_ENV: 'development' | 'test' | 'production';
@@ -29,6 +33,11 @@ export interface EnvironmentVariables {
   ENABLE_SWAGGER: string;
   SESSION_SECRET: string;
   DEV_QUICK_LOGIN?: string;
+  ALPHACI_DEPLOYMENT_MODE?: string;
+  STORAGE_DRIVER?: string;
+  DATABASE_URL?: string;
+  /** Legacy name for DATABASE_URL; still accepted. */
+  SUPABASE_DB_URL?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -75,12 +84,6 @@ export interface EnvironmentVariables {
 }
 
 type RawEnv = Record<string, unknown>;
-const SCOPED_SUPABASE_URL_SUFFIX = '_SUPABASE_URL';
-const SCOPED_SUPABASE_SECRET_SUFFIXES = [
-  '_SUPABASE_SECRET_KEY',
-  '_SUPABASE_SERVICE_ROLE_KEY',
-] as const;
-
 function getTrimmedString(env: RawEnv, keys: string[]): string | undefined {
   for (const key of keys) {
     const value = env[key];
@@ -90,65 +93,6 @@ function getTrimmedString(env: RawEnv, keys: string[]): string | undefined {
   }
 
   return undefined;
-}
-
-function extractScopedPrefix(key: string, suffix: string): string | null {
-  if (!key.endsWith(suffix)) {
-    return null;
-  }
-
-  const prefix = key.slice(0, -suffix.length);
-  return prefix || null;
-}
-
-function getScopedSecretPrefix(key: string): string | null {
-  for (const suffix of SCOPED_SUPABASE_SECRET_SUFFIXES) {
-    const prefix = extractScopedPrefix(key, suffix);
-    if (prefix) {
-      return prefix;
-    }
-  }
-
-  return null;
-}
-
-function collectScopedSupabasePrefixSets(env: RawEnv): {
-  urlPrefixes: Set<string>;
-  secretPrefixes: Set<string>;
-} {
-  const urlPrefixes = new Set<string>();
-  const secretPrefixes = new Set<string>();
-
-  for (const [key, raw] of Object.entries(env)) {
-    if (typeof raw !== 'string' || raw.trim() === '') {
-      continue;
-    }
-
-    const urlPrefix = extractScopedPrefix(key, SCOPED_SUPABASE_URL_SUFFIX);
-    if (urlPrefix) {
-      urlPrefixes.add(urlPrefix);
-    }
-
-    const secretPrefix = getScopedSecretPrefix(key);
-    if (secretPrefix) {
-      secretPrefixes.add(secretPrefix);
-    }
-  }
-
-  return { urlPrefixes, secretPrefixes };
-}
-
-function countScopedSupabaseClients(env: RawEnv): number {
-  const { urlPrefixes, secretPrefixes } = collectScopedSupabasePrefixSets(env);
-
-  let count = 0;
-  for (const prefix of urlPrefixes) {
-    if (secretPrefixes.has(prefix)) {
-      count += 1;
-    }
-  }
-
-  return count;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +229,55 @@ function validateProductionGithubAppConfig(env: RawEnv): void {
   }
 }
 
+/**
+ * STORAGE_DRIVER=supabase needs the service-role client. Anything else leaves
+ * SUPABASE_* optional, so a self-hosted or Supabase-free deployment boots
+ * without them.
+ */
+function requireSupabaseForStorage(env: RawEnv): void {
+  const missing = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'].filter(
+    (key) => getTrimmedString(env, [key]) === undefined,
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `[env] STORAGE_DRIVER=supabase requires ${missing.join(' and ')}. ` +
+        'Set them, or use STORAGE_DRIVER=postgres.',
+    );
+  }
+}
+
+/**
+ * ALPHACI_DEPLOYMENT_MODE=selfhosted: sessions must live in Postgres (shared
+ * across processes and surviving a restart), a database URL is mandatory, and
+ * a public address is needed so links handed to browsers and GitHub-hosted
+ * runners are not localhost.
+ */
+function validateSelfhostedConfig(env: RawEnv): void {
+  if (env['SESSION_STORE_DRIVER'] !== 'postgres') {
+    throw new Error(
+      '[env] ALPHACI_DEPLOYMENT_MODE=selfhosted requires SESSION_STORE_DRIVER=postgres.',
+    );
+  }
+  if (
+    getTrimmedString(env, ['DATABASE_URL', 'SUPABASE_DB_URL']) === undefined
+  ) {
+    throw new Error(
+      '[env] ALPHACI_DEPLOYMENT_MODE=selfhosted requires DATABASE_URL (the Postgres connection string).',
+    );
+  }
+  if (
+    getTrimmedString(env, [
+      'PLATFORM_PUBLIC_URL',
+      'API_PUBLIC_URL',
+      'GITHUB_CALLBACK_URL',
+    ]) === undefined
+  ) {
+    throw new Error(
+      '[env] ALPHACI_DEPLOYMENT_MODE=selfhosted requires PLATFORM_PUBLIC_URL, the public HTTPS address of this API.',
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Exported validate function
 // ---------------------------------------------------------------------------
@@ -317,47 +310,22 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // keeping this check here makes an invalid artifact/profile fail at boot.
   parseCompositionConfig(env as NodeJS.ProcessEnv);
 
+  // Deployment mode and storage driver decide which Supabase values are needed.
+  // SUPABASE_* are optional unless the Supabase storage driver is selected.
+  const deploymentMode = parseDeploymentMode(env);
+  const storageDriver = resolveStorageDriver(env, deploymentMode);
+  if (storageDriver === 'supabase') {
+    requireSupabaseForStorage(env);
+  }
+  if (deploymentMode === 'selfhosted') {
+    validateSelfhostedConfig(env);
+  }
+
   const SUPABASE_URL = getTrimmedString(env, ['SUPABASE_URL']);
   const SUPABASE_ANON_KEY = getTrimmedString(env, ['SUPABASE_ANON_KEY']);
   const SUPABASE_SERVICE_ROLE_KEY = getTrimmedString(env, [
     'SUPABASE_SERVICE_ROLE_KEY',
   ]);
-
-  const scopedSupabaseClientCount = countScopedSupabaseClients(env);
-
-  const defaultSupabaseValues = {
-    SUPABASE_URL,
-    SUPABASE_ANON_KEY,
-    SUPABASE_SERVICE_ROLE_KEY,
-  };
-
-  const missingDefaultSupabaseKeys = Object.entries(defaultSupabaseValues)
-    .filter(([, value]) => !value)
-    .map(([key]) => key);
-
-  if (
-    missingDefaultSupabaseKeys.length === 3 &&
-    scopedSupabaseClientCount === 0
-  ) {
-    throw new Error(
-      '[env] Missing Supabase configuration. Provide SUPABASE_URL + SUPABASE_ANON_KEY + SUPABASE_SERVICE_ROLE_KEY, or define at least one scoped client pair (<SERVICE>_SUPABASE_URL + <SERVICE>_SUPABASE_SECRET_KEY).',
-    );
-  }
-
-  if (
-    missingDefaultSupabaseKeys.length > 0 &&
-    missingDefaultSupabaseKeys.length < 3
-  ) {
-    if (scopedSupabaseClientCount === 0) {
-      throw new Error(
-        `[env] Incomplete default Supabase configuration. Missing: ${missingDefaultSupabaseKeys.join(', ')}.`,
-      );
-    }
-
-    console.warn(
-      `[env] WARNING: Default SUPABASE_* config is incomplete (${missingDefaultSupabaseKeys.join(', ')}). Proceeding with scoped service clients only.`,
-    );
-  }
 
   // --- Required: CORS ---
   // ALLOWED_ORIGINS must be set; corsOptions() will deny all browser-origin

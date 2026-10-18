@@ -53,14 +53,12 @@ describe('validateEnv', () => {
       expect(result.NODE_ENV).toBe('test');
     });
 
-    it('accepts scoped Supabase-only config without default SUPABASE_* trio', () => {
+    it('accepts an environment with no Supabase configuration at all', () => {
       const result = validateEnv(
         validEnv({
           SUPABASE_URL: undefined,
           SUPABASE_ANON_KEY: undefined,
           SUPABASE_SERVICE_ROLE_KEY: undefined,
-          PAYMENT_SERVICE_SUPABASE_URL: 'https://payment.supabase.co',
-          PAYMENT_SERVICE_SUPABASE_SECRET_KEY: 'payment-secret',
         }),
       );
 
@@ -69,18 +67,32 @@ describe('validateEnv', () => {
       expect(result.SUPABASE_SERVICE_ROLE_KEY).toBeUndefined();
     });
 
-    it('accepts incomplete default SUPABASE_* when scoped clients are configured', () => {
+    it('accepts a partial SUPABASE_* set when the Supabase storage driver is not selected', () => {
       const result = validateEnv(
         validEnv({
+          STORAGE_DRIVER: 'postgres',
           SUPABASE_ANON_KEY: undefined,
-          PAYMENT_SERVICE_SUPABASE_URL: 'https://payment.supabase.co',
-          PAYMENT_SERVICE_SUPABASE_SECRET_KEY: 'payment-secret',
+          SUPABASE_SERVICE_ROLE_KEY: undefined,
         }),
       );
 
       expect(result.SUPABASE_URL).toBe('https://abc.supabase.co');
       expect(result.SUPABASE_ANON_KEY).toBeUndefined();
-      expect(result.SUPABASE_SERVICE_ROLE_KEY).toBe('service-role-key');
+      expect(result.SUPABASE_SERVICE_ROLE_KEY).toBeUndefined();
+    });
+
+    it('ignores legacy scoped *_SUPABASE_* variables', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            SUPABASE_URL: undefined,
+            SUPABASE_ANON_KEY: undefined,
+            SUPABASE_SERVICE_ROLE_KEY: undefined,
+            PAYMENT_SERVICE_SUPABASE_URL: 'https://payment.supabase.co',
+            PAYMENT_SERVICE_SUPABASE_SECRET_KEY: 'payment-secret',
+          }),
+        ),
+      ).not.toThrow();
     });
 
     it('defaults ENABLE_SWAGGER to "false" when not set', () => {
@@ -187,9 +199,6 @@ describe('validateEnv', () => {
 
   describe('required string fields', () => {
     const requiredFields = [
-      'SUPABASE_URL',
-      'SUPABASE_ANON_KEY',
-      'SUPABASE_SERVICE_ROLE_KEY',
       'ALLOWED_ORIGINS',
       'FRONTEND_URL',
       'GITHUB_CLIENT_ID',
@@ -269,6 +278,126 @@ describe('validateEnv', () => {
         validateEnv(
           validEnv({
             GITHUB_APP_SLUG: 'my-github-app',
+          }),
+        ),
+      ).not.toThrow();
+    });
+  });
+
+  describe('deployment mode and storage driver', () => {
+    const selfhostedEnv = (overrides: Record<string, unknown> = {}) =>
+      validEnv({
+        SUPABASE_URL: undefined,
+        SUPABASE_ANON_KEY: undefined,
+        SUPABASE_SERVICE_ROLE_KEY: undefined,
+        ALPHACI_DEPLOYMENT_MODE: 'selfhosted',
+        SESSION_STORE_DRIVER: 'postgres',
+        DATABASE_URL: 'postgres://app:pw@db:5432/alphaci',
+        PLATFORM_PUBLIC_URL: 'https://alphaci.customer.example',
+        ...overrides,
+      });
+
+    it('treats an unset ALPHACI_DEPLOYMENT_MODE as saas', () => {
+      expect(() => validateEnv(validEnv())).not.toThrow();
+    });
+
+    it('rejects an unknown ALPHACI_DEPLOYMENT_MODE', () => {
+      expect(() =>
+        validateEnv(validEnv({ ALPHACI_DEPLOYMENT_MODE: 'onprem-ish' })),
+      ).toThrow(/ALPHACI_DEPLOYMENT_MODE/);
+    });
+
+    it('accepts a complete self-hosted environment with no Supabase values', () => {
+      expect(() => validateEnv(selfhostedEnv())).not.toThrow();
+    });
+
+    it('requires SESSION_STORE_DRIVER=postgres when self-hosted', () => {
+      expect(() =>
+        validateEnv(selfhostedEnv({ SESSION_STORE_DRIVER: undefined })),
+      ).toThrow(/SESSION_STORE_DRIVER=postgres/);
+      expect(() =>
+        validateEnv(selfhostedEnv({ SESSION_STORE_DRIVER: 'memory' })),
+      ).toThrow(/SESSION_STORE_DRIVER=postgres/);
+    });
+
+    it('requires a database URL when self-hosted', () => {
+      expect(() =>
+        validateEnv(selfhostedEnv({ DATABASE_URL: undefined })),
+      ).toThrow(/DATABASE_URL/);
+    });
+
+    it('accepts the legacy SUPABASE_DB_URL as the database URL when self-hosted', () => {
+      expect(() =>
+        validateEnv(
+          selfhostedEnv({
+            DATABASE_URL: undefined,
+            SUPABASE_DB_URL: 'postgres://app:pw@db:5432/alphaci',
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('requires a public URL when self-hosted', () => {
+      expect(() =>
+        validateEnv(selfhostedEnv({ PLATFORM_PUBLIC_URL: undefined })),
+      ).toThrow(/PLATFORM_PUBLIC_URL/);
+    });
+
+    it('defaults the storage driver to postgres when self-hosted, even with SUPABASE_* present', () => {
+      expect(() =>
+        validateEnv(
+          selfhostedEnv({
+            SUPABASE_URL: 'https://abc.supabase.co',
+            SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects STORAGE_DRIVER=supabase when self-hosted', () => {
+      expect(() =>
+        validateEnv(selfhostedEnv({ STORAGE_DRIVER: 'supabase' })),
+      ).toThrow(/not available when ALPHACI_DEPLOYMENT_MODE=selfhosted/);
+    });
+
+    it('rejects an unknown STORAGE_DRIVER', () => {
+      expect(() => validateEnv(validEnv({ STORAGE_DRIVER: 's3' }))).toThrow(
+        /STORAGE_DRIVER/,
+      );
+    });
+
+    it('requires the Supabase URL and service-role key when STORAGE_DRIVER=supabase', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            STORAGE_DRIVER: 'supabase',
+            SUPABASE_URL: undefined,
+          }),
+        ),
+      ).toThrow(/STORAGE_DRIVER=supabase requires SUPABASE_URL/);
+      expect(() =>
+        validateEnv(
+          validEnv({
+            STORAGE_DRIVER: 'supabase',
+            SUPABASE_SERVICE_ROLE_KEY: '',
+          }),
+        ),
+      ).toThrow(/SUPABASE_SERVICE_ROLE_KEY/);
+    });
+
+    it('accepts STORAGE_DRIVER=supabase with its URL and key', () => {
+      expect(() =>
+        validateEnv(validEnv({ STORAGE_DRIVER: 'supabase' })),
+      ).not.toThrow();
+    });
+
+    it('accepts STORAGE_DRIVER=postgres in saas mode without Supabase values', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            STORAGE_DRIVER: 'postgres',
+            SUPABASE_URL: undefined,
+            SUPABASE_SERVICE_ROLE_KEY: undefined,
           }),
         ),
       ).not.toThrow();
