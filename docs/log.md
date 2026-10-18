@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-19
+
+- **Update**: Recorded the Supabase-free runtime (self-hosted phase 1, WP-A). Database health is a `SELECT 1` on the app pool; the Supabase client is an optional storage dependency; `ALPHACI_DEPLOYMENT_MODE` and `STORAGE_DRIVER` choose the deployment rules and where QA screenshot bytes live; the postgres driver serves bytes through HMAC-signed links at `GET /api/v1/qa-attachments/content`. Route inventory and the capability route baseline gained that one route.
+
 ## 2026-10-15
 
 - **Creation**: Recorded local on-prem acceptance, targeted remote schema verification, temporary tunnel/installer checks, the read-only eatta workflow preview, real Docker two-project rollback evidence, and the remaining GitHub permissions and Windows runtime checks in `docs/operations/onprem-local-acceptance.md`.
