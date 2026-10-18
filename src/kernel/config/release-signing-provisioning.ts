@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import {
   RELEASE_TRUST_KEYS_ENV,
   resolveReleaseSigningSource,
+  serverSignsReleases,
 } from './release-signing.config';
 import {
   kmsTrustProblem,
@@ -83,6 +84,8 @@ export async function configureRepositoryReleaseSigning(input: {
   if (!input.targets.some((target) => input.deliveredByHost(target.provider))) {
     return undefined;
   }
+  // The backend signs (ALPHACI_RELEASE_SIGNER=file): no signing setting reaches GitHub.
+  if (serverSignsReleases(input.read)) return undefined;
 
   const source = resolveReleaseSigningSource(input.read);
   if (source.kind === 'invalid') {

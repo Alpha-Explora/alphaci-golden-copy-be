@@ -1,4 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
 import {
   ForbiddenException,
@@ -9,6 +12,8 @@ import type { AppRoleLookup } from '#kernel/ports/app-role.port';
 import type { OnpremMachinesRepository } from '../../infrastructure/repositories/onprem-machines.repository';
 import { machineSummary } from '../../infrastructure/repositories/onprem-machines.repository';
 import type { OnpremInstallerReleasePort } from '../ports/onprem-installer-release.port';
+import { labSigningKeyId } from '#kernel/config/release-signing-key';
+import { createReleaseSigner } from '../../infrastructure/release-signing/release-signer';
 import { OnpremHostsService } from './onprem-hosts.service';
 
 const publicKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
@@ -228,5 +233,48 @@ describe('installer release resolution', () => {
     ).rejects.toThrow(ServiceUnavailableException);
     expect(installerReleases.resolve).not.toHaveBeenCalled();
     expect(repository.createEnrollment).not.toHaveBeenCalled();
+  });
+});
+
+describe('enrollment trust keys with the backend signer', () => {
+  it('hands a newly enrolled host the backend signing key, so its releases verify', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'enrollment-signer-'));
+    try {
+      const pair = generateKeyPairSync('ec', {
+        namedCurve: 'prime256v1',
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+      });
+      const keyPath = join(dir, 'sign.key');
+      writeFileSync(keyPath, pair.privateKey);
+      const signer = createReleaseSigner(
+        (key) =>
+          ({
+            ALPHACI_RELEASE_SIGNER: 'file',
+            ALPHACI_RELEASE_SIGNING_KEY_FILE: keyPath,
+          })[key],
+      );
+      const repository = { consume: jest.fn().mockResolvedValue({ id: 'm' }) };
+      const service = new OnpremHostsService(
+        repository as unknown as OnpremMachinesRepository,
+        {} as never,
+        {} as never,
+        new ConfigService({
+          ONPREM_RELEASES_ENABLED: 'true',
+          PLATFORM_PUBLIC_URL: 'https://api.example.com',
+        }),
+        {} as never,
+        signer,
+      );
+      const result = await service.consumeEnrollment(
+        'a'.repeat(43),
+        {} as never,
+      );
+      expect(result.trustKeys).toEqual({
+        [labSigningKeyId(pair.privateKey)]: pair.publicKey,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -4,6 +4,7 @@
 
 - **Update**: Added the self-hosted install runbook section "Switching an existing host to the install's signing key": when a host needs it, how to replace its credential, the manual `trust.json` entry, and how to verify the switch. The on-prem host setup runbook now links to it and states that `enroll.sh --replace` handles an address change.
 - **Update**: Added the optional on-prem block to `deploy/selfhost/alphaci.env.example` and the on-prem checks to `alphaci-ctl doctor`, which run only while `ONPREM_RELEASES_ENABLED=true`.
+- **Update**: Documented backend release signing (`ALPHACI_RELEASE_SIGNER=file`) in the release registry contract. The runner signing default is unchanged.
 
 - **Update**: The QA screenshot content route has its own throttle (300 requests a minute per client address, the route-level override of the 60 a minute default) and answers `ETag` and `If-None-Match` with `304`. Orphaned bytes in `projects.qa_attachment_objects` are swept on a 15-minute timer when `STORAGE_DRIVER=postgres`: unreferenced objects older than one hour, 500 per batch, one replica at a time through a transaction advisory lock. Migration `20261019020000` adds the `created_at` index the sweep reads.
 

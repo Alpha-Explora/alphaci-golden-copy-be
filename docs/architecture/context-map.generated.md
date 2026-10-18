@@ -22,9 +22,9 @@ This map is generated from the current source tree and architecture metrics. It 
 | Context | Owns | Public boundary | Owned schemas | Measured source/test files |
 |---|---|---|---|---|
 | `identity-access` | authentication, administration, capabilities, workspaces, hierarchy, and repository access policy | `src/modules/identity-access/index.ts` | `identity`, `orgs`, `hierarchy` | 148 source files / 34 tests |
-| `projects` | project lifecycle, catalog, workflows, existing repositories, and project read models | `src/modules/projects/index.ts` | `projects`, `workflow` | 316 source files / 120 tests |
+| `projects` | project lifecycle, catalog, workflows, existing repositories, and project read models | `src/modules/projects/index.ts` | `projects`, `workflow` | 318 source files / 122 tests |
 | `pipelines` | GitHub integration, CI token lifecycle, and CI report ingestion | `src/modules/pipelines/index.ts` | `github_app`, `ci`, `workflow` | 86 source files / 32 tests |
-| `runtime` | deployment targets, environment metadata, domains, provider connections, provider adapters, and deployment history | `src/modules/runtime/index.ts` | `runtime`, `env_provisioning`, `runtime_deployments`, `runtime_domains`, `runtime_secrets`, `gcp_operations` | 204 source files / 71 tests |
+| `runtime` | deployment targets, environment metadata, domains, provider connections, provider adapters, and deployment history | `src/modules/runtime/index.ts` | `runtime`, `env_provisioning`, `runtime_deployments`, `runtime_domains`, `runtime_secrets`, `gcp_operations` | 208 source files / 73 tests |
 | `billing` | subscriptions, usage, and quota policy | `src/modules/billing/index.ts` | `billing`, `usage`, `billing_lifecycle` | 21 source files / 5 tests |
 | `platform-ops` | audit, notifications, feedback, and outbox consumers | `src/modules/platform-ops/index.ts` | `platform`, `audit`, `notifications`, `support` | 31 source files / 6 tests |
 

@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { labSigningKeyId } from '#kernel/config/release-signing-key';
@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import type { DatabaseService } from '#kernel/db/database.service';
 import type { DeploymentProjectReferenceLookup } from '#kernel/ports/deployment-runtime.port';
 import { UPDATE_AGENT_MESSAGE } from '../../domain/onprem-tunnel';
+import { createReleaseSigner } from '../../infrastructure/release-signing/release-signer';
 import { OnpremReadinessService } from './onprem-readiness.service';
 
 describe('On-prem readiness', () => {
@@ -380,6 +381,96 @@ describe('On-prem readiness', () => {
         status: 'failed',
         message: expect.stringContaining('The lab signing key cannot be used'),
       });
+    });
+  });
+
+  describe('file release signer', () => {
+    let fileDir: string;
+    let fileKeyPath: string;
+
+    beforeAll(() => {
+      fileDir = mkdtempSync(join(tmpdir(), 'readiness-file-signer-'));
+      const pair = generateKeyPairSync('ec', {
+        namedCurve: 'prime256v1',
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+      });
+      fileKeyPath = join(fileDir, 'sign.key');
+      writeFileSync(fileKeyPath, pair.privateKey);
+    });
+    afterAll(() => {
+      rmSync(fileDir, { recursive: true, force: true });
+    });
+
+    const fileEnv = (keyPath: string) => ({
+      ALPHACI_RELEASE_SIGNER: 'file',
+      ALPHACI_RELEASE_SIGNING_KEY_FILE: keyPath,
+    });
+    const readFileCheck = async (env: Record<string, string>) => {
+      const signer = createReleaseSigner((key) => env[key]);
+      const withSigner = new OnpremReadinessService(
+        { query } as unknown as DatabaseService,
+        projects as unknown as DeploymentProjectReferenceLookup,
+        new ConfigService({
+          PLATFORM_PUBLIC_URL: 'https://api.example.com',
+          ONPREM_RELEASES_ENABLED: 'true',
+          ...env,
+        }),
+        signer,
+      );
+      return (await withSigner.read('project', 'env', 'viewer')).checks;
+    };
+
+    it('passes with the backend signer, trusts its key with no trust setting, and drops the CI signing secret', async () => {
+      const checks = await readFileCheck(fileEnv(fileKeyPath));
+      const find = (id: string) => checks.find((item) => item.id === id);
+      expect(find('release-signing')).toMatchObject({
+        status: 'passed',
+        message: expect.stringContaining(
+          'signed by this AlphaCI backend with key ' +
+            labSigningKeyId(readFileSync(fileKeyPath, 'utf8')),
+        ),
+      });
+      expect(find('signing-trust')).toMatchObject({ status: 'passed' });
+      expect(find('ci-signing-secret')).toMatchObject({ status: 'passed' });
+    });
+
+    it('fails with the signer problem when the key file cannot be used', async () => {
+      const env = fileEnv(join(fileDir, 'absent.key'));
+      const checks = await readFileCheck(env);
+      expect(
+        checks.find((item) => item.id === 'release-signing'),
+      ).toMatchObject({
+        status: 'failed',
+        message: expect.stringContaining('cannot be read'),
+      });
+    });
+
+    it('fails when the mode is unknown or file mode names no key', async () => {
+      await expect(
+        readFileCheck({ ALPHACI_RELEASE_SIGNER: 'kms' }),
+      ).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'release-signing',
+            status: 'failed',
+            message: expect.stringContaining('must be runner or file'),
+          }),
+        ]),
+      );
+      await expect(
+        readFileCheck({ ALPHACI_RELEASE_SIGNER: 'file' }),
+      ).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'release-signing',
+            status: 'failed',
+            message: expect.stringContaining(
+              'ALPHACI_RELEASE_SIGNING_KEY_FILE',
+            ),
+          }),
+        ]),
+      );
     });
   });
 });
