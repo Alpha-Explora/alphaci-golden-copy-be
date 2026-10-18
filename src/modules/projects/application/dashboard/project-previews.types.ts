@@ -25,6 +25,20 @@ export type ProjectBranchPreviewStatus =
   | DeploymentHistoryStatus
   | 'not_deployed';
 
+/** One of an environment's recent deploys, as its Overview card lists them. */
+export interface ProjectPreviewDeploy {
+  id: string;
+  status: DeploymentHistoryStatus;
+  commitSha: string | null;
+  commitMessage: string | null;
+  /** What started it, in the provider's word; null where the provider does not say. */
+  trigger: string | null;
+  createdAt: string;
+  /** When the provider began it; the duration runs from here (or createdAt) to readyAt. */
+  startedAt: string | null;
+  readyAt: string | null;
+}
+
 export interface ProjectBranchPreview {
   branch: string;
   /** True for the branch the provider deploys to production. */
@@ -55,6 +69,8 @@ export interface ProjectBranchPreview {
   pullRequestNumber: number | null;
   /** Who started the newest deployment, when the provider says. */
   createdBy: string | null;
+  /** What started the newest deployment, in the provider's word. */
+  trigger: string | null;
   /**
    * The URL to open, and to frame when `embeddable` is true: the
    * environment's stable address where it has one, which is what the provider
@@ -70,7 +86,13 @@ export interface ProjectBranchPreview {
   inspectorUrl: string | null;
   /** Null for an environment with no deployment to date. */
   createdAt: string | null;
+  startedAt: string | null;
   readyAt: string | null;
+  /**
+   * This environment's newest deploys, newest first, the current one included
+   * (at most RECENT_DEPLOYS_PER_ENVIRONMENT). Empty when nothing is deployed.
+   */
+  recentDeploys: ProjectPreviewDeploy[];
   /** null means undetermined — the UI must not frame it, but should still link it. */
   embeddable: boolean | null;
   embedBlockedReason: string | null;

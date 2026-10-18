@@ -175,7 +175,7 @@ describe('package stage: the report waits for the promotion', () => {
     );
     // Still reports after a failed or skipped promotion rather than waiting on it.
     expect(report?.if).toBe(
-      "${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}",
+      "${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('[\"dev\",\"uat\",\"main\"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}",
     );
   });
 
@@ -215,7 +215,7 @@ describe('verify stage: a resolve-targets failure is reported', () => {
 
     expect(report?.needs).toContain('resolve-targets');
     expect(report?.if).toBe(
-      "${{ always() && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}",
+      "${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('[\"dev\",\"uat\",\"main\"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}",
     );
   });
 

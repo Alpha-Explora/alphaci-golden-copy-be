@@ -118,6 +118,8 @@ export interface ProviderDeployEvent {
   id: string;
   status: string;
   createdAt: string;
+  /** When the provider began working on it, where that differs from when it was queued. */
+  startedAt?: string | null;
   readyAt: string | null;
   commitSha: string | null;
   commitMessage: string | null;

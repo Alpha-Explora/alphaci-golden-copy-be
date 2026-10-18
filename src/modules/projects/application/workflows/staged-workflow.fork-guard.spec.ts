@@ -37,6 +37,13 @@ interface Parsed {
 const SAME_REPOSITORY_RUN =
   "github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository";
 
+/** The pull_request chain of a pipeline branch duplicates its push chain. */
+const NOT_DUPLICATE_PULL_REQUEST_RUN =
+  "github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || " +
+  '!contains(fromJSON(\'["dev","uat","main"]\'), github.event.workflow_run.pull_requests[0].head.ref)';
+
+const CHAIN_RUN_ALLOWED = `(${SAME_REPOSITORY_RUN}) && (${NOT_DUPLICATE_PULL_REQUEST_RUN})`;
+
 const template = (stack: WorkflowTemplate['stack']): WorkflowTemplate => ({
   id: `tpl-${String(stack)}`,
   name: 'pipeline',
@@ -163,12 +170,12 @@ describe('generated workflows refuse runs chained off a fork', () => {
     expect(stages.filter((stage) => stage === 'package').length).toBe(3);
   });
 
-  it('skips the context job for a run of another repository', () => {
+  it('skips the context job for a run of another repository, or a pipeline branch’s pull request chain', () => {
     for (const file of chained()) {
       expect({
         path: file.path,
         if: parse(file).jobs['pipeline-context']?.if,
-      }).toEqual({ path: file.path, if: `\${{ ${SAME_REPOSITORY_RUN} }}` });
+      }).toEqual({ path: file.path, if: `\${{ ${CHAIN_RUN_ALLOWED} }}` });
     }
   });
 
@@ -188,7 +195,7 @@ describe('generated workflows refuse runs chained off a fork', () => {
     for (const file of allFiles()) {
       const report = parse(file).jobs['report-results'];
       if (!report) continue;
-      expect(report.if).toBe(`\${{ always() && (${SAME_REPOSITORY_RUN}) }}`);
+      expect(report.if).toBe(`\${{ always() && (${CHAIN_RUN_ALLOWED}) }}`);
     }
   });
 });
