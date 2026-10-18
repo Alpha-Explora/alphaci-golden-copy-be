@@ -59,6 +59,13 @@ services:
     logging: *logging
     env_file:
       - alphaci.env
+    # migrate needs the database URL only. The other *_FILE settings from
+    # alphaci.env are blanked, so the runner does not read secrets it has no mount for.
+    environment:
+      SESSION_SECRET_FILE: ''
+      GITHUB_CLIENT_SECRET_FILE: ''
+      GITHUB_APP_PRIVATE_KEY_FILE: ''
+      GITHUB_APP_WEBHOOK_SECRET_FILE: ''
     secrets:
       - database_url
     depends_on:
