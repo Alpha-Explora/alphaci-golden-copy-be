@@ -37,6 +37,7 @@ function goodEnv(): NodeJS.ProcessEnv {
     GITHUB_ENFORCED_ORG: 'acme',
     DATABASE_URL: 'postgres://alphaci:pw@db:5432/alphaci?sslmode=disable',
     SESSION_SECRET: SESSION,
+    ENV_PROVISIONING_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
     GITHUB_CLIENT_SECRET: 'oauth-secret',
     GITHUB_APP_PRIVATE_KEY: 'pem-placeholder',
     GITHUB_APP_WEBHOOK_SECRET: 'webhook-secret',

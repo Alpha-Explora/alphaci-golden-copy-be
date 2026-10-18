@@ -63,6 +63,7 @@ services:
     # alphaci.env are blanked, so the runner does not read secrets it has no mount for.
     environment:
       SESSION_SECRET_FILE: ''
+      ENV_PROVISIONING_ENCRYPTION_KEY_FILE: ''
       GITHUB_CLIENT_SECRET_FILE: ''
       GITHUB_APP_PRIVATE_KEY_FILE: ''
       GITHUB_APP_WEBHOOK_SECRET_FILE: ''
@@ -87,6 +88,7 @@ services:
       - github_app_private_key
       - github_app_webhook_secret
       - release_signing_key
+      - env_provisioning_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -181,6 +183,8 @@ secrets:
     file: ./secrets/session_secret
   release_signing_key:
     file: ./secrets/release_signing_key
+  env_provisioning_encryption_key:
+    file: ./secrets/env_provisioning_encryption_key
   github_app_private_key:
     file: ./secrets/github_app_private_key
   github_oauth_client_secret:

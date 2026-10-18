@@ -26,6 +26,7 @@ export const SECRET_FILES = {
   dbPassword: 'db_password',
   databaseUrl: 'database_url',
   releaseSigningKey: 'release_signing_key',
+  envProvisioningKey: 'env_provisioning_encryption_key',
   githubAppPrivateKey: 'github_app_private_key',
   githubOauthClientSecret: 'github_oauth_client_secret',
   githubAppWebhookSecret: 'github_app_webhook_secret',
@@ -37,6 +38,7 @@ export const GENERATED_SECRETS = [
   SECRET_FILES.dbPassword,
   SECRET_FILES.databaseUrl,
   SECRET_FILES.releaseSigningKey,
+  SECRET_FILES.envProvisioningKey,
 ] as const;
 
 /** Secrets the operator must place by hand before `compose up`. */
@@ -153,6 +155,7 @@ export function renderAlphaciEnv(hostname: string, tls: TlsMode): string {
     '# --- Secrets, read from files ---',
     `DATABASE_URL_FILE=${containerSecretPath(SECRET_FILES.databaseUrl)}`,
     `SESSION_SECRET_FILE=${containerSecretPath(SECRET_FILES.sessionSecret)}`,
+    `ENV_PROVISIONING_ENCRYPTION_KEY_FILE=${containerSecretPath(SECRET_FILES.envProvisioningKey)}`,
     `GITHUB_CLIENT_SECRET_FILE=${containerSecretPath(SECRET_FILES.githubOauthClientSecret)}`,
     `GITHUB_APP_PRIVATE_KEY_FILE=${containerSecretPath(SECRET_FILES.githubAppPrivateKey)}`,
     `GITHUB_APP_WEBHOOK_SECRET_FILE=${containerSecretPath(SECRET_FILES.githubAppWebhookSecret)}`,
@@ -244,6 +247,17 @@ export function runInit(options: InitOptions): InitReport {
     writeNew(
       join(secretsDir, SECRET_FILES.releaseSigningKey),
       newReleaseKeyPem,
+    ),
+  );
+
+  // The 32-byte key that encrypts environment tokens at rest. The backend reads it
+  // at boot even when env provisioning is off, so it is always generated. Losing it
+  // makes the stored tokens unreadable, so it belongs in the backup.
+  record(
+    `secrets/${SECRET_FILES.envProvisioningKey}`,
+    writeNew(
+      join(secretsDir, SECRET_FILES.envProvisioningKey),
+      () => `${Buffer.from(randomHex(32), 'hex').toString('base64')}\n`,
     ),
   );
 

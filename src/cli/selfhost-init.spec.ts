@@ -28,14 +28,17 @@ const EXAMPLE_PATH = join(
   'alphaci.env.example',
 );
 
-/** KEY=value lines of an env file, ignoring comments and blank lines. */
+/**
+ * KEY=value lines of an env file, ignoring comments and blank lines. Tolerates
+ * CRLF, because a Windows checkout with autocrlf writes CRLF line endings.
+ */
 function envKeys(content: string): Map<string, string> {
   const entries = new Map<string, string>();
-  for (const line of content.split('\n')) {
+  for (const line of content.split(/\r?\n/)) {
     if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
     const eq = line.indexOf('=');
     if (eq === -1) continue;
-    entries.set(line.slice(0, eq), line.slice(eq + 1));
+    entries.set(line.slice(0, eq), line.slice(eq + 1).trim());
   }
   return entries;
 }
@@ -177,6 +180,7 @@ describe('runInit', () => {
       'secrets/db_password',
       'secrets/database_url',
       'secrets/release_signing_key',
+      'secrets/env_provisioning_encryption_key',
     ]);
     expect(report.kept).toEqual([]);
     expect(report.missingCustomerSecrets).toEqual([
@@ -187,6 +191,15 @@ describe('runInit', () => {
     expect(readFileSync(join(dir, 'alphaci.env'), 'utf8')).toContain(
       'ALPHACI_HOSTNAME=alphaci.example.com',
     );
+  });
+
+  it('generates a 64-character session secret, a P-256 release key and a 32-byte base64 provisioning key', () => {
+    runInit({ dir, hostname: 'alphaci.example.com', tls: 'auto' });
+    const provisioning = readFileSync(
+      join(dir, 'secrets', 'env_provisioning_encryption_key'),
+      'utf8',
+    ).trim();
+    expect(Buffer.from(provisioning, 'base64')).toHaveLength(32);
   });
 
   it('generates a 64-character session secret and a P-256 release key', () => {
@@ -241,6 +254,7 @@ describe('runInit', () => {
       'secrets/db_password',
       'secrets/database_url',
       'secrets/release_signing_key',
+      'secrets/env_provisioning_encryption_key',
     ]);
     expect(readFileSync(join(dir, 'alphaci.env'), 'utf8')).toBe(before.env);
     expect(readFileSync(join(dir, 'secrets', 'session_secret'), 'utf8')).toBe(
