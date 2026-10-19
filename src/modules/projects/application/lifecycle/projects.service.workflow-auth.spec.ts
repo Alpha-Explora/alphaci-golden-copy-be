@@ -69,6 +69,9 @@ const makeGithubService = () =>
       .mockResolvedValue({ status: 'applied' }),
     setActionsSecret: jest.fn().mockResolvedValue(undefined),
     setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
+    commitFilesToNewBranch: jest
+      .fn()
+      .mockResolvedValue({ committed: true, commitSha: 'commit-1' }),
     deleteRepo: jest.fn().mockResolvedValue(true),
   }) as unknown as GithubService;
 
@@ -170,7 +173,23 @@ describe('ProjectProvisioningApplicationService workflow authorization', () => {
       },
     );
 
-    expect(support.pushWorkflowFile).toHaveBeenCalledTimes(3);
+    // One commit for every staged file: each extra push started its own
+    // pipeline chain on the new repository.
+    expect(support.pushWorkflowFile).not.toHaveBeenCalled();
+    const commitFiles = (
+      githubService as unknown as { commitFilesToNewBranch: jest.Mock }
+    ).commitFilesToNewBranch;
+    expect(commitFiles).toHaveBeenCalledTimes(1);
+    expect(commitFiles).toHaveBeenCalledWith('gh-token', 'owner/repo', {
+      fromBranch: 'main',
+      newBranch: 'main',
+      replaceExisting: true,
+      message: 'ci: add ALPHACI workflow',
+      files: stagedWorkflowFiles.map((file) => ({
+        path: file.path,
+        content: file.yaml,
+      })),
+    });
     const setActionsSecretStrict = (
       githubService as unknown as { setActionsSecretStrict: jest.Mock }
     ).setActionsSecretStrict;

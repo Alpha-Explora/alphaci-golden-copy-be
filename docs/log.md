@@ -2,6 +2,7 @@
 
 ## 2026-10-19
 
+- **Update**: Generated workflow files land in one commit per branch, and the React scaffold no longer adds its own container publish workflow. See CHANGELOG.
 - **Update**: Generated pipelines name images after the repository, and every lockfile-less install the generator emits resolves as of one day ago (`--before`). The React Dockerfile installs without a lockfile. See CHANGELOG.
 - **Update**: Recorded ADR-0014 amendment 11: Verification and test case results are Pending, Passed or Failed, and Failed returns the story to development. Updated the persona matrix and section 7.2 of `docs/design/project-requirements.md`.
 

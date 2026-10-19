@@ -51,6 +51,9 @@ const makeGithubService = () =>
       .mockResolvedValue({ status: 'applied' }),
     setActionsSecret: jest.fn().mockResolvedValue(undefined),
     setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
+    commitFilesToNewBranch: jest
+      .fn()
+      .mockResolvedValue({ committed: true, commitSha: 'commit-1' }),
     deleteRepo: jest.fn().mockResolvedValue(true),
   }) as unknown as GithubService;
 
