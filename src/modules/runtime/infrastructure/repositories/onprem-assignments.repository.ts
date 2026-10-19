@@ -102,9 +102,15 @@ export async function reserveMachinePorts(
   config: AssignmentRequestConfig,
   preferred: ReadonlyMap<string, number> = new Map(),
 ): Promise<AssignmentConfig> {
+  // A host port is never handed out twice, across machines too: one server can
+  // be enrolled in several workspaces (one machine per workspace), and those
+  // machines share its ports. The lock serializes allocations across machines,
+  // which the caller's per-machine FOR UPDATE does not.
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtext('onprem_port_reservations'))",
+  );
   const reserved = await client.query<{ host_port: number }>(
-    'SELECT host_port FROM env_provisioning.onprem_port_reservations WHERE machine_id=$1',
-    [machineId],
+    'SELECT host_port FROM env_provisioning.onprem_port_reservations',
   );
   const taken = new Set(reserved.rows.map((row) => row.host_port));
   const ports: AssignmentConfig['ports'] = [];
