@@ -295,7 +295,12 @@ function databaseProbes(env: NodeJS.ProcessEnv): DatabaseProbes {
 function openClient(url: string, env: NodeJS.ProcessEnv): Client {
   return new Client({
     connectionString: url,
-    ssl: postgresSslConfig(url, env['DATABASE_CA_CERT']),
+    ssl: postgresSslConfig(
+      url,
+      // The API reads SUPABASE_DB_CA_CERT; installs that set only that one
+      // (a hosted database) need the CLI to verify the same server.
+      env['DATABASE_CA_CERT'] || env['SUPABASE_DB_CA_CERT'],
+    ),
     application_name: 'alphaci-ctl',
   });
 }

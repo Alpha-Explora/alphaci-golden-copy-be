@@ -85,16 +85,18 @@ export function defaultAssignmentConfig(
 }
 
 /**
- * `https://<environment>-<repository>.<apps domain>`: one DNS label, so a single
+ * `https://<environment>-<repository>.<apps domain>`, and for production the
+ * plain `https://<repository>.<apps domain>`: one DNS label, so a single
  * wildcard record (`*.<apps domain>`) and certificate per name cover them all.
  */
 export function appsDomainAddress(
   domain: string,
   environmentSlug: string,
   repoFullName: string,
+  production = false,
 ): string {
   const repo = repoFullName.split('/').at(-1) ?? repoFullName;
-  const label = `${environmentSlug}-${repo}`
+  const label = (production ? repo : `${environmentSlug}-${repo}`)
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/^-+/, '')
@@ -115,13 +117,19 @@ export function withAppsDomain(
   domain: string | undefined,
   environmentSlug: string,
   repoFullName: string,
+  production = false,
 ): AssignmentRequestConfig {
   if (!domain || config.ingress?.mode !== 'tunnel') return config;
   return {
     ...config,
     ingress: {
       mode: 'configured',
-      publicUrl: appsDomainAddress(domain, environmentSlug, repoFullName),
+      publicUrl: appsDomainAddress(
+        domain,
+        environmentSlug,
+        repoFullName,
+        production,
+      ),
     },
   };
 }
@@ -250,6 +258,13 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
     private readonly targets: DeploymentTargetsQuery,
     private readonly config: ConfigService,
   ) {}
+  /** ONPREM_APPS_DOMAIN: `*.<domain>` points at this server, which routes it. */
+  private appsDomain(): string | undefined {
+    return (
+      this.config.get<string>('ONPREM_APPS_DOMAIN')?.trim().toLowerCase() ||
+      undefined
+    );
+  }
   async current(projectId: string, environmentId: string, userId: string) {
     await this.visible(projectId, environmentId, userId);
     return this.repository.current(projectId, environmentId);
@@ -297,10 +312,10 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
       ...input,
       config: withAppsDomain(
         input.config,
-        this.config.get<string>('ONPREM_APPS_DOMAIN')?.trim().toLowerCase() ||
-          undefined,
+        this.appsDomain(),
         environment.slug,
         project.repoFullName,
+        environment.role === 'production',
       ),
     };
     const membership = await this.manager(projectId, userId);
@@ -380,9 +395,12 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
         });
         return { assignmentId: result.id };
       }
-      // A legacy host keeps its registration until a person replaces it, and
-      // production needs a person to name its HTTPS ingress.
-      if (current || environment.role === 'production') return null;
+      // A legacy host keeps its registration until a person replaces it.
+      // Production needs an HTTPS address, so it is only assigned here when
+      // this server has an apps domain to give it a permanent one.
+      const appsDomain = this.appsDomain();
+      if (current || (environment.role === 'production' && !appsDomain))
+        return null;
       const membership = await this.manager(projectId, userId);
       const healthy = await this.repository.healthyMachines(
         membership.workspaceId,
@@ -392,7 +410,14 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
         machineId: null,
         expectedAssignmentId: null,
         requestId: randomUUID(),
-        config: defaultAssignmentConfig(slots, project.serviceRuntime),
+        // "tunnel" is the automatic HTTPS address; with an apps domain,
+        // assign() makes it a permanent name under that domain.
+        config: appsDomain
+          ? {
+              ...defaultAssignmentConfig(slots, project.serviceRuntime),
+              ingress: { mode: 'tunnel', publicUrl: null },
+            }
+          : defaultAssignmentConfig(slots, project.serviceRuntime),
       });
       return { assignmentId: result.id };
     } catch (error) {
