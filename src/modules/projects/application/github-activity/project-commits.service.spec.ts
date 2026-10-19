@@ -58,9 +58,9 @@ describe('ProjectCommitsService', () => {
   let service: ProjectCommitsService;
 
   const call = (
-    query: Parameters<ProjectCommitsService['listCommits']>[4] = {},
+    query: Parameters<ProjectCommitsService['listCommits']>[3] = {},
     oauth: string | null = 'oauth',
-  ) => service.listCommits('project-1', 'user-1', oauth, 'devone', query);
+  ) => service.listCommits('project-1', 'user-1', oauth, query);
 
   beforeEach(() => {
     projectsRepository = {
@@ -167,15 +167,23 @@ describe('ProjectCommitsService', () => {
     expect(github.listCommits).not.toHaveBeenCalled();
   });
 
-  it('shows a developer only the branches the Code tab shows them (never main)', async () => {
+  it('shows a developer every branch offered by the Code tab', async () => {
     projectsRepository.findAppRole.mockResolvedValue('member');
     github.listBranches.mockResolvedValue(
       ['dev', 'uat', 'main', 'feature/devone-x', 'feature/other-y'].map(branch),
     );
 
     const response = await call();
-    expect(response.branches).toEqual(['dev', 'uat', 'feature/devone-x']);
-    await expect(call({ branch: 'main' })).rejects.toThrow(BadRequestException);
+    expect(response.branches).toEqual([
+      'dev',
+      'uat',
+      'main',
+      'feature/devone-x',
+      'feature/other-y',
+    ]);
+    await expect(call({ branch: 'main' })).resolves.toMatchObject({
+      branch: 'main',
+    });
   });
 
   describe('stale session token', () => {

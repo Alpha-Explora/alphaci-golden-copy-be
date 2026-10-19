@@ -86,9 +86,8 @@ function isUnauthorized(error: unknown): boolean {
 /**
  * GET /projects/:id/commits — the commit history of one branch.
  *
- * Visibility is the project's own (findByIdAndUser, 404 otherwise) and the
- * branches offered are the ones the caller's persona may see in the Code tab
- * (visibleBranchesFor), so this never shows a developer `main`.
+ * Visibility is the project's own (findByIdAndUser, 404 otherwise); Developers
+ * can browse every repository branch, matching the Code tab.
  *
  * Token: the caller's own OAuth token first, because this is their view of the
  * repository; if GitHub rejects it (a session token is stored once and goes
@@ -110,7 +109,6 @@ export class ProjectCommitsService {
     projectId: string,
     userId: string,
     oauthToken: string | null,
-    viewerLogin: string | null,
     query: ProjectCommitsQuery = {},
   ): Promise<ProjectCommitsResponse> {
     const project = await this.projectsRepository.findByIdAndUser(
@@ -141,7 +139,6 @@ export class ProjectCommitsService {
           token,
           project.repo_full_name,
           role,
-          viewerLogin,
           query.branch?.trim() || null,
           limit,
           page,
@@ -164,24 +161,12 @@ export class ProjectCommitsService {
     token: string,
     repoFullName: string,
     role: string,
-    viewerLogin: string | null,
     requestedBranch: string | null,
     limit: number,
     page: number,
   ): Promise<ProjectCommitsResponse> {
     const all = await this.githubService.listBranches(token, repoFullName);
-    const authors =
-      role === 'member' && viewerLogin
-        ? await this.githubService
-            .listBranchHeadAuthors(token, repoFullName)
-            .catch((error: unknown) => {
-              this.logger.debug(
-                `Branch author lookup failed; matching own branches by name only: ${String(error)}`,
-              );
-              return null;
-            })
-        : null;
-    const visible = visibleBranchesFor(role, viewerLogin, all, authors);
+    const visible = visibleBranchesFor(role, all);
     const names = this.orderBranches(visible);
 
     const branch = requestedBranch

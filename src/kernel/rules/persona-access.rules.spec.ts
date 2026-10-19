@@ -4,6 +4,7 @@ import {
   canCreatePullRequest,
   canCreateProjectFolder,
   canCreateRepository,
+  canCreateWorkspaceBranch,
   canManageRequirements,
   repositoryCreateRequiresProject,
   repositoryCreateRequiresFeature,
@@ -111,89 +112,39 @@ describe('visibleBranchesFor', () => {
   const names = (list: { name: string }[]) => list.map((x) => x.name);
 
   it.each(['admin', 'lead'] as const)('shows %s every branch', (role) => {
-    expect(names(visibleBranchesFor(role, 'alice', all, null))).toEqual(
-      names(all),
-    );
+    expect(names(visibleBranchesFor(role, all))).toEqual(names(all));
   });
 
   it('shows qa only the pipeline rungs that exist', () => {
-    expect(names(visibleBranchesFor('qa', 'alice', all, null))).toEqual([
+    expect(names(visibleBranchesFor('qa', all))).toEqual([
       'dev',
       'uat',
       'main',
     ]);
-    expect(
-      names(visibleBranchesFor('qa', 'alice', [b('main'), b('spike')], null)),
-    ).toEqual(['main']);
-  });
-
-  it('hides main from a member even when they authored its head commit', () => {
-    const authors = new Map([['main', 'alice']]);
-    expect(
-      names(visibleBranchesFor('member', 'alice', all, authors)),
-    ).not.toContain('main');
-  });
-
-  it('shows a member dev, uat and own feature branches, never main', () => {
-    expect(names(visibleBranchesFor('member', 'alice', all, null))).toEqual([
-      'dev',
-      'uat',
-      'feature/Alice-login',
+    expect(names(visibleBranchesFor('qa', [b('main'), b('spike')]))).toEqual([
+      'main',
     ]);
   });
 
-  it('matches the login case-insensitively', () => {
-    expect(names(visibleBranchesFor('member', 'ALICE', all, null))).toContain(
-      'feature/Alice-login',
-    );
-    expect(
-      names(visibleBranchesFor('member', 'alice', all, null)),
-    ).not.toContain('feature/bob-x');
-  });
-
-  it('adds branches whose head commit author is the login', () => {
-    const authors = new Map<string, string | null>([
-      ['hotfix/z', 'Alice'],
-      ['spike', 'bob'],
-      ['feature/bob-x', null],
-    ]);
-    expect(names(visibleBranchesFor('member', 'alice', all, authors))).toEqual([
-      'dev',
-      'uat',
-      'feature/Alice-login',
-      'hotfix/z',
-    ]);
-  });
-
-  it('falls back to name matching when author data is unavailable', () => {
-    expect(
-      names(visibleBranchesFor('member', 'alice', all, null)),
-    ).not.toContain('hotfix/z');
-  });
-
-  it('gives a member without a login only dev and uat', () => {
-    expect(names(visibleBranchesFor('member', null, all, null))).toEqual([
-      'dev',
-      'uat',
-    ]);
-  });
-
-  it('tolerates missing rungs for a member', () => {
-    expect(
-      names(
-        visibleBranchesFor('member', 'alice', [b('main'), b('spike')], null),
-      ),
-    ).toEqual([]);
+  it('shows Developers every branch for read-only browsing', () => {
+    expect(names(visibleBranchesFor('member', all))).toEqual(names(all));
   });
 
   it('fails closed to dev only for an unknown role', () => {
-    expect(names(visibleBranchesFor('intern', 'alice', all, null))).toEqual([
-      'dev',
-    ]);
+    expect(names(visibleBranchesFor('intern', all))).toEqual(['dev']);
   });
 });
 
 describe('Project / repository create rules', () => {
+  it.each([
+    ['admin', true],
+    ['lead', true],
+    ['member', true],
+    ['qa', false],
+  ] as const)('canCreateWorkspaceBranch(%s) is %s', (role, expected) => {
+    expect(canCreateWorkspaceBranch(role)).toBe(expected);
+  });
+
   it.each([
     ['admin', true],
     ['lead', true],

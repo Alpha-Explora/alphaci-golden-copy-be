@@ -53,7 +53,6 @@ export class ProjectActivityController {
       id,
       this.requireUserId(req),
       this.oauthToken(req),
-      req.session.user?.login ?? null,
       {
         ...(branch ? { branch } : {}),
         ...(limit === undefined || limit === ''
