@@ -10,6 +10,8 @@ import type {
   DeleteProviderTargetResult,
   ProviderAccountSummary,
   ProviderDeployEvent,
+  ProviderRollbackInput,
+  ProviderRollbackResult,
   ProviderDeploymentTarget,
   ProviderLogEntry,
   ProviderLogPage,
@@ -666,6 +668,70 @@ export class VercelEnvClient implements DeploymentProvider {
     };
 
     return mapVercelDeployHistory(payload.deployments);
+  }
+
+  /**
+   * Instant Rollback: points the production domains at an earlier production
+   * deployment, without building anything. Vercel then stops assigning new
+   * production deploys to the domains until a deployment is promoted again,
+   * which is what `resumeDeploys` does.
+   */
+  async rollbackDeploy(
+    input: ProviderRollbackInput,
+  ): Promise<ProviderRollbackResult> {
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v9/projects/${encodeURIComponent(input.targetId)}/rollback/${encodeURIComponent(input.deployId)}`,
+        input,
+      ),
+      { method: 'POST', headers: this.headers(input.token) },
+    );
+    await this.assertOk(
+      response,
+      'Vercel could not roll back to that deployment',
+    );
+    return {
+      deployId: input.deployId,
+      status: 'rolling_back',
+      holdsNewDeploys: true,
+    };
+  }
+
+  /**
+   * Ends a rollback: promotes the newest production deployment that is ready,
+   * which puts it on the domains and lets new production deploys through.
+   */
+  async resumeDeploys(
+    input: ProviderTargetStatusInput,
+  ): Promise<{ deployId: string | null }> {
+    const listed = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&target=production&state=READY&limit=1`,
+        input,
+      ),
+      { headers: this.headers(input.token) },
+    );
+    await this.assertOk(
+      listed,
+      'Vercel production deployments could not be loaded',
+    );
+    const payload = (await listed.json()) as {
+      deployments?: Array<{ uid?: string }>;
+    };
+    const deployId = payload.deployments?.[0]?.uid ?? null;
+    if (!deployId) return { deployId: null };
+    const promoted = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v10/projects/${encodeURIComponent(input.targetId)}/promote/${encodeURIComponent(deployId)}`,
+        input,
+      ),
+      { method: 'POST', headers: this.headers(input.token) },
+    );
+    await this.assertOk(
+      promoted,
+      'Vercel could not put the newest deployment back live',
+    );
+    return { deployId };
   }
 
   async queryLogs(input: ProviderLogQuery): Promise<ProviderLogPage> {

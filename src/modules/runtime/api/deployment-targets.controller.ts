@@ -110,6 +110,39 @@ export class DeploymentTargetsController {
     );
   }
 
+  /**
+   * Puts an earlier deploy of this service back live (Render rollback, Vercel
+   * Instant Rollback). Body: `{ deployId, reason }`. Developers and admins.
+   */
+  @Post(':targetId/rollback')
+  rollback(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('targetId') targetId: string,
+    @Body() body: { deployId?: unknown; reason?: unknown },
+  ) {
+    return this.service.rollbackDeploymentTarget(
+      projectId,
+      targetId,
+      req.session.user!.id,
+      body,
+    );
+  }
+
+  /** Ends a rollback that holds new deploys (Vercel): the newest deploy goes live again. */
+  @Post(':targetId/rollback/resume')
+  resumeDeploys(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('targetId') targetId: string,
+  ) {
+    return this.service.resumeDeploymentTargetDeploys(
+      projectId,
+      targetId,
+      req.session.user!.id,
+    );
+  }
+
   @Put(':targetId/environment')
   attachEnvironment(
     @Req() req: Request,

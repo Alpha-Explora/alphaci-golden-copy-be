@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 258 current API routes."
+description: "Generated inventory of the 260 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **258 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **260 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -235,6 +235,8 @@ The current compiled API exposes **258 routes** under the global `/api/v1` prefi
 - `POST /api/v1/projects/{id}/workflow-settings/preview`
 - `POST /api/v1/projects/{projectId}/deployment-targets`
 - `POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/reinstall-secrets`
+- `POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/rollback`
+- `POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/rollback/resume`
 - `POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/sync`
 - `POST /api/v1/projects/{projectId}/domains`
 - `POST /api/v1/projects/{projectId}/domains/{domainId}/verify`
