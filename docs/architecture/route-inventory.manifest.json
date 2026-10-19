@@ -1,11 +1,11 @@
 {
   "routeCount": 269,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "59cb07829c80bc9018b5a8bdaa177091cae42bc5694429f9244126e409d24f1e",
+  "referenceSha256": "3c227a9ae899cc51b64cbf219350f7cdbf792fd5d2c9acbbe28322eb91cadbaa",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "59cb07829c80bc9018b5a8bdaa177091cae42bc5694429f9244126e409d24f1e",
+  "baselineSha256": "3c227a9ae899cc51b64cbf219350f7cdbf792fd5d2c9acbbe28322eb91cadbaa",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -304,7 +304,7 @@
     {
       "reason": "Product owner acceptance of a signed-off Project run item (ADR-0014 amendment 12)",
       "routes": [
-        "PATCH /api/v1/delivery-projects/:deliveryProjectId/qa-runs/:runId/items/:itemId/acceptance"
+        "PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/acceptance"
       ]
     }
   ]

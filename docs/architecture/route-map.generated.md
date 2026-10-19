@@ -163,9 +163,9 @@ The current compiled API exposes **269 routes** under the global `/api/v1` prefi
 - `GET /api/v1/workspaces/{workspaceId}/qa-requirements/overview`
 - `PATCH /api/v1/admin/feedback/{id}`
 - `PATCH /api/v1/admin/users/{id}/app-role`
-- `PATCH /api/v1/delivery-projects/:deliveryProjectId/qa-runs/:runId/items/:itemId/acceptance`
 - `PATCH /api/v1/delivery-projects/{deliveryProjectId}`
 - `PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}`
+- `PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/acceptance`
 - `PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/test-cases/{testCaseId}`
 - `PATCH /api/v1/groups/{groupId}`
 - `PATCH /api/v1/groups/{groupId}/members/{memberId}`
