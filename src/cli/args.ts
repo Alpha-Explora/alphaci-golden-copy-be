@@ -10,6 +10,12 @@ export type CliCommand =
     }
   | { readonly name: 'admin-grant'; readonly githubLogin: string }
   | { readonly name: 'doctor' }
+  | {
+      readonly name: 'host-enrollment';
+      readonly team: string;
+      readonly githubLogin: string;
+      readonly hostName: string;
+    }
   | { readonly name: 'help' };
 
 /** A mistake in the command line. The message is shown to the operator as is. */
@@ -29,6 +35,9 @@ Commands:
   admin-grant --github-login <login>
       Make an existing AlphaCI user a platform super-admin. The user must have
       signed in once.
+  host-enrollment --team <name or ID> --github-login <login> [--name <host name>]
+      Create a one-time enrollment code for an on-prem host and print it. Used by
+      server-host to enroll this server's own agent.
   doctor
       Check the database, migrations, signing key, required settings, outbound
       HTTPS and the public API address.
@@ -96,6 +105,21 @@ export function parseArgs(argv: readonly string[]): CliCommand {
       }
       return { name: 'admin-grant', githubLogin };
     }
+    case 'host-enrollment': {
+      const team = flags.get('team');
+      const githubLogin = flags.get('github-login');
+      if (positionals.length > 0 || !team || !githubLogin) {
+        throw new UsageError(
+          'host-enrollment needs --team <name or ID> and --github-login <login>.',
+        );
+      }
+      return {
+        name: 'host-enrollment',
+        team,
+        githubLogin,
+        hostName: flags.get('name') ?? 'alphaci-server',
+      };
+    }
     case 'doctor': {
       if (positionals.length > 0) {
         throw new UsageError('doctor takes no arguments.');
@@ -118,6 +142,7 @@ const KNOWN_FLAGS: Readonly<Record<string, readonly string[]>> = {
   init: ['tls', 'dir', 'hostname'],
   'admin-grant': ['github-login'],
   doctor: [],
+  'host-enrollment': ['team', 'github-login', 'name'],
 };
 
 function splitFlags(

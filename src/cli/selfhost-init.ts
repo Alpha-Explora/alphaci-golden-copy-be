@@ -30,6 +30,7 @@ export const SECRET_FILES = {
   githubAppPrivateKey: 'github_app_private_key',
   githubOauthClientSecret: 'github_oauth_client_secret',
   githubAppWebhookSecret: 'github_app_webhook_secret',
+  onpremRegistryToken: 'onprem_registry_token',
 } as const;
 
 /** The secrets init generates. The GitHub ones come from the customer's own apps. */
@@ -159,6 +160,9 @@ export function renderAlphaciEnv(hostname: string, tls: TlsMode): string {
     `GITHUB_CLIENT_SECRET_FILE=${containerSecretPath(SECRET_FILES.githubOauthClientSecret)}`,
     `GITHUB_APP_PRIVATE_KEY_FILE=${containerSecretPath(SECRET_FILES.githubAppPrivateKey)}`,
     `GITHUB_APP_WEBHOOK_SECRET_FILE=${containerSecretPath(SECRET_FILES.githubAppWebhookSecret)}`,
+    // Read-only pull token lent to on-prem hosts (set with alphaci-ctl
+    // registry-token). Empty until then; hosts use their own Docker login.
+    `ONPREM_REGISTRY_TOKEN_FILE=${containerSecretPath(SECRET_FILES.onpremRegistryToken)}`,
     '',
   ];
   return lines.join('\n');
@@ -259,6 +263,13 @@ export function runInit(options: InitOptions): InitReport {
       join(secretsDir, SECRET_FILES.envProvisioningKey),
       () => `${Buffer.from(randomHex(32), 'hex').toString('base64')}\n`,
     ),
+  );
+
+  // Created empty here, by the api's own uid, so the api can read it once
+  // alphaci-ctl registry-token fills it in. Compose mounts it either way.
+  record(
+    `secrets/${SECRET_FILES.onpremRegistryToken}`,
+    writeNew(join(secretsDir, SECRET_FILES.onpremRegistryToken), ''),
   );
 
   const missingCustomerSecrets = CUSTOMER_SECRETS.filter(

@@ -45,6 +45,58 @@ case "$command" in
     exec docker run --rm -v "$DIR:/selfhost" "$image" \
       node "$CLI" init --dir /selfhost "$@"
     ;;
+  registry-token)
+    # The read-only token hosts pull the private release images with. Read from
+    # stdin and written by the image's own user (uid 1001, the api's), so the
+    # api can read it: a root-owned secret is unreadable to it.
+    image=$(sed -n 's/^ALPHACI_API_IMAGE=//p' "$DIR/.env" | tail -n 1)
+    login=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --github-login) login=$2; shift 2 ;;
+        --github-login=*) login=${1#*=}; shift ;;
+        *) echo "registry-token takes --github-login <owner of the token>." >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$login" ] || { echo "registry-token needs --github-login <owner of the token>." >&2; exit 2; }
+    [ -t 0 ] && printf 'Paste the token (read:packages), then press Enter: ' >&2
+    IFS= read -r token
+    [ -n "$token" ] || { echo "No token given; nothing changed." >&2; exit 2; }
+    printf '%s\n' "$token" | docker run --rm -i -v "$DIR/secrets:/secrets" --entrypoint sh "$image" -c \
+      'umask 0277 && cat > /secrets/onprem_registry_token.new && mv -f /secrets/onprem_registry_token.new /secrets/onprem_registry_token'
+    if grep -q '^ONPREM_REGISTRY_USERNAME=' "$DIR/alphaci.env"; then
+      sed -i "s|^ONPREM_REGISTRY_USERNAME=.*|ONPREM_REGISTRY_USERNAME=$login|" "$DIR/alphaci.env"
+    else
+      echo "ONPREM_REGISTRY_USERNAME=$login" >> "$DIR/alphaci.env"
+    fi
+    cd "$DIR" && docker compose up -d api
+    echo "Registry token saved. Hosts pull release images with it from their next deployment."
+    ;;
+  server-host)
+    # This server also runs the deployments: enroll its own on-prem agent and
+    # route each environment's address (ONPREM_APPS_DOMAIN) through this
+    # install's Caddy. Run as root on the server, after compose up.
+    [ "$(id -u)" -eq 0 ] || { echo "Run server-host with sudo." >&2; exit 1; }
+    cd "$DIR"
+    host=$(sed -n 's/^ALPHACI_HOSTNAME=//p' alphaci.env | tail -n 1)
+    version=$(sed -n 's/^ONPREM_INSTALLER_VERSION=//p' alphaci.env | tail -n 1)
+    sha=$(sed -n 's/^ONPREM_INSTALLER_SHA256=//p' alphaci.env | tail -n 1)
+    [ -n "$host" ] && [ -n "$version" ] || { echo "Set ALPHACI_HOSTNAME and the on-prem installer settings in alphaci.env first." >&2; exit 2; }
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    (umask 077; docker compose run --rm -T --no-deps api node "$CLI" host-enrollment "$@" > "$work/code")
+    curl -fsS "https://$host/api/v1/onprem/installer/$version" -o "$work/agent.tgz"
+    [ -z "$sha" ] || echo "$sha  $work/agent.tgz" | sha256sum -c - > /dev/null
+    tar -xzf "$work/agent.tgz" -C "$work"
+    ALPHACI_ENROLL_CODE_FILE="$work/code" bash "$work/agent/install.sh" --enroll "https://$host" ubuntu
+    install -m 0755 "$DIR/alphaci-app-routes" /opt/alphaci/bin/alphaci-app-routes
+    sed "s|^ExecStart=.*|Environment=ALPHACI_INSTALL_DIR=$DIR\nExecStart=/opt/alphaci/bin/alphaci-app-routes|" \
+      "$DIR/alphaci-app-routes.service" > /etc/systemd/system/alphaci-app-routes.service
+    install -m 0644 "$DIR/alphaci-app-routes.timer" /etc/systemd/system/alphaci-app-routes.timer
+    systemctl daemon-reload
+    systemctl enable --now alphaci-app-routes.timer
+    echo "This server now runs deployments. Set ONPREM_APPS_DOMAIN in alphaci.env (with *.<domain> pointing here) for permanent app addresses."
+    ;;
   help|-h|--help)
     cat <<'USAGE'
 alphaci-ctl - setup helper for the self-hosted AlphaCI appliance
@@ -52,6 +104,9 @@ alphaci-ctl - setup helper for the self-hosted AlphaCI appliance
   init <hostname> [--tls auto|internal|custom]   write alphaci.env and secrets/ (existing files are kept)
   admin-grant --github-login <login>             make an existing user a platform super-admin
   doctor                                         check the database, migrations, signing key, settings and outbound HTTPS
+  registry-token --github-login <login>          save the read-only token hosts pull release images with (from stdin)
+  sudo server-host --team <team> --github-login <login> [--name <host name>]
+                                                 enroll this server's own agent and route app addresses through Caddy
 USAGE
     ;;
   *)
