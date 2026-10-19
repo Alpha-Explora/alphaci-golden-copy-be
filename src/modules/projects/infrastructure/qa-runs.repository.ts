@@ -670,7 +670,11 @@ export class QaRunsRepository {
           SET
             status = COALESCE($4, status),
             notes = CASE WHEN $5::boolean THEN $6 ELSE notes END,
-            defect_severity = CASE WHEN $7::boolean THEN $8 ELSE defect_severity END,
+            defect_severity = CASE
+              WHEN $4::text = 'passed' THEN NULL
+              WHEN $7::boolean THEN $8
+              ELSE defect_severity
+            END,
             reproduction_steps = CASE WHEN $9::boolean THEN $10 ELSE reproduction_steps END,
             verified_by = CASE
               WHEN $4::text IS NULL THEN verified_by
@@ -854,6 +858,7 @@ export class QaRunsRepository {
           UPDATE projects.qa_run_items
           SET
             status = 'pending',
+            defect_severity = NULL,
             fix_requested_at = NOW(),
             fix_requested_by = $3,
             fix_requested_by_login = $4,

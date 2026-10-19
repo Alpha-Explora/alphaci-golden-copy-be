@@ -80,6 +80,9 @@ describe('QaRunsRepository concurrency guards', () => {
     expect(lockSql).toMatch(/FOR SHARE/);
     expect(lockParams).toEqual(['run-1']);
     expect(query.mock.calls[1]?.[0]).toMatch(/UPDATE projects\.qa_run_items/);
+    expect(query.mock.calls[1]?.[0]).toMatch(
+      /defect_severity = CASE[\s\S]*WHEN \$4::text = 'passed' THEN NULL/,
+    );
   });
 
   it('clears the previous fix request when an item is failed (returned to dev) again', async () => {
@@ -229,6 +232,7 @@ describe('QaRunsRepository concurrency guards', () => {
     expect(query.mock.calls[2]?.[0]).toContain(
       "status IN ('failed', 'returned_to_dev')",
     );
+    expect(query.mock.calls[2]?.[0]).toContain('defect_severity = NULL');
     expect(query.mock.calls[3]?.[1]?.[5]).toBe('failed');
   });
 
