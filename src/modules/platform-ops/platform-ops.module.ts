@@ -7,6 +7,7 @@ import { FeedbackModule } from './feedback/feedback.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OutboxRelayService } from './application/outbox-relay.service';
 import { OutboxRelayWorker } from './application/outbox-relay.worker';
+import { NotificationRelayWorker } from './application/notification-relay.worker';
 
 /** Aggregation/composition module for the platform-ops bounded context. */
 @Module({
@@ -17,7 +18,7 @@ import { OutboxRelayWorker } from './application/outbox-relay.worker';
     NotificationsModule,
     FeedbackModule,
   ],
-  providers: [OutboxRelayService, OutboxRelayWorker],
+  providers: [OutboxRelayService, OutboxRelayWorker, NotificationRelayWorker],
   exports: [OutboxRelayService],
 })
 export class PlatformOpsModule {}

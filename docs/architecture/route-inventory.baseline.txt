@@ -71,6 +71,7 @@ GET /api/v1/me/assigned-repositories
 GET /api/v1/me/groups
 GET /api/v1/notifications
 GET /api/v1/notifications/preferences
+GET /api/v1/notifications/stream
 GET /api/v1/onprem/assignments
 GET /api/v1/onprem/installer/{version}
 GET /api/v1/projects

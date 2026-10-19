@@ -651,16 +651,41 @@ export class GroupsRepository {
     userId: string,
     role: GrantableRole,
     addedBy: string,
-  ): Promise<void> {
-    await this.databaseService.query(
-      `
+    onAdded?: (
+      client: PoolClient,
+      context: { groupName: string; actorLogin: string | null },
+    ) => Promise<void>,
+  ): Promise<boolean> {
+    return this.databaseService.withTransaction(async (client) => {
+      const added = await client.query<{ id: string }>(
+        `
         INSERT INTO orgs.workspace_members (workspace_id, user_id, role, member_status, invited_by, invited_at)
         VALUES ($1, $2, $3, 'active', $4, NOW())
         ON CONFLICT (workspace_id, user_id)
-        DO UPDATE SET role = EXCLUDED.role, member_status = 'active', removed_at = NULL, removed_by = NULL, removal_reason = NULL;
+        DO UPDATE SET role = EXCLUDED.role, member_status = 'active',
+          invited_by = EXCLUDED.invited_by, invited_at = EXCLUDED.invited_at,
+          removed_at = NULL, removed_by = NULL, removal_reason = NULL
+        WHERE workspace_members.member_status <> 'active'
+        RETURNING id;
       `,
-      [groupId, userId, role, addedBy],
-    );
+        [groupId, userId, role, addedBy],
+      );
+      if (!added.rows[0]) return false;
+      if (onAdded) {
+        const context = await client.query<{
+          name: string;
+          login: string | null;
+        }>(
+          `SELECT w.name, u.login FROM orgs.workspaces w
+         LEFT JOIN identity.app_users u ON u.id = $2 WHERE w.id = $1`,
+          [groupId, addedBy],
+        );
+        const row = context.rows[0];
+        if (!row) throw new Error('Added member workspace was not found');
+        await onAdded(client, { groupName: row.name, actorLogin: row.login });
+      }
+      return true;
+    });
   }
 
   private toGroup(

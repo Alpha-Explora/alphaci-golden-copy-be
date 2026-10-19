@@ -6,6 +6,7 @@ import { NotificationsController } from './api/notifications.controller';
 import { NotificationEventsService } from './application/notification-events.service';
 import { NotificationsRepository } from './infrastructure/notifications.repository';
 import { NotificationsService } from './application/notifications.service';
+import { NotificationStreamService } from './application/notification-stream.service';
 
 @Module({
   imports: [DatabaseModule],
@@ -13,6 +14,7 @@ import { NotificationsService } from './application/notifications.service';
   providers: [
     NotificationsRepository,
     NotificationsService,
+    NotificationStreamService,
     NotificationEventsService,
     SessionAuthGuard,
   ],

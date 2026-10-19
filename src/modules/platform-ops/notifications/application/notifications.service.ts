@@ -10,7 +10,10 @@ import type {
 export class NotificationsService {
   constructor(private readonly repository: NotificationsRepository) {}
 
-  listForUser(userId: string): Promise<NotificationsResponse> {
+  async listForUser(userId: string): Promise<NotificationsResponse> {
+    if (!(await this.repository.isInAppEnabled(userId))) {
+      return { enabled: false, items: [], unreadCount: 0 };
+    }
     return this.repository.listForUser(userId);
   }
 

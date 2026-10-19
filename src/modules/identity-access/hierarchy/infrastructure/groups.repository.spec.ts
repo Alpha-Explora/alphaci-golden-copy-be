@@ -151,8 +151,8 @@ describe('GroupsRepository addMemberDirect', () => {
 
     await repo.addMemberDirect('group-1', 'user-2', 'member', 'actor-1');
 
-    expect(db.query).toHaveBeenCalledTimes(1);
-    const [sql, params] = (db.query as jest.Mock).mock.calls[0] as [
+    expect(db.query).not.toHaveBeenCalled();
+    const [sql, params] = db._clientMock.query.mock.calls[1] as [
       string,
       unknown[],
     ];
@@ -160,7 +160,50 @@ describe('GroupsRepository addMemberDirect', () => {
     expect(sql).toContain('ON CONFLICT (workspace_id, user_id)');
     expect(sql).toContain("member_status = 'active'");
     expect(sql).toContain('removed_at = NULL');
+    expect(sql).toContain("WHERE workspace_members.member_status <> 'active'");
     expect(params).toEqual(['group-1', 'user-2', 'member', 'actor-1']);
+  });
+
+  it('rolls membership back when notification enqueueing fails', async () => {
+    const db = makeDatabaseService();
+    db._clientMock.query.mockImplementation(async (sql: string) => ({
+      rows: sql.includes('RETURNING id')
+        ? [{ id: 'new-member' }]
+        : sql.includes('SELECT w.name')
+          ? [{ name: 'Team A', login: 'lead' }]
+          : [],
+    }));
+    const notify = jest.fn().mockRejectedValue(new Error('outbox offline'));
+    await expect(
+      new GroupsRepository(db).addMemberDirect(
+        'g',
+        'u',
+        'member',
+        'lead',
+        notify,
+      ),
+    ).rejects.toThrow('outbox offline');
+    expect(notify).toHaveBeenCalledWith(db._clientMock, {
+      groupName: 'Team A',
+      actorLogin: 'lead',
+    });
+    expect(db._clientMock.query).toHaveBeenLastCalledWith('ROLLBACK');
+    expect(db._clientMock.query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('does not notify when a concurrent request already activated membership', async () => {
+    const db = makeDatabaseService();
+    const notify = jest.fn();
+    await expect(
+      new GroupsRepository(db).addMemberDirect(
+        'g',
+        'u',
+        'member',
+        'lead',
+        notify,
+      ),
+    ).resolves.toBe(false);
+    expect(notify).not.toHaveBeenCalled();
   });
 });
 

@@ -28,6 +28,7 @@ describe('NotificationsRepository', () => {
           project_id: 'project-1',
           delivery_project_id: 'delivery-1',
           group_id: 'group-1',
+          unread_count: 61,
         },
         {
           id: 'notification-2',
@@ -69,7 +70,7 @@ describe('NotificationsRepository', () => {
           deliveryProjectId: null,
         },
       ],
-      unreadCount: 1,
+      unreadCount: 61,
     });
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('FROM notifications.notifications'),
@@ -173,6 +174,8 @@ describe('NotificationsRepository', () => {
         'quota_reached',
         'Quota reached',
         'Project quota reached.',
+        null,
+        null,
       ],
     );
   });

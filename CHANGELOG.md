@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Workspace member additions now enqueue a durable recipient notification in the membership transaction. Authenticated live notification snapshots keep the Inbox and badge current, with deduplicated delivery, explicit workspace links, and a notification-only one-second relay.
+
 ### Added
 
 - Vercel deploy history now includes production. It used to read only the newest 20 deployments across every branch, and on a busy project those are all dev/uat previews, so production had no history: an empty Production list and nothing to roll back to. The client now also reads the latest 10 production deployments and merges them in, each once, newest first. If that extra read fails, the history is returned as before.

@@ -1,7 +1,9 @@
 import { UnauthorizedException } from '@nestjs/common';
+import { NEVER } from 'rxjs';
 
 import { NotificationsController } from '#modules/platform-ops/notifications/api/notifications.controller';
 import { NotificationsService } from '#modules/platform-ops/notifications/application/notifications.service';
+import type { NotificationStreamService } from '#modules/platform-ops/notifications/application/notification-stream.service';
 
 describe('NotificationsController', () => {
   const makeService = () =>
@@ -44,6 +46,7 @@ describe('NotificationsController', () => {
     await expect(
       controller.list({ session: { user: { id: 'user-1' } } } as never),
     ).resolves.toEqual({
+      userId: 'user-1',
       enabled: true,
       items: [
         {
@@ -79,6 +82,42 @@ describe('NotificationsController', () => {
     expect(() => controller.list({ session: {} } as never)).toThrow(
       UnauthorizedException,
     );
+  });
+
+  it('uses the session recipient for streaming and stops after the session is revoked', async () => {
+    jest.useFakeTimers();
+    try {
+      const streams = { open: jest.fn(() => NEVER), closed$: NEVER };
+      const controller = new NotificationsController(
+        makeService(),
+        streams as unknown as NotificationStreamService,
+      );
+      const get = jest.fn(
+        (
+          _id: string,
+          callback: (error: Error | null, session: null) => void,
+        ) => {
+          callback(null, null);
+        },
+      );
+      const error = jest.fn();
+      const subscription = controller
+        .stream({
+          session: { userId: 'member' },
+          sessionID: 'session-id',
+          sessionStore: { get },
+        } as never)
+        .subscribe({ error });
+      expect(streams.open).toHaveBeenCalledWith('member');
+      jest.advanceTimersByTime(15000);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(get).toHaveBeenCalledWith('session-id', expect.any(Function));
+      expect(error).toHaveBeenCalledWith(expect.any(UnauthorizedException));
+      subscription.unsubscribe();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('returns notification preferences for the current user', async () => {

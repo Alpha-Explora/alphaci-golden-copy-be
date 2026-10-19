@@ -37,6 +37,8 @@ function pairs(entries) {
 
 /** Exact cross-schema allowances for replayable history and reviewed migration transitions. */
 const LEGACY_MIGRATION_REFERENCES = new Map([
+  // Platform notifications retain a workspace target with deletion-safe ownership.
+  ['platform-ops/20261019110735_workspace_member_live_notifications.sql', pairs(['orgs.workspaces'])],
   [
     'projects/20260925050000_project_environments.sql',
     pairs(['env_provisioning.project_deployment_targets']),

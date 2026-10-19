@@ -9,6 +9,8 @@ import { NotificationsRepository } from '../infrastructure/notifications.reposit
 export interface NotificationEventInput {
   userId: string;
   projectId?: string | null;
+  workspaceId?: string | null;
+  sourceEventId?: string | null;
   eventCode: string;
   title: string;
   body: string;

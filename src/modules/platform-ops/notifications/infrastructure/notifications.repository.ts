@@ -18,6 +18,7 @@ interface NotificationRow {
   project_id: string | null;
   delivery_project_id: string | null;
   group_id: string | null;
+  unread_count?: number | string;
 }
 
 interface NotificationPreferencesRow {
@@ -31,6 +32,14 @@ interface NotificationPreferencesRow {
 export class NotificationsRepository {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  async isInAppEnabled(userId: string): Promise<boolean> {
+    const result = await this.databaseService.query<{ enabled: boolean }>(
+      `SELECT COALESCE((SELECT in_app_enabled FROM notifications.notification_preferences WHERE user_id = $1), TRUE) AS enabled`,
+      [userId],
+    );
+    return result.rows[0]?.enabled !== false;
+  }
+
   async listForUser(userId: string): Promise<NotificationsResponse> {
     const result = await this.databaseService.query<NotificationRow>(
       `
@@ -43,12 +52,14 @@ export class NotificationsRepository {
           n.created_at,
           n.project_id,
           hr.delivery_project_id,
-          hr.group_id
+          COALESCE(n.workspace_id, hr.group_id) AS group_id,
+          (SELECT count(*)::int FROM notifications.notifications unread
+           WHERE unread.user_id = $1 AND unread.read_at IS NULL) AS unread_count
         FROM notifications.notifications n
         LEFT JOIN hierarchy.repositories hr
           ON hr.provisioned_project_id = n.project_id
         WHERE n.user_id = $1
-        ORDER BY n.created_at DESC
+        ORDER BY n.created_at DESC, n.id DESC
         LIMIT 50;
       `,
       [userId],
@@ -58,7 +69,7 @@ export class NotificationsRepository {
     return {
       enabled: true,
       items,
-      unreadCount: items.filter((item) => item.readAt === null).length,
+      unreadCount: Number(result.rows[0]?.unread_count ?? 0),
     };
   }
 
@@ -95,10 +106,15 @@ export class NotificationsRepository {
             project_id,
             event_code,
             title,
-            body
+            body,
+            workspace_id,
+            source_event_id
           )
-          VALUES ($1, $2, $3, $4, $5)
-          RETURNING id, title, body, event_code, read_at, created_at, project_id
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (user_id, source_event_id)
+            WHERE source_event_id IS NOT NULL
+          DO UPDATE SET source_event_id = EXCLUDED.source_event_id
+          RETURNING id, title, body, event_code, read_at, created_at, project_id, workspace_id
         )
         SELECT
           i.id,
@@ -109,7 +125,7 @@ export class NotificationsRepository {
           i.created_at,
           i.project_id,
           hr.delivery_project_id,
-          hr.group_id
+          COALESCE(i.workspace_id, hr.group_id) AS group_id
         FROM inserted i
         LEFT JOIN hierarchy.repositories hr
           ON hr.provisioned_project_id = i.project_id;
@@ -120,6 +136,8 @@ export class NotificationsRepository {
         input.eventCode,
         input.title,
         input.body,
+        input.workspaceId ?? null,
+        input.sourceEventId ?? null,
       ],
     );
 

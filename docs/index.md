@@ -13,6 +13,7 @@ This bundle describes the current AlphaCI backend as one NestJS deployable. It i
 * [Capabilities](capabilities/) - capability contract, current registry, and generated matrix.
 * [Packs](packs/) - comparable SaaS, EDU, and Enterprise composition references.
 * [Runbooks](runbooks/) - verification, migrations, outbox, provisioning, authentication, and performance procedures.
+* [Workspace member notifications](operations/workspace-member-notifications.md) - live delivery, migration order, and recipient verification.
 
 ## Maintenance
 

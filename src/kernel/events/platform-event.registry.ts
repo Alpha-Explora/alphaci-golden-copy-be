@@ -27,6 +27,7 @@ export interface AuditRecordedEventPayload {
 export interface NotificationRequestedEventPayload {
   userId: string;
   projectId?: string | null;
+  workspaceId?: string | null;
   eventCode: string;
   title: string;
   body: string;
@@ -110,11 +111,13 @@ export function decodePlatformEvent(
 
   if (topic === PLATFORM_EVENT_TOPICS.notificationRequested) {
     const projectId = optionalStringOrNull(value, 'projectId');
+    const workspaceId = optionalStringOrNull(value, 'workspaceId');
     return {
       topic: PLATFORM_EVENT_TOPICS.notificationRequested,
       payload: {
         userId: requireString(value, 'userId'),
         ...(projectId === undefined ? {} : { projectId }),
+        ...(workspaceId === undefined ? {} : { workspaceId }),
         eventCode: requireString(value, 'eventCode'),
         title: requireString(value, 'title'),
         body: requireString(value, 'body'),

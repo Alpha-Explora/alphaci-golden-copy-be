@@ -2,6 +2,8 @@
 
 ## 2026-10-19
 
+- **Update**: Documented live workspace member notifications, the additive workspace/source-event migration, recipient stream isolation, delivery cadence, and deployment verification in `operations/workspace-member-notifications.md`.
+
 - **Update**: Added the self-hosted install runbook section "Switching an existing host to the install's signing key": when a host needs it, how to replace its credential, the manual `trust.json` entry, and how to verify the switch. The on-prem host setup runbook now links to it and states that `enroll.sh --replace` handles an address change.
 - **Update**: Added the optional on-prem block to `deploy/selfhost/alphaci.env.example` and the on-prem checks to `alphaci-ctl doctor`, which run only while `ONPREM_RELEASES_ENABLED=true`.
 - **Update**: Documented backend release signing (`ALPHACI_RELEASE_SIGNER=file`) in the release registry contract. The runner signing default is unchanged.

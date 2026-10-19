@@ -6,10 +6,14 @@ import {
   Patch,
   Post,
   Req,
+  Sse,
+  Optional,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { interval, map, merge, mergeMap, takeUntil, timer } from 'rxjs';
+import { NotificationStreamService } from '../application/notification-stream.service';
 
 import {
   CapabilityGuard,
@@ -22,7 +26,37 @@ import { NotificationsService } from '../application/notifications.service';
 @UseGuards(SessionAuthGuard, CapabilityGuard)
 @RequiresCapability('platform.notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    @Optional() private readonly streams?: NotificationStreamService,
+  ) {}
+
+  @Sse('stream')
+  stream(@Req() req: Request) {
+    const userId = this.requireUserId(req);
+    if (!this.streams) throw new Error('Notification streaming is unavailable');
+    const heartbeat = interval(15000).pipe(
+      mergeMap(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            req.sessionStore.get(req.sessionID, (error, session) => {
+              if (
+                error ||
+                !session ||
+                (session.user?.id ?? session.userId) !== userId
+              ) {
+                reject(new UnauthorizedException('Session ended'));
+              } else resolve();
+            });
+          }),
+      ),
+      map(() => ({ type: 'heartbeat', data: {} })),
+    );
+    // Reconnection re-runs capability/session guards, including session expiry.
+    return merge(this.streams.open(userId), heartbeat).pipe(
+      takeUntil(merge(timer(300000), this.streams.closed$)),
+    );
+  }
 
   @Get()
   list(@Req() req: Request) {
@@ -30,7 +64,9 @@ export class NotificationsController {
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
-    return this.notificationsService.listForUser(userId);
+    return this.notificationsService
+      .listForUser(userId)
+      .then((notifications) => ({ ...notifications, userId }));
   }
 
   @Post(':id/read')
