@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- QA Verification is Pending, Passed or Failed (ADR-0014, amendment 11). Failed always sends the story back to the Developers: its Progress returns to In progress in the same write, it shows in their "returned" My QA items, the notification says it was failed and returned, and marking it Done re-queues it for QA. Blocked and Returned to dev are no longer accepted on a Project run (`400 QA_VERIFICATION_STATUS_INVALID`), and test case results are Pending, Passed or Failed. Existing rows keep their status. No migration.
 - Workspace member additions now enqueue a durable recipient notification in the membership transaction. Authenticated live notification snapshots keep the Inbox and badge current, with deduplicated delivery, explicit workspace links, and a notification-only one-second relay.
 
 ### Added

@@ -164,7 +164,11 @@ export interface RunActor {
 export interface QaProjectItemRules {
   /** 'passed' needs the source requirement item's Progress to be 'done'. */
   requireProgressDoneForPass: boolean;
-  /** 'returned_to_dev' puts the source item's Progress back to 'in_progress'. */
+  /**
+   * 'failed' (and 'returned_to_dev' on legacy callers) puts the source item's
+   * Progress back to 'in_progress': a failed story always returns to the
+   * Developers (ADR-0014, amendment 11).
+   */
   resetProgressOnReturn: boolean;
   /**
    * 'passed' needs every test case of the run item to be passed or not
@@ -670,14 +674,14 @@ export class QaRunsRepository {
               WHEN $4::text IN ('pending', 'in_progress') THEN NULL
               ELSE NOW()
             END,
-            -- Returning an item to dev opens a new fix round: the previous
+            -- Failing or returning an item opens a new fix round: the previous
             -- round's "fixed, please re-test" request no longer applies (it
             -- stays in qa_run_item_events). Leaving it set made a re-returned
             -- item look already-fixed and hid the developer's re-test action.
-            fix_requested_at = CASE WHEN $4::text = 'returned_to_dev' THEN NULL ELSE fix_requested_at END,
-            fix_requested_by = CASE WHEN $4::text = 'returned_to_dev' THEN NULL ELSE fix_requested_by END,
-            fix_requested_by_login = CASE WHEN $4::text = 'returned_to_dev' THEN NULL ELSE fix_requested_by_login END,
-            fix_note = CASE WHEN $4::text = 'returned_to_dev' THEN NULL ELSE fix_note END,
+            fix_requested_at = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL ELSE fix_requested_at END,
+            fix_requested_by = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL ELSE fix_requested_by END,
+            fix_requested_by_login = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL ELSE fix_requested_by_login END,
+            fix_note = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL ELSE fix_note END,
             row_version = row_version + 1,
             updated_at = NOW()
           WHERE id = $1 AND run_id = $2 AND row_version = $3
@@ -735,10 +739,10 @@ export class QaRunsRepository {
 
       if (
         rules?.resetProgressOnReturn &&
-        patch.status === 'returned_to_dev' &&
+        (patch.status === 'failed' || patch.status === 'returned_to_dev') &&
         updated.source_item_id
       ) {
-        // QA sent it back, so the developer is working on it again.
+        // QA failed it (or sent it back), so the developer is working on it again.
         await client.query(
           `
             UPDATE projects.qa_checklist_items
@@ -809,11 +813,11 @@ export class QaRunsRepository {
   }
 
   /**
-   * Conditional on the item's CURRENT status already being 'returned_to_dev'
-   * — that WHERE clause is itself the race-safe guard (the contract's
-   * request-retest body carries no expectedRowVersion), so a 0-row result
-   * means either the item does not belong to this run or it was not (or no
-   * longer is) returned_to_dev.
+   * Conditional on the item's CURRENT status being 'failed' or
+   * 'returned_to_dev' (both mean QA sent it back) — that WHERE clause is
+   * itself the race-safe guard (the contract's request-retest body carries no
+   * expectedRowVersion), so a 0-row result means either the item does not
+   * belong to this run or it is not (or no longer) sent back.
    */
   async requestRetest(
     runId: string,
@@ -823,6 +827,10 @@ export class QaRunsRepository {
   ): Promise<QaRunItemRow | null> {
     return this.databaseService.withTransaction(async (client) => {
       await lockOpenRunForItemWrite(client, runId);
+      const before = await client.query<{ status: QaRunItemStatus }>(
+        `SELECT status FROM projects.qa_run_items WHERE id = $1 AND run_id = $2 FOR UPDATE;`,
+        [itemId, runId],
+      );
       const result = await client.query<QaRunItemRow>(
         `
           UPDATE projects.qa_run_items
@@ -837,7 +845,7 @@ export class QaRunsRepository {
             verified_at = NULL,
             row_version = row_version + 1,
             updated_at = NOW()
-          WHERE id = $1 AND run_id = $2 AND status = 'returned_to_dev'
+          WHERE id = $1 AND run_id = $2 AND status IN ('failed', 'returned_to_dev')
           RETURNING *;
         `,
         [itemId, runId, actor.id, actor.login, note],
@@ -854,9 +862,16 @@ export class QaRunsRepository {
             run_item_id, run_id, actor_user_id, actor_login, event_type,
             from_status, to_status, payload
           )
-          VALUES ($1, $2, $3, $4, 'fix_requested', 'returned_to_dev', 'pending', $5::jsonb);
+          VALUES ($1, $2, $3, $4, 'fix_requested', $6, 'pending', $5::jsonb);
         `,
-        [itemId, runId, actor.id, actor.login, JSON.stringify({ note })],
+        [
+          itemId,
+          runId,
+          actor.id,
+          actor.login,
+          JSON.stringify({ note }),
+          before.rows[0]?.status ?? 'returned_to_dev',
+        ],
       );
 
       return updated;

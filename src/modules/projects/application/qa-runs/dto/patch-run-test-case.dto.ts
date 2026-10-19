@@ -8,18 +8,18 @@ import {
 } from 'class-validator';
 
 import {
-  QA_TEST_CASE_STATUSES,
+  QA_SETTABLE_TEST_CASE_STATUSES,
   type QaTestCaseStatus,
 } from '../qa-runs.contracts';
 
-/** PATCH one test case's result in a Project run. `null` clears notes; omitted leaves them. */
+/** PATCH one test case's result in a Project run (pending, passed or failed). `null` clears notes; omitted leaves them. */
 export class PatchRunTestCaseDto {
   @IsInt()
   @Min(1)
   expectedRowVersion!: number;
 
   @IsOptional()
-  @IsIn(QA_TEST_CASE_STATUSES)
+  @IsIn(QA_SETTABLE_TEST_CASE_STATUSES)
   status?: QaTestCaseStatus;
 
   @IsOptional()

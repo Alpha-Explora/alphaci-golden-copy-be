@@ -82,7 +82,7 @@ describe('QaRunsRepository concurrency guards', () => {
     expect(query.mock.calls[1]?.[0]).toMatch(/UPDATE projects\.qa_run_items/);
   });
 
-  it('clears the previous fix request when an item is returned to dev again', async () => {
+  it('clears the previous fix request when an item is failed (returned to dev) again', async () => {
     query
       .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
       .mockResolvedValueOnce({
@@ -107,7 +107,7 @@ describe('QaRunsRepository concurrency guards', () => {
       'fix_note',
     ]) {
       expect(updateSql).toContain(
-        `${column} = CASE WHEN $4::text = 'returned_to_dev' THEN NULL`,
+        `${column} = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL`,
       );
     }
   });
@@ -188,6 +188,48 @@ describe('QaRunsRepository concurrency guards', () => {
       repository.requestRetest('run-1', 'item-1', actor, null),
     ).rejects.toBeInstanceOf(QaRunNotOpenError);
     expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed item goes back to the Developers: its story Progress returns to in_progress in the same transaction', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce({
+        rows: [{ id: 'item-1', status: 'failed', source_item_id: 'story-1' }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await repository.updateItem(
+      'run-1',
+      'item-1',
+      1,
+      patch({ status: 'failed', defectSeverity: 'major' }),
+      actor,
+      'pending',
+      { requireProgressDoneForPass: true, resetProgressOnReturn: true },
+    );
+
+    const progressSql = query.mock.calls[3]?.[0] as string;
+    expect(progressSql).toMatch(/UPDATE projects\.qa_checklist_items/);
+    expect(progressSql).toContain("progress = 'in_progress'");
+    expect(query.mock.calls[3]?.[1]).toEqual(['story-1', 'user-1', 'quinn']);
+  });
+
+  it('a Developer marking a failed item Done re-queues it as pending, recording that it was failed', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce({ rows: [{ status: 'failed' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'item-1', status: 'pending' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      repository.requestRetest('run-1', 'item-1', actor, 'Fixed'),
+    ).resolves.toMatchObject({ status: 'pending' });
+
+    expect(query.mock.calls[2]?.[0]).toContain(
+      "status IN ('failed', 'returned_to_dev')",
+    );
+    expect(query.mock.calls[3]?.[1]?.[5]).toBe('failed');
   });
 
   it('locks the run FOR UPDATE and signs off when the items are unchanged', async () => {
