@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-20
+
+- **Update**: On-prem default container ports and health paths come from the scaffolded app's runtime contract (`SCAFFOLD_RUNTIME_CONTRACTS`), with the 3000/4000 and `/` fallback kept for repositories AlphaCI did not scaffold. Recorded in the release registry contract and the on-prem host setup runbook ("Default container ports", including how to fix an existing environment). Route inventory gained `GET .../host-assignment/defaults`; the generated maps were regenerated. See CHANGELOG.
+
 ## 2026-10-19
 
 - **Update**: Generated workflow files land in one commit per branch, and the React scaffold no longer adds its own container publish workflow. See CHANGELOG.

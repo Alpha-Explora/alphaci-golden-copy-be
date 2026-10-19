@@ -1,5 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
-import type { AssignmentConfig } from '#kernel/ports/onprem-assignment.port';
+import type {
+  AssignmentConfig,
+  AssignmentRequestConfig,
+} from '#kernel/ports/onprem-assignment.port';
 import {
   OnpremAssignmentsService,
   defaultAssignmentConfig,
@@ -121,6 +124,7 @@ describe('automatic assignment', () => {
     );
   beforeEach(() => {
     jest.clearAllMocks();
+    projects.findProjectReference.mockResolvedValue({ id: 'project' });
     repository.current.mockResolvedValue(null);
     repository.healthyMachines.mockResolvedValue(['machine']);
     repository.machineWorkspace.mockResolvedValue('ws');
@@ -211,6 +215,214 @@ describe('automatic assignment', () => {
     await expect(
       service().ensureAutomaticAssignment('project', 'env', 'user'),
     ).resolves.toBeNull();
+  });
+  it("assigns the scaffolded app's own port and health path", async () => {
+    projects.findProjectReference.mockResolvedValueOnce({
+      projectId: 'project',
+      serviceRuntime: {
+        slot: 'frontend',
+        containerPort: 8080,
+        healthPath: '/',
+      },
+    });
+    await service().ensureAutomaticAssignment('project', 'env', 'user');
+    expect(repository.assign.mock.calls[0][0].config).toEqual({
+      ports: [{ slot: 'frontend', containerPort: 8080 }],
+      health: [{ slot: 'frontend', path: '/' }],
+      ingress: { mode: 'direct', publicUrl: null },
+    });
+  });
+  it('gives each repository of a two-repository project its own contract', async () => {
+    const contracts: Record<string, unknown> = {
+      'backend-row': {
+        slot: 'backend',
+        containerPort: 8080,
+        healthPath: '/health',
+      },
+      'frontend-row': {
+        slot: 'frontend',
+        containerPort: 3000,
+        healthPath: '/',
+      },
+    };
+    projects.findProjectReference.mockImplementation((projectId: string) =>
+      Promise.resolve({ projectId, serviceRuntime: contracts[projectId] }),
+    );
+    targets.listDeploymentTargets.mockImplementation((projectId: string) =>
+      Promise.resolve([
+        {
+          environmentId: 'env',
+          provider: 'onprem-compose',
+          slot: projectId === 'backend-row' ? 'backend' : 'frontend',
+        },
+      ]),
+    );
+    await service().ensureAutomaticAssignment('backend-row', 'env', 'user');
+    await service().ensureAutomaticAssignment('frontend-row', 'env', 'user');
+    expect(
+      (
+        repository.assign.mock.calls as Array<
+          [{ projectId: string; config: AssignmentRequestConfig }]
+        >
+      ).map(([call]) => [
+        call.projectId,
+        call.config.ports,
+        call.config.health,
+      ]),
+    ).toEqual([
+      [
+        'backend-row',
+        [{ slot: 'backend', containerPort: 8080 }],
+        [{ slot: 'backend', path: '/health' }],
+      ],
+      [
+        'frontend-row',
+        [{ slot: 'frontend', containerPort: 3000 }],
+        [{ slot: 'frontend', path: '/' }],
+      ],
+    ]);
+  });
+  it('gives a slot added to an assignment its contract, keeping the kept slot', async () => {
+    projects.findProjectReference.mockResolvedValueOnce({
+      projectId: 'project',
+      serviceRuntime: {
+        slot: 'backend',
+        containerPort: 8080,
+        healthPath: '/health',
+      },
+    });
+    repository.current.mockResolvedValue({
+      id: 'old',
+      machineId: 'machine',
+      config: {
+        ports: [{ slot: 'frontend', hostPort: 8081, containerPort: 8000 }],
+        health: [{ slot: 'frontend', path: '/ready' }],
+        ingress: { mode: 'direct', publicUrl: null },
+      },
+    });
+    targets.listDeploymentTargets.mockResolvedValue([
+      { environmentId: 'env', provider: 'onprem-compose', slot: 'frontend' },
+      { environmentId: 'env', provider: 'onprem-compose', slot: 'backend' },
+    ]);
+    await service().ensureAutomaticAssignment('project', 'env', 'user');
+    const assigned = repository.assign.mock.calls[0][0].config;
+    expect(assigned.ports).toEqual([
+      { slot: 'frontend', containerPort: 8000 },
+      { slot: 'backend', containerPort: 8080 },
+    ]);
+    expect(assigned.health).toEqual([
+      { slot: 'frontend', path: '/ready' },
+      { slot: 'backend', path: '/health' },
+    ]);
+  });
+  it('keeps the ports a person chose over the contract', async () => {
+    projects.findProjectReference.mockResolvedValueOnce({
+      projectId: 'project',
+      serviceRuntime: {
+        slot: 'frontend',
+        containerPort: 8080,
+        healthPath: '/',
+      },
+    });
+    const chosen = {
+      ports: [{ slot: 'frontend' as const, containerPort: 5173 }],
+      health: [{ slot: 'frontend' as const, path: '/ready' }],
+      ingress: { mode: 'direct' as const, publicUrl: null },
+    };
+    await service().assignProvisionedEnvironment('project', 'env', 'user', {
+      requestId: 'request',
+      config: chosen,
+    });
+    expect(repository.assign.mock.calls[0][0].config).toEqual(chosen);
+  });
+  it('answers the defaults Hosting pre-fills, the contract or the fallback', async () => {
+    projects.findProjectReference.mockResolvedValueOnce({
+      projectId: 'project',
+      serviceRuntime: {
+        slot: 'frontend',
+        containerPort: 8080,
+        healthPath: '/',
+      },
+    });
+    await expect(service().defaults('project', 'env', 'user')).resolves.toEqual(
+      {
+        ports: [{ slot: 'frontend', containerPort: 8080 }],
+        health: [{ slot: 'frontend', path: '/' }],
+      },
+    );
+    await expect(service().defaults('project', 'env', 'user')).resolves.toEqual(
+      {
+        ports: [{ slot: 'frontend', containerPort: 3000 }],
+        health: [{ slot: 'frontend', path: '/' }],
+      },
+    );
+    targets.listDeploymentTargets.mockResolvedValue([
+      { environmentId: 'env', provider: 'vercel', slot: 'frontend' },
+    ]);
+    await expect(service().defaults('project', 'env', 'user')).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+});
+
+describe('defaultAssignmentConfig', () => {
+  const contract = (
+    slot: 'frontend' | 'backend',
+    containerPort: number,
+    healthPath: string,
+  ) => ({ slot, containerPort, healthPath });
+  it.each([
+    ['NestJS', contract('backend', 3000, '/health')],
+    ['.NET', contract('backend', 8080, '/health')],
+    ['Node.js', contract('backend', 3000, '/health')],
+    ['Next.js', contract('frontend', 3000, '/')],
+    ['React (nginx)', contract('frontend', 8080, '/')],
+  ])('takes a %s app’s port and health path', (_stack, serviceRuntime) => {
+    const config = defaultAssignmentConfig(
+      [serviceRuntime.slot],
+      serviceRuntime,
+    );
+    expect(config.ports).toEqual([
+      {
+        slot: serviceRuntime.slot,
+        containerPort: serviceRuntime.containerPort,
+      },
+    ]);
+    expect(config.health).toEqual([
+      { slot: serviceRuntime.slot, path: serviceRuntime.healthPath },
+    ]);
+  });
+  it.each([[null], [undefined]])(
+    'falls back to 3000 and 4000 with health at / without a contract (%s)',
+    (serviceRuntime) => {
+      expect(
+        defaultAssignmentConfig(['frontend', 'backend'], serviceRuntime),
+      ).toEqual({
+        ports: [
+          { slot: 'frontend', containerPort: 3000 },
+          { slot: 'backend', containerPort: 4000 },
+        ],
+        health: [
+          { slot: 'frontend', path: '/' },
+          { slot: 'backend', path: '/' },
+        ],
+        ingress: { mode: 'direct', publicUrl: null },
+      });
+    },
+  );
+  it('uses the fallback for a slot the scaffold does not fill', () => {
+    const config = defaultAssignmentConfig(
+      ['frontend', 'backend'],
+      contract('backend', 8080, '/health'),
+    );
+    expect(config.ports).toEqual([
+      { slot: 'frontend', containerPort: 3000 },
+      { slot: 'backend', containerPort: 8080 },
+    ]);
+    expect(config.health).toEqual([
+      { slot: 'frontend', path: '/' },
+      { slot: 'backend', path: '/health' },
+    ]);
   });
 });
 

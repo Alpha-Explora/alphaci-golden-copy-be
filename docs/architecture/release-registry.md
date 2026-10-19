@@ -78,6 +78,17 @@ Each target
 slot has a container port, a distinct machine host port, and a health path or
 explicit null. Null records missing health evidence; the agent reports the
 deployment failed without pulling or applying it until health is configured.
+When nobody chose them, the container port and health path come from the
+runtime contract of the app AlphaCI scaffolded for that project row
+(`SCAFFOLD_RUNTIME_CONTRACTS` in Projects, read by Runtime through
+`DeploymentProjectReference.serviceRuntime`): NestJS and Node.js 3000 `/health`,
+.NET 8080 `/health`, Next.js 3000 `/`, React (nginx) 8080 `/`. A slot with no
+contract (an imported repository, or a slot the stack does not fill) falls back
+to 3000 for a frontend and 4000 for a backend, health at `/`. A config a person
+or the create request supplies is used as given. `GET
+/projects/:projectId/environments/:environmentId/host-assignment/defaults`
+returns the same per-slot defaults for Hosting's form. Stored assignments are
+not rewritten.
 Readiness distinguishes missing schema, offline/revoked machines, prerequisites,
 missing health paths, and still-unverified runner, registry, port, ingress, and
 application checks. Connected does not mean application healthy.

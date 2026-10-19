@@ -1,4 +1,9 @@
 import type { ScaffoldFile } from './scaffold-file';
+import { SCAFFOLD_RUNTIME_CONTRACTS } from './service-runtime-contract';
+
+/** The port and health path this service serves; see service-runtime-contract.ts. */
+const { containerPort: PORT, healthPath: HEALTH_PATH } =
+  SCAFFOLD_RUNTIME_CONTRACTS.dotnet;
 
 /**
  * Standalone file tree for a modern, SDK-style .NET service.
@@ -316,7 +321,7 @@ function programCs(projectName: string, serviceName: string): string {
     '// it the schema says an endpoint exists and nothing about what it',
     '// returns, and a contract test generated from that can only check the',
     '// status code — it would pass against an endpoint returning anything.',
-    'app.MapGet("/health", (IServiceStatus status) =>',
+    `app.MapGet("${HEALTH_PATH}", (IServiceStatus status) =>`,
     '    Results.Ok(new HealthResponse(status.CurrentStatus(), ServiceInfo.Name)))',
     '   .Produces<HealthResponse>(StatusCodes.Status200OK);',
     '',
@@ -509,7 +514,7 @@ function serviceStatusTests(projectName: string): string {
     '                    services.AddSingleton(status)))',
     '            .CreateClient();',
     '',
-    '        var body = await client.GetFromJsonAsync<HealthResponse>("/health");',
+    `        var body = await client.GetFromJsonAsync<HealthResponse>("${HEALTH_PATH}");`,
     '',
     '        Assert.NotNull(body);',
     '        Assert.Equal("degraded", body!.Status);',
@@ -547,7 +552,7 @@ function healthTests(projectName: string): string {
     '    {',
     '        var client = _factory.CreateClient();',
     '',
-    '        var response = await client.GetAsync("/health");',
+    `        var response = await client.GetAsync("${HEALTH_PATH}");`,
     '',
     '        Assert.Equal(HttpStatusCode.OK, response.StatusCode);',
     '        var body = await response.Content.ReadFromJsonAsync<HealthResponse>();',
@@ -594,8 +599,8 @@ function dockerfile(projectName: string, runtimeVersion: string): string {
     '',
     `FROM ${DOTNET_RUNTIME_IMAGE}:${tag} AS runtime`,
     'WORKDIR /app',
-    'ENV ASPNETCORE_URLS=http://+:8080',
-    'EXPOSE 8080',
+    `ENV ASPNETCORE_URLS=http://+:${PORT}`,
+    `EXPOSE ${PORT}`,
     // Base image tags lag distribution security fixes; the release scan
     // blocks fixable HIGH and CRITICAL findings, so take them at build time.
     'USER root',
@@ -650,7 +655,7 @@ function readmeEnvExample(): string {
     '# Copy to .env for local runs. Never commit the copy: the pipeline’s env',
     '# guard fails any pull request that adds one.',
     'ASPNETCORE_ENVIRONMENT=Development',
-    'ASPNETCORE_URLS=http://localhost:8080',
+    `ASPNETCORE_URLS=http://localhost:${PORT}`,
     '',
     '# Origins allowed to call this API from a browser, comma-separated. On',
     "# managed hosting ALPHACI sets this to the deployed frontend's address.",
@@ -707,7 +712,7 @@ function brunoHealthRequest(serviceName: string): string {
     '}',
     '',
     'get {',
-    '  url: {{BASE_URL}}/health',
+    `  url: {{BASE_URL}}${HEALTH_PATH}`,
     '}',
     '',
     'assert {',
