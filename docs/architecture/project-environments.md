@@ -35,8 +35,9 @@ The project API supports:
   change generated deploy workflows; project provisioning continues through
   the legacy fixed path.
 - Project creation accepts an ordered `environments` array for
-  single-repository projects (see below). Other repository shapes reject one
-  before any repository or GitHub write.
+  single-repository and two-repository (`multi-repo`) projects (see below).
+  A project with both services in one repository rejects one before any
+  repository or GitHub write.
 
 The environment definition accepts complete ordered lists and requires exactly
 one production environment at any position. The editable `dev → uat → main`
@@ -109,3 +110,34 @@ and requested slot through the environment-aware target path, which also
 provisions each GitHub Environment, and finally generates the environments
 pipeline, naming those environment and target IDs, and pushes it to every
 source branch. The response lists the branches actually created.
+
+### Two-repository projects
+
+A two-repository project (`repoShape: multi-repo`) created with an
+`environments` list is two project rows, one per repository. Each row stores
+the same environments under its own IDs. Each repository then goes through
+the same environment pipeline as a single-repository project, limited to the
+slot it deploys: the backend repository gets the `backend` targets and the
+frontend repository gets the `frontend` targets. Each repository has its own
+branches, release signing, generated pipeline, releases and promotions. A
+target with the `standalone` slot is rejected for this shape. After both
+repositories exist, the backend and frontend targets of each environment are
+cross-linked by the same pass that a hosted pair uses.
+
+The two rows are linked the same way as every two-repository project. Both are
+filed under the same delivery project, so `ProjectLinkPort.getProjectFolder`
+returns each row as a sibling repository of the other. Both rows have
+`repoShape` `multi-repo`, and each generated pipeline names the other
+repository as its sibling. The create response returns the backend row as `id`
+and the frontend row as `secondaryProjectId`.
+
+Host assignment after creation runs for both rows. The `hostAssignment` config
+of an environment has one port entry and one health entry per slot. Each row
+is assigned with the entries for its own slot, the shared ingress, and the
+same machine. The server allocates host ports per machine, so the two rows
+cannot collide. For a two-repository project, each `hostAssignments` entry
+names its `projectId` and `slot`, and failure messages name the repository.
+
+If the frontend repository fails during creation, everything created for it is
+removed and the backend repository stays usable. The response then has
+`secondaryRepoError`.

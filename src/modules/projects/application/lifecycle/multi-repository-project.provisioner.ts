@@ -13,6 +13,7 @@ import {
   buildMultiRepoCreateResponse,
   createMultiRepoGithubRepo,
   deriveMultiRepoNames,
+  linkMultiRepoEnvironmentDeployments,
   provisionMultiRepoBackend,
   provisionMultiRepoDeployments,
   provisionMultiRepoFrontend,
@@ -116,6 +117,10 @@ export class MultiRepositoryProjectProvisioner {
       backend,
       repo: beRepo,
       bundle: backendBundle,
+      effectiveDeploymentProvisioning,
+      ...(beSiblingRepoFullName !== undefined && {
+        siblingRepoFullName: beSiblingRepoFullName,
+      }),
     });
 
     const frontendProvision = await provisionMultiRepoFrontend({
@@ -136,16 +141,28 @@ export class MultiRepositoryProjectProvisioner {
       }),
     });
 
-    const deploymentProvisioning = await provisionMultiRepoDeployments({
-      support: this.support,
-      logger: this.logger,
-      userId,
-      provisioningToken,
-      effectiveDeploymentProvisioning,
-      backendRow: backendProvision.row,
-      beRepoFullName,
-      frontend: frontendProvision,
-    });
+    // With project environments each repository already provisioned its own
+    // targets, environment by environment, while its pipeline was generated.
+    const deploymentProvisioning = backendProvision.environment
+      ? await linkMultiRepoEnvironmentDeployments({
+          support: this.support,
+          logger: this.logger,
+          userId,
+          effectiveDeploymentProvisioning,
+          backendRow: backendProvision.row,
+          backend: backendProvision.environment,
+          frontend: frontendProvision,
+        })
+      : await provisionMultiRepoDeployments({
+          support: this.support,
+          logger: this.logger,
+          userId,
+          provisioningToken,
+          effectiveDeploymentProvisioning,
+          backendRow: backendProvision.row,
+          beRepoFullName,
+          frontend: frontendProvision,
+        });
 
     // ONE announcement per logical project, not one per repository. The
     // response already treats the backend row and repo as the project's
@@ -178,6 +195,7 @@ export class MultiRepositoryProjectProvisioner {
       backendCommitUrl: backendProvision.commitUrl,
       frontend: frontendProvision,
       deploymentProvisioning,
+      backendEnvironment: backendProvision.environment,
     });
   }
 }

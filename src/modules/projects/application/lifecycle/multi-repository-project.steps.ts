@@ -25,6 +25,12 @@ import {
   BRANCHES_CREATED_ON_PROVISION,
   PROVISIONED_BRANCHES,
 } from '#kernel/config/pipeline-branches';
+import {
+  combineEnvironmentResults,
+  completeEnvironmentPipeline,
+  placeholderWorkflowEnvironments,
+  type EnvironmentPipelineResult,
+} from './environment-project.pipeline';
 
 export type CreatedGithubRepo = {
   repoUrl: string;
@@ -44,12 +50,19 @@ export type MultiRepoBackendProvision = {
   commitUrl: string | null;
   /** The hierarchy delivery project the backend row was linked under, if any. */
   deliveryProjectId: string | null;
+  /** Set when the project has its own environments. */
+  environment?: EnvironmentPipelineResult;
 };
 
 export type MultiRepoFrontendProvision = {
   feRepoFullName: string | undefined;
   feRepoUrl: string | undefined;
+  /** The frontend row, only once its repository is fully provisioned. */
   feRow: ProvisionedProjectRow | undefined;
+  /** Set when the project has its own environments. */
+  environment?: EnvironmentPipelineResult;
+  /** Why the frontend repository is missing, when its provisioning failed. */
+  error?: string;
 };
 
 export function deriveMultiRepoNames(repoName: string): {
@@ -156,6 +169,7 @@ export async function buildMultiRepoBackendBundle(input: {
       support.workflowFragmentRegistry,
     ),
     ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
+    ...placeholderWorkflowEnvironments(dto.environments),
   });
 
   return {
@@ -198,6 +212,7 @@ export async function buildMultiRepoFrontendBundle(input: {
       support.workflowFragmentRegistry,
     ),
     ...(siblingRepoFullName !== undefined && { siblingRepoFullName }),
+    ...placeholderWorkflowEnvironments(dto.environments),
   });
 
   return {
@@ -345,6 +360,91 @@ export async function createAndProtectDefaultBranches(input: {
   });
 }
 
+/** One repository's pipeline, once its row and CI secrets exist. */
+export type MultiRepoPipeline = {
+  commitSha: string;
+  commitUrl: string | null;
+  /** Set when the project has its own environments. */
+  environment?: EnvironmentPipelineResult;
+};
+
+/**
+ * Give one repository of the pair its pipeline.
+ *
+ * Without project environments: the branch-based pipeline already built in
+ * `bundle`, pushed to main, then dev and uat created and protected. With
+ * them: the environment pipeline (release signing, environment branches, one
+ * target per environment for this repository's slot, the generated pipeline
+ * on every source branch), the same one a single-repository project gets.
+ */
+export async function finishMultiRepoPipeline(input: {
+  support: ProjectProvisioningSupport;
+  userId: string;
+  provisioningToken: string;
+  dto: CreateProjectDto;
+  slot: MicroserviceSlotDto;
+  /** The hosting slot this repository deploys. */
+  deploySlot: 'backend' | 'frontend';
+  repo: CreatedGithubRepo;
+  row: ProvisionedProjectRow;
+  bundle: MultiRepoWorkflowBundle;
+  effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
+  siblingRepoFullName?: string | undefined;
+}): Promise<MultiRepoPipeline> {
+  const { support, provisioningToken, dto, repo, row, bundle } = input;
+  if (dto.environments) {
+    const environment = await completeEnvironmentPipeline(support, {
+      userId: input.userId,
+      row,
+      provisioningToken,
+      ownerLogin: repo.ownerLogin,
+      repoName: repo.repoName,
+      repoFullName: `${repo.ownerLogin}/${repo.repoName}`,
+      deploymentProvisioning: input.effectiveDeploymentProvisioning,
+      slots: [input.deploySlot],
+      ownSlotTargetsOnly: true,
+      workflow: {
+        templateId: bundle.templateId,
+        serviceName: input.slot.serviceName,
+        servicePath: '.',
+        nodeVersion: dto.nodeVersion,
+        coverageThreshold: dto.coverageThreshold,
+        hasTestsDirectory: true,
+        ...(input.siblingRepoFullName !== undefined && {
+          siblingRepoFullName: input.siblingRepoFullName,
+        }),
+      },
+    });
+    return {
+      commitSha: environment.commit?.commitSha ?? '',
+      commitUrl: environment.commit?.commitUrl ?? null,
+      environment,
+    };
+  }
+
+  const { commitSha, commitUrl } = await support.pushWorkflowFiles(
+    provisioningToken,
+    repo.ownerLogin,
+    repo.repoName,
+    bundle.workflowFiles,
+  );
+  await support.projectsRepository.updateStatus(
+    row.id,
+    'provisioned',
+    commitSha,
+    commitUrl,
+  );
+  await createAndProtectDefaultBranches({
+    support,
+    provisioningToken,
+    ownerLogin: repo.ownerLogin,
+    repoName: repo.repoName,
+    userId: input.userId,
+    project: row,
+  });
+  return { commitSha, commitUrl };
+}
+
 export async function compensateMultiRepoProvision(input: {
   support: ProjectProvisioningSupport;
   provisioningToken: string;
@@ -370,6 +470,9 @@ export async function provisionMultiRepoBackend(input: {
   backend: MicroserviceSlotDto;
   repo: CreatedGithubRepo;
   bundle: MultiRepoWorkflowBundle;
+  effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
+  /** `owner/repo` of the paired frontend repository. See buildMultiRepoBackendBundle. */
+  siblingRepoFullName?: string;
 }): Promise<MultiRepoBackendProvision> {
   const { support, userId, provisioningToken, dto, backend, repo, bundle } =
     input;
@@ -377,8 +480,7 @@ export async function provisionMultiRepoBackend(input: {
 
   let backendRow: ProvisionedProjectRow | undefined;
   let backendDeliveryProjectId: string | null = null;
-  let backendCommitSha = '';
-  let backendCommitUrl: string | null = null;
+  let pipeline: MultiRepoPipeline | undefined;
   let backendProvisioningComplete = false;
   try {
     await support.pushStarterFiles(
@@ -421,27 +523,18 @@ export async function provisionMultiRepoBackend(input: {
       projectId: backendRow.id,
     });
 
-    ({ commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
-      await support.pushWorkflowFiles(
-        provisioningToken,
-        repo.ownerLogin,
-        repo.repoName,
-        bundle.workflowFiles,
-      ));
-    await support.projectsRepository.updateStatus(
-      backendRow.id,
-      'provisioned',
-      backendCommitSha,
-      backendCommitUrl,
-    );
-
-    await createAndProtectDefaultBranches({
+    pipeline = await finishMultiRepoPipeline({
       support,
-      provisioningToken,
-      ownerLogin: repo.ownerLogin,
-      repoName: repo.repoName,
       userId,
-      project: backendRow,
+      provisioningToken,
+      dto,
+      slot: backend,
+      deploySlot: 'backend',
+      repo,
+      row: backendRow,
+      bundle,
+      effectiveDeploymentProvisioning: input.effectiveDeploymentProvisioning,
+      siblingRepoFullName: input.siblingRepoFullName,
     });
 
     backendProvisioningComplete = true;
@@ -459,7 +552,7 @@ export async function provisionMultiRepoBackend(input: {
     throw error;
   }
 
-  if (!backendRow) {
+  if (!backendRow || !pipeline) {
     // Unreachable: a backend failure is rethrown from the catch above.
     throw new UnprocessableEntityException(
       'Backend repository provisioning did not complete',
@@ -468,9 +561,10 @@ export async function provisionMultiRepoBackend(input: {
 
   return {
     row: backendRow,
-    commitSha: backendCommitSha,
-    commitUrl: backendCommitUrl,
+    commitSha: pipeline.commitSha,
+    commitUrl: pipeline.commitUrl,
     deliveryProjectId: backendDeliveryProjectId,
+    ...(pipeline.environment && { environment: pipeline.environment }),
   };
 }
 
@@ -514,6 +608,8 @@ export async function provisionMultiRepoFrontend(input: {
   let feRepoUrl: string | undefined;
   let feRepoCreated: { owner: string; repo: string } | undefined;
   let feRow: ProvisionedProjectRow | undefined;
+  let pipeline: MultiRepoPipeline | undefined;
+  let error: string | undefined;
   let feProvisioningComplete = false;
 
   try {
@@ -578,27 +674,18 @@ export async function provisionMultiRepoFrontend(input: {
       projectId: feRow.id,
     });
 
-    const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
-      await support.pushWorkflowFiles(
-        provisioningToken,
-        repo.ownerLogin,
-        repo.repoName,
-        bundle.workflowFiles,
-      );
-    await support.projectsRepository.updateStatus(
-      feRow.id,
-      'provisioned',
-      frontendCommitSha,
-      frontendCommitUrl,
-    );
-
-    await createAndProtectDefaultBranches({
+    pipeline = await finishMultiRepoPipeline({
       support,
-      provisioningToken,
-      ownerLogin: repo.ownerLogin,
-      repoName: repo.repoName,
       userId,
-      project: feRow,
+      provisioningToken,
+      dto,
+      slot: frontend,
+      deploySlot: 'frontend',
+      repo,
+      row: feRow,
+      bundle,
+      effectiveDeploymentProvisioning,
+      siblingRepoFullName,
     });
 
     feProvisioningComplete = true;
@@ -606,6 +693,8 @@ export async function provisionMultiRepoFrontend(input: {
     logger.warn(
       `Multi-repo project created but frontend repo provisioning failed: ${String(err)}`,
     );
+    error =
+      'Project created with its backend repository only. The frontend repository could not be provisioned, and anything created for it was removed.';
     // Roll back a half-created frontend repo so a retry can reuse its name;
     // the backend repo is fully provisioned and is still returned.
     if (!feProvisioningComplete && feRepoCreated) {
@@ -619,10 +708,17 @@ export async function provisionMultiRepoFrontend(input: {
       });
       feRepoFullName = undefined;
       feRepoUrl = undefined;
+      feRow = undefined;
     }
   }
 
-  return { feRepoFullName, feRepoUrl, feRow };
+  return {
+    feRepoFullName,
+    feRepoUrl,
+    feRow,
+    ...(pipeline?.environment && { environment: pipeline.environment }),
+    ...(error !== undefined && { error }),
+  };
 }
 
 export async function provisionMultiRepoDeployments(input: {
@@ -696,6 +792,58 @@ export async function provisionMultiRepoDeployments(input: {
   return combineDeploymentProvisioningResults(provisioningResults);
 }
 
+/**
+ * The pair's deployment result when each repository provisioned its own
+ * environment targets (finishMultiRepoPipeline). Neither repository's pass saw
+ * the other's targets, so the halves are cross-linked here through the same
+ * pass a hosted pair uses, one environment at a time: a frontend is only ever
+ * handed its own environment's API URL, and a backend only its own
+ * environment's frontend origin.
+ */
+export async function linkMultiRepoEnvironmentDeployments(input: {
+  support: ProjectProvisioningSupport;
+  logger: Logger;
+  userId: string;
+  effectiveDeploymentProvisioning: DeploymentProvisioningRequestDto | undefined;
+  backendRow: ProvisionedProjectRow;
+  backend: EnvironmentPipelineResult;
+  frontend: MultiRepoFrontendProvision;
+}): Promise<DeploymentProvisioningResult> {
+  const { backend, frontend } = input;
+  const frontendRow = frontend.feRow;
+  const frontendPipeline = frontend.environment;
+  if (frontendRow && frontendPipeline) {
+    for (const { environment, result } of backend.perEnvironment) {
+      const frontendResult = frontendPipeline.perEnvironment.find(
+        (item) => item.environment.slug === environment.slug,
+      )?.result;
+      if (!frontendResult) continue;
+      try {
+        await input.support.projectDeploymentProvisioningService.crossLinkServiceUrls(
+          {
+            userId: input.userId,
+            request: input.effectiveDeploymentProvisioning,
+            groups: [
+              { projectId: input.backendRow.id, result },
+              { projectId: frontendRow.id, result: frontendResult },
+            ],
+          },
+        );
+      } catch (error) {
+        input.logger.warn(
+          `Multi-repo cross-service env injection failed for ${environment.slug}: ${String(error)}`,
+        );
+      }
+    }
+  }
+  return combineEnvironmentResults([
+    backend.deploymentProvisioning,
+    ...(frontendRow && frontendPipeline
+      ? [frontendPipeline.deploymentProvisioning]
+      : []),
+  ]);
+}
+
 export function buildMultiRepoCreateResponse(input: {
   backend: MicroserviceSlotDto;
   backendRow: ProvisionedProjectRow;
@@ -707,15 +855,29 @@ export function buildMultiRepoCreateResponse(input: {
   backendCommitUrl: string | null;
   frontend: MultiRepoFrontendProvision;
   deploymentProvisioning: DeploymentProvisioningResult;
+  /** The backend's environment pipeline, when the project has its own environments. */
+  backendEnvironment?: EnvironmentPipelineResult | undefined;
 }): CreateProjectResponse {
+  const environment = input.backendEnvironment;
+  const releaseSigningWarnings = [
+    ...new Set(
+      [environment, input.frontend.environment]
+        .map((pipeline) => pipeline?.releaseSigningWarning)
+        .filter((warning): warning is string => warning !== undefined),
+    ),
+  ];
   return {
     id: input.backendRow.id,
     repoFullName: input.beRepoFullName,
     repoUrl: input.beRepoUrl,
     status: 'provisioned',
-    branchesCreated: [...PROVISIONED_BRANCHES],
+    branchesCreated: environment
+      ? [...new Set(['main', ...environment.branches])]
+      : [...PROVISIONED_BRANCHES],
     workflowPath: input.backendWorkflowPath,
-    workflowFiles: workflowFileMetadata(input.backendWorkflowFiles),
+    workflowFiles: workflowFileMetadata(
+      environment?.workflowFiles ?? input.backendWorkflowFiles,
+    ),
     githubCommitSha: input.backendCommitSha,
     githubCommitUrl: input.backendCommitUrl,
     projectTypeId: input.backend.projectTypeId,
@@ -726,6 +888,15 @@ export function buildMultiRepoCreateResponse(input: {
     }),
     ...(input.frontend.feRepoUrl !== undefined && {
       secondaryRepoUrl: input.frontend.feRepoUrl,
+    }),
+    ...(input.frontend.feRow && {
+      secondaryProjectId: input.frontend.feRow.id,
+    }),
+    ...(input.frontend.error !== undefined && {
+      secondaryRepoError: input.frontend.error,
+    }),
+    ...(releaseSigningWarnings.length > 0 && {
+      releaseSigningWarning: releaseSigningWarnings.join(' '),
     }),
     deploymentProvisioning: input.deploymentProvisioning,
   };
