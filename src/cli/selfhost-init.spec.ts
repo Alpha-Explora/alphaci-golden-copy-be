@@ -182,6 +182,7 @@ describe('runInit', () => {
       'secrets/release_signing_key',
       'secrets/env_provisioning_encryption_key',
       'secrets/onprem_registry_token',
+      'secrets/sonar_token',
     ]);
     expect(report.kept).toEqual([]);
     expect(report.missingCustomerSecrets).toEqual([
@@ -257,6 +258,7 @@ describe('runInit', () => {
       'secrets/release_signing_key',
       'secrets/env_provisioning_encryption_key',
       'secrets/onprem_registry_token',
+      'secrets/sonar_token',
     ]);
     expect(readFileSync(join(dir, 'alphaci.env'), 'utf8')).toBe(before.env);
     expect(readFileSync(join(dir, 'secrets', 'session_secret'), 'utf8')).toBe(

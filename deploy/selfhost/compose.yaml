@@ -90,6 +90,7 @@ services:
       - release_signing_key
       - env_provisioning_encryption_key
       - onprem_registry_token
+      - sonar_token
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -199,3 +200,5 @@ secrets:
     file: ./secrets/github_app_webhook_secret
   onprem_registry_token:
     file: ./secrets/onprem_registry_token
+  sonar_token:
+    file: ./secrets/sonar_token

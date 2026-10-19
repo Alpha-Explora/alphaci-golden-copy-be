@@ -31,6 +31,7 @@ export const SECRET_FILES = {
   githubOauthClientSecret: 'github_oauth_client_secret',
   githubAppWebhookSecret: 'github_app_webhook_secret',
   onpremRegistryToken: 'onprem_registry_token',
+  sonarToken: 'sonar_token',
 } as const;
 
 /** The secrets init generates. The GitHub ones come from the customer's own apps. */
@@ -270,6 +271,12 @@ export function runInit(options: InitOptions): InitReport {
   record(
     `secrets/${SECRET_FILES.onpremRegistryToken}`,
     writeNew(join(secretsDir, SECRET_FILES.onpremRegistryToken), ''),
+  );
+  // Same for the SonarCloud token (alphaci-ctl sonar). ALPHACI_SONAR_TOKEN_FILE
+  // is only set once it is filled in, because an empty secret file is an error.
+  record(
+    `secrets/${SECRET_FILES.sonarToken}`,
+    writeNew(join(secretsDir, SECRET_FILES.sonarToken), ''),
   );
 
   const missingCustomerSecrets = CUSTOMER_SECRETS.filter(

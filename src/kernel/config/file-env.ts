@@ -16,6 +16,7 @@ export const FILE_ENV_ALLOW_LIST: readonly string[] = [
   'GITHUB_APP_PRIVATE_KEY',
   'GITHUB_APP_WEBHOOK_SECRET',
   'ENV_PROVISIONING_ENCRYPTION_KEY',
+  'ALPHACI_SONAR_TOKEN',
 ];
 
 export type ReadSecretFile = (path: string) => string;
