@@ -329,6 +329,7 @@ const CAPABILITY_ROUTE_BASELINE: Readonly<Record<string, BaselineController>> =
       reason: 'project workspace surface',
       routes: [
         { handler: 'listBranches', method: 'GET' },
+        { handler: 'createBranch', method: 'POST' },
         { handler: 'listFiles', method: 'GET' },
         { handler: 'listFileCommits', method: 'GET' },
         { handler: 'listRuns', method: 'GET' },

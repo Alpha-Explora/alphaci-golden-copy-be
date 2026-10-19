@@ -46,7 +46,7 @@ Do this once per AlphaCI server.
    - `ONPREM_RELEASES_ENABLED=true`
    - `ENV_PROVISIONING_ENABLED=true`
    - An installer source (see [Installer source](#installer-source)).
-   - `ONPREM_INSTALLER_VERSION` set to the agent version you serve. The current agent is `0.4.3` (`deploy/onprem/agent/release-manifest.json`). Without the setting the server serves `0.2.0`, which has no automatic HTTPS address, no linked services, and no registry pull credential.
+   - `ONPREM_INSTALLER_VERSION`, the agent version you serve. Unset, the server offers the agent this release ships (`deploy/onprem/agent/release-manifest.json`, currently `0.4.3`). Set it to serve another version, and for `alphaci-ctl server-host`.
 2. Releases are signed by the server's own key (`ALPHACI_RELEASE_SIGNER=file`). Enrollment hands that key to every host automatically. `ALPHACI_RELEASE_TRUST_KEYS_JSON` is needed only for extra keys, such as the previous key during a rotation.
 3. If the release images are private, save a pull token: `./alphaci-ctl registry-token --github-login <token owner>`. See [Private release images](#private-release-images).
 4. Apply the settings with `docker compose up -d`, then run `./alphaci-ctl doctor`. While `ONPREM_RELEASES_ENABLED=true`, doctor adds two checks: `on-prem settings are present and valid` names each missing or malformed setting, and `release trust key for on-prem hosts is available` prints the key ID that enrollment trusts.
@@ -65,7 +65,7 @@ Set these in the hosting service's environment (for example the Render service's
 | `ENV_PROVISIONING_ENABLED` | `true` |
 | `ALPHACI_RELEASE_TRUST_KEYS_JSON` | One-line JSON object mapping each trusted key ID to its PEM public key. See [Release signing on a hosted backend](#release-signing-on-a-hosted-backend). |
 | Signing source | Cloud KMS settings, or the lab key for lab hosts. See the same section. |
-| `ONPREM_INSTALLER_VERSION` | The agent version to serve, for example `0.4.3`. Default `0.2.0`. |
+| `ONPREM_INSTALLER_VERSION` | The agent version to serve. Default: the agent this backend ships (`deploy/onprem/agent/release-manifest.json`, currently `0.4.3`). |
 | Installer source | `ONPREM_INSTALLER_RELEASE_REPO` and, recommended, `ONPREM_INSTALLER_SHA256`. See [Installer source](#installer-source). |
 | `ONPREM_INSTALLER_RELEASE_TOKEN` | Optional. A GitHub token used only for API calls, to avoid the unauthenticated rate limit. Secret. |
 | `ONPREM_REGISTRY_TOKEN_FILE`, `ONPREM_REGISTRY_USERNAME` | Optional. The pull credential lent to hosts. See [Private release images](#private-release-images). |

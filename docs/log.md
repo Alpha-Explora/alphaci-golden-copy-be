@@ -2,6 +2,8 @@
 
 ## 2026-10-20
 
+- **Update**: An unset `ONPREM_INSTALLER_VERSION` now means the agent this backend ships (`deploy/onprem/agent/release-manifest.json`, 0.4.3), not 0.2.0. Updated the on-prem host setup runbook and both env examples. Regenerated the architecture maps for the new runtime file.
+
 - **Deletion**: Removed the dated plans, specs and review report under `docs/superpowers/` (12 files). Each was implemented, superseded or abandoned. Their lasting contracts are in ADR-0007 to ADR-0010, ADR-0012, `capabilities/capability-contract.md`, `architecture/project-environments.md`, `architecture/release-registry.md` and the on-prem host setup runbook. The one design not yet built is kept: `docs/superpowers/specs/2026-10-18-egress-only-self-hosted-alphaci-design.md`.
 - **Deletion**: Removed `docs/operations/onprem-local-acceptance.md`, a dated evidence log rather than a procedure. Its lasting points are in the on-prem host setup runbook.
 - **Update**: Brought the current-state docs in line with the code. `current-architecture.md` gained the deployment modes, both release signer modes, the self-host migration runner and rollback, and has the current route and provider counts. The constitution, event map and ADR-0005 record the in-process `OutboxRelayWorker` and `NotificationRelayWorker` beside the Render cron. ADR-0008 records that the edition always comes from `ALPHACI_EDITION`. ADR-0012 is accepted for `onprem-compose` and self-managed Compose, and its body no longer claims a Supabase Auth dependency. ADR-0013 lists the Excel report. ADR-0014 gained amendments 13 and 14. `PERSONA_WORKFLOW_SPEC.md` and `design/project-requirements.md` describe the current state only. `capability-contract.md` gained the composition variables and resolution rules.

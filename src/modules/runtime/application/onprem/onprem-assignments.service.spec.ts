@@ -99,6 +99,17 @@ it('still rejects unknown ingress modes and non-HTTPS production configured URLs
   ).toThrow(/HTTPS address/);
 });
 
+/**
+ * On-prem releases switched on, and no ONPREM_APPS_DOMAIN, so the automatic
+ * HTTPS address stays the machine's tunnel.
+ */
+function releasesConfig(enabled = 'true') {
+  return {
+    get: (key: string) =>
+      key === 'ONPREM_RELEASES_ENABLED' ? enabled : undefined,
+  } as never;
+}
+
 describe('automatic assignment', () => {
   const repository = {
     current: jest.fn(),
@@ -120,7 +131,7 @@ describe('automatic assignment', () => {
       { findAppRole: jest.fn().mockResolvedValue('member') } as never,
       projects as never,
       targets as never,
-      { get: () => 'true' } as never,
+      releasesConfig(),
     );
   beforeEach(() => {
     jest.clearAllMocks();
@@ -229,7 +240,7 @@ describe('automatic assignment', () => {
     expect(repository.assign.mock.calls[0][0].config).toEqual({
       ports: [{ slot: 'frontend', containerPort: 8080 }],
       health: [{ slot: 'frontend', path: '/' }],
-      ingress: { mode: 'direct', publicUrl: null },
+      ingress: { mode: 'tunnel', publicUrl: null },
     });
   });
   it('gives each repository of a two-repository project its own contract', async () => {
@@ -406,7 +417,7 @@ describe('defaultAssignmentConfig', () => {
           { slot: 'frontend', path: '/' },
           { slot: 'backend', path: '/' },
         ],
-        ingress: { mode: 'direct', publicUrl: null },
+        ingress: { mode: 'tunnel', publicUrl: null },
       });
     },
   );
@@ -454,7 +465,7 @@ describe('tunnel presentation', () => {
       { findAppRole: jest.fn().mockResolvedValue('member') } as never,
       projects as never,
       targets as never,
-      { get: () => enabled } as never,
+      releasesConfig(enabled),
     );
   const tunnelRow = {
     id: 'binding',
