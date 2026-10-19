@@ -24,7 +24,6 @@ import {
   canDispatchAutomation,
   canManageTestCases,
   canReopenRun,
-  canSetReturnedToDev,
   canSetVerification,
   canSignOff,
 } from '../../domain/qa-run-access.rules';
@@ -83,6 +82,7 @@ import { computeSummary, toRunItem, toSignoff } from './qa-run.mappers';
 import { groupRunTestCases } from './qa-run-test-cases';
 import {
   QA_PROJECT_RUN_BRANCH,
+  QA_PROJECT_VERIFICATION_STATUSES,
   QA_RUNS_LIST_DEFAULT_LIMIT,
   QA_RUNS_LIST_MAX_LIMIT,
   type ProjectMyQaItems,
@@ -125,7 +125,8 @@ const SIGNOFF_SUMMARY_TRUNCATE_LENGTH = 300;
 const QA_REFUSAL_NOTICES: Partial<
   Record<QaRunItemRow['status'], { eventCode: string; verb: string }>
 > = {
-  failed: { eventCode: 'qa.item.failed', verb: 'failed' },
+  // Failed sends the story back to the Developers (ADR-0014, amendment 11).
+  failed: { eventCode: 'qa.item.failed', verb: 'failed and returned' },
   blocked: { eventCode: 'qa.item.blocked', verb: 'blocked' },
   returned_to_dev: { eventCode: 'qa.item.returned_to_dev', verb: 'returned' },
 };
@@ -591,25 +592,24 @@ export class QaProjectRunsService {
     if (!canSetVerification(role)) {
       throw verificationForbidden();
     }
-    if (dto.status === 'in_progress') {
+    // Pending, Passed or Failed only: Failed always returns the story to the
+    // Developers, so Blocked and Returned to dev are no longer offered.
+    if (
+      dto.status !== undefined &&
+      !(QA_PROJECT_VERIFICATION_STATUSES as readonly string[]).includes(
+        dto.status,
+      )
+    ) {
       throw verificationStatusInvalid(dto.status);
-    }
-    if (dto.status === 'returned_to_dev' && !canSetReturnedToDev(role)) {
-      throw new ForbiddenException(
-        'Only QA, a lead, or an admin may return an item to development.',
-      );
     }
 
     const effectiveSeverity =
       dto.defectSeverity !== undefined
         ? dto.defectSeverity
         : item.defect_severity;
-    if (
-      (dto.status === 'failed' || dto.status === 'returned_to_dev') &&
-      !effectiveSeverity
-    ) {
+    if (dto.status === 'failed' && !effectiveSeverity) {
       throw new BadRequestException(
-        'A defect severity is required to mark this item failed or returned to dev.',
+        'A defect severity is required to mark this item failed.',
       );
     }
 

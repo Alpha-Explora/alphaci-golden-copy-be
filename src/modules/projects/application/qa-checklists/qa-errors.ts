@@ -50,7 +50,7 @@ export const verificationStatusInvalid = (status: string) =>
       400,
       'Bad Request',
       'QA_VERIFICATION_STATUS_INVALID',
-      `"${status}" is not a Verification status. Use pending, passed, failed, blocked or returned_to_dev.`,
+      `"${status}" is not a Verification status. Use pending, passed or failed (failed sends it back to the Developers).`,
     ),
   );
 

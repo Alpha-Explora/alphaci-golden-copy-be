@@ -6,7 +6,11 @@ describe('bucketMyQaItem', () => {
   const cases: Array<
     [QaProgress, QaRunItemStatus | null, QaMyItemsBucket | null]
   > = [
-    // A returned run item wins over Progress.
+    // A failed (or, on older rows, returned) run item wins over Progress:
+    // Failed always sends the story back to the Developers.
+    ['done', 'failed', 'returned'],
+    ['in_progress', 'failed', 'returned'],
+    ['todo', 'failed', 'returned'],
     ['done', 'returned_to_dev', 'returned'],
     ['in_progress', 'returned_to_dev', 'returned'],
     ['todo', 'returned_to_dev', 'returned'],
@@ -16,12 +20,10 @@ describe('bucketMyQaItem', () => {
     ['in_progress', 'passed', 'inProgress'],
     ['todo', null, 'todo'],
     ['todo', 'pending', 'todo'],
-    ['todo', 'failed', 'todo'],
     // Only a done item that QA has not decided is QA's queue.
     ['done', null, 'readyForQa'],
     ['done', 'pending', 'readyForQa'],
     ['done', 'passed', null],
-    ['done', 'failed', null],
     ['done', 'blocked', null],
     // Not a Project-run status any more: it is not pending, so not queued.
     ['done', 'in_progress', null],

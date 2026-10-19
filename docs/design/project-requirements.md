@@ -564,6 +564,7 @@ Migration `supabase/migrations/projects/20261020010000_qa_test_cases.sql` (addit
 - **Open runs follow the definitions.** `syncOpenRunTestCases(client, iterationId)` runs in the same transaction as every definition write, after `appendMissingItemsToOpenRuns`, and after a new run is created. It locks the open runs FOR SHARE, then the affected run items FOR UPDATE in id order, deletes copies whose definition is gone, upserts the rest (an unchanged copy is not rewritten; a result is never reset by an edit), and bumps `row_version` of every run item it changed. Signed-off runs are never touched.
 - **Strict pass:** `passed` on a run item is refused while any of its test cases is `pending`, `failed` or `blocked` (`409 QA_TEST_CASES_OPEN` with `openTestCases`). `not_applicable` counts as resolved.
 - **Sign-off:** `APPROVED` is refused while any test case of the run is open (same code), since one can be added or re-marked after its story passed. The merge-to-main gate is unchanged.
+- **Pending, Passed, Failed only (amendment 11):** a test case result and a story's Verification are `pending`, `passed` or `failed`. A failed story goes back to the Developers exactly as `returned_to_dev` did (Progress `in_progress`, the "returned" bucket, re-queued to `pending` when a Developer marks it Done). `blocked`, `returned_to_dev` and `not_applicable` are no longer set; rows written before keep them.
 
 ### 7.3 API
 

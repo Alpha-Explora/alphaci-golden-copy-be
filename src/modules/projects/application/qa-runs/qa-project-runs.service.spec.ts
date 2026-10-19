@@ -569,11 +569,11 @@ describe('QaProjectRunsService.updateItem (Verification track)', () => {
     ).rejects.toThrow(ConflictException);
   });
 
-  it('returned_to_dev tells the owner, leads and developers (not the actor), anchored on the frontend repository', async () => {
+  it('failed tells the owner, leads and developers (not the actor) it is back with them, anchored on the frontend repository', async () => {
     const { service, runs, notifications } = setup();
     runs.updateItem.mockResolvedValue(
       itemRow({
-        status: 'returned_to_dev',
+        status: 'failed',
         defect_severity: 'major',
         notes: 'Broken',
       }),
@@ -584,12 +584,17 @@ describe('QaProjectRunsService.updateItem (Verification track)', () => {
       actor(),
       'run-1',
       'ri-1',
-      patch({ status: 'returned_to_dev', defectSeverity: 'major' }),
+      patch({ status: 'failed', defectSeverity: 'major' }),
     );
 
     const calls = notifications.record.mock.calls.map(
       (call) =>
-        call[0] as { userId: string; projectId: string; eventCode: string },
+        call[0] as {
+          userId: string;
+          projectId: string;
+          eventCode: string;
+          title: string;
+        },
     );
     expect(calls.map((call) => call.userId).sort()).toEqual([
       'dev-1',
@@ -597,45 +602,29 @@ describe('QaProjectRunsService.updateItem (Verification track)', () => {
       'owner-1',
     ]);
     expect(calls.every((call) => call.projectId === 'p-web')).toBe(true);
-    expect(calls[0]?.eventCode).toBe('qa.item.returned_to_dev');
+    expect(calls[0]?.eventCode).toBe('qa.item.failed');
+    expect(calls[0]?.title).toBe(
+      'QA failed and returned "Pay by card" in Checkout',
+    );
   });
 
-  it.each([
-    ['blocked', null, 'qa.item.blocked', 'QA blocked'],
-    ['failed', 'major', 'qa.item.failed', 'QA failed'],
-  ] as const)(
-    'a %s item tells the owner, leads and developers too, whatever its severity',
-    async (status, severity, eventCode, verb) => {
-      const { service, runs, notifications } = setup();
-      runs.updateItem.mockResolvedValue(
-        itemRow({ status, defect_severity: severity, notes: 'this wrong' }),
-      );
+  it.each(['blocked', 'returned_to_dev', 'in_progress'] as const)(
+    'refuses %s: a Project run is Pending, Passed or Failed, and Failed returns it to dev',
+    async (status) => {
+      const { service, runs } = setup();
 
-      await service.updateItem(
-        DP,
-        actor(),
-        'run-1',
-        'ri-1',
-        patch({ status, defectSeverity: severity }),
-      );
-
-      const calls = notifications.record.mock.calls.map(
-        (call) =>
-          call[0] as {
-            userId: string;
-            eventCode: string;
-            title: string;
-            body: string;
-          },
-      );
-      expect(calls.map((call) => call.userId).sort()).toEqual([
-        'dev-1',
-        'lead-1',
-        'owner-1',
-      ]);
-      expect(calls[0]?.eventCode).toBe(eventCode);
-      expect(calls[0]?.title.startsWith(verb)).toBe(true);
-      expect(calls[0]?.body).toContain('this wrong');
+      await expect(
+        service.updateItem(
+          DP,
+          actor(),
+          'run-1',
+          'ri-1',
+          patch({ status, defectSeverity: 'major' }),
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'QA_VERIFICATION_STATUS_INVALID' },
+      });
+      expect(runs.updateItem).not.toHaveBeenCalled();
     },
   );
 

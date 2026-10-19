@@ -15,10 +15,10 @@ export type QaMyItemsBucket = 'returned' | 'inProgress' | 'todo' | 'readyForQa';
  *
  * `runItemStatus` is the item's Verification status on the run being read, or
  * null when that run has no run item for it (or there is no run). Order
- * matters: a returned run item wins over Progress, and Progress `todo` /
- * `in_progress` win over a pending run item. Only a `done` item whose run
- * item is pending (or missing) is QA's queue; one that is passed, failed or
- * blocked is not in any bucket.
+ * matters: a failed (or returned) run item wins over Progress, and Progress
+ * `todo` / `in_progress` win over a pending run item. Only a `done` item
+ * whose run item is pending (or missing) is QA's queue; one that is passed
+ * (or blocked, on rows written before amendment 11) is not in any bucket.
  *
  * A plain function, not a class: undecorated classes under domain/ get no
  * constructor args from Nest.
@@ -27,7 +27,9 @@ export function bucketMyQaItem(
   progress: QaProgress,
   runItemStatus: QaRunItemStatus | null,
 ): QaMyItemsBucket | null {
-  if (runItemStatus === 'returned_to_dev') {
+  // Failed always sends the story back to the Developers (ADR-0014,
+  // amendment 11); returned_to_dev is the same on rows written before.
+  if (runItemStatus === 'failed' || runItemStatus === 'returned_to_dev') {
     return 'returned';
   }
   if (progress === 'in_progress') {
