@@ -29,9 +29,13 @@ import type {
 } from '#kernel/ports/onprem-assignment.port';
 import {
   TUNNEL_REPORT_WINDOW,
+  agentAtLeast,
   ingressReadiness,
   tunnelReport,
 } from '../../domain/onprem-tunnel';
+import { SERVICE_LINK_AGENT_VERSION } from '../../domain/onprem-service-link';
+import { OnpremAssignmentsRepository } from '../../infrastructure/repositories/onprem-assignments.repository';
+import { OnpremServiceLinksService } from './onprem-service-links.service';
 import { trustKeysWithSigner } from '../../domain/release-signature';
 import {
   RELEASE_SIGNER,
@@ -57,6 +61,10 @@ export class OnpremReadinessService {
     @Optional()
     @Inject(RELEASE_SIGNER)
     private readonly releaseSigner?: ReleaseSigner,
+    @Optional()
+    private readonly assignments?: OnpremAssignmentsRepository,
+    @Optional()
+    private readonly serviceLinks?: OnpremServiceLinksService,
   ) {}
 
   async read(
@@ -382,6 +390,13 @@ export class OnpremReadinessService {
         )
       : { status: 'failed' as const, message: 'No assignment configuration.' };
     check('ingress', ingress.status, ingress.message);
+    await this.serviceLinkCheck(
+      host.machine_id,
+      projectId,
+      environmentId,
+      host.agent_version,
+      check,
+    );
     check(
       'host-ports',
       'unverified',
@@ -392,5 +407,59 @@ export class OnpremReadinessService {
       'unverified',
       'A machine connection does not prove a deployment healthy. Check its signed release and deployment history.',
     );
+  }
+
+  /**
+   * Only for a linked environment: one half of a two-repository pair whose
+   * other half runs the same environment on the same machine. Every other
+   * environment's readiness is unchanged.
+   */
+  private async serviceLinkCheck(
+    machineId: string,
+    projectId: string,
+    environmentId: string,
+    agentVersion: string | null,
+    check: (
+      id: string,
+      status: ReadinessCheck['status'],
+      message: string,
+    ) => void,
+  ) {
+    if (!this.assignments || !this.serviceLinks) return;
+    try {
+      const bindings = await this.assignments.machineBindings(machineId);
+      const self = bindings.find(
+        (item) =>
+          item.projectId === projectId && item.environmentId === environmentId,
+      );
+      if (!self) return;
+      const link = (
+        await this.serviceLinks.linksFor(bindings, new Set([self.id]))
+      ).get(self.id);
+      if (!link) return;
+      const peer = link.peers[0]?.slot ?? 'other half';
+      if (!agentAtLeast(agentVersion, SERVICE_LINK_AGENT_VERSION)) {
+        check(
+          'service-link',
+          'failed',
+          `This environment's ${peer} runs on the same machine, but the machine's agent is older than ${SERVICE_LINK_AGENT_VERSION} and deploys them unlinked. Update the agent on this machine.`,
+        );
+        return;
+      }
+      const variables = Object.values(link.env).flatMap((env) =>
+        Object.keys(env ?? {}),
+      );
+      check(
+        'service-link',
+        'passed',
+        `Linked with this environment's ${peer} on the same machine through the Docker network ${link.network}.${variables.length ? ` The agent sets ${variables.join(', ')}.` : ''} Each side applies the link on its next deployment.`,
+      );
+    } catch {
+      check(
+        'service-link',
+        'unverified',
+        'Could not check whether this environment is linked with the other half of its project.',
+      );
+    }
   }
 }

@@ -103,6 +103,56 @@ local archive and checksum manifest. The `On-prem agent release` workflow
 (`.github/workflows/onprem-agent-release.yml`) publishes those files as release
 assets when a matching tag is pushed.
 
+### Linked frontend and backend on one machine
+
+A two-repository project has a backend project and a frontend project filed
+under one delivery project (the shared Project folder). When both have an
+environment with the same slug assigned to the same machine, the machine's
+`GET /onprem/assignments` adds `assignment.link` to each of those
+environments' deployments:
+
+```json
+"link": {
+  "network": "alphaci-3f9a1c2b7d4e-dev",
+  "env": { "frontend": { "API_URL": "http://backend:4000" } },
+  "peers": [{ "environmentId": "<backend environment id>", "slot": "backend" }]
+}
+```
+
+- The link is derived on every read and never stored, so assigning,
+  unassigning or moving either side changes it on the machine's next read.
+- It exists only when the machine runs exactly one backend-only and one
+  frontend-only environment with that slug from that delivery project. A single
+  app, a missing half, a half on another machine, a different slug, or an
+  ambiguous folder gets no `link`, and the payload is exactly as before.
+- `network` is `alphaci-<12 hex of sha256(backendEnvId:frontendEnvId)>-<slug>`.
+  Both containers join it, each aliased by its slot.
+- The frontend gets `API_URL=http://backend:<backend container port>`.
+  `NEXT_PUBLIC_API_URL` is not sent: Next.js inlines it at build time, so a
+  runtime value would not reach the browser bundle. The backend gets
+  `FRONTEND_URL` (the frontend's tunnel or configured address) and
+  `CORS_ORIGINS` (that address's origin) once an address is known, and no
+  variables before that. On-prem targets have no user-managed variables, so
+  nothing is overwritten.
+- `peers` names the other half. The agent attaches that half's running
+  container to the network, so the first linked deployment of either side
+  works without waiting for the other to redeploy.
+- `link` sits beside `machine`, outside the signed envelope: like ports and
+  health paths, it is placement, not part of the release.
+- A failed lookup fails the read, so a linked environment is never handed out
+  without its link.
+
+Agent 0.4.0 applies the link. It validates the network name, slots, variable
+names (`^[A-Z_][A-Z0-9_]*$`) and values (strings with no control characters),
+reports the deployment failed without deploying when any is invalid, writes the
+values as JSON with `$` escaped for Compose, and creates the network if it is
+missing. AlphaCI sends `link` only to a machine whose last heartbeat reported
+agent 0.4.0 or newer (`SERVICE_LINK_AGENT_VERSION`). An older agent gets exactly
+the previous payload and deploys the environment unlinked; readiness then
+fails the `service-link` check and asks for an agent update.
+Linked environments on 0.4.0 pass it. The network is not removed when a link
+ends.
+
 Optional project creation host bindings use the kernel `OnpremAssignmentPort`
 after project creation succeeds. Failures return `hostAssignments` or
 `hostAssignmentError` alongside the created project. Retry assignment through

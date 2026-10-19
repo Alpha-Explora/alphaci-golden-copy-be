@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { OnpremHostsModule } from './onprem-hosts.module';
 import { OnpremAssignmentsService } from './application/onprem/onprem-assignments.service';
+import { OnpremServiceLinksService } from './application/onprem/onprem-service-links.service';
 import { OnpremAssignmentsRepository } from './infrastructure/repositories/onprem-assignments.repository';
 import { OnpremAssignmentsController } from './api/onprem-assignments.controller';
 import { ONPREM_ASSIGNMENT } from '#kernel/ports/onprem-assignment.port';
@@ -17,6 +18,7 @@ import { NotificationsModule } from '#modules/platform-ops/notifications/notific
 import { SubscriptionModule } from '#modules/billing/subscription/subscription.module.js';
 import { UsageModule } from '#modules/billing/usage/usage.module.js';
 import { WorkspacesModule } from '#modules/identity-access/workspaces/workspaces.module.js';
+import { HierarchyProjectLinkModule } from '#modules/identity-access/hierarchy/project-link/index.js';
 import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { DeploymentTargetsController } from './api/deployment-targets.controller';
 import { EnvironmentDeploymentTargetsController } from './api/environment-deployment-targets.controller';
@@ -130,6 +132,9 @@ import {
     SubscriptionModule,
     UsageModule,
     WorkspacesModule,
+    // PROJECT_LINK_PORT: the delivery project that pairs a backend and a
+    // frontend repository, for on-prem service links.
+    HierarchyProjectLinkModule,
     CiModule,
     LegacyDeploymentProvidersModule,
     RuntimeCoreModule,
@@ -151,6 +156,7 @@ import {
   providers: [
     OnpremAssignmentsService,
     OnpremAssignmentsRepository,
+    OnpremServiceLinksService,
     { provide: ONPREM_ASSIGNMENT, useExisting: OnpremAssignmentsService },
     ProviderConnectionsRepository,
     DeploymentTargetsRepository,

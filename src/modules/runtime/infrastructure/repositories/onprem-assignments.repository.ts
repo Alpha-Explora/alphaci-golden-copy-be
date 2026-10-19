@@ -16,6 +16,7 @@ import type {
 } from '#kernel/ports/onprem-assignment.port';
 import {
   TUNNEL_REPORT_WINDOW,
+  effectivePublicAddress,
   tunnelReady,
   tunnelReport,
 } from '../../domain/onprem-tunnel';
@@ -465,12 +466,17 @@ export class OnpremAssignmentsRepository {
     kind: 'machine' | 'legacy',
   ) {
     let machineId: string | null = null;
+    let agentVersion: string | null = null;
     if (kind === 'machine') {
-      const found = await client.query<{ id: string }>(
-        'SELECT id FROM env_provisioning.onprem_machines WHERE token_sha256=$1 AND revoked_at IS NULL FOR UPDATE',
+      const found = await client.query<{
+        id: string;
+        agent_version: string | null;
+      }>(
+        'SELECT id, agent_version FROM env_provisioning.onprem_machines WHERE token_sha256=$1 AND revoked_at IS NULL FOR UPDATE',
         [hash],
       );
       machineId = found.rows[0]?.id ?? null;
+      agentVersion = found.rows[0]?.agent_version ?? null;
       if (!machineId)
         throw new UnauthorizedException(
           'Machine credential is invalid or revoked.',
@@ -485,12 +491,11 @@ export class OnpremAssignmentsRepository {
     return {
       kind,
       machineId,
+      /** What the machine reported in its last heartbeat; null for a legacy host. */
+      agentVersion,
       assignmentIds: bindings.rows.map((row) => row.id),
       bindings: bindings.rows.map((row) => ({
-        id: row.id,
-        projectId: row.project_id,
-        environmentId: row.environment_id,
-        machine: row.machine_id ? assignment(row) : null,
+        ...machineBinding(row),
         /** A running tunnel with a fresh address: production may be handed out. */
         tunnelReady: tunnelReady({
           status: row.tunnel_status,
@@ -502,4 +507,42 @@ export class OnpremAssignmentsRepository {
       })),
     };
   }
+  /** Every active binding on a machine, for deriving service links. */
+  async machineBindings(machineId: string): Promise<MachineBinding[]> {
+    const result = await this.db.query<AssignmentRow>(
+      `SELECT *, tunnel_reported_at > NOW() - INTERVAL '${TUNNEL_REPORT_WINDOW}' AS tunnel_fresh FROM env_provisioning.onprem_hosts WHERE machine_id=$1 AND revoked_at IS NULL ORDER BY id`,
+      [machineId],
+    );
+    return result.rows.map(machineBinding);
+  }
+}
+
+/** A binding on a machine, with the address users reach it at when known. */
+export interface MachineBinding {
+  id: string;
+  projectId: string;
+  environmentId: string;
+  machine: MachineAssignment | null;
+  publicAddress: string | null;
+}
+
+function machineBinding(row: AssignmentRow): MachineBinding {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    environmentId: row.environment_id,
+    machine: row.machine_id ? assignment(row) : null,
+    publicAddress: row.machine_id
+      ? effectivePublicAddress(
+          row.assignment_config.ingress,
+          tunnelReport({
+            status: row.tunnel_status,
+            url: row.tunnel_url,
+            message: row.tunnel_message,
+            reportedAt: row.tunnel_reported_at,
+            fresh: row.tunnel_fresh === true,
+          }),
+        )
+      : null,
+  };
 }

@@ -550,6 +550,32 @@ when it accepts the target. A trust gap refuses the target before anything is
 written. It cannot see the pipeline's contents from there, so
 the regeneration step is yours to do.
 
+## Frontend and backend from two repositories
+
+A project created with a frontend repository and a backend repository has one
+AlphaCI project per repository. To run them together on one machine, assign the
+environment with the same name (for example `dev`) of both projects to the same
+machine. Nothing else is configured.
+
+1. Make sure the machine runs agent 0.4.0 or newer. With an older agent, both
+   halves deploy unlinked and the environment's readiness shows a failed
+   `service-link` check.
+2. Assign the backend environment and the frontend environment to the machine.
+3. Deploy either side. The agent creates the Docker network
+   `alphaci-<pair>-<environment>` and attaches both containers, aliased
+   `backend` and `frontend`. The frontend gets `API_URL=http://backend:<port>`.
+4. Read the environment's readiness. `service-link` passes and names the
+   network. The backend gets `FRONTEND_URL` and `CORS_ORIGINS` on its next
+   deployment after the frontend has a public address (tunnel or configured URL).
+
+To verify on the machine, run `docker exec <frontend container> printenv API_URL`
+and `docker network inspect alphaci-<pair>-<environment>`.
+
+Moving either half to another machine, unassigning it, or assigning a second
+frontend or backend of the same Project to that environment ends the link: the
+next deployment of the remaining side is unlinked. The agent does not remove
+the network; remove it with `docker network rm` once no container uses it.
+
 ## Rotate the Cloud KMS signing key
 
 A new key version does not change the signer identity, so the sign-release job

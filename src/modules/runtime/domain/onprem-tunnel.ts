@@ -154,6 +154,11 @@ export const UPDATE_AGENT_MESSAGE =
 
 /** Whether an agent version reports tunnels: dotted numbers, compared part by part. */
 export function agentSupportsTunnels(version: string | null): boolean {
+  return agentAtLeast(version, TUNNEL_AGENT_VERSION);
+}
+
+/** Whether a reported agent version is `minimum` or newer; malformed never is. */
+export function agentAtLeast(version: string | null, minimum: string): boolean {
   if (!version) return false;
   const have = version.split('.').map((part) => Number(part));
   if (
@@ -161,11 +166,11 @@ export function agentSupportsTunnels(version: string | null): boolean {
     have.some((part) => !Number.isInteger(part) || part < 0)
   )
     return false;
-  const minimum = TUNNEL_AGENT_VERSION.split('.').map((part) => Number(part));
-  for (let index = 0; index < minimum.length; index++) {
+  const required = minimum.split('.').map((part) => Number(part));
+  for (let index = 0; index < required.length; index++) {
     const reported = have[index] ?? 0;
-    const required = minimum[index] ?? 0;
-    if (reported !== required) return reported > required;
+    const wanted = required[index] ?? 0;
+    if (reported !== wanted) return reported > wanted;
   }
   return true;
 }
