@@ -46,7 +46,7 @@ fi
 # The tunnel reports are what this machine observed in its previous check.
 tunnels=$(find "$TUNNEL_ROOT" -mindepth 2 -maxdepth 2 -name tunnel.json -type f -print0 2> /dev/null |
   xargs -0 -r cat | jq -sc '[.[] | {assignmentId, status, message, publicUrl}]') || tunnels='[]'
-printf '%s' "$checks" | jq --argjson tunnels "$tunnels" '{agentVersion:"0.3.0",checks:.,tunnels:$tunnels}' > "$WORK/heartbeat.json"
+printf '%s' "$checks" | jq --argjson tunnels "$tunnels" '{agentVersion:"0.4.0",checks:.,tunnels:$tunnels}' > "$WORK/heartbeat.json"
 # The reply lists the host ports AlphaCI reserved on this machine, and the
 # tunnel-mode assignments whose tunnels must stay open.
 code=$(curl -sS --max-time 30 -H "@$WORK/auth.header" -H 'Content-Type: application/json' --data-binary "@$WORK/heartbeat.json" -o "$WORK/heartbeat-reply.json" -w '%{http_code}' "$API/api/v1/onprem/heartbeat") || code=000

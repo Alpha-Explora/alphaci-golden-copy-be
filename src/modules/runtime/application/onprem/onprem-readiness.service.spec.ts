@@ -473,4 +473,94 @@ describe('On-prem readiness', () => {
       );
     });
   });
+  describe('service link between the two halves of a project', () => {
+    const link = {
+      network: 'alphaci-0123456789ab-dev',
+      env: { frontend: { API_URL: 'http://backend:4000' } },
+      peers: [
+        {
+          environmentId: '11111111-1111-4111-8111-111111111111',
+          slot: 'backend' as const,
+        },
+      ],
+    };
+    const self = {
+      id: 'binding',
+      projectId: 'project',
+      environmentId: 'env',
+      machine: null,
+      publicAddress: null,
+    };
+    const read = (agentVersion: string, links: Map<string, unknown>) => {
+      projects.findProjectEnvironment.mockResolvedValue({
+        id: 'env',
+        role: 'non_production',
+      });
+      query
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              releases: 'releases',
+              hosts: 'hosts',
+              active_host_index: true,
+              machine_schema: true,
+              tunnel_schema: true,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              machine_id: 'machine',
+              fresh: true,
+              revoked: false,
+              checks: [],
+              assignment_config: {
+                ports: [
+                  { slot: 'frontend', hostPort: 8080, containerPort: 3000 },
+                ],
+                health: [{ slot: 'frontend', path: '/' }],
+                ingress: { mode: 'direct', publicUrl: null },
+              },
+              agent_version: agentVersion,
+            },
+          ],
+        });
+      const assignments = {
+        machineBindings: jest.fn().mockResolvedValue([self]),
+      };
+      const serviceLinks = { linksFor: jest.fn().mockResolvedValue(links) };
+      return new OnpremReadinessService(
+        { query } as unknown as DatabaseService,
+        projects as unknown as DeploymentProjectReferenceLookup,
+        config,
+        undefined,
+        assignments as never,
+        serviceLinks as never,
+      ).read('project', 'env', 'viewer');
+    };
+    it('passes for a linked environment on an agent that applies links', async () => {
+      const { checks } = await read('0.4.0', new Map([['binding', link]]));
+      expect(checks).toContainEqual({
+        id: 'service-link',
+        status: 'passed',
+        message: expect.stringContaining('alphaci-0123456789ab-dev'),
+      });
+      expect(
+        checks.find((item) => item.id === 'service-link')?.message,
+      ).toContain('API_URL');
+    });
+    it('asks for an agent update when the agent predates links', async () => {
+      const { checks } = await read('0.3.0', new Map([['binding', link]]));
+      expect(checks).toContainEqual({
+        id: 'service-link',
+        status: 'failed',
+        message: expect.stringContaining('Update the agent'),
+      });
+    });
+    it('adds no check for an environment that is not linked', async () => {
+      const { checks } = await read('0.4.0', new Map());
+      expect(checks.map((item) => item.id)).not.toContain('service-link');
+    });
+  });
 });
