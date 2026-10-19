@@ -1,13 +1,16 @@
 ---
 type: "Playbook"
 title: "Database migrations"
-description: "Validate ownership and replay order before applying the current Supabase migrations."
+description: "Validate ownership and replay order, then apply the migration tree to a Supabase database or to the self-hosted PostgreSQL database."
 tags: [runbook, database, migrations]
 status: stable
 sources:
   - id: migration-planner
     resource: "scripts/apply-all-migrations.mjs"
     title: "Migration replay planner"
+  - id: selfhost-runner
+    resource: "src/scripts/selfhost-migrations.ts"
+    title: "Self-hosted migration runner"
   - id: ownership-gate
     resource: "scripts/check-schema-ownership.cjs"
     title: "Schema ownership gate"
@@ -17,54 +20,72 @@ sources:
 ---
 # Database migrations
 
+The migration tree is `supabase/migrations/<owner>/*.sql`, one directory per context owner. Both runners discover every file recursively and apply them in one global order, sorted by filename. Migrations never run at application startup.
+
 ## Preflight
 
-Run the static checks before any database mutation:
+Run the static checks before any database change:
 
 ```bash
 npm run check:schema-ownership
 npm run db:apply:all -- --dry-run
 ```
 
-The ownership check covers migration SQL and repository inline SQL. The replay planner recursively discovers the six owner directories and sorts timestamp-prefixed filenames globally.
+The ownership check covers migration SQL and repository inline SQL. The dry run lists the replay order and touches nothing.
 
 ## Review rules
 
 - A migration belongs under the context that owns the schema it creates or changes.
-- Existing cross-schema references are exact, reviewed transition entries in the ownership gate.
-- A new cross-schema reference requires an ownership decision and a precise gate entry; do not add a whole-file exemption.
-- Migration filenames must have unique timestamp versions across the complete tree.
+- Existing cross-schema references are exact, reviewed entries in the ownership gate. A new one needs an ownership decision and a precise gate entry, not a whole-file exemption.
+- Filename versions are unique across the whole tree.
+- Migrations are idempotent, so a rerun is a normal recovery step.
 - Review destructive data operations and rollback SQL separately from ordering.
 
-## Self-hosted (plain PostgreSQL)
+## Self-hosted appliance (plain PostgreSQL)
 
-The self-hosted deployment runs on plain PostgreSQL 16, which has no Supabase roles or Storage. Use the runner there instead of `db:apply:all`:
+The appliance's `migrate` service runs `node dist/src/scripts/migrate-selfhost.js` before `api` on every `docker compose up`. To run it by hand from the install directory:
 
 ```bash
-DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db> npm run db:migrate:selfhost -- --dry-run
-DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db> node dist/src/scripts/migrate-selfhost.js
+docker compose run --rm migrate                                              # apply pending migrations
+docker compose run --rm migrate node dist/src/scripts/migrate-selfhost.js --dry-run   # list them
+./alphaci-ctl doctor                                                         # "migrations are at head"
 ```
 
-The runner takes a session advisory lock, creates the `anon` and `authenticated` roles if they are missing, and applies each pending migration in the `db:apply:all` order. A migration with its own `BEGIN` or a non-transactional statement runs unwrapped, so a failure in one of those can leave partial effects; the runner prints a warning when it starts one. It stops at the first failure and fails before applying anything if an applied file has changed. Migrations keyed by full filename are recorded in `public.schema_migrations`; SaaS still uses the Supabase CLI ledger.
+Outside the appliance, run it from a checkout against any PostgreSQL 16 database:
 
-## Apply
+```bash
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db> npm run db:migrate:selfhost
+npm run db:migrate:selfhost -- --dry-run
+```
 
-For an approved configured database, use the repository migration tooling with the required environment values:
+The runner reads `DATABASE_URL` (or `DATABASE_URL_FILE`, or `SUPABASE_DB_URL`), and `DATABASE_CA_CERT` for TLS. Loopback hosts connect without TLS; other hosts use TLS unless the URL sets `sslmode=disable`. A run:
+
+1. Takes a session advisory lock, so two starting containers cannot interleave.
+2. Creates the `anon` and `authenticated` roles if they are missing (`deploy/selfhost/postgres-init/00-roles.sql`).
+3. Creates the ledger `public.schema_migrations(version, applied_at, checksum)`, keyed by full filename.
+4. Stops before applying anything if an applied file's checksum changed.
+5. Applies each pending migration in its own transaction with its ledger row. A file with its own `BEGIN`, or a non-transactional statement, runs unwrapped, and the runner warns when it starts one; a failure there can leave partial effects.
+
+It stops at the first failure. Exit codes: 0 success, 1 migration or connection failure, 2 configuration error.
+
+## Supabase (hosted backend)
+
+`db:apply:all` applies every migration in order through `scripts/apply-migrations.ts`, each in its own transaction. It reads `SUPABASE_DB_URL` from `.env`: the direct connection on port 5432, not the 6543 transaction pooler.
 
 ```bash
 npm run db:apply:all
+npm run db:apply:all -- --from <filename>.sql   # resume from one file
+npm run db:apply -- <filename>.sql ...          # apply named files only
 ```
 
-Use the repository's normal Supabase CLI procedure when the linked environment requires ledger inspection or repair. Capture the planned order, applied result, and database verification query.
+It keeps no ledger of its own and stops at the first failure. Use the Supabase CLI when the linked project's ledger needs inspection or repair; see the [migration reconciliation runbook](runbook-migration-reconciliation.md). Record the planned order, the applied result, and a verification query.
 
 ## Rollback and evidence
 
-Do not infer that a rollback is safe from a clean dry-run. Review the matching `supabase/rollbacks/` file, data-loss behavior, foreign keys, RLS, and external consumers. Record the migration names, database target, operator, start/end time, result, and any follow-up reconciliation.
+A clean dry run does not show that a rollback is safe. Review the matching `supabase/rollbacks/` file, data loss, foreign keys, RLS, and external consumers. Rollbacks are not applied by either runner. Record the migration names, database target, operator, start and end time, result, and any follow-up reconciliation.
 
-The rollback for `20260824000000_branch_scoped_env_vars.sql` fails closed for
-any preview row because the old schema cannot preserve preview branch identity.
-Do not remove that guard or add an automatic winner-selection step: take an
-approved backup/re-provisioning action, then retry the rollback only after the
-preview data has been resolved.
+The rollback for `20260824000000_branch_scoped_env_vars.sql` fails closed for any preview row, because the old schema cannot keep preview branch identity. Do not remove that guard or add automatic winner selection: resolve the preview data through an approved backup or re-provisioning action first.
 
-For ledger drift, use the [migration reconciliation runbook](runbook-migration-reconciliation.md). For the ownership table, use the generated [schema map](/architecture/schema-ownership.generated.md).
+On the appliance, a migration is undone by restoring the backup taken before the upgrade; see the [self-hosted install runbook](runbook-selfhost-install.md#upgrade).
+
+For the ownership table, use the generated [schema map](/architecture/schema-ownership.generated.md).

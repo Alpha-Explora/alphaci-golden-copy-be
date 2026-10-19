@@ -12,6 +12,8 @@
 # Usage: ./alphaci-ctl init <hostname> [--tls auto|internal|custom]
 #        ./alphaci-ctl admin-grant --github-login <login>
 #        ./alphaci-ctl doctor
+#        ./alphaci-ctl registry-token --github-login <login>
+#        sudo ./alphaci-ctl server-host --team <team> --github-login <login> [--name <host name>]
 set -eu
 
 # Git Bash on Windows rewrites arguments that start with / (such as /selfhost)

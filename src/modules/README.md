@@ -6,10 +6,11 @@ an additional top-level module.
 
 ```text
 modules/
-├── identity-access/   auth, admin, capabilities, workspaces, hierarchy
-├── projects/          projects, catalog, workflows, existing repositories
+├── identity-access/   auth, admin, capabilities, workspaces, hierarchy, member directory
+├── projects/          projects, environments, requirements, QA runs, catalog,
+│                      workflows, existing repositories
 ├── pipelines/         GitHub integration and CI reporting
-├── runtime/           deployment targets, environment variables, providers
+├── runtime/           deployment targets, environment variables, providers, on-prem hosts, releases
 ├── billing/           subscriptions and usage/quota policy
 └── platform-ops/      audit, notifications, feedback, outbox consumers
 ```

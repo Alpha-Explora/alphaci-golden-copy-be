@@ -14,6 +14,12 @@ sources:
   - id: "environment-targets"
     resource: "supabase/migrations/runtime/20260928100000_deployment_target_environments.sql"
     title: "Deployment targets keyed by environment"
+  - id: "environment-pipeline"
+    resource: "src/modules/projects/application/lifecycle/environment-project.pipeline.ts"
+    title: "Environment pipeline at project creation"
+  - id: "creation-host-assignment"
+    resource: "src/modules/projects/application/lifecycle/project-provisioning-application.service.ts"
+    title: "Environment validation and host assignment at project creation"
 ---
 
 # Project environments
@@ -31,18 +37,19 @@ The project API supports:
 - POST /projects/:projectId/environments to append an environment.
 - PATCH /projects/:projectId/environments/:environmentId to change only its
   display name.
-- These APIs manage environment metadata only. They do not create branches or
-  change generated deploy workflows; project provisioning continues through
-  the legacy fixed path.
+- Adding or renaming requires a Developer (`member`) or admin app role; any
+  user who can see the project can list.
+- These APIs manage environment metadata only. They do not create branches,
+  targets or hosts, and they do not regenerate workflows.
 - Project creation accepts an ordered `environments` array for
   single-repository and two-repository (`multi-repo`) projects (see below).
-  A project with both services in one repository rejects one before any
-  repository or GitHub write.
+  Creation then provisions branches, targets and the pipeline from that list.
+  A project with both services in one repository rejects
+  one before any repository or GitHub write.
 
 The environment definition accepts complete ordered lists and requires exactly
-one production environment at any position. The editable `dev → uat → main`
-template describes a future configuration; it does not affect deployment
-behavior before E3 makes provisioning and workflows environment-aware.
+one production environment at any position. A project created without an
+`environments` list keeps the fixed `dev → uat → main` branch pipeline.
 When an environment is added to an empty legacy project, that first addition
 must be production so the API does not create a partially configured
 environment list. Later additions must be non-production. Slugs, IDs, source
@@ -85,7 +92,16 @@ env-var metadata and custom domains stored per target stay separate.
   returns the environment's target and its URLs. It answers 404 when no target
   is configured and 409 when the target is missing or failed. Other modules
   use the same rule through `ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER`; there is
-  no fallback to another provider or to a branch lookup.
+  no fallback to another provider or to a branch lookup. For an on-prem
+  target, `publicUrl` is the environment's host address (see
+  [Release registry](/architecture/release-registry.md)), given only for the
+  slot that address serves: the frontend when there is one.
+
+Creating or attaching an on-prem (`onprem-compose`) target also assigns the
+environment to a host when the workspace has exactly one connected machine
+(production only when `ONPREM_APPS_DOMAIN` is set).
+If the environment already has a host and its slots changed, it is reassigned
+on the same machine; kept slots keep their settings and host ports.
 
 Before a target is created or attached, the repository's GitHub Environment
 named by the environment slug is created or updated and limited to deployments
@@ -103,13 +119,30 @@ and its existing branch-based behavior until an operator attaches it.
 ## Creating a project with environments
 
 A single-repository project created with an `environments` list stores the
-environments in the given order, creates each distinct source branch once
-from `main`, and protects every branch except the first environment's
-(`main` is always protected). It then provisions one target per environment
-and requested slot through the environment-aware target path, which also
-provisions each GitHub Environment, and finally generates the environments
-pipeline, naming those environment and target IDs, and pushes it to every
-source branch. The response lists the branches actually created.
+environments in the given order and configures release signing before any
+workflow exists. It creates each distinct source branch once from `main`,
+then provisions one target per environment and requested slot through the
+environment-aware target path, which also provisions each GitHub Environment.
+It then generates the environments pipeline, naming those environment and
+target IDs, and writes all workflow files to each source branch in one
+commit, so each branch starts one pipeline run. Finally it protects every
+branch except the first environment's (`main` is always protected). The
+response lists the branches actually created.
+
+A creation target may name an `environmentSlug`. That environment uses it for
+its slot; every other environment uses the target without a slug for that
+slot. This is how earlier environments run on hosted providers while
+production runs on an on-prem host. A target `projectName` gets the
+environment slug appended (`<name>-<slug>`). On-prem targets require an
+`environments` list, and an unknown slug or a second target for the same
+environment and slot is refused before the repository exists.
+
+After creation, each environment with an explicit `hostAssignment` is
+assigned to that host. Every other environment whose targets are all on-prem
+goes to the workspace's only connected machine when there is exactly one.
+Production is included only when `ONPREM_APPS_DOMAIN` gives it a permanent
+HTTPS address. Results are returned as `hostAssignments` or `hostAssignmentError`; a failed
+assignment never undoes the project and is retried through Hosting.
 
 ### Two-repository projects
 
@@ -134,8 +167,11 @@ and the frontend row as `secondaryProjectId`.
 Host assignment after creation runs for both rows. The `hostAssignment` config
 of an environment has one port entry and one health entry per slot. Each row
 is assigned with the entries for its own slot, the shared ingress, and the
-same machine. The server allocates host ports per machine, so the two rows
-cannot collide. For a two-repository project, each `hostAssignments` entry
+same machine. The server allocates host ports and never hands one port to two
+bindings on any machine, so the two rows cannot collide. When both rows run
+the same environment on the same machine, the machine links them (see
+[Release registry](/architecture/release-registry.md)). For a two-repository
+project, each `hostAssignments` entry
 names its `projectId` and `slot`, and failure messages name the repository.
 
 If the frontend repository fails during creation, everything created for it is

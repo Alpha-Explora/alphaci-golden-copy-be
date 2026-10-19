@@ -58,6 +58,15 @@ The configured lease must be longer than the handler timeout after bounds are ap
 - The lease/timeout invariant is enforced at relay configuration time; an invalid configuration fails closed before a row is claimed.
 - Operators have one scheduler, one command, one table, and one runbook to inspect.
 
+## Amendment: in-process relay workers (2026-10-20)
+
+The Render cron is no longer the only scheduler. The API process also drains the table:
+
+- `OutboxRelayWorker` runs every 15 seconds (`OUTBOX_RELAY_INTERVAL_MS`; `0` turns it off). It always delivers the platform topics. It delivers the hierarchy grant/revoke topics only when `HIERARCHY_GITHUB_SYNC_MODE=live`, because their handlers change GitHub team membership.
+- `NotificationRelayWorker` delivers notification rows every second (`NOTIFICATION_RELAY_INTERVAL_MS`, 250 ms to 60 s; off when either interval is `0`).
+
+A self-hosted install has no cron; these workers are its relay. Running them beside the cron, or on several API replicas, delivers nothing twice: every claim is leased and taken with `SKIP LOCKED`. The rejected "second scheduler" alternative is superseded by this lease guarantee. The claim, lease, retry and quarantine rules above are unchanged.
+
 ## Verification
 
 Run `npm run process:outbox` only against an approved configured database, run the outbox scheduler and repository tests, and use the [outbox relay runbook](/runbooks/runbook-outbox-relay.md). The [event map](/architecture/events-map.generated.md) is generated from the topic registry and relay sources.

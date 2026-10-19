@@ -25,7 +25,7 @@ A build profile is a declared set of packs compiled into one artifact. A profile
 
 | Profile | Packs | Tenancy | Edition resolved from |
 |---|---|---|---|
-| `hosted` | saas, edu | multi-tenant | the tenant |
+| `hosted` | saas, edu | multi-tenant | the environment, at startup (per-tenant resolution is not built) |
 | `enterprise` | enterprise | single-tenant per deployment | the environment, at startup |
 
 An artifact excludes source for packs its profile does not contain. Exclusion is derived from declared composition data and is applied by build configuration. It never takes the form of an edition comparison in source.

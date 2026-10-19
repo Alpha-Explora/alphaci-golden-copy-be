@@ -1,259 +1,83 @@
 ---
 type: "Design Specification"
 title: "Project requirements"
-description: "Design for Project-owned functional and system requirements, two-track progress and verification, Project-level QA runs, and the per-Project merge-to-main gate."
+description: "Design for Project-owned functional and system requirements, Iterations, two-track progress and verification, Project-level QA runs with test cases, Product owner acceptance, and the per-Project merge-to-main gate."
 tags: [design, projects, qa, requirements, migrations]
 status: stable
 ---
 # Project requirements
 
-**Status:** Implemented in the backend (approved 2026-10-01, decisions in 6.3). Recorded as [ADR-0014](../architecture/decisions/adr-0014-project-requirements.md).
-**Builds on:** [ADR-0013 QA verification runs](../architecture/decisions/adr-0013-qa-verification-runs.md).
+**Status:** Implemented in the backend. The decisions are recorded in [ADR-0014](/architecture/decisions/adr-0014-project-requirements.md) and its amendments.
+**Builds on:** [ADR-0013 QA verification runs](/architecture/decisions/adr-0013-qa-verification-runs.md).
 
 Terminology. In QA code, "project" means a `projects.provisioned_projects` row, which is one repository. A "Project" in the product (API term `delivery-project`, SQL `hierarchy.delivery_projects`) is the folder that owns one or more repositories. This document writes "repository" for the first and "Project" for the second.
 
-## Summary of decisions
+## Summary
 
-1. A Project owns its requirements. There are two kinds: `functional` (a Feature whose items are User stories) and `system` (a flat checklist). Every existing checklist becomes a `system` requirement.
-2. Requirements apply to every repository in the Project automatically. The per-repository share table is legacy and ignored for new data.
-3. Each item has two independent tracks: **Progress** (`todo`, `in_progress`, `done`) set by developers, leads and admins; **Verification** (`pending`, `passed`, `failed`, `blocked`, `returned_to_dev`) set by QA, leads and admins.
-4. QA verifies once per Project. A Project run captures the `uat` head SHA of every repository when it starts.
-5. A repository may merge `uat` to `main` only when the latest signed-off Project run is `APPROVED` and still current for every repository in the Project.
-6. The existing tables are extended in place (no renames), so the migration is additive and the deployed code keeps working until the new code ships. The migration is applied **before** the backend deploy.
+1. A Project owns its requirements. There are two kinds: `functional` (a Feature whose items are User stories) and `system` (a flat checklist). Every checklist that existed before became a `system` requirement.
+2. Requirements apply to every repository in the Project. The per-repository share table is legacy and is not read for requirements that have a Project.
+3. A Project works in Iterations. At most one Iteration is active. Requirements and Project runs belong to one Iteration, and only the current Iteration counts.
+4. Each item has two independent tracks: **Progress** (`todo`, `in_progress`, `done`) set by developers, leads and admins; **Verification** (`pending`, `passed`, `failed`) set by QA, leads and admins. `failed` returns the story to the Developers.
+5. QA verifies once per Iteration and set of heads. A Project run captures the `uat` head of every repository when it starts.
+6. QA writes test cases under a User story and records a result per test case in each run.
+7. After QA signs a run off as `APPROVED` or `CONDITIONAL`, a Product owner accepts it item by item.
+8. A repository may merge `uat` to `main` only when the latest signed-off Project run of the current Iteration is `APPROVED`, still current for every repository, passed every item of the Iteration, predates no requirement change, and every item is accepted. Merging every covered repository delivers the Iteration.
 
-## 1. Schema and migration
+## 1. Schema and migrations
 
 ### 1.1 Model
 
-| Concept | Table | Change |
+| Concept | Table | Columns and keys |
 |---|---|---|
-| Requirement | `projects.qa_checklists` | add `kind`, `delivery_project_id`, `legacy_checklist_id`; scope-aware unique name index |
-| Requirement item (story or checklist item) | `projects.qa_checklist_items` | add `acceptance_criteria`, Progress columns, `row_version`, `updated_at` |
-| Project run | `projects.qa_verification_runs` | add `scope`, `delivery_project_id`, `heads_fingerprint`; `project_id` and `commit_sha` become nullable |
-| Heads captured at run start | `projects.qa_run_repositories` | new |
-| Run item snapshot | `projects.qa_run_items` | add `requirement_id`, `requirement_name`, `requirement_kind`, `acceptance_criteria` |
-| Sign-off, events | `projects.qa_run_signoffs`, `projects.qa_run_item_events` | unchanged, reused by Project runs |
-| Legacy sharing | `projects.qa_checklist_projects` | untouched, no longer read for requirements that have a `delivery_project_id` |
+| Iteration | `projects.project_iterations` | `number`, `goal` (max 120), `status` (`active`, `delivered`), `started_*`, `delivered_*`, `signoff_run_id`, `delivery_json`; unique (`delivery_project_id`, `number`); at most one `active` per Project |
+| Requirement | `projects.qa_checklists` | `kind`, `delivery_project_id`, `iteration_id`, `legacy_checklist_id`; active names unique per (workspace, Iteration, kind, lower(name)) |
+| Requirement item (story or checklist item) | `projects.qa_checklist_items` | `acceptance_criteria` (max 4000), `progress`, `progress_by`, `progress_by_login`, `progress_at`, `row_version`, `updated_at` |
+| Test case category, test case | `projects.qa_test_case_categories`, `projects.qa_test_cases` | section 7 |
+| Project run | `projects.qa_verification_runs` | `scope` (`repository`, `project`), `delivery_project_id`, `iteration_id`, `heads_fingerprint`; `project_id` and `commit_sha` nullable; unique (`iteration_id`, `heads_fingerprint`) for `scope = 'project'` |
+| Heads captured at run start | `projects.qa_run_repositories` | `run_id`, `project_id`, `repo_full_name`, `head_sha`; key (`run_id`, `project_id`) |
+| Run item snapshot | `projects.qa_run_items` | `requirement_id`, `requirement_name`, `requirement_kind`, `acceptance_criteria`, `po_status`, `po_by`, `po_by_login`, `po_at` |
+| Run test case | `projects.qa_run_test_cases` | section 7 |
+| Screenshot evidence | `projects.qa_run_item_attachments`, `projects.qa_attachment_objects` | up to 5 images per run item |
+| Sign-off, events | `projects.qa_run_signoffs`, `projects.qa_run_item_events` | shared with repository-scope runs |
+| Legacy sharing | `projects.qa_checklist_projects` | not read for requirements that have a `delivery_project_id` |
 
-Why extend rather than add tables: the run, item, event, sign-off, report and row-locking machinery (about 1,200 lines in `qa-runs.service.ts`) works on `run_id` and does not care whether a run covers one repository or many. Existing runs keep their foreign keys and stay as history with `scope = 'repository'`. Table names keep the `qa_checklist` prefix; API and docs use "requirement".
+The run, item, event, sign-off, report and row-locking machinery works on `run_id` and does not care whether a run covers one repository or many. Repository-scope runs stay as history with `scope = 'repository'`. Table names keep the `qa_checklist` prefix; the API and docs say "requirement".
 
-Progress lives on the requirement item (definition), not on the run item, because it persists across runs and across rebuilds of `uat`. Verification lives on the run item because it is a verdict about specific commits.
+Progress lives on the requirement item because it persists across runs and across rebuilds of `uat`. Verification lives on the run item because it is a verdict about specific commits.
 
 ### 1.2 Ownership and RLS
 
-- `delivery_project_id` is a plain UUID with no foreign key, the same pattern as `workspace_id`: the `projects` context may only reference the `projects` and `workflow` schemas (`scripts/check-schema-ownership.cjs`).
-- Runtime reads of `hierarchy.*` go through a **port, not an exemption**. `ProjectLinkPort` (already consumed by Projects) gains `getDeliveryProject(deliveryProjectId): Promise<ProjectFolderLink | null>`, the reverse of the existing `getProjectFolder(projectId)`. It returns the group id, name and non-archived repositories with their provisioned project ids. No new inline-SQL entries are added to the gate.
-- Deleting a Project must remove its requirements. A new kernel port `DELIVERY_PROJECT_DATA_CLEANUP`, implemented by Projects (same shape as `WORKSPACE_DATA_CLEANUP`) and called by `DeliveryProjectsService` on delete, archives or deletes requirements; runs stay as history because their snapshot is self-contained.
-- The **migration** cannot use a port. It reads `hierarchy.repositories` and `hierarchy.delivery_projects` for the backfill, so the migration needs two exact-pair entries in `LEGACY_MIGRATION_REFERENCES` for `projects/20261001010000_project_requirements.sql`: `hierarchy.repositories` and `hierarchy.delivery_projects`. This is the same kind of reviewed transition entry the hierarchy migrations already have for `projects.provisioned_projects`. No whole-file exemption.
-- New tables enable RLS and `REVOKE ALL ... FROM anon, authenticated`, as in the QA slices.
+- `delivery_project_id` is a plain UUID with no foreign key, like `workspace_id`: the `projects` context may only reference the `projects` and `workflow` schemas (`scripts/check-schema-ownership.cjs`).
+- Runtime reads of `hierarchy.*` go through `ProjectLinkPort`: `getDeliveryProject(deliveryProjectId)` returns the group id, name and non-archived repositories with their provisioned project ids, and `listDeliveryProjectsForGroup` lists a team's Projects.
+- Deleting a Project removes its requirements through the kernel port `DELIVERY_PROJECT_DATA_CLEANUP`, implemented by projects and called by `DeliveryProjectsService`. Runs stay as history because their snapshot is self-contained.
+- Only the one-time backfills read `hierarchy.*` inline. They are reviewed exact-pair entries in `LEGACY_MIGRATION_REFERENCES`, not whole-file exemptions.
+- Every new table enables RLS and revokes all from `anon` and `authenticated`.
 
-### 1.3 Migration `supabase/migrations/projects/20261001010000_project_requirements.sql`
+### 1.3 Migrations
 
-Single file, idempotent, every constraint inline or guarded so a cold replay and a re-run both succeed. Statement order matters: the name-index swap must precede the backfill, because duplicated names would violate the old index.
+All live in `supabase/migrations/projects/`. Each is idempotent: every constraint is inline or guarded, so a cold replay and a re-run both succeed.
 
-```sql
--- Project requirements: Project-owned functional/system requirements,
--- item acceptance criteria and Progress, Project-level QA runs.
--- Additive: deployed code keeps working against this schema.
+| File | Does |
+|---|---|
+| `20261001010000_project_requirements.sql` | adds `kind`, `delivery_project_id`, `legacy_checklist_id`, item acceptance criteria and Progress, run `scope`, `delivery_project_id`, `heads_fingerprint`, the `qa_run_repositories` table and the run item requirement columns; adds the `qa_verification_runs_scope_shape_chk` check; backfills each shared checklist into one `system` requirement per Project its repositories belong to (the original keeps its id, so old runs stay linked; other Projects get a copy with `legacy_checklist_id`) |
+| `20261014010000_qa_run_item_attachments.sql`, `20261019010000_qa_attachment_objects.sql` | screenshot evidence on run items |
+| `20261015010000_project_iterations.sql` | creates `project_iterations`, adds `iteration_id` to requirements and runs, backfills Iteration 1 for every Project, adds presence checks, and swaps both unique keys to per-Iteration (`uq_qa_requirements_iteration_name_active`, `uq_qa_runs_iteration_heads`) |
+| `20261020010000_qa_test_cases.sql` | test case categories, test cases and run test cases |
+| `20261021010000_qa_po_acceptance.sql` | `po_status`, `po_by`, `po_by_login`, `po_at` on run items |
 
--- 1. Requirements -------------------------------------------------------
-ALTER TABLE projects.qa_checklists
-  ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'system'
-    CONSTRAINT qa_checklists_kind_chk CHECK (kind IN ('functional', 'system')),
-  ADD COLUMN IF NOT EXISTS delivery_project_id UUID NULL
-    CONSTRAINT qa_checklists_functional_scope_chk
-      CHECK (kind <> 'functional' OR delivery_project_id IS NOT NULL),
-  ADD COLUMN IF NOT EXISTS legacy_checklist_id UUID NULL
-    REFERENCES projects.qa_checklists(id) ON DELETE SET NULL;
+Rollbacks are in `supabase/rollbacks/`. They fail closed when the older schema cannot hold the data: `20261001010000_project_requirements_down.sql` while any Project run or `functional` requirement exists, `20261020010000_qa_test_cases_down.sql` while any test case row exists.
 
--- Names are unique per (workspace, Project scope, kind), so the same
--- checklist name can exist in two Projects. NULL scope = "unassigned".
-DROP INDEX IF EXISTS projects.uq_qa_checklists_workspace_name_active;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_qa_requirements_scope_name_active
-  ON projects.qa_checklists (
-    workspace_id,
-    COALESCE(delivery_project_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    kind,
-    lower(name)
-  )
-  WHERE archived_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_qa_checklists_delivery_project
-  ON projects.qa_checklists (delivery_project_id)
-  WHERE delivery_project_id IS NOT NULL;
-
--- 2. Items: acceptance criteria + Progress track ---------------------------
-ALTER TABLE projects.qa_checklist_items
-  ADD COLUMN IF NOT EXISTS acceptance_criteria TEXT NULL
-    CONSTRAINT qa_checklist_items_acceptance_criteria_length_chk
-      CHECK (char_length(acceptance_criteria) <= 4000),
-  ADD COLUMN IF NOT EXISTS progress TEXT NOT NULL DEFAULT 'todo'
-    CONSTRAINT qa_checklist_items_progress_chk
-      CHECK (progress IN ('todo', 'in_progress', 'done')),
-  ADD COLUMN IF NOT EXISTS progress_by UUID NULL,
-  ADD COLUMN IF NOT EXISTS progress_by_login TEXT NULL,
-  ADD COLUMN IF NOT EXISTS progress_at TIMESTAMPTZ NULL,
-  ADD COLUMN IF NOT EXISTS row_version INTEGER NOT NULL DEFAULT 1,
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-
--- 3. Runs: Project scope ---------------------------------------------------
-ALTER TABLE projects.qa_verification_runs
-  ALTER COLUMN project_id DROP NOT NULL,
-  ALTER COLUMN commit_sha DROP NOT NULL,
-  ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'repository'
-    CONSTRAINT qa_verification_runs_scope_chk CHECK (scope IN ('repository', 'project')),
-  ADD COLUMN IF NOT EXISTS delivery_project_id UUID NULL,
-  -- sha256 hex of the sorted "<provisioned_project_id>:<head_sha>" lines.
-  ADD COLUMN IF NOT EXISTS heads_fingerprint TEXT NULL
-    CONSTRAINT qa_verification_runs_heads_fingerprint_chk
-      CHECK (heads_fingerprint ~ '^[0-9a-f]{64}$');
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'projects.qa_verification_runs'::regclass
-      AND conname = 'qa_verification_runs_scope_shape_chk'
-  ) THEN
-    ALTER TABLE projects.qa_verification_runs
-      ADD CONSTRAINT qa_verification_runs_scope_shape_chk CHECK (
-        (scope = 'repository' AND project_id IS NOT NULL AND commit_sha IS NOT NULL)
-        OR
-        (scope = 'project' AND delivery_project_id IS NOT NULL
-           AND project_id IS NULL AND heads_fingerprint IS NOT NULL)
-      );
-  END IF;
-END $$;
-
--- One run per (Project, set of heads): the idempotency key for POST create.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_qa_runs_project_scope_heads
-  ON projects.qa_verification_runs (delivery_project_id, heads_fingerprint)
-  WHERE scope = 'project';
-CREATE INDEX IF NOT EXISTS idx_qa_runs_project_scope_created
-  ON projects.qa_verification_runs (delivery_project_id, created_at DESC)
-  WHERE scope = 'project';
-
-CREATE TABLE IF NOT EXISTS projects.qa_run_repositories (
-  run_id UUID NOT NULL REFERENCES projects.qa_verification_runs(id) ON DELETE CASCADE,
-  project_id UUID NOT NULL REFERENCES projects.provisioned_projects(id) ON DELETE CASCADE,
-  repo_full_name TEXT NOT NULL,
-  head_sha TEXT NOT NULL
-    CONSTRAINT qa_run_repositories_head_sha_chk
-    CHECK (head_sha ~ '^[0-9a-f]{40}$' OR head_sha ~ '^[0-9a-f]{64}$'),
-  CONSTRAINT qa_run_repositories_pkey PRIMARY KEY (run_id, project_id)
-);
-CREATE INDEX IF NOT EXISTS idx_qa_run_repositories_project
-  ON projects.qa_run_repositories (project_id);
-
-ALTER TABLE projects.qa_run_items
-  ADD COLUMN IF NOT EXISTS requirement_id UUID NULL
-    REFERENCES projects.qa_checklists(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS requirement_name TEXT NULL,
-  ADD COLUMN IF NOT EXISTS requirement_kind TEXT NULL
-    CONSTRAINT qa_run_items_requirement_kind_chk
-      CHECK (requirement_kind IN ('functional', 'system')),
-  ADD COLUMN IF NOT EXISTS acceptance_criteria TEXT NULL;
-
-ALTER TABLE projects.qa_run_repositories ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON projects.qa_run_repositories FROM anon, authenticated;
-
--- 4. Backfill: each shared system checklist -> one system requirement per
--- Project its shared repositories belong to. The original row is assigned to
--- the first Project (keeps its id, so old runs stay linked); other Projects
--- get a copy. Unshared checklists are untouched (delivery_project_id NULL =
--- "unassigned"). qa_checklist_projects is left as-is (legacy, read by the
--- deployed code until it is replaced). Re-running copies nothing twice.
-DO $$
-DECLARE
-  pair RECORD;
-  v_current UUID;
-  v_name TEXT;
-  v_copy_id UUID;
-BEGIN
-  FOR pair IN
-    SELECT DISTINCT c.id AS checklist_id, dp.id AS dp_id, dp.created_at AS dp_created
-    FROM projects.qa_checklists c
-    JOIN projects.qa_checklist_projects s ON s.checklist_id = c.id
-    JOIN hierarchy.repositories hr
-      ON hr.provisioned_project_id = s.project_id AND hr.status <> 'archived'
-    JOIN hierarchy.delivery_projects dp
-      ON dp.id = hr.delivery_project_id
-     AND dp.status = 'active'
-     AND dp.group_id = c.workspace_id
-    WHERE c.archived_at IS NULL
-      AND c.kind = 'system'
-      AND c.legacy_checklist_id IS NULL
-    ORDER BY c.id, dp.created_at, dp.id
-  LOOP
-    SELECT delivery_project_id, name INTO v_current, v_name
-      FROM projects.qa_checklists WHERE id = pair.checklist_id;
-
-    IF v_current = pair.dp_id THEN
-      CONTINUE;
-    END IF;
-
-    IF v_current IS NULL THEN
-      UPDATE projects.qa_checklists
-         SET delivery_project_id = pair.dp_id, updated_at = NOW()
-       WHERE id = pair.checklist_id AND delivery_project_id IS NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM projects.qa_checklists x
-           WHERE x.delivery_project_id = pair.dp_id AND x.kind = 'system'
-             AND x.archived_at IS NULL AND lower(x.name) = lower(v_name));
-      CONTINUE;
-    END IF;
-
-    IF EXISTS (
-      SELECT 1 FROM projects.qa_checklists x
-      WHERE x.legacy_checklist_id = pair.checklist_id
-        AND x.delivery_project_id = pair.dp_id
-    ) THEN
-      CONTINUE;
-    END IF;
-
-    v_copy_id := NULL;
-    INSERT INTO projects.qa_checklists
-      (workspace_id, name, description, version, kind, delivery_project_id,
-       legacy_checklist_id, created_by, created_at)
-    SELECT workspace_id, name, description, 1, 'system', pair.dp_id,
-           id, created_by, created_at
-      FROM projects.qa_checklists WHERE id = pair.checklist_id
-    ON CONFLICT DO NOTHING
-    RETURNING id INTO v_copy_id;
-
-    IF v_copy_id IS NOT NULL THEN
-      INSERT INTO projects.qa_checklist_items
-        (checklist_id, "position", title, description, target_persona,
-         verification_type, test_identifier)
-      SELECT v_copy_id, "position", title, description, target_persona,
-             verification_type, test_identifier
-        FROM projects.qa_checklist_items WHERE checklist_id = pair.checklist_id;
-    END IF;
-  END LOOP;
-END $$;
-
-COMMENT ON COLUMN projects.qa_checklists.kind
-  IS 'functional = Feature with User stories; system = flat checklist.';
-COMMENT ON COLUMN projects.qa_checklists.delivery_project_id
-  IS 'Owning Project (hierarchy.delivery_projects.id). No FK: cross-context. NULL = unassigned legacy system checklist.';
-COMMENT ON TABLE projects.qa_run_repositories
-  IS 'uat head SHA of each repository captured when a Project run started.';
-```
-
-A matching `supabase/rollbacks/20261001010000_project_requirements_down.sql` drops the new table and columns and restores the old index. It must fail closed if any `scope = 'project'` run or `kind = 'functional'` requirement exists, because the old schema cannot hold them.
-
-Prod check (2 checklists, 4 items, 4 shares, 3 runs): "TestChecklist" ends as two system requirements (original plus one copy), "John's Password" as one. Both original ids keep their runs. Run `--dry-run` first, and before applying, count repositories that have legacy shares but no `hierarchy.repositories` row (see section 3, unfiled repositories).
-
-### 1.4 Status columns used by the new code
+### 1.4 Status values
 
 - Item `progress`: `todo`, `in_progress`, `done`. `done` means ready for QA.
-- Run item `status` keeps its existing CHECK. New writes never use `in_progress`; allowed values are `pending`, `passed`, `failed`, `blocked`, `returned_to_dev`.
+- Run item `status`: new writes set `pending`, `passed` or `failed`. Rows written earlier may hold `blocked` or `returned_to_dev`; both read as open defects, and `returned_to_dev` reads like `failed`. `in_progress` is never written on Project runs.
+- Run item `po_status`: `pending` or `passed`. Any QA status write resets it to `pending`.
 - Project run rows: `branch = 'uat'`, `commit_source = 'branch_head'`, `commit_sha` NULL, `checklist_id` NULL, `checklist_version` 0, `checklist_name` = the Project name at run start.
 - Run item `position` is global across the run: requirements in order (functional first, then system, by creation), items by position.
 
 ## 2. API contract
 
-All routes sit behind `@RequiresCapability('projects.qa-checklists')` (no new capability: a new key would need the capability ledger, the generated matrix and the frontend catalog kept in sync, and the `apiField` in `GET /capabilities` has been missed before). Visibility: the caller must be an active member of the Project's group (`QaAccessService.canAccessWorkspace`), else 404. The Project and its group come from `ProjectLinkPort.getDeliveryProject`. Errors use the existing shape `{ statusCode, code?, message, reasons? }`.
+Every route sits behind `@RequiresCapability('projects.qa-checklists')`. The caller must be an active member of the Project's group (`QaAccessService.canAccessWorkspace`), else 404. Errors use the shape `{ statusCode, code?, message, reasons? }`. Every write on a delivered Iteration answers `409 ITERATION_DELIVERED`.
 
 ### 2.1 Shapes
 
@@ -271,6 +95,7 @@ interface RequirementItem {            // a "story" when kind = functional
   progressAt: string | null;
   rowVersion: number;
   canSetProgress: boolean;             // caller-specific
+  testCategories: TestCaseCategory[];  // always [] on system items (section 7)
 }
 interface Requirement {
   id: string; kind: RequirementKind;
@@ -286,21 +111,24 @@ interface Requirement {
 
 ### 2.2 Requirements
 
+Requirement routes read and write the Project's current Iteration.
+
 | Route | Who | Body / result |
 |---|---|---|
-| `GET /delivery-projects/:dpId/requirements?kind=&includeArchived=` | any group member | `{ deliveryProject: {id,name,groupId}, requirements: Requirement[], permissions: { canManage, canSetProgress } }` |
+| `GET /delivery-projects/:dpId/requirements?kind=&includeArchived=` | any group member | `{ deliveryProject: {id,name,groupId}, requirements: Requirement[], permissions: { canManage, canSetProgress, canManageTestCases } }` |
 | `POST /delivery-projects/:dpId/requirements` | lead, admin | `{ kind, name, description?, items?: [{title, acceptanceCriteria?, verificationType?, testIdentifier?}] }` -> 201 `Requirement` |
+| `POST /delivery-projects/:dpId/requirements/batch` | lead, admin | `{ kind, requirements: [{ name, description?, items? }] }` (1 to 20), all in one transaction |
 | `GET /requirements/:id` | any group member | `Requirement` |
 | `PATCH /requirements/:id` | lead, admin | `{ name?, description?, expectedVersion }` -> `Requirement` (bumps `version`) |
 | `POST /requirements/:id/archive` | lead, admin | `Requirement` |
 | `POST /requirements/:id/items` | lead, admin | `{ title, acceptanceCriteria?, verificationType?, testIdentifier? }` -> 201 `RequirementItem`, appended |
 | `PATCH /requirements/:id/items/:itemId` | lead, admin | `{ title?, acceptanceCriteria?: string\|null, verificationType?, testIdentifier?, expectedRowVersion }` -> `RequirementItem` |
 | `DELETE /requirements/:id/items/:itemId` | lead, admin | 204; open run items keep their snapshot (`source_item_id` set null) |
-| `PUT /requirements/:id/items/order` | lead, admin | `{ itemIds: string[] }`, must be exactly the current set; positions rewritten in one transaction (the unique `position` constraint is deferrable) |
+| `PUT /requirements/:id/items/order` | lead, admin | `{ itemIds: string[] }`, exactly the current set; positions rewritten in one transaction (the unique `position` constraint is deferrable) |
 
-Edits are by item id and never delete-and-reinsert, so Progress survives. The legacy `PUT /qa-checklists/:id/items` (delete and reinsert) must not be called on migrated rows; see 4.3.
+Edits are by item id and never delete-and-reinsert, so Progress survives. New items (single create, batch, add item) join the Iteration's open runs as `pending`.
 
-Errors: 400 `REQUIREMENT_KIND_INVALID`, 400 `REQUIREMENT_ORDER_MISMATCH`, 403 `REQUIREMENT_MANAGE_FORBIDDEN`, 404 (not a member or not found), 409 `REQUIREMENT_NAME_TAKEN` (unique index), 409 `REQUIREMENT_STALE` (`expectedVersion`), 409 `REQUIREMENT_ITEM_STALE` (`expectedRowVersion`), 409 `REQUIREMENT_ARCHIVED`.
+Errors: 400 `REQUIREMENT_KIND_INVALID`, 400 `REQUIREMENT_ORDER_MISMATCH`, 400 `REQUIREMENT_BATCH_INVALID`, 400 `REQUIREMENT_BATCH_DUPLICATE_NAME` (with the 0-based `index`), 403 `REQUIREMENT_MANAGE_FORBIDDEN`, 404 (not a member or not found), 409 `REQUIREMENT_NAME_TAKEN`, 409 `REQUIREMENT_STALE` (`expectedVersion`), 409 `REQUIREMENT_ITEM_STALE` (`expectedRowVersion`), 409 `REQUIREMENT_ARCHIVED`.
 
 ### 2.3 Progress
 
@@ -310,41 +138,62 @@ Errors: 400 `REQUIREMENT_KIND_INVALID`, 400 `REQUIREMENT_ORDER_MISMATCH`, 403 `R
 { "progress": "done", "expectedRowVersion": 3, "note": "optional, max 1000" }
 ```
 
-Returns `{ item: RequirementItem, readyForQaNotified: boolean }`. Any transition among the three values is allowed (a developer can reopen their own mistake). Transaction: lock the item row, check `row_version`, update `progress`, `progress_by*`, bump `row_version`. If the new value is `done` and an open Project run has this item's run item in `returned_to_dev`, that run item is set to `pending` with `fix_requested_*` filled (the existing `requestRetest` repository method, lock order run row then item row). Errors: 403 `PROGRESS_FORBIDDEN` (qa), 409 `REQUIREMENT_ITEM_STALE`, 409 `REQUIREMENT_ARCHIVED`.
+Returns `{ item: RequirementItem, readyForQaNotified: boolean }`. Any transition among the three values is allowed. The write locks the item row, checks `row_version`, updates `progress` and `progress_by*`, and bumps `row_version`. When the new value is `done`, every open run of the Iteration whose run item for this story is `failed` (or `returned_to_dev`) sets it back to `pending`, records the fix request and clears the defect severity; QA is then notified (section 4.2). Errors: 403 `PROGRESS_FORBIDDEN` (qa), 409 `REQUIREMENT_ITEM_STALE`, 409 `REQUIREMENT_ARCHIVED`.
 
 ### 2.4 Project runs
 
-Project runs live under the Project. The server resolves the heads; the client never sends a SHA (ADR-0013 rule 4).
+Project runs live under the Project and belong to its current Iteration. The server resolves the heads; the client never sends a SHA.
 
 | Route | Who | Notes |
 |---|---|---|
-| `GET /delivery-projects/:dpId/qa-runs?limit&cursor` | group member | `{ runs: ProjectQaRunListItem[], next }`, project-scope runs only |
+| `GET /delivery-projects/:dpId/qa-runs?limit&cursor` | group member | `{ runs: ProjectQaRunListItem[], next }`, the current Iteration's runs |
 | `GET /delivery-projects/:dpId/qa-runs/current` | group member | `{ run: ProjectQaRun \| null, heads: HeadStatus[], stale: boolean }` for the current set of heads |
-| `POST /delivery-projects/:dpId/qa-runs` | qa, lead, admin | no body. 201 `{ created: true, run }`, or 200 `{ created: false, run }` when a run for the same fingerprint exists |
+| `POST /delivery-projects/:dpId/qa-runs` | qa, lead, admin | no body. 201 `{ created: true, run }`, or 200 `{ created: false, run }` when the Iteration already has a run for those heads |
 | `GET /delivery-projects/:dpId/qa-runs/:runId` | group member | `ProjectQaRun` |
-| `PATCH /delivery-projects/:dpId/qa-runs/:runId/items/:itemId` | qa, lead, admin | set Verification, below |
-| `POST .../:runId/signoff` | qa, lead, admin | `{ verdict, summary?, conditions? }`, rules unchanged from ADR-0013 rule 7 |
-| `POST .../:runId/reopen` | lead, admin | unchanged |
-| `GET .../:runId/report?format=json\|markdown` | group member | `qa-report/v2`: v1 plus `repositories[]` (name, head SHA) and per-item requirement name and kind; frozen at sign-off |
-| `POST .../:runId/automation/dispatch` | qa, lead, admin | body `{ projectId? }`; default dispatches the verify workflow in every covered repository with the caller's token |
+| `PATCH .../:runId/items/:itemId` | qa, lead, admin | set Verification, below |
+| `PATCH .../:runId/items/:itemId/test-cases/:testCaseId` | qa, admin | test case result (section 7) |
+| `PATCH .../:runId/items/:itemId/acceptance` | lead, admin | Product owner acceptance (section 8) |
+| `POST .../:runId/signoff` | qa, lead, admin | `{ verdict, summary?, conditions? }`, rules below |
+| `POST .../:runId/reopen` | lead, admin | supersedes the sign-off; items the Iteration holds but the run lacks are added as `pending` |
+| `GET .../:runId/report?format=json\|md\|xlsx` | group member | `qa-report/v2` (`markdown` and `excel` are accepted aliases); frozen at sign-off |
+| `POST .../:runId/automation/dispatch` | qa, lead, admin | body `{ projectId? }`; dispatches the verify workflow in every covered repository (or one) with the caller's token; 202 |
+| `POST .../:runId/items/:itemId/attachments`, `GET .../:runId/items/:itemId/attachments`, `GET .../:runId/attachments`, `DELETE .../:runId/attachments/:attachmentId` | add: qa, lead, admin | screenshot evidence; the uploader, a lead or an admin deletes a human attachment while the run is open |
 
 ```ts
 interface HeadStatus { projectId: string; repoFullName: string;
   runSha: string | null; currentSha: string | null; moved: boolean; }
-interface ProjectQaRun /* extends the existing QaRun */ {
+interface ProjectQaRun /* extends the repository-scope QaRun */ {
   scope: 'project'; deliveryProjectId: string; deliveryProjectName: string;
+  iteration?: { id; number; status } | null;
   repositories: HeadStatus[];
-  stale: boolean;                       // any repository moved or a repository was added
-  requirementsChanged: boolean;         // informational, see section 6
-  items: ProjectQaRunItem[];            // QaRunItem + requirementId, requirementName,
-                                        // requirementKind, acceptanceCriteria, progress
-  permissions: { canSetVerification, canSignOff, canReopen, canDispatch };
+  stale: boolean;               // any repository moved, or one joined the Project
+  requirementsChanged: boolean; // requirements changed after the run started (open) or was signed off
+  items: ProjectQaRunItem[];    // QaRunItem + sourceItemId, requirementId, requirementName,
+                                // requirementKind, acceptanceCriteria, progress (live),
+                                // attachmentCount, testCategories, poAcceptance
+  permissions: { canSetVerification, canSignOff, canReopen, canDispatch,
+                 canManageTestCases, canRecordTestCases, canAccept };
+  attachments: { enabled, canAdd };
+  automation; automationByRepository;
 }
 ```
 
-`POST` create: read `uat` head of each non-archived repository that has a linked provisioned project (installation token precedence as in `QaPromotionService.resolveReadToken`), fingerprint, `INSERT ... ON CONFLICT DO NOTHING` on `uq_qa_runs_project_scope_heads`, snapshot all non-archived requirements' items, set `prior_run_item_id` to the same source item in the newest earlier Project run. Errors: 409 `QA_NO_REQUIREMENTS`, 409 `QA_UAT_HEAD_UNREADABLE` (`reasons` lists repositories), 409 `QA_UAT_BRANCH_MISSING`, 409 `QA_NO_REPOSITORIES`.
+Create: read the `uat` head of each non-archived repository that has a linked provisioned project, fingerprint the sorted `<repository>:<head>` lines with sha256, insert on the per-Iteration unique key, snapshot every active requirement's items, set `prior_run_item_id` to the same source item in the newest earlier run, and copy the stories' test cases. Errors: 403 for a developer, 409 `QA_NO_REQUIREMENTS`, 409 `QA_UAT_HEAD_UNREADABLE` (`reasons` lists repositories), 409 `QA_UAT_BRANCH_MISSING`, 409 `QA_NO_REPOSITORIES`.
 
-Set Verification body: `{ status: 'pending'|'passed'|'failed'|'blocked'|'returned_to_dev', notes?, defectSeverity?, reproductionSteps?, expectedRowVersion }`. Rules unchanged: `failed` and `returned_to_dev` require a severity (400); `QA_ITEM_STALE`, `QA_RUN_CHANGED` 409 codes unchanged. New: 400 `QA_VERIFICATION_STATUS_INVALID` for `in_progress`; 403 `VERIFICATION_FORBIDDEN` for a developer; 409 `QA_PROGRESS_NOT_DONE` for `passed` while the source item's Progress is not `done` (6.3 decision 1). Setting `returned_to_dev` also sets the source item's Progress to `in_progress` in the same transaction (skipped when `source_item_id` is null).
+Set Verification body: `{ status?: 'pending'|'passed'|'failed', notes?, defectSeverity?, reproductionSteps?, expectedRowVersion }`.
+
+- Any other status answers 400 `QA_VERIFICATION_STATUS_INVALID`; a developer gets 403 `VERIFICATION_FORBIDDEN`.
+- `failed` needs a severity (`blocker`, `major`, `minor`; 400 without one). In the same transaction it sets the source item's Progress to `in_progress` and clears the previous fix request.
+- `passed` needs the source item's Progress `done` (409 `QA_PROGRESS_NOT_DONE`; a run item whose source was deleted cannot pass) and every test case of the story passed (409 `QA_TEST_CASES_OPEN`). Passing clears the defect severity.
+- A stale write answers 409 `QA_ITEM_STALE`. A status write resets the item's Product owner acceptance.
+
+Sign-off rules:
+
+- Any verdict is refused with 409 `QA_RUN_OPEN_DEFECTS` while an item is `failed`, `blocked` or `returned_to_dev`.
+- `APPROVED` needs every item `passed`, no open test case (409 `QA_TEST_CASES_OPEN`), and every item the Iteration holds now (409 `QA_RUN_MISSING_ITEMS`; the missing items are added to the run as `pending`).
+- `CONDITIONAL` needs no item `pending` or `in_progress`, and written `conditions` (400).
+- `REJECTED` may leave items `pending`.
+- Sign-off takes the run row `FOR UPDATE` and re-checks the items' row-version fingerprint; a change in between answers 409 `QA_RUN_CHANGED`.
 
 ### 2.5 My QA items (project-wide)
 
@@ -352,20 +201,20 @@ Set Verification body: `{ status: 'pending'|'passed'|'failed'|'blocked'|'returne
 
 ```ts
 interface MyQaItems {
-  returned: FeedItem[];     // current run item = returned_to_dev
+  returned: FeedItem[];     // current run item failed (or returned_to_dev)
   inProgress: FeedItem[];   // Progress = in_progress
   todo: FeedItem[];         // Progress = todo
-  readyForQa: FeedItem[];   // Progress = done and run item pending (QA's queue)
+  readyForQa: FeedItem[];   // Progress = done and run item pending or missing (QA's queue)
 }
 interface FeedItem { requirement: {id,name,kind}; item: RequirementItem;
   runId: string | null; runItem: ProjectQaRunItem | null; }
 ```
 
-Run items come from the open run for the current heads, or the newest open Project run if heads moved; `runItem` is null when none exists.
+The run is the current Iteration's run for the current heads, else its newest open run. `bucketMyQaItem` (`domain/qa-my-items.rules.ts`) is the single rule for the buckets; a `done` item whose run item is `passed` is in none.
 
 ### 2.6 Checklists overview (team level, read-only)
 
-`GET /workspaces/:workspaceId/qa-requirements/overview` (any workspace member)
+`GET /workspaces/:workspaceId/qa-requirements/overview?includeArchived=` (any workspace member)
 
 ```ts
 { groups: [{ deliveryProject: {id,name}, requirements: RequirementSummary[],
@@ -374,6 +223,7 @@ Run items come from the open run for the current heads, or the newest open Proje
                        openDefects: { blocker, major, minor, unrated },
                        members: { developer: number, qa: number } },
              promotion: { mergedRepositories, totalRepositories, lastMergedAt: iso | null } | null,
+             iteration: { number, status: 'active'|'delivered', deliveredAt: iso | null } | null,
              viewerMembership: 'developer' | 'qa' | null }],
   unassigned: RequirementSummary[],
   permissions: { canManage } }
@@ -381,175 +231,149 @@ interface RequirementSummary { id; kind; name; itemCount;
   progressCounts; verification: { pending, passed, failed, blocked, returned_to_dev } | null;
   latestRunStatus: 'open'|'signed_off'|null; archivedAt }
 interface LatestRun { id; status: 'open'|'signed_off'; createdAt: iso;
-  verdict: 'APPROVED'|'REJECTED'|'CONDITIONAL' | null;   // current (non-superseded) sign-off; null while open
+  verdict: 'APPROVED'|'REJECTED'|'CONDITIONAL' | null;   // active sign-off; null while open
   signedOffAt: iso | null; signedOffBy: string | null }  // signer's GitHub login
 ```
 
-`verification` is from the newest Project run of that Project, null when none. Groups come from `ProjectLinkPort` plus the requirement rows; Projects with no requirements are listed with an empty array.
+Everything reads the current Iteration of each Project, in batches over all the team's Projects, so the number of database round trips does not grow with the number of Projects. Projects with no requirements are listed with an empty array.
 
-The per-group fields after `requirements` are additive (the Checklists page ignores them; the Home dashboard reads them). Every one of them is read in a batch over all the team's Projects, so the number of database round trips does not grow with the number of Projects (constant: Projects, requirements, caller role, requirement items, newest runs with sign-offs, members and repositories via the hierarchy port, run items, and one audit read when some newest run is signed off).
+- `latestRun` is the Iteration's newest Project run; `verification` comes from the same run.
+- `counts.readyForQa` uses `bucketMyQaItem` over the non-archived requirement items and the newest run's items; with no run every done item counts. **Known gap:** my-items picks its run from the live `uat` heads; the overview makes no GitHub call and always reads the newest run. They differ only when the newest run is signed off and a head has since moved: my-items then has no run and lists every done item, the overview counts only the done items that run left undecided.
+- `counts.openDefects` counts the newest run's items that are `failed`, `blocked` or `returned_to_dev`, by severity (null is `unrated`).
+- `counts.members` counts ACTIVE `hierarchy.delivery_project_members` rows by `member_kind`; `viewerMembership` is the caller's own active row (null for leads, admins and non-members). Both come through the `DELIVERY_PROJECT_OVERVIEW_QUERY` port.
+- `promotion` is null unless `latestRun.status` is `signed_off`. It is read from the Iteration's stored delivery state (`delivery_json`): `mergedRepositories` is the repositories recorded as delivered (merged, or already in `main`), `totalRepositories` the Project's repositories linked to an AlphaCI project, `lastMergedAt` the newest delivery.
+- `iteration` is the Project's current Iteration; a delivered one means nothing is waiting for production.
 
-- `latestRun` is the newest Project run (the same run `verification` is read from), null when the Project has none. `verdict`, `signedOffAt` and `signedOffBy` come from that run's active sign-off and are null while it is open.
-- `counts.readyForQa` is the size of the `readyForQa` bucket of `GET /delivery-projects/:id/qa/my-items` (section 2.5), computed by the same function (`bucketMyQaItem`, `domain/qa-my-items.rules.ts`) over the Project's non-archived requirement items and the newest run's items; with no run every done item counts. **Known gap:** my-items picks its run from the live `uat` heads (the run for the current heads, else the newest open run); the overview makes no GitHub call, so it always reads the newest run. They agree when there is no run, when the newest run is open, and when no head has moved since the newest signed-off run. They differ only when the newest run is signed off and a head has since moved: my-items then has no run and lists every done item, the overview counts only the done items that run left undecided.
-- `counts.openDefects` counts the newest run's items whose Verification is `failed`, `blocked` or `returned_to_dev`, by defect severity (a null severity is `unrated`); all zero with no run. A signed-off run still reports the defects it was signed off with.
-- `counts.members` is the number of ACTIVE rows of `hierarchy.delivery_project_members` by `member_kind`; `viewerMembership` is the caller's own active row (null for leads and admins, who are never members, and for non-members). Both come through the `DELIVERY_PROJECT_OVERVIEW_QUERY` port.
-- `promotion` is null unless `latestRun.status` is `signed_off`. Promotion is per repository, the run per Project, hence merged / total: `mergedRepositories` counts the Project's repositories that have a `qa.promotion.merged` audit event at or after `latestRun.signedOffAt`, `totalRepositories` the Project's non-archived repositories linked to an AlphaCI project (the only ones that can be promoted), `lastMergedAt` the newest such merge. It is also null when the merges cannot be read (audit recording is off, or the read failed), so the page says nothing about promotion rather than a misleading 0 merged.
+### 2.7 Iterations
+
+| Route | Who | Notes |
+|---|---|---|
+| `GET /delivery-projects/:dpId/iterations` | group member | `{ iterations }`, newest first |
+| `GET /delivery-projects/:dpId/iterations/current` | group member | the active Iteration, else the last delivered one: `{ iteration, canStartNext, deliveredRepositories, coveredRepositories, canMergeAll }` |
+| `POST /delivery-projects/:dpId/iterations` | lead, admin | `{ goal? }` (at most 120 characters, 400 `ITERATION_GOAL_INVALID`) -> `{ iteration }` |
+
+Iteration 1 is created on first use. Starting the next Iteration needs the current one delivered (409 `ITERATION_ACTIVE`, also on a lost race); it starts with no requirements. A non-empty `carryOver.requirementItemIds` answers 400 `ITERATION_CARRY_INVALID`. Others get 403 `ITERATION_START_FORBIDDEN`. Starting records `qa.iteration.started` and notifies the workspace leads, Developers and QA.
 
 ## 3. Merge-to-main gate
 
-Today `evaluateQaPromotionGate` is per repository: every checklist shared to that repository needs a signed-off `APPROVED` run on the repository's current `uat` head. The new rule is per Project and implemented as a new pure function `evaluateProjectPromotionGate` in `qa-promotion.rules.ts` (the old function stays for the unfiled fallback decision below and for its tests until removed).
-
 ### 3.1 Rule
 
-For repository R filed under Project P, `QaPromotionService.computeStatus` does:
+`evaluateProjectPromotionGate` in `domain/qa-promotion.rules.ts`, evaluated by `QaProjectDeliveryService.evaluateGate` for the Project's current Iteration. For a repository R filed under Project P:
 
-1. Resolve P through `ProjectLinkPort.getProjectFolder(R.id)`. Collect P's repositories with a linked provisioned project and read each `uat` head (parallel, same token precedence as today).
-2. Find L = the **latest signed-off Project run** of P: the project-scope run whose active sign-off has the greatest `signed_at`. Open runs never count.
-3. `eligible(R)` is true only if all hold:
+1. Read the `uat` head of every repository of P with a linked provisioned project (in parallel).
+2. Find L, the **latest signed-off run** of the Iteration: the run whose active sign-off has the greatest `signed_at`. Open runs never count.
+3. R is eligible only when all hold:
    - every head was readable;
-   - P has at least one non-archived requirement and L exists;
-   - L's active verdict is `APPROVED` (`REJECTED` and `CONDITIONAL` block, as today);
-   - L is **current**: L has a `qa_run_repositories` row for every repository of P, and each row's `head_sha` equals that repository's current `uat` head. If any repository moved, or a repository was added to P since, L is stale for all repositories.
-4. Otherwise `eligible` is false and `reasons` explains the first failures, for example `Project run is stale: "api" moved from a1b2c3d to e4f5a6b`, `Latest sign-off is Rejected`, `Could not read the uat head of "web"`, `No QA run covers the current uat heads`.
+   - P has at least one active requirement in the Iteration, and L exists;
+   - L's verdict is `APPROVED` (`REJECTED` and `CONDITIONAL` block);
+   - L is current: it has a `qa_run_repositories` row for every repository of P, and each captured head equals the head now. Any repository moving, or joining P, makes L stale for all of them;
+   - L passed every active item of the Iteration;
+   - no requirement was created, edited, archived or had items changed after L's sign-off;
+   - the Product owner accepted every item of L;
+   - the Iteration is not delivered.
+4. Otherwise `reasons` lists the failures, for example `Project run is stale: "api" moved from a1b2c3d to e4f5a6b`, `Latest sign-off is Rejected`, `Could not read the uat head of "web"`, `No QA run covers the current uat heads`, `Requirements changed after QA signed off: a Product owner reopens the run so QA verifies them`, `2 items are waiting for the Product owner to pass them`.
 
-Using the latest signed-off run (not any approved run) means a later Rejected sign-off on newer heads blocks even if an older run was approved. A single-repository Project degenerates to today's behavior: one head, one run, same verdict rule.
+A later Rejected sign-off on newer heads blocks even if an older run was approved. Merging one repository does not move its `uat` head, so the other repositories stay eligible after the first one merges.
 
-Merging one repository does not move its `uat` head (the merge commit lands on `main`), so the other repositories of P stay eligible after the first one merges.
+### 3.2 Routes
 
-### 3.2 Contract changes
+- `GET /projects/:projectId/qa/promotion` returns `qaBranch`, `targetBranch`, `headSha`, `scope` (`project` or `unfiled`), `deliveryProject`, `run` (`{ id, verdict, signedAt, stale }`), `repositories: HeadStatus[]`, `requirementsChanged`, `eligible`, `reasons`, `pullRequest`, `repositoryDelivered`, `iterationDelivered`, `iteration`, `reasonCodes`, `canMerge`, and the deprecated `checklists` (one entry per requirement, each carrying the Project-level result).
+- `POST /projects/:projectId/qa/promotion/merge` (lead, admin) recomputes the gate server-side. It answers 409 `QA_PROJECT_REQUIRED` for an unfiled repository, 409 `ITERATION_DELIVERED`, 409 `QA_PROMOTION_BLOCKED` with `reasons`, 409 `QA_UAT_MOVED` when the promotion pull request's head moved, and 409 `GITHUB_REAUTH` without a usable credential. GitHub writes go out as the ALPHACI GitHub App; the person's token is only the fallback. The reply says `how`: `merged`, or `already_in_main` when `main` already holds the signed-off head.
+- `POST /delivery-projects/:dpId/promotion/merge-all` (lead, admin) merges every covered repository in a stable order, keeps going after a failure, and reports a result per repository. 409 `PROJECT_HAS_NO_REPOSITORIES` without a linked repository.
 
-`GET /projects/:projectId/qa/promotion` and `POST .../merge` keep their routes. The response adds, all additive:
-
-```ts
-scope: 'project' | 'unfiled';
-deliveryProject: { id: string; name: string } | null;
-run: { id: string; verdict: QaVerdict; signedAt: string; stale: boolean } | null;
-repositories: HeadStatus[];
-```
-
-`checklists` stays populated for the deployed frontend: one entry per requirement of P, each with `approvedForHead` equal to the Project-level result, marked deprecated. `buildQaPromotionPullRequestBody` is fed the same entries and additionally lists the run id and covered repositories. `merge` recomputes the gate server-side exactly as today, keeps the `QA_UAT_MOVED` check on the PR head SHA, and keeps the 409 `QA_PROMOTION_BLOCKED` with `reasons`. Merge audit metadata gains `deliveryProjectId` and `runId`.
+Each delivered repository is recorded in the Iteration's `delivery_json`. When every covered repository is in, the Iteration becomes `delivered`, records `qa.iteration.delivered` and notifies the workspace leads, Developers and QA. A merge records `qa.promotion.merged` with `deliveryProjectId` and `runId`.
 
 ### 3.3 Repositories not filed under a Project
 
-A repository with no `hierarchy.repositories` row has no Project, so it has no requirements and no run. Decision: its gate is **blocked** with reason `This repository is not filed under a Project; QA requirements belong to Projects`, 409 `QA_PROJECT_REQUIRED` on merge. A lead fixes it with the existing "Move repository between folders" action. No legacy per-repository fallback is kept: it would keep the old runs live and contradict "existing runs are read-only history". Pre-flight (section 5) counts repositories that have legacy shares and no hierarchy row so none is stranded unexpectedly.
+A repository with no `hierarchy.repositories` row has no Project, no requirements and no run. Its gate is blocked with `This repository is not filed under a Project; QA requirements belong to Projects`, and merge answers 409 `QA_PROJECT_REQUIRED`. A lead files it with "Move repository between folders". There is no per-repository fallback.
 
-## 4. Notifications, persona rules, existing endpoints
+## 4. Persona rules, notifications, legacy endpoints
 
 ### 4.1 Persona rules (allow-lists)
 
-All checks stay allow-lists, never "not member" (ADR-0013 rule 2). New or changed functions in `qa-run-access.rules.ts`:
+All checks are allow-lists, never "not member". Functions in `domain/qa-run-access.rules.ts` (`canManageRequirements` comes from `src/kernel/rules/persona-access.rules.ts`):
 
-| Function | Allowed roles | Notes |
+| Function | Allowed roles | Gates |
 |---|---|---|
-| `canManageRequirements` | lead, admin | same set as `QaAccessService.canManage` (includes platform admins) |
-| `canSetProgress` | member, lead, admin | QA cannot set Progress |
-| `canSetVerification` | qa, lead, admin | replaces `personaAllowsRole`; developers lose it |
-| `canSetReturnedToDev` | qa, lead, admin | unchanged |
-| `canCreateRun`, `canSignOff`, `canDispatchAutomation` | qa, lead, admin | unchanged |
-| `canReopenRun`, `canMergeQaPromotion` | lead, admin | unchanged |
-| `canRequestRetest` | member, lead, admin | kept only for the compatibility alias in 4.3 |
-| `canManageTestCases` | qa, admin | test case categories and test cases under a User story (section 7) |
+| `canManageRequirements` | lead, admin | requirement writes |
+| `canSetProgress` | member, lead, admin | Progress; QA does not set it |
+| `canSetVerification` | qa, lead, admin | run item Verification |
+| `canManageTestCases` | qa, admin | test case categories and test cases |
+| `canRecordTestCaseResults` | qa, admin | test case results in a run |
+| `canAcceptRunItems` | lead, admin | Product owner acceptance |
+| `canCreateRun`, `canSignOff`, `canDispatchAutomation`, `canAddEvidence` | qa, lead, admin | run lifecycle and evidence |
+| `canReopenRun`, `canMergeQaPromotion`, `canRemoveAnyAttachment` | lead, admin | reopen, merge to main, deleting another person's attachment |
+| `canRequestRetest` | member, lead, admin | the legacy `request-retest` alias |
 
-`personaAllowsRole` and `targetPersona` stop gating anything for Project runs. The column remains as data on legacy rows. Admins keep every action. Update `PERSONA_WORKFLOW_SPEC.md` (Verification Execution, QA Checklists, My QA items and Release Promotion rows) in the implementation change.
+Starting an Iteration uses `QaAccessService.canManage` (lead, admin). `personaAllowsRole` and `targetPersona` gate nothing on Project runs; the column remains as data on legacy rows. Platform admins resolve to `admin` and keep every action.
 
 ### 4.2 Notifications
 
-Events keep their codes so the inbox and the frontend mapping do not change. Delivery is through `NotificationEventPublisher` with the explicit `@Inject` token. `projectId` on a notification is the Project's frontend repository, else its oldest linked repository (decision 5 in 6.3; the deep-link join in the notifications repository goes repository to folder); the body names the Project.
+Delivery is through `NotificationEventPublisher` with an explicit `@Inject` token. `projectId` on a notification is the Project's repository with a `frontend` deployment target (read through the runtime-owned `DEPLOYMENT_TARGETS_QUERY` port), oldest first, else its oldest linked repository. The actor never notifies themselves.
 
-| Trigger | Event code | Recipients (minus actor) |
+| Trigger | Event code | Recipients |
 |---|---|---|
-| Progress set to `done` | `qa.item.retest_requested` | workspace QA members, plus the previous verifier of that item if any. Fires even when no run item is returned, with title `Ready for QA: "<item>"` |
-| Verification `returned_to_dev` | `qa.item.returned_to_dev` | project owner, workspace leads and developers. The best-effort commit-author lookup is dropped for Project runs because a run covers many repositories |
-| Verification `blocked` with blocker severity | `qa.item.blocked` | workspace leads |
-| Sign-off | `qa.run.signed_off` | run creator, owner, workspace leads |
-| Merge to main | `qa.promotion.merged` | workspace leads, unchanged |
+| Progress set to `done` | `qa.item.retest_requested` | workspace QA members and the previous verifier of a re-queued run item; title `Ready for QA: "<item>"` |
+| Verification set to `failed` | `qa.item.failed` | repository owner, workspace leads, every Developer; only on the change itself |
+| Sign-off | `qa.run.signed_off` | run creator, repository owner, workspace leads |
+| Product owner fails an item | `qa.item.po_rejected` | run creator, signer, repository owner, workspace QA, leads and Developers |
+| Iteration started | `qa.iteration.started` | workspace leads, Developers and QA |
+| Iteration delivered | `qa.iteration.delivered` | workspace leads, Developers and QA |
+| Merge to main | `qa.promotion.merged` | workspace leads |
 
-### 4.3 Existing endpoints: keep or deprecate
+Rows written before `blocked` and `returned_to_dev` were retired still map to `qa.item.blocked` and `qa.item.returned_to_dev` in the code, but nothing sets those statuses on Project runs.
 
-Rule for the whole table: additive for one release, then remove after the frontend has shipped on the new routes.
+### 4.3 Legacy endpoints
 
-| Existing | Disposition |
+These remain for the frontend that predates Project requirements. They are deprecated.
+
+| Endpoint | Behaviour |
 |---|---|
-| `GET /workspaces/:ws/qa-checklists`, `GET /qa-checklists/:id`, `GET /projects/:id/qa-checklists` | keep, deprecated. Responses gain `kind`, `deliveryProjectId`, `legacyChecklistId`, item `acceptanceCriteria`, `progress`. The per-repository list now returns the requirements of the repository's Project |
-| `POST /workspaces/:ws/qa-checklists` | keep, deprecated; creates an unassigned `system` row only |
-| `PATCH`, `PUT :id/items`, `POST :id/archive`, `PUT/PATCH :id/projects` | keep for unassigned rows. For rows with a `delivery_project_id`: 409 `REQUIREMENT_MOVED_TO_PROJECT` (the delete-and-reinsert item replace would destroy Progress) |
-| `GET /projects/:id/qa-runs`, `/current`, `/:runId`, `/:runId/report` | keep. Return repository-scope runs only, as read-only history; each carries `legacy: true` |
-| `POST /projects/:id/qa-runs`, `PATCH .../items/:itemId`, `signoff`, `reopen`, `automation/dispatch` | on a repository-scope run: 409 `QA_RUN_LEGACY_READONLY`. Creating a repository-scope run is refused the same way, with `projectRunsUrl` |
-| `POST .../items/:itemId/request-retest` | alias on Project runs: sets the item's Progress to `done` (same effects and notification). Legacy runs: 409 `QA_RUN_LEGACY_READONLY` |
-| `GET /projects/:id/qa-my-items`, `/qa-returned-items` | keep, deprecated: derived from the repository's Project (`returned`; `developerItems` = `inProgress` + `todo`) |
-| `GET /projects/:id/qa/promotion`, `POST .../merge` | keep, extended (section 3) |
+| `GET /workspaces/:ws/qa-checklists`, `GET /qa-checklists/:id`, `GET /projects/:id/qa-checklists` | responses carry `kind`, `deliveryProjectId`, `legacyChecklistId`, item `acceptanceCriteria` and `progress`; the per-repository list returns the requirements of the repository's Project |
+| `POST /workspaces/:ws/qa-checklists` | creates an unassigned `system` row only |
+| `PATCH`, `PUT :id/items`, `POST :id/archive`, `PUT/PATCH :id/projects` | work on unassigned rows; on rows with a `delivery_project_id`: 409 `REQUIREMENT_MOVED_TO_PROJECT` (the delete-and-reinsert item replace would destroy Progress) |
+| `GET /projects/:id/qa-runs`, `/current`, `/:runId`, `/:runId/report` | repository-scope runs only, as read-only history; each carries `legacy: true` |
+| `POST /projects/:id/qa-runs`, `PATCH .../items/:itemId`, `signoff`, `reopen`, `automation/dispatch` | 409 `QA_RUN_LEGACY_READONLY`; creating a repository-scope run is refused the same way, with `projectRunsUrl` |
+| `POST .../items/:itemId/request-retest` | on a Project run item: sets the item's Progress to `done` (same effects and notification); on a legacy run: 409 `QA_RUN_LEGACY_READONLY` |
+| `GET /projects/:id/qa-my-items`, `/qa-returned-items` | derived from the repository's Project (`returned`; `developerItems` = `inProgress` + `todo`) |
 
-The frontend migrates to: requirements CRUD, Progress, Project runs, Project-wide My QA items, the overview, and the extended promotion response.
+## 5. Migration order
 
-## 5. Rollout
+- A migration that adds columns the backend reads is applied before the backend deploys. The requirements, test case and acceptance migrations are additive, so code deployed earlier keeps working on the new schema.
+- `20261015010000_project_iterations.sql` is not additive for code that predates Iterations: after it, that code cannot create a Project run or a Project requirement. Apply it immediately before the backend that uses it.
+- Run `node scripts/apply-all-migrations.mjs --dry-run` and `npm run check:schema-ownership` first. Each file runs in one transaction, so a failure leaves the schema unchanged.
 
-**Decision: apply the migration BEFORE deploying the backend.**
+## 6. Design decisions and risks
 
-Why:
+### 6.1 Decisions
 
-- The new code selects and writes `kind`, `delivery_project_id`, `progress`, `scope` and the coverage table. Deployed first, every QA endpoint and the Merge-to-main gate would fail with a missing-column error until the migration ran. ADR-0013 already records the same rule ("deploying code that writes a new column requires its migration first").
-- The migration is additive, so the deployed code keeps working on the new schema. Checked against the deployed code paths: new columns have defaults; `project_id` and `commit_sha` are nullable but no Project run exists yet, so no deployed query meets a NULL; the old name index is replaced by a looser scope-aware one, and the deployed duplicate-name check is a pre-query, not a reliance on the index name; the backfill leaves `qa_checklist_projects` untouched, so every repository still resolves its shared checklists, and the Merge-to-main gate and existing runs behave as before.
-- Visible side effects of the in-between period: the team checklist list shows a migrated checklist twice (one per Project) under the same name; creating a checklist or sharing one works as before.
+1. **Passed requires Done.** `passed` on a run item whose source item's Progress is not `done` is refused (409 `QA_PROGRESS_NOT_DONE`). `failed` and `pending` stay allowed at any Progress.
+2. **Strict staleness.** Any repository of the Project moving its `uat` head, or a repository joining the Project, makes the latest signed-off run stale for every repository. The QA'd combination changed, so the sign-off no longer describes what would ship.
+3. **Unfiled repositories are blocked** (section 3.3).
+4. **Requirement changes after a sign-off block the merge.** The run, `current` and `GET .../qa/promotion` expose `requirementsChanged: true`; a Product owner reopens the run so QA verifies the change. A delivered Iteration therefore never holds unverified work, and the next Iteration starts empty.
+5. **Notifications anchor on the frontend repository first** (section 4.2).
+6. **Failed returns the story.** QA has three Verification values; `failed` always sends the story back to the Developers, and a run cannot be signed off while one is open.
 
-Order:
-
-1. Pre-flight (read-only): `node scripts/apply-all-migrations.mjs --dry-run`; `npm run check:schema-ownership`; count unfiled repositories with legacy shares (`qa_checklist_projects` rows whose `project_id` has no `hierarchy.repositories` row) and file them first if any; record the counts of checklists, items, shares and runs (expected 2, 4, 4, 3).
-2. Apply: `node scripts/apply-all-migrations.mjs --from 20261001010000_project_requirements.sql` (direct connection on 5432). The file runs in one transaction, so a failure leaves the schema unchanged.
-3. Verify with SQL: system requirements with a `delivery_project_id` equal the expected pairs (TestChecklist in 2 Projects, John's Password in 1); item counts of copies equal their originals; no `kind = 'functional'` rows; old runs still `scope = 'repository'`.
-4. Deploy the backend. Smoke: `GET /delivery-projects/:id/requirements`, the promotion status of one repository, a legacy run read.
-5. Re-run the same `--from` command once after the deploy. The backfill is idempotent and catches checklists shared by the deployed code during the window; after the new backend is live no new legacy share is possible.
-6. Deploy the frontend. Remove the deprecated routes in a later release, with a second migration dropping `qa_checklist_projects` only after nothing reads it.
-
-Rollback: the down file fails closed once Project runs or functional requirements exist. Before any such data exists, backend rollback alone is safe because the schema is a superset.
-
-Documentation changes in the implementation change: ADR-0014 (Project requirements), `PERSONA_WORKFLOW_SPEC.md`, `docs/log.md`, `CHANGELOG.md`, the schema-ownership gate entries, the route inventory baseline and manifest, regenerated maps (last step before pushing), and the frontend catalog if the capability response changes.
-
-## 6. Risks and test plan
-
-### 6.1 Risks
+### 6.2 Risks
 
 | Risk | Mitigation |
 |---|---|
-| Name index swap blocks the backfill if ordered wrongly | index swap is statement 1 of the migration; cold-replay test |
-| Backfill assigns the wrong Project when a checklist is shared across Projects | deterministic order (Project `created_at`, then id); copies carry `legacy_checklist_id`; verification query in section 5 |
-| Edits destroy Progress (legacy item replace deletes and reinserts) | edit by item id only; legacy replace refused for migrated rows |
-| Strict staleness: any repository moving invalidates the sign-off for all | intended (the QA'd combination changed); the UI shows which repository moved and offers a new run, which snapshots again |
-| Requirement edited after a sign-off | the gate does not change; `requirementsChanged` is informational and a lead can reopen. Making it blocking would invalidate sign-off on every typo fix |
-| N GitHub reads per gate evaluation | parallel reads, the same call as today per repository; `Promise.all` with a per-repository failure reason |
-| Developers lose Verification | intended; `item.canUpdate` replaced by `permissions.canSetVerification` |
+| Edits destroy Progress (legacy item replace deletes and reinserts) | edit by item id only; legacy replace refused on Project rows |
+| Backfill assigns the wrong Project when a checklist is shared across Projects | deterministic order (Project `created_at`, then id); copies carry `legacy_checklist_id` |
+| N GitHub reads per gate evaluation | parallel reads with a per-repository failure reason; display paths reuse a reading up to 15 to 30 seconds old, merge paths read fresh |
 | Silent undefined injection of the optional notification sink | explicit `@Inject(Class)` token and the boot test in `tests/architecture/http-boot.spec.ts` |
-| Undecorated domain classes get no constructor args | new rule modules are plain functions |
+| Undecorated domain classes get no constructor args | rule modules are plain functions |
 | Deleting a Project leaves orphan requirements | `DELIVERY_PROJECT_DATA_CLEANUP` port; unassigned rows are never deleted by it |
-| Notification deep link for a multi-repository run | uses the frontend repository, else the oldest (6.3 decision 5); revisit if the inbox needs a Project target |
-| `npm run lint` covers `tests/`; a path-scoped eslint passed locally and failed in CI | run the full repository gate commands before pushing |
 
-### 6.2 Test plan
+### 6.3 Tests
 
-- **Rules (unit):** every function in 4.1 over `admin|lead|qa|member`; `evaluateProjectPromotionGate` matrix: no run, open run, Rejected, Conditional, Approved and current, Approved and one repository moved, repository added after the run, head unreadable, no requirements, single-repository Project equals the old result, newest sign-off Rejected over an older Approved.
-- **Migration (integration, real database, no mocks):** apply the whole tree to an empty database, then again (idempotent); seed 2 checklists, 4 items, 4 shares across 2 Projects plus 3 runs, assert the expected requirements, copies and untouched runs; re-run adds nothing; unshared checklist stays unassigned; archived Project and archived repository are skipped.
-- **Repository SQL:** unique name index per scope; `scope_shape` check rejects mixed rows; fingerprint idempotency under concurrent create; Progress write with stale `row_version`; `returned_to_dev` resets Progress in the same transaction; order endpoint rejects a partial set.
-- **Service:** Project run snapshot (items from several requirements, global positions, `prior_run_item_id`); sign-off rules unchanged; legacy run writes return `QA_RUN_LEGACY_READONLY`; notification fan-out per 4.2 and no self-notification.
-- **Controller / HTTP boot:** guards, 404 for non-members, DTO validation; DI boot test for the new providers and the cleanup port.
-- **Gate end to end:** two repositories, one Project: approve, merge A, move B, A blocked; re-run and approve, A and B eligible.
-- **Docs and gates:** `npm run check:documentation`, `check:schema-ownership`, `check:capabilities`, route inventory, full `npm run lint`, and regenerate the maps as the last step.
+Unit specs sit beside the code in `src/modules/projects/` (`domain/qa-run-access.rules.spec.ts`, `domain/qa-promotion.rules.spec.ts`, `domain/qa-my-items.rules.spec.ts`, `domain/project-iteration.rules.spec.ts`, the `qa-*` and `project-iteration*` service, repository and controller specs). Migration integration specs run against a real database: `tests/integration/project-requirements.migration.integration.spec.ts`, `qa-test-cases.migration.integration.spec.ts` and `qa-po-acceptance.migration.integration.spec.ts`.
 
-### 6.3 Confirmed decisions (2026-10-01)
-
-1. **Passed requires Done.** Setting Verification `passed` on a run item whose source item's Progress is not `done` is refused with 409 `QA_PROGRESS_NOT_DONE` ("A developer marks this Done before QA can pass it."). `failed`, `blocked`, `returned_to_dev` and `pending` stay allowed at any Progress. Run items whose source item was deleted (`source_item_id` null) cannot be passed either.
-2. **Strict staleness.** Any repository of the Project moving its `uat` head, or a repository joining the Project, makes the latest signed-off run stale for every repository (section 3.1 unchanged).
-3. **Unfiled repositories are blocked** (section 3.3 unchanged).
-4. **Requirement edits are informational.** Editing, adding, archiving or reordering requirements after a sign-off does not change the gate. The run, the `current` endpoint and `GET .../qa/promotion` expose `requirementsChanged: true` and the UI shows "Requirements changed since sign-off"; a lead may reopen.
-5. **Notification link goes to the frontend repository first.** `projectId` on a Project-run notification is the Project's repository with a `frontend` deployment target (`env_provisioning.project_deployment_targets.slot = 'frontend'`, read through a port owned by the runtime module, not a cross-schema query), oldest first; with none, the Project's oldest linked repository. This replaces the "oldest repository" rule in 4.2.
-
-This file lives in `docs/design/`, which no index links. Existing specs live in `docs/superpowers/specs/`; move it there if the maintainers prefer one location.
-
-## 7. Test cases under a User story (ADR-0014, amendment 10)
+## 7. Test cases under a User story
 
 QA writes how a story is tested: categories of test cases ("Happy path", "Validation", "Session") under a User story, and the test cases inside them. A run records QA's result per test case.
 
 ### 7.1 Model
-
-Migration `supabase/migrations/projects/20261020010000_qa_test_cases.sql` (additive; rollback `supabase/rollbacks/20261020010000_qa_test_cases_down.sql` fails closed while any row exists).
 
 | Table | Holds | Key points |
 |---|---|---|
@@ -559,13 +383,12 @@ Migration `supabase/migrations/projects/20261020010000_qa_test_cases.sql` (addit
 
 ### 7.2 Rules
 
-- **Who:** `canManageTestCases` (qa, admin) writes definitions; `canSetVerification` (qa, lead, admin) records results. Non-members of the group get 404.
+- **Who:** `canManageTestCases` (qa, admin) writes definitions, others get `403 TEST_CASE_MANAGE_FORBIDDEN`. `canRecordTestCaseResults` (qa, admin) records results, others get `403 TEST_CASE_RESULT_FORBIDDEN`; the Product owner reads them. Non-members of the group get 404.
 - **Which items:** items of a `functional` requirement only (`409 TEST_CASES_STORY_ONLY`). Archived Features and delivered Iterations refuse writes.
-- **Open runs follow the definitions.** `syncOpenRunTestCases(client, iterationId)` runs in the same transaction as every definition write, after `appendMissingItemsToOpenRuns`, and after a new run is created. It locks the open runs FOR SHARE, then the affected run items FOR UPDATE in id order, deletes copies whose definition is gone, upserts the rest (an unchanged copy is not rewritten; a result is never reset by an edit), and bumps `row_version` of every run item it changed. Signed-off runs are never touched.
-- **Strict pass:** `passed` on a run item is refused while any of its test cases is `pending`, `failed` or `blocked` (`409 QA_TEST_CASES_OPEN` with `openTestCases`). `not_applicable` counts as resolved.
-- **Sign-off:** `APPROVED` is refused while any test case of the run is open (same code), since one can be added or re-marked after its story passed. The merge-to-main gate is unchanged.
-- **Pending, Passed, Failed only (amendment 11):** a test case result and a story's Verification are `pending`, `passed` or `failed`. A failed story goes back to the Developers exactly as `returned_to_dev` did (Progress `in_progress`, the "returned" bucket, re-queued to `pending` when a Developer marks it Done). `blocked`, `returned_to_dev` and `not_applicable` are no longer set; rows written before keep them.
-- **Product owner acceptance (amendment 12):** after QA's `APPROVED` or `CONDITIONAL` sign-off, a Product owner or admin passes or fails each run item (`qa_run_items.po_status`, `po_by`, `po_by_login`, `po_at`; migration `20261021010000_qa_po_acceptance.sql`). Failing needs notes, reopens the run and fails the item, which returns the story to the Developers; QA and the Developers are notified (`qa.item.po_rejected`). A QA status write resets the item's acceptance. Merge to main waits until every item of the latest signed-off run is accepted. Test case results are recorded by QA and admins only (`403 TEST_CASE_RESULT_FORBIDDEN`).
+- **Results:** `pending`, `passed` or `failed`. `blocked` and `not_applicable` answer 400; rows written before keep them, and `not_applicable` counts as resolved.
+- **Open runs follow the definitions.** `syncOpenRunTestCases(client, iterationId)` runs in the same transaction as every definition write, after `appendMissingItemsToOpenRuns`, and after a new run is created. It locks the open runs FOR SHARE, then the affected run items FOR UPDATE in id order, deletes copies whose definition is gone, upserts the rest (an unchanged copy is not rewritten; an edit never resets a result), and bumps `row_version` of every run item it changed. Signed-off runs are never touched.
+- **Strict pass:** `passed` on a run item is refused while any of its test cases is `pending`, `failed` or `blocked` (`409 QA_TEST_CASES_OPEN` with `openTestCases`).
+- **Sign-off:** `APPROVED` is refused while any test case of the run is open (same code), since one can be added or re-marked after its story passed. Lock order is run, then run item, then test case; a result write bumps its run item's `row_version`, so the sign-off fingerprint refuses a sign-off that raced one.
 
 ### 7.3 API
 
@@ -581,4 +404,17 @@ Every definition write answers the story's whole set: `{ itemId, testCategories:
 | `DELETE /requirements/:id/items/:itemId/test-cases/:testCaseId` | none | |
 | `PATCH /delivery-projects/:dpId/qa-runs/:runId/items/:itemId/test-cases/:testCaseId` | `{ expectedRowVersion, status?, notes? }` | answers the whole run, like an item write; `409 TEST_CASE_STALE` |
 
-Reads: `RequirementItem.testCategories` (always `[]` on system items), `permissions.canManageTestCases` on the requirement list, `ProjectQaRunItem.testCategories` (`[{ id | null, name, testCases: [{ id, sourceTestCaseId, position, title, expectedResult, status, notes, verifiedBy, verifiedAt, rowVersion }] }]`; an open run also lists categories with no test case yet) and `ProjectQaRunPermissions.canManageTestCases` (open run and qa or admin). The QA report (JSON, Markdown, Excel) carries the test cases; reports frozen before this have no `testCategories` key.
+Reads: `RequirementItem.testCategories`, `permissions.canManageTestCases` on the requirement list, `ProjectQaRunItem.testCategories` (`[{ id | null, name, rowVersion, testCases: [{ id, sourceTestCaseId, position, title, expectedResult, status, notes, verifiedBy, verifiedAt, rowVersion, definitionRowVersion }] }]`; an open run also lists categories with no test case yet), and `permissions.canManageTestCases` and `permissions.canRecordTestCases` on a run (open run, qa or admin). The QA report (JSON, Markdown, Excel) carries the test cases; reports frozen before test cases existed have no `testCategories` key.
+
+## 8. Product owner acceptance
+
+After QA signs a Project run off as `APPROVED` or `CONDITIONAL`, a Product owner or admin checks each item.
+
+`PATCH /delivery-projects/:dpId/qa-runs/:runId/items/:itemId/acceptance` with `{ decision: 'passed'|'failed', expectedRowVersion, notes?, defectSeverity? }`:
+
+- The run must be signed off and not `REJECTED` (409 otherwise); others get 403. A stale `expectedRowVersion` answers 409 `QA_ITEM_STALE`.
+- `passed` sets `po_status = 'passed'` with `po_by`, `po_by_login` and `po_at`, and records `qa.item.po_accepted`.
+- `failed` needs notes (400). It reopens the run (the sign-off is superseded, as on Reopen), adds any item the Iteration holds but the run lacks, and sets the item `failed` with the notes prefixed "Product owner:" and the given severity (default `major`). That returns the story to the Developers like any QA failure. It records `qa.run.reopened` and `qa.item.po_rejected` and notifies as in section 4.2. QA re-checks the story once a Developer marks it Done, and signs off again.
+- Any QA status write resets the item's acceptance to `pending`.
+
+A run item carries `poAcceptance: { status: 'pending'|'passed', acceptedBy, acceptedAt }` and the run carries `permissions.canAccept`. Merge to main waits until every item of the latest signed-off run is accepted (section 3.1).

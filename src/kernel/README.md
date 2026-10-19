@@ -6,8 +6,9 @@ never import from `src/modules/`.**
 
 | Folder | Responsibility |
 |---|---|
-| `auth/` | session lookup contracts and application-wide authentication guards |
-| `config/` | environment validation and application/security configuration |
+| `auth/` | session lookup contracts and application-wide authentication and subscription guards |
+| `composition/` | capability catalog, edition manifests, build profiles, client-policy seam, resolver, and capability guard |
+| `config/` | environment validation, deployment mode, release signing, and application/security configuration |
 | `db/` | database services, PostgreSQL configuration, and Supabase access |
 | `events/` | outbox persistence, topic registration, and event dispatching |
 | `http/` | exception filters and HTTP middleware shared by the application |

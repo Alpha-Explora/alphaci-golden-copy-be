@@ -3,7 +3,7 @@ okf_version: "0.2"
 ---
 # AlphaCI backend knowledge bundle
 
-This bundle describes the current AlphaCI backend as one NestJS deployable. It is organized for progressive disclosure: start with the [constitution](constitution.md), then use the current architecture, capability, pack, and runbook sections. The frontend repository keeps a matching current-state bundle that snapshots this catalog and records the screens that consume it.
+This bundle describes the current AlphaCI backend as one NestJS deployable that runs as a managed service or as a self-hosted appliance on the customer's server. It is organized for progressive disclosure: start with the [constitution](constitution.md), then use the current architecture, capability, pack, and runbook sections. The frontend repository keeps a matching current-state bundle that snapshots this catalog and records the screens that consume it.
 
 ## Foundations
 
@@ -12,8 +12,9 @@ This bundle describes the current AlphaCI backend as one NestJS deployable. It i
 * [Architecture](architecture/) - context ownership, contracts, events, providers, routes, schemas, checks, and decisions.
 * [Capabilities](capabilities/) - capability contract, current registry, and generated matrix.
 * [Packs](packs/) - comparable SaaS, EDU, and Enterprise composition references.
-* [Runbooks](runbooks/) - verification, migrations, outbox, provisioning, authentication, and performance procedures.
-* [Workspace member notifications](operations/workspace-member-notifications.md) - live delivery, migration order, and recipient verification.
+* [Project requirements design](design/project-requirements.md) - Project requirements, Iterations, QA runs, test cases, acceptance, and the merge-to-main gate.
+* [Runbooks](runbooks/) - verification, migrations, outbox, provisioning, on-prem hosts, self-hosted install, authentication, and performance procedures.
+* [Workspace member notifications](operations/workspace-member-notifications.md) - live delivery, settings, and recipient verification.
 
 ## Maintenance
 

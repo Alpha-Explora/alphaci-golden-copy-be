@@ -1,7 +1,7 @@
 ---
 type: "Playbook"
 title: "Migration ledger reconciliation"
-description: "Reconcile checked-in migration files with the configured Supabase migration ledger without re-running applied SQL."
+description: "Reconcile checked-in migration files with a Supabase project's migration ledger without re-running applied SQL."
 tags: [runbook, database, migrations, reconciliation]
 status: stable
 sources:
@@ -16,14 +16,16 @@ sources:
 
 ## Purpose
 
-Use this procedure when migration files and the configured Supabase migration ledger do not describe the same history. The repair marks SQL that is already applied; it does not re-run those migrations.
+Use this procedure when the migration files and a Supabase project's migration ledger do not describe the same history. The repair marks SQL that is already applied; it does not re-run it.
 
-## Current reconciliation facts
+This applies to Supabase-hosted databases only. The self-hosted runner keeps its own ledger, `public.schema_migrations`, with a checksum per file. There, a checksum mismatch means an applied file changed: restore the original file instead of repairing the ledger. See the [database migrations runbook](runbook-database-migrations.md#self-hosted-appliance-plain-postgresql).
+
+## Reconciliation facts
 
 - The migration tree is grouped under six context owners.
-- Filename versions were normalized so every migration version is unique.
-- Extracted ledger migrations are checked into the migration tree.
-- The remaining ledger repair is an operator action against the configured Supabase project, not a local SQL replay.
+- Every migration filename version is unique.
+- Migrations that exist only in the ledger are checked into the tree.
+- The versions listed below are the ones to mark when the hosted ledger lacks them. Check each with `supabase migration list --linked` first. Marking them is an operator action against the configured project, not a local SQL replay.
 
 ## Preconditions
 

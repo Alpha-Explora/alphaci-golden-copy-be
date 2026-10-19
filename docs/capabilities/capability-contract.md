@@ -66,9 +66,13 @@ The kernel `CapabilityGuard` enforces capabilities declared with
 the guard allows the request. When metadata is present, it resolves through the
 subject-scoped `CAPABILITY_RESOLVER.for(...)` path, forwarding the authenticated
 session's optional `tenantId`; a missing capability is returned as a generic
-`404 Not Found`. `SubscriptionGuard` remains a separate Billing-owned check
-that runs after composition, and the capability guard does not inspect
-subscription state.
+`404 Not Found` with the message `Requested capability is not available`.
+Handler metadata overrides class metadata. `SubscriptionGuard` is a separate
+kernel guard that reads Billing through the `SUBSCRIPTION_ACCESS` port and runs
+after composition, and the capability guard does
+not inspect subscription state. Gated controllers declare the guards in the
+order `SessionAuthGuard, CapabilityGuard, SubscriptionGuard`, so an absent
+capability answers 404 before an unentitled request answers 402.
 
 ### HTTP route coverage gate
 
@@ -109,6 +113,30 @@ build profile -> edition manifest -> client policy -> deployment configuration -
 ```
 
 Each layer can narrow the set. No layer can enable a capability that is not present in the preceding layer.
+
+The tenant override layer has no source. The manifest source accepts the request subject and ignores it, so every tenant of one deployment resolves the same set.
+
+### Composition configuration
+
+| Variable | Values | Unset |
+| --- | --- | --- |
+| `ALPHACI_BUILD_PROFILE` | `hosted`, `enterprise` | `enterprise` |
+| `ALPHACI_EDITION` | `saas`, `edu`, `enterprise` | `enterprise` |
+| `ALPHACI_CLIENT` | a client ID registered in `src/packs/enterprise/clients/index.ts` | no client policy |
+| `ALPHACI_CLIENT_CONFIG` | path to a client policy document | no client policy |
+
+An invalid value stops the boot. The edition is read from the environment at startup in every profile. The boot also fails when the edition manifest names a capability outside the build profile. `npm run start:saas`, `start:edu`, `start:enterprise`, and `start:enterprise-client` set the profile, edition, and client together through `scripts/run-edition.mjs`.
+
+### Resolution rules
+
+`src/kernel/composition/capability-resolver.ts` applies these rules:
+
+- A capability is enabled only when every `configurationFlags` path resolves to exactly `true`. A missing or non-boolean value narrows it out.
+- A `not-implemented` record never appears in the resolved set, even when a manifest lists it.
+- A capability whose `requires` key was removed is removed too, until the set stops changing. The result keeps registry order.
+- A duplicate registry key, an unknown or duplicate manifest key, a manifest out of registry order, an unknown `requires` key, or a `requires` cycle is an error.
+
+Three injection tokens carry the composition. `CAPABILITY_RESOLVER` is request-scoped. `DEPLOYMENT_CAPABILITY_RESOLVER` is a singleton for workers and services without a request subject. `CAPABILITY_MANIFEST_SOURCE` is the replaceable manifest seam. `/api/v1/capabilities` reads the deployment set.
 
 A client policy is a deny-only declaration for one client, selected by `ALPHACI_CLIENT` or supplied as a document at `ALPHACI_CLIENT_CONFIG`. It removes capability keys from the edition manifest and cannot introduce one. See [ADR-0009](/architecture/decisions/adr-0009-client-capability-policies.md).
 

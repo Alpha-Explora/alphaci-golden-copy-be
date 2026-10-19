@@ -3,7 +3,7 @@ type: "Decision"
 title: "Configurable deployment targets"
 description: "Keep managed providers as the default and add customer-hosted Compose and Kubernetes targets as configurable options for both the platform and customer projects."
 tags: [architecture, decision, deployment, on-premises, runtime]
-status: draft
+status: stable
 timestamp: "2026-09-25T00:00:00Z"
 sources:
   - id: provider-boundaries
@@ -19,15 +19,15 @@ sources:
 # ADR-0012: Configurable deployment targets
 
 **Decision date:** 2026-09-25
-**Decision status:** Proposed
+**Decision status:** Accepted for `onprem-compose` project targets and self-managed Compose platform hosting. `onprem-k8s` and `self-managed-k8s` remain proposed and are not built.
 **Scope:** Where the AlphaCI platform runs, and where the projects it manages deploy
 
 ## Context
 
 Two different questions are both called "deployment":
 
-1. **Platform hosting**: where AlphaCI itself (API, frontend, PostgreSQL, outbox relay) runs. Today it is managed hosting: the API and outbox cron on Render, the frontend on Vercel, the database on Supabase.
-2. **Project deployment target**: where a customer project that AlphaCI generates pipelines for is deployed. Today every deployment target names a provider (`vercel`, `render`, or `gcp`), and the pipeline generator looks up that provider's workflow fragment. React projects default to Vercel; backend stacks, including .NET, default to Render through a container image.
+1. **Platform hosting**: where AlphaCI itself (API, frontend, PostgreSQL, outbox relay) runs. When this was decided, it was managed hosting only: the API and outbox cron on Render, the frontend on Vercel, the database on Supabase.
+2. **Project deployment target**: where a customer project that AlphaCI generates pipelines for is deployed. Every deployment target names a provider (`vercel`, `render`, or `gcp`), and the pipeline generator looks up that provider's workflow fragment. React projects default to Vercel; backend stacks, including .NET, default to Render through a container image.
 
 Customers now need both to run inside their own network, first on a Windows host through WSL2, later on Linux and Kubernetes. The existing managed paths must keep working unchanged.
 
@@ -70,10 +70,10 @@ requests are optional and separate.
 Render and customer-hosted Compose use the same GHCR image digest across
 environments. Vercel is an explicit exception: each target builds from the
 same pinned commit and records its own immutable deployment ID; it does not
-promise identical build bytes across arbitrary Vercel environments. Today,
-`dev` is not hosted and managed providers assume `main` is hosted by them, so
-branch routing and provider provisioning must change before this example is
-available.
+promise identical build bytes across arbitrary Vercel environments. A project
+created with an `environments` list gets this routing; a project created
+without one keeps the fixed `dev → uat → main` branch pipeline (see
+[project environments](/architecture/project-environments.md)).
 
 The first customer-hosted implementation is `onprem-compose` for customer React and .NET projects, on a Windows host running WSL2, pulling from GHCR over an outbound connection. `onprem-k8s` follows for clients that already run Kubernetes.
 
@@ -100,9 +100,9 @@ Every customer-hosted option follows the same contract:
 
 ## Consequences
 
-- React needs a container image (static build served by nginx or Caddy) for customer-hosted targets; Vercel builds it today.
+- React needs a container image (static build served by nginx or Caddy) for customer-hosted targets; the React scaffold ships a Dockerfile for it.
 - .NET customer-hosted targets are limited to SDK-style .NET in Linux containers; .NET Framework is out of scope.
-- Self-managed platform hosting replaces the Supabase database with PostgreSQL, but the API still calls Supabase Auth. An authentication adapter (OIDC first) is required before the platform runs without Supabase.
+- Self-managed platform hosting runs on plain PostgreSQL with no Supabase (`ALPHACI_DEPLOYMENT_MODE=selfhosted`, `STORAGE_DRIVER=postgres`). Sign-in is GitHub OAuth with the backend's own session cookie, so no Supabase Auth adapter is needed. The install is `deploy/selfhost/` ([self-hosted install](/runbooks/runbook-selfhost-install.md)).
 - Each customer-hosted provider needs a host-side component: a small agent for Compose, Argo CD for Kubernetes.
 
 ## Verification

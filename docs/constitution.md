@@ -30,7 +30,7 @@ The application has six bounded contexts: `identity-access`, `projects`, `pipeli
 
 ## Product axes
 
-Edition, tenancy, deployment target, and feature flag are independent values. Editions compose from capability declarations; they do not create copied domain implementations. A lower configuration layer cannot enable a capability that the build or selected edition does not provide.
+Edition, tenancy, deployment target, deployment mode (`ALPHACI_DEPLOYMENT_MODE`: managed `saas` or `selfhosted`), and feature flag are independent values. Editions compose from capability declarations; they do not create copied domain implementations. A lower configuration layer cannot enable a capability that the build or selected edition does not provide.
 
 The narrowing order is:
 
@@ -46,9 +46,10 @@ Provider implementations belong to Runtime under `src/modules/runtime/infrastruc
 
 ## Events and outbox
 
-The active event mechanism is the PostgreSQL table `platform.outbox_events`, processed by the single compiled relay invoked from `scripts/process-outbox.cjs` and scheduled by `render.yaml`.
+The active event mechanism is the PostgreSQL table `platform.outbox_events`, processed by the platform-ops `OutboxRelayService`. The API runs it on in-process timers, and `scripts/process-outbox.cjs` runs it as a one-shot job that `render.yaml` schedules for the managed deployment.
 
 - The kernel topic registry is the allow-list and every registered topic has one handler.
+- Every consumer claims rows through the same leased `FOR UPDATE SKIP LOCKED` path, so concurrent consumers never deliver one row at the same time.
 - Critical hierarchy assignment transitions insert the state change and outbox row in one transaction.
 - Audit and notification writes are explicit best-effort post-commit observability writes.
 - Delivery is at-least-once. The relay uses short row leases, retry scheduling, and quarantine; handlers must be idempotent.
