@@ -21,6 +21,7 @@ import {
   DEPLOYMENT_TARGETS_QUERY,
   type DeploymentProjectReferenceLookup,
   type DeploymentTargetsQuery,
+  type ServiceRuntimeContract,
 } from '#kernel/ports/deployment-runtime.port';
 import type {
   AssignmentRequestConfig,
@@ -41,20 +42,37 @@ import {
 
 const ONPREM_COMPOSE = 'onprem-compose';
 
-/** What an environment gets when nobody chose: one port per slot, health at /. */
+/**
+ * Container port and health path for a slot whose app has no known contract:
+ * a repository AlphaCI did not scaffold (imported or brought by the customer),
+ * or a slot the project's scaffold does not fill. The values are a guess, so
+ * Hosting shows them for a person to correct.
+ */
+function fallbackSlotRuntime(slot: 'frontend' | 'backend') {
+  return { containerPort: slot === 'frontend' ? 3000 : 4000, healthPath: '/' };
+}
+
+/**
+ * What an environment gets when nobody chose: one port and health path per
+ * slot. A slot the project's scaffold fills takes that app's port and health
+ * path (`serviceRuntime`); any other slot takes the fallback.
+ */
 export function defaultAssignmentConfig(
   slots: ReadonlyArray<string>,
+  serviceRuntime?: ServiceRuntimeContract | null,
 ): AssignmentRequestConfig {
   const known = slots.filter(
     (slot): slot is 'frontend' | 'backend' =>
       slot === 'frontend' || slot === 'backend',
   );
+  const runtime = (slot: 'frontend' | 'backend') =>
+    serviceRuntime?.slot === slot ? serviceRuntime : fallbackSlotRuntime(slot);
   return {
     ports: known.map((slot) => ({
       slot,
-      containerPort: slot === 'frontend' ? 3000 : 4000,
+      containerPort: runtime(slot).containerPort,
     })),
-    health: known.map((slot) => ({ slot, path: '/' })),
+    health: known.map((slot) => ({ slot, path: runtime(slot).healthPath })),
     ingress: { mode: 'direct', publicUrl: null },
   };
 }
@@ -187,6 +205,28 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
     await this.visible(projectId, environmentId, userId);
     return this.repository.current(projectId, environmentId);
   }
+  /**
+   * The container port and health path per slot that an assignment of this
+   * environment starts from, the same ones automatic assignment uses. Hosting
+   * pre-fills its form with them.
+   */
+  async defaults(
+    projectId: string,
+    environmentId: string,
+    userId: string,
+  ): Promise<Pick<AssignmentRequestConfig, 'ports' | 'health'>> {
+    const { project } = await this.visible(projectId, environmentId, userId);
+    const slots = await this.onpremSlots(projectId, environmentId);
+    if (!slots)
+      throw new BadRequestException(
+        'All environment targets must use on-prem Compose.',
+      );
+    const { ports, health } = defaultAssignmentConfig(
+      slots,
+      project.serviceRuntime,
+    );
+    return { ports, health };
+  }
   async assign(
     projectId: string,
     environmentId: string,
@@ -199,7 +239,11 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
       config: AssignmentRequestConfig;
     },
   ) {
-    const environment = await this.visible(projectId, environmentId, userId);
+    const { environment } = await this.visible(
+      projectId,
+      environmentId,
+      userId,
+    );
     const membership = await this.manager(projectId, userId);
     const machineId = input.machineId ?? null;
     if (
@@ -238,7 +282,11 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
   ): Promise<{ assignmentId: string } | null> {
     if (this.config.get('ONPREM_RELEASES_ENABLED') !== 'true') return null;
     try {
-      const environment = await this.visible(projectId, environmentId, userId);
+      const { environment, project } = await this.visible(
+        projectId,
+        environmentId,
+        userId,
+      );
       const slots = await this.onpremSlots(projectId, environmentId);
       if (!slots) return null;
       const current = await this.repository.current(projectId, environmentId);
@@ -253,7 +301,7 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
           return { assignmentId: current.id };
         // A slot was added or removed: reassign on the same machine. Kept
         // slots keep their settings and host ports; new ones get defaults.
-        const defaults = defaultAssignmentConfig(slots);
+        const defaults = defaultAssignmentConfig(slots, project.serviceRuntime);
         const config = current.config;
         const result = await this.assign(projectId, environmentId, userId, {
           machineId: current.machineId,
@@ -285,7 +333,7 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
         machineId: null,
         expectedAssignmentId: null,
         requestId: randomUUID(),
-        config: defaultAssignmentConfig(slots),
+        config: defaultAssignmentConfig(slots, project.serviceRuntime),
       });
       return { assignmentId: result.id };
     } catch (error) {
@@ -361,14 +409,14 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
   ) {
     if (this.config.get('ONPREM_RELEASES_ENABLED') !== 'true')
       throw new ForbiddenException('On-prem delivery is disabled.');
-    if (!(await this.projects.findProjectReference(projectId, userId)))
-      throw new NotFoundException('Project not found.');
+    const project = await this.projects.findProjectReference(projectId, userId);
+    if (!project) throw new NotFoundException('Project not found.');
     const environment = await this.projects.findProjectEnvironment(
       projectId,
       environmentId,
     );
     if (!environment) throw new NotFoundException('Environment not found.');
-    return environment;
+    return { environment, project };
   }
   private async manager(projectId: string, userId: string) {
     if (!canManageHosting(await this.roles.findAppRole(userId)))

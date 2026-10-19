@@ -173,6 +173,24 @@ export interface DeploymentProjectReference {
   repoUrl?: string | null;
   workflowPath?: string | null;
   projectOptions?: Record<string, unknown> | null;
+  /**
+   * How the app AlphaCI scaffolded for this repository runs in its container.
+   * Null for a repository AlphaCI did not scaffold (an imported repository).
+   */
+  serviceRuntime?: ServiceRuntimeContract | null;
+}
+
+/**
+ * What a generated app's container serves: the port it listens on and the
+ * path that answers a health check. Projects declares one per scaffold, next to
+ * the Dockerfile that exposes the port; Runtime uses it as the on-prem default.
+ */
+export interface ServiceRuntimeContract {
+  /** The deployment slot this app fills. */
+  slot: 'frontend' | 'backend';
+  containerPort: number;
+  /** Starts with `/`. */
+  healthPath: string;
 }
 
 export interface DeploymentProjectReferenceLookup {

@@ -54,9 +54,10 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    replacement. The timer starts once enrollment succeeds; the first authenticated
    check-in runs before it, and if that check-in fails the timer keeps retrying.
 6. Wait for Connected. While it is the workspace's only connected machine,
-   new non-production on-prem environments are assigned to it automatically
-   (container port 3000 for a frontend, 4000 for a backend, health at `/`);
-   adjust them from Hosting if the application differs. With several connected
+   new non-production on-prem environments are assigned to it automatically,
+   with the container port and health path of the app AlphaCI scaffolded for
+   the project (see "Default container ports" below). Adjust them from Hosting
+   if the application differs. With several connected
    machines, Hosting asks which one to use. AlphaCI picks each host port
    (from 8080 upward, distinct per machine). Production needs an HTTPS address,
    so it is assigned from Hosting: either an existing HTTPS ingress URL, or the
@@ -72,6 +73,32 @@ hosts only, in CI's secret store). It never belongs on an enrolled machine.
    revocation. Revoking also ends the machine's pending replacement enrollment,
    so that code stops working. To keep the environments on the replacement,
    consume its enrollment before revoking.
+
+### Default container ports
+
+Automatic assignment and the Hosting form start from the container port and
+health path of the app AlphaCI scaffolded for the project. Each repository of a
+two-repository project uses its own stack.
+
+| Scaffolded app | Slot | Container port | Health path |
+|---|---|---|---|
+| NestJS | backend | 3000 | `/health` |
+| Node.js | backend | 3000 | `/health` |
+| .NET | backend | 8080 | `/health` |
+| Next.js | frontend | 3000 | `/` |
+| React (nginx) | frontend | 8080 | `/` |
+
+The Node.js starter has no HTTP server yet. Add one that listens on `PORT` and
+answers `/health`, or change the health path in Hosting.
+
+A repository AlphaCI did not scaffold (an imported repository), or a slot the
+project's stack does not fill, starts from container port 3000 for a frontend
+and 4000 for a backend, with health at `/`. Set the real values in Hosting.
+
+An environment assigned before this table existed keeps its stored ports. If
+its health check fails because the port is wrong, open the environment in
+Hosting, choose **Change machine or ports**, set the container port and health
+path from the table, and save. The next deployment uses them.
 
 ## Automatic HTTPS address (tunnel)
 

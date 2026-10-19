@@ -8,6 +8,7 @@ import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
 } from '#kernel/ports/deployment-runtime.port';
 import { ProjectsRepository } from './infrastructure/projects.repository';
+import { scaffoldRuntimeContract } from './scaffold.builder';
 
 @Injectable()
 class ProjectReferenceLookupAdapter implements DeploymentProjectReferenceLookup {
@@ -29,6 +30,10 @@ class ProjectReferenceLookupAdapter implements DeploymentProjectReferenceLookup 
           repoUrl: project.repo_url,
           workflowPath: project.workflow_path,
           projectOptions: project.project_options,
+          // Only a repository AlphaCI scaffolded records a project type. Each
+          // row of a two-repository project has its own, so each gets its
+          // own slot's contract.
+          serviceRuntime: scaffoldRuntimeContract(project.project_type_id),
         }
       : null;
   }

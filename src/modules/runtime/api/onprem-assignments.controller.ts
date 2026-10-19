@@ -46,6 +46,19 @@ export class OnpremAssignmentsController {
       req.session.user!.id,
     );
   }
+  /** Container port and health path per slot to start an assignment from. */
+  @Get('defaults')
+  defaults(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('environmentId', ParseUUIDPipe) environmentId: string,
+    @Req() req: Request,
+  ) {
+    return this.assignments.defaults(
+      projectId,
+      environmentId,
+      req.session.user!.id,
+    );
+  }
   @Post()
   assign(
     @Param('projectId', ParseUUIDPipe) projectId: string,
