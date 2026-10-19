@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import {
   BadGatewayException,
@@ -657,6 +658,32 @@ export class ReleaseRegistryService {
   }
 
   /** What a host must deploy: its environment's in-flight, signed deployments. */
+  /**
+   * The registry login hosts pull release images with: ONPREM_REGISTRY_TOKEN_FILE
+   * (a token that can read the organization's packages) and
+   * ONPREM_REGISTRY_USERNAME. Null when not configured, and the host then
+   * pulls with whatever login its Docker already has.
+   */
+  private registryPullCredential(): {
+    server: string;
+    username: string;
+    password: string;
+  } | null {
+    const file = this.configService.get<string>('ONPREM_REGISTRY_TOKEN_FILE');
+    if (!file) return null;
+    try {
+      const password = readFileSync(file, 'utf8').trim();
+      if (!password) return null;
+      return {
+        server: this.configService.get<string>('ONPREM_REGISTRY_SERVER') || 'ghcr.io',
+        username: this.configService.get<string>('ONPREM_REGISTRY_USERNAME') || 'alphaci',
+        password,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async hostAssignments(token: string) {
     if (this.machineAssignments) {
       this.assertOnpremEnabled();
@@ -726,11 +753,20 @@ export class ReleaseRegistryService {
                   new Set(pending.map((entry) => entry.bindingId)),
                 )
               : new Map<string, ServiceLink>();
+          // The images are private packages; a host has no registry login of
+          // its own, so it is lent the install's read-only pull credential for
+          // the pull, over this authenticated machine channel.
+          const registry = pending.length ? this.registryPullCredential() : null;
           return pending.map(({ bindingId, item }) => {
             const link = links.get(bindingId);
-            return link
-              ? { ...item, assignment: { ...item.assignment, link } }
-              : item;
+            return {
+              ...item,
+              assignment: {
+                ...item.assignment,
+                ...(link ? { link } : {}),
+                ...(registry ? { registry } : {}),
+              },
+            };
           });
         },
       );

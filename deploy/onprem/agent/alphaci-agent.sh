@@ -107,11 +107,29 @@ deploy() {
   fi
 
   report "$id" deploying || return 1
+  # Private images: AlphaCI lends its read-only pull credential with the
+  # assignment. Log in to a throwaway Docker config for these pulls only, so
+  # the credential is never left in the host's own Docker login.
+  local registry_config=""
+  if jq -e '.assignment.registry.password // empty' "$1" > /dev/null 2>&1; then
+    registry_config=$(mktemp -d)
+    jq -r '.assignment.registry.password' "$1" |
+      DOCKER_CONFIG="$registry_config" "$DOCKER" login "$(jq -r '.assignment.registry.server' "$1")" \
+        -u "$(jq -r '.assignment.registry.username' "$1")" --password-stdin > /dev/null 2>&1 ||
+      log "deployment $id: registry login failed; pulling with the host's own login"
+  fi
   while IFS='=' read -r key reference; do
     case "$key" in
-      ALPHACI_IMAGE_*) "$DOCKER" pull "$reference" > /dev/null || pulled=0 ;;
+      ALPHACI_IMAGE_*)
+        if [ -n "$registry_config" ]; then
+          DOCKER_CONFIG="$registry_config" "$DOCKER" pull "$reference" > /dev/null || pulled=0
+        else
+          "$DOCKER" pull "$reference" > /dev/null || pulled=0
+        fi
+        ;;
     esac
   done < "$next"
+  [ -z "$registry_config" ] || rm -rf "$registry_config"
 
   if [ "$pulled" = 0 ]; then
     log "deployment $id: an image could not be pulled; nothing changed"
