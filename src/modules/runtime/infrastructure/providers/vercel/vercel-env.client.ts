@@ -32,6 +32,7 @@ import {
   mapVercelBuildEventLine,
   mapVercelDeployHistory,
   mapVercelRuntimeLogLine,
+  mergeNewestFirst,
   type VercelBuildEventEntry,
   type VercelDeploymentRow,
   type VercelRuntimeLogEntry,
@@ -667,7 +668,37 @@ export class VercelEnvClient implements DeploymentProvider {
       deployments?: VercelDeploymentRow[];
     };
 
-    return mapVercelDeployHistory(payload.deployments);
+    return mergeNewestFirst(
+      mapVercelDeployHistory(payload.deployments),
+      await this.recentProductionDeployments(input),
+    );
+  }
+
+  /**
+   * Production deployments on their own. The newest 20 across every branch
+   * are often all previews (each dev and uat push is one), which left
+   * production with no history: nothing to show on the Production tab and
+   * nothing to roll back to. Best effort: a failure keeps the list above.
+   */
+  private async recentProductionDeployments(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderDeployEvent[]> {
+    try {
+      const response = await fetch(
+        this.withInputScope(
+          `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&target=production&limit=10`,
+          input,
+        ),
+        { headers: this.headers(input.token) },
+      );
+      if (!response.ok) return [];
+      const payload = (await response.json()) as {
+        deployments?: VercelDeploymentRow[];
+      };
+      return mapVercelDeployHistory(payload.deployments);
+    } catch {
+      return [];
+    }
   }
 
   /**

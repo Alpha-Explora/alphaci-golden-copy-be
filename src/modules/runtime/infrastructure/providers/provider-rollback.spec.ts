@@ -11,6 +11,66 @@ const ok = (body: unknown) => ({
 describe('provider rollback', () => {
   afterEach(() => jest.restoreAllMocks());
 
+  it('Vercel: history adds the production deployments the newest 20 previews pushed out, once each, newest first', async () => {
+    const row = (uid: string, createdAt: number, target: string | null) => ({
+      uid,
+      target,
+      readyState: 'READY',
+      createdAt,
+    });
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        ok({
+          deployments: [row('dpl_p2', 300, null), row('dpl_p1', 200, null)],
+        }),
+      )
+      .mockResolvedValueOnce(
+        ok({
+          deployments: [
+            row('dpl_prod2', 100, 'production'),
+            row('dpl_prod1', 50, 'production'),
+          ],
+        }),
+      );
+    global.fetch = fetchMock;
+
+    const events = await new VercelEnvClient().getDeployHistory({
+      token: 'vc',
+      targetId: 'prj_1',
+      vercelTeamId: 'team_1',
+    });
+    expect(events.map(({ id, environment }) => [id, environment])).toEqual([
+      ['dpl_p2', 'preview'],
+      ['dpl_p1', 'preview'],
+      ['dpl_prod2', 'production'],
+      ['dpl_prod1', 'production'],
+    ]);
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'https://api.vercel.com/v6/deployments?projectId=prj_1&target=production&limit=10&teamId=team_1',
+    );
+  });
+
+  it('Vercel: a failed production read leaves the recent history as it was', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        ok({
+          deployments: [{ uid: 'dpl_p1', readyState: 'READY', createdAt: 1 }],
+        }),
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      });
+    const events = await new VercelEnvClient().getDeployHistory({
+      token: 'vc',
+      targetId: 'prj_1',
+    });
+    expect(events.map(({ id }) => id)).toEqual(['dpl_p1']);
+  });
+
   it('Render: posts the chosen deploy to the rollback endpoint and reports the new deploy', async () => {
     const fetchMock = jest
       .fn()
