@@ -448,6 +448,7 @@ All checks stay allow-lists, never "not member" (ADR-0013 rule 2). New or change
 | `canCreateRun`, `canSignOff`, `canDispatchAutomation` | qa, lead, admin | unchanged |
 | `canReopenRun`, `canMergeQaPromotion` | lead, admin | unchanged |
 | `canRequestRetest` | member, lead, admin | kept only for the compatibility alias in 4.3 |
+| `canManageTestCases` | qa, admin | test case categories and test cases under a User story (section 7) |
 
 `personaAllowsRole` and `targetPersona` stop gating anything for Project runs. The column remains as data on legacy rows. Admins keep every action. Update `PERSONA_WORKFLOW_SPEC.md` (Verification Execution, QA Checklists, My QA items and Release Promotion rows) in the implementation change.
 
@@ -541,3 +542,41 @@ Documentation changes in the implementation change: ADR-0014 (Project requiremen
 5. **Notification link goes to the frontend repository first.** `projectId` on a Project-run notification is the Project's repository with a `frontend` deployment target (`env_provisioning.project_deployment_targets.slot = 'frontend'`, read through a port owned by the runtime module, not a cross-schema query), oldest first; with none, the Project's oldest linked repository. This replaces the "oldest repository" rule in 4.2.
 
 This file lives in `docs/design/`, which no index links. Existing specs live in `docs/superpowers/specs/`; move it there if the maintainers prefer one location.
+
+## 7. Test cases under a User story (ADR-0014, amendment 10)
+
+QA writes how a story is tested: categories of test cases ("Happy path", "Validation", "Session") under a User story, and the test cases inside them. A run records QA's result per test case.
+
+### 7.1 Model
+
+Migration `supabase/migrations/projects/20261020010000_qa_test_cases.sql` (additive; rollback `supabase/rollbacks/20261020010000_qa_test_cases_down.sql` fails closed while any row exists).
+
+| Table | Holds | Key points |
+|---|---|---|
+| `qa_test_case_categories` | `item_id` (the story, cascade), `position`, `name` (1 to 120), `row_version` | unique `(item_id, lower(name))`; at most 30 per story |
+| `qa_test_cases` | `category_id` (cascade), `position`, `title` (1 to 300), `expected_result` (max 2000), `row_version` | at most 100 per category |
+| `qa_run_test_cases` | `run_id`, `run_item_id` (cascade), `source_test_case_id` / `source_category_id` (SET NULL), snapshot of category name and position, title, expected result, `status`, `notes`, verifier, `row_version` | unique `(run_item_id, source_test_case_id)` is the sync's upsert key; a verifier is set exactly when `status <> 'pending'` |
+
+### 7.2 Rules
+
+- **Who:** `canManageTestCases` (qa, admin) writes definitions; `canSetVerification` (qa, lead, admin) records results. Non-members of the group get 404.
+- **Which items:** items of a `functional` requirement only (`409 TEST_CASES_STORY_ONLY`). Archived Features and delivered Iterations refuse writes.
+- **Open runs follow the definitions.** `syncOpenRunTestCases(client, iterationId)` runs in the same transaction as every definition write, after `appendMissingItemsToOpenRuns`, and after a new run is created. It locks the open runs FOR SHARE, then the affected run items FOR UPDATE in id order, deletes copies whose definition is gone, upserts the rest (an unchanged copy is not rewritten; a result is never reset by an edit), and bumps `row_version` of every run item it changed. Signed-off runs are never touched.
+- **Strict pass:** `passed` on a run item is refused while any of its test cases is `pending`, `failed` or `blocked` (`409 QA_TEST_CASES_OPEN` with `openTestCases`). `not_applicable` counts as resolved.
+- **Sign-off:** `APPROVED` is refused while any test case of the run is open (same code), since one can be added or re-marked after its story passed. The merge-to-main gate is unchanged.
+
+### 7.3 API
+
+Every definition write answers the story's whole set: `{ itemId, testCategories: [{ id, position, name, rowVersion, testCases: [{ id, position, title, expectedResult, rowVersion }] }] }`.
+
+| Method and path | Body | Notes |
+|---|---|---|
+| `POST /requirements/:id/items/:itemId/test-categories` | `{ name }` | 201; `409 TEST_CATEGORY_NAME_TAKEN`, `409 TEST_CASES_LIMIT` |
+| `PATCH /requirements/:id/items/:itemId/test-categories/:categoryId` | `{ name, expectedRowVersion }` | `409 TEST_CASE_STALE` |
+| `DELETE /requirements/:id/items/:itemId/test-categories/:categoryId` | none | deletes its test cases too |
+| `POST /requirements/:id/items/:itemId/test-categories/:categoryId/test-cases` | `{ title, expectedResult? }` | 201 |
+| `PATCH /requirements/:id/items/:itemId/test-cases/:testCaseId` | `{ expectedRowVersion, title?, expectedResult? }` | `null` clears the expected result |
+| `DELETE /requirements/:id/items/:itemId/test-cases/:testCaseId` | none | |
+| `PATCH /delivery-projects/:dpId/qa-runs/:runId/items/:itemId/test-cases/:testCaseId` | `{ expectedRowVersion, status?, notes? }` | answers the whole run, like an item write; `409 TEST_CASE_STALE` |
+
+Reads: `RequirementItem.testCategories` (always `[]` on system items), `permissions.canManageTestCases` on the requirement list, `ProjectQaRunItem.testCategories` (`[{ id | null, name, testCases: [{ id, sourceTestCaseId, position, title, expectedResult, status, notes, verifiedBy, verifiedAt, rowVersion }] }]`; an open run also lists categories with no test case yet) and `ProjectQaRunPermissions.canManageTestCases` (open run and qa or admin). The QA report (JSON, Markdown, Excel) carries the test cases; reports frozen before this have no `testCategories` key.

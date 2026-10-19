@@ -317,6 +317,8 @@ describe('QaProjectRunsRepository.appendMissingItemsToOpenRuns', () => {
     for (const rowCount of rowCounts) {
       clientQuery.mockResolvedValueOnce({ rows: [], rowCount });
     }
+    // The test case sync's own run lock (it re-reads the open runs).
+    clientQuery.mockResolvedValueOnce({ rows: [] });
     const withTransaction = jest.fn(
       (work: (client: { query: typeof clientQuery }) => Promise<unknown>) =>
         work({ query: clientQuery }),
@@ -356,6 +358,13 @@ describe('QaProjectRunsRepository.appendMissingItemsToOpenRuns', () => {
       'run-2',
       'it-3',
     ]);
+    // Then the stories' test cases follow them, in the same transaction.
+    const [syncSql, syncParams] = clientQuery.mock.calls[3] as [
+      string,
+      unknown[],
+    ];
+    expect(syncSql).toContain('FOR SHARE');
+    expect(syncParams).toEqual(['it-3']);
   });
 
   it('does nothing without an open run', async () => {

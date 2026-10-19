@@ -22,6 +22,7 @@ import {
   canCreateRun,
   canAddEvidence,
   canDispatchAutomation,
+  canManageTestCases,
   canReopenRun,
   canSetReturnedToDev,
   canSetVerification,
@@ -39,11 +40,16 @@ import {
   QaRunItemsChangedError,
   QaRunNotOpenError,
   QaRunsRepository,
+  QaTestCasesOpenError,
   type QaProjectRunRow,
   type QaRunItemRow,
   type QaRunRepositoryRow,
   type QaRunSignoffRow,
 } from '../../infrastructure/qa-runs.repository';
+import {
+  QaTestCasesRepository,
+  type QaRunTestCaseRow,
+} from '../../infrastructure/qa-test-cases.repository';
 import { QaAccessService } from '../qa-checklists/qa-access.service';
 import type { ProjectIterationRef } from '../qa-checklists/project-iterations.contracts';
 import { ProjectIterationsService } from '../qa-checklists/project-iterations.service';
@@ -56,8 +62,10 @@ import {
   qaNoRepositories,
   qaNoRequirements,
   qaProgressNotDone,
+  qaTestCasesOpen,
   qaUatBranchMissing,
   qaUatHeadUnreadable,
+  testCaseStale,
   verificationForbidden,
   verificationStatusInvalid,
 } from '../qa-checklists/qa-errors';
@@ -72,6 +80,7 @@ import {
 } from './qa-project-report';
 import { toSignoffHistoryEntry } from './qa-report.mapper';
 import { computeSummary, toRunItem, toSignoff } from './qa-run.mappers';
+import { groupRunTestCases } from './qa-run-test-cases';
 import {
   QA_PROJECT_RUN_BRANCH,
   QA_RUNS_LIST_DEFAULT_LIMIT,
@@ -96,6 +105,7 @@ import {
   type QaUatHeadReading,
 } from './qa-uat-heads.service';
 import type { PatchQaRunItemDto } from './dto/patch-qa-run-item.dto';
+import type { PatchRunTestCaseDto } from './dto/patch-run-test-case.dto';
 import type { SignoffQaRunDto } from './dto/signoff-qa-run.dto';
 
 type AuditEventSink = Pick<AuditEventPublisher, 'recordProjectEvent'>;
@@ -205,6 +215,7 @@ export class QaProjectRunsService {
     private readonly automation: QaAutomationService,
     private readonly attachments: QaRunAttachmentsService,
     private readonly iterations: ProjectIterationsService,
+    private readonly testCases: QaTestCasesRepository,
     // Explicit tokens: the sink aliases are type aliases, which TypeScript
     // emits as `Object` in design:paramtypes, so without @Inject Nest finds no
     // provider and @Optional() silently injects undefined.
@@ -399,6 +410,9 @@ export class QaProjectRunsService {
     const itemsByRequirement = await this.checklists.listItemsByChecklistIds(
       rows.map((row) => row.id),
     );
+    const testCategories = await this.requirementsService.testCategoriesFor(
+      [...itemsByRequirement.values()].flat().map((item) => item.id),
+    );
 
     const run = await this.pickRunForFeed(iteration.id, readings);
     const assembled = run
@@ -422,7 +436,12 @@ export class QaProjectRunsService {
         const runItem = runItemBySource.get(item.id) ?? null;
         const entry: QaMyItemsFeedItem = {
           requirement: { id: row.id, name: row.name, kind: row.kind },
-          item: this.requirementsService.toItem(item, role, row),
+          item: this.requirementsService.toItem(
+            item,
+            role,
+            row,
+            testCategories.get(item.id),
+          ),
           runId: runItem ? (run?.id ?? null) : null,
           runItem,
         };
@@ -531,10 +550,17 @@ export class QaProjectRunsService {
     const signoff = result.created
       ? null
       : await this.runs.findActiveSignoff(result.run.id);
+    // A new run copies its stories' test cases (which bumps those items'
+    // row_version), so it renders from the rows as they are now.
+    if (result.created) {
+      await this.testCases.syncOpenRuns(iteration.id);
+    }
     const run = await this.assembleRun({
       project,
       run: result.run,
-      items: result.items,
+      items: result.created
+        ? await this.runs.listItemsByRunId(result.run.id)
+        : result.items,
       signoff,
       coverage: result.repositories,
       role,
@@ -602,11 +628,18 @@ export class QaProjectRunsService {
         },
         runActor,
         item.status,
-        { requireProgressDoneForPass: true, resetProgressOnReturn: true },
+        {
+          requireProgressDoneForPass: true,
+          resetProgressOnReturn: true,
+          requireTestCasesResolvedForPass: true,
+        },
       );
     } catch (error) {
       if (error instanceof QaProgressNotDoneError) {
         throw qaProgressNotDone();
+      }
+      if (error instanceof QaTestCasesOpenError) {
+        throw qaTestCasesOpen(error.open, 'item');
       }
       if (error instanceof QaRunNotOpenError) {
         throw new ConflictException(
@@ -643,6 +676,63 @@ export class QaProjectRunsService {
     return this.reload(project, run, role, actor);
   }
 
+  /**
+   * Records QA's result on one test case of a story in an open run (the
+   * Verification track: qa, lead, admin). Answers the whole run, like an
+   * item write, so the story's counts and controls re-render together.
+   */
+  async updateTestCase(
+    deliveryProjectId: string,
+    actor: QaRunActorContext,
+    runId: string,
+    itemId: string,
+    testCaseId: string,
+    dto: PatchRunTestCaseDto,
+  ): Promise<ProjectQaRun> {
+    const project = await this.projectContext.requireProject(
+      deliveryProjectId,
+      actor.userId,
+    );
+    const run = await this.requireRun(deliveryProjectId, runId);
+    await this.requireItem(run.id, itemId);
+    await this.iterations.assertRowWritable(run);
+    this.requireRunOpen(run);
+
+    const role = await this.access.findAppRole(actor.userId);
+    if (!canSetVerification(role)) {
+      throw verificationForbidden();
+    }
+
+    let updated: QaRunTestCaseRow | null;
+    try {
+      updated = await this.testCases.recordResult(
+        run.id,
+        itemId,
+        testCaseId,
+        dto.expectedRowVersion,
+        { status: dto.status, notes: dto.notes },
+        { id: actor.userId, login: actor.userLogin },
+      );
+    } catch (error) {
+      if (error instanceof QaRunNotOpenError) {
+        throw new ConflictException(
+          'This run is signed off. Reopen it to make changes.',
+        );
+      }
+      throw error;
+    }
+    if (!updated) {
+      const exists = (await this.testCases.listForRun(run.id)).some(
+        (row) => row.id === testCaseId && row.run_item_id === itemId,
+      );
+      if (!exists) {
+        throw new NotFoundException('Test case not found in this run');
+      }
+      throw testCaseStale(dto.expectedRowVersion);
+    }
+    return this.reload(project, run, role, actor);
+  }
+
   async signoff(
     deliveryProjectId: string,
     actor: QaRunActorContext,
@@ -667,6 +757,12 @@ export class QaProjectRunsService {
     const items = await this.runs.listItemsByRunId(run.id);
     this.validateVerdict(dto, items);
     if (dto.verdict === 'APPROVED') {
+      // A story passes only with its test cases resolved, but one can be
+      // added, or re-marked failed, after the story passed.
+      const openTestCases = await this.testCases.countOpenForRun(run.id);
+      if (openTestCases > 0) {
+        throw qaTestCasesOpen(openTestCases, 'run');
+      }
       await this.assertRunCoversIteration(run);
     }
 
@@ -1044,6 +1140,7 @@ export class QaProjectRunsService {
     const sourceIds = items
       .map((item) => item.source_item_id)
       .filter((id): id is string => id !== null);
+    const runIsOpen = run.status === 'open';
     const [
       priorSummaries,
       progressBySource,
@@ -1051,6 +1148,8 @@ export class QaProjectRunsService {
       changed,
       attachmentCounts,
       iterationRef,
+      testCaseCopies,
+      liveTestCategories,
     ] = await Promise.all([
       this.runs.findPriorItemSummaries(
         items
@@ -1065,7 +1164,17 @@ export class QaProjectRunsService {
       ),
       this.attachments.countsByItem(run.id),
       this.iterations.findRef(run.iteration_id),
+      this.testCases.listForRun(run.id),
+      runIsOpen
+        ? this.requirementsService.testCategoriesFor(sourceIds)
+        : Promise.resolve(null),
     ]);
+    const copiesByItem = new Map<string, QaRunTestCaseRow[]>();
+    for (const copy of testCaseCopies) {
+      const list = copiesByItem.get(copy.run_item_id) ?? [];
+      list.push(copy);
+      copiesByItem.set(copy.run_item_id, list);
+    }
 
     const repositories = buildHeadStatuses(
       project.repositories,
@@ -1101,6 +1210,12 @@ export class QaProjectRunsService {
         acceptanceCriteria: row.acceptance_criteria,
         progress,
         attachmentCount: attachmentCounts.get(row.id) ?? 0,
+        testCategories: groupRunTestCases(
+          copiesByItem.get(row.id) ?? [],
+          liveTestCategories && row.source_item_id
+            ? (liveTestCategories.get(row.source_item_id) ?? [])
+            : null,
+        ),
       };
     });
 
@@ -1115,6 +1230,7 @@ export class QaProjectRunsService {
         canSignOff: open && canSignOff(role),
         canReopen: run.status !== 'open' && writable && canReopenRun(role),
         canDispatch: open && canDispatchAutomation(role),
+        canManageTestCases: open && canManageTestCases(role),
       },
       attachments: {
         enabled: this.attachments.isEnabled(),

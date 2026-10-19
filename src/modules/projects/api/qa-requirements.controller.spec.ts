@@ -11,6 +11,7 @@ import { CapabilityGuard } from '#kernel/composition/index.js';
 import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
 import { QaProjectRunsService } from '../application/qa-runs/qa-project-runs.service';
 import { QaRequirementsService } from '../application/qa-checklists/qa-requirements.service';
+import { QaTestCasesService } from '../application/qa-checklists/qa-test-cases.service';
 import {
   DeliveryProjectQaMyItemsController,
   DeliveryProjectQaRunsController,
@@ -49,6 +50,7 @@ async function createApp() {
     create: jest.fn(),
     getById: jest.fn().mockResolvedValue({ id: 'run-1' }),
     updateItem: jest.fn().mockResolvedValue({ id: 'run-1' }),
+    updateTestCase: jest.fn().mockResolvedValue({ id: 'run-1' }),
     signoff: jest.fn().mockResolvedValue({ id: 'run-1' }),
     reopen: jest.fn().mockResolvedValue({ id: 'run-1' }),
     myItems: jest.fn().mockResolvedValue({ returned: [] }),
@@ -56,6 +58,15 @@ async function createApp() {
   };
   const dispatch = {
     dispatch: jest.fn().mockResolvedValue({ dispatched: [], failed: [] }),
+  };
+  const story = { itemId: ITEM, testCategories: [] };
+  const testCases = {
+    createCategory: jest.fn().mockResolvedValue(story),
+    updateCategory: jest.fn().mockResolvedValue(story),
+    deleteCategory: jest.fn().mockResolvedValue(story),
+    createTestCase: jest.fn().mockResolvedValue(story),
+    updateTestCase: jest.fn().mockResolvedValue(story),
+    deleteTestCase: jest.fn().mockResolvedValue(story),
   };
 
   const module = await Test.createTestingModule({
@@ -68,6 +79,7 @@ async function createApp() {
     ],
     providers: [
       { provide: QaRequirementsService, useValue: requirements },
+      { provide: QaTestCasesService, useValue: testCases },
       { provide: QaProjectRunsService, useValue: projectRuns },
       { provide: QaAutomationDispatchService, useValue: dispatch },
     ],
@@ -94,7 +106,7 @@ async function createApp() {
     }),
   );
   await app.init();
-  return { app, requirements, projectRuns, dispatch };
+  return { app, requirements, projectRuns, dispatch, testCases };
 }
 
 describe('requirements and Project run controllers', () => {
@@ -260,6 +272,83 @@ describe('requirements and Project run controllers', () => {
       ITEM,
       'user-1',
     );
+  });
+
+  it('routes the test case writes of a story, each with a validated body', async () => {
+    const CAT = '33333333-3333-4333-8333-333333333333';
+    const CASE = '44444444-4444-4444-8444-444444444444';
+    const base = `/requirements/${ID}/items/${ITEM}`;
+
+    await http()
+      .post(`${base}/test-categories`)
+      .send({ name: 'Happy path' })
+      .expect(201);
+    expect(fixture.testCases.createCategory).toHaveBeenCalledWith(
+      ID,
+      ITEM,
+      'user-1',
+      { name: 'Happy path' },
+    );
+    await http().post(`${base}/test-categories`).send({ name: '' }).expect(400);
+
+    await http()
+      .patch(`${base}/test-categories/${CAT}`)
+      .send({ name: 'Session' })
+      .expect(400);
+    await http()
+      .patch(`${base}/test-categories/${CAT}`)
+      .send({ name: 'Session', expectedRowVersion: 1 })
+      .expect(200);
+    await http().delete(`${base}/test-categories/${CAT}`).expect(200);
+    expect(fixture.testCases.deleteCategory).toHaveBeenCalledWith(
+      ID,
+      ITEM,
+      CAT,
+      'user-1',
+    );
+
+    await http()
+      .post(`${base}/test-categories/${CAT}/test-cases`)
+      .send({ title: 'Logs in', expectedResult: 'Profile shown' })
+      .expect(201);
+    await http()
+      .post(`${base}/test-categories/${CAT}/test-cases`)
+      .send({ title: 'Logs in', steps: 'unknown field' })
+      .expect(400);
+    await http()
+      .patch(`${base}/test-cases/${CASE}`)
+      .send({ expectedResult: null, expectedRowVersion: 2 })
+      .expect(200);
+    await http().delete(`${base}/test-cases/${CASE}`).expect(200);
+    expect(fixture.testCases.deleteTestCase).toHaveBeenCalledWith(
+      ID,
+      ITEM,
+      CASE,
+      'user-1',
+    );
+  });
+
+  it('records a test case result in a Project run with a known status', async () => {
+    const CASE = '44444444-4444-4444-8444-444444444444';
+    const path = `/delivery-projects/${ID}/qa-runs/run-1/items/${ITEM}/test-cases/${CASE}`;
+
+    await http()
+      .patch(path)
+      .send({ status: 'not_applicable', expectedRowVersion: 1 })
+      .expect(200);
+    expect(fixture.projectRuns.updateTestCase).toHaveBeenCalledWith(
+      ID,
+      expect.objectContaining({ userId: 'user-1' }),
+      'run-1',
+      ITEM,
+      CASE,
+      { status: 'not_applicable', expectedRowVersion: 1 },
+    );
+    await http()
+      .patch(path)
+      .send({ status: 'returned_to_dev', expectedRowVersion: 1 })
+      .expect(400);
+    await http().patch(path).send({ status: 'passed' }).expect(400);
   });
 
   it('PATCH requirement and item need their version guards', async () => {

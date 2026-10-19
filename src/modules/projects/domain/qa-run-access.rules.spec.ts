@@ -2,6 +2,7 @@ import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
 import {
   canCreateRun,
   canDispatchAutomation,
+  canManageTestCases,
   canManageRequirements,
   canMergeQaPromotion,
   canReopenRun,
@@ -28,6 +29,7 @@ const EXPECTED: Array<
   ['canReopenRun', canReopenRun, ['admin', 'lead']],
   ['canMergeQaPromotion', canMergeQaPromotion, ['admin', 'lead']],
   ['canRequestRetest', canRequestRetest, ['admin', 'lead', 'member']],
+  ['canManageTestCases', canManageTestCases, ['admin', 'qa']],
 ];
 
 describe.each(EXPECTED)('%s', (_name, rule, allowed) => {

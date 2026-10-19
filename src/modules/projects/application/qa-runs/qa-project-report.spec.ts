@@ -85,6 +85,7 @@ const run = (items: ProjectQaRunItem[]): ProjectQaRun =>
       canSignOff: false,
       canReopen: true,
       canDispatch: false,
+      canManageTestCases: false,
     },
     attachments: { enabled: true, canAdd: false },
     automation: { verify: null, quality: null },
@@ -222,5 +223,73 @@ describe('qa-report/v2 attachments', () => {
     });
 
     expect(renderQaProjectReportMarkdown(before)).not.toContain('Screenshot');
+  });
+});
+
+describe('qa-report/v2 test cases', () => {
+  const withTestCases = buildQaProjectReport({
+    generatedAt: '2026-10-01T02:00:00.000Z',
+    frozen: true,
+    run: run([
+      item({
+        testCategories: [
+          {
+            id: 'cat-1',
+            name: 'Happy path',
+            rowVersion: null,
+            testCases: [
+              {
+                id: 'rtc-1',
+                sourceTestCaseId: 'tc-1',
+                position: 0,
+                title: 'Logs in | remembers me',
+                expectedResult: 'Profile in the header',
+                status: 'passed',
+                notes: null,
+                verifiedBy: { id: 'qa-1', login: 'qa' },
+                verifiedAt: '2026-10-01T00:30:00.000Z',
+                rowVersion: 2,
+                definitionRowVersion: null,
+              },
+              {
+                id: 'rtc-2',
+                sourceTestCaseId: 'tc-2',
+                position: 1,
+                title: 'Wrong password',
+                expectedResult: null,
+                status: 'not_applicable',
+                notes: 'SSO only',
+                verifiedBy: { id: 'qa-1', login: 'qa' },
+                verifiedAt: '2026-10-01T00:31:00.000Z',
+                rowVersion: 2,
+                definitionRowVersion: null,
+              },
+            ],
+          },
+        ],
+      }),
+    ]),
+    signoffHistory: [],
+  });
+
+  it('lists each story test cases under its requirement, with the result and escaped cells', () => {
+    const markdown = renderQaProjectReportMarkdown(withTestCases);
+
+    expect(markdown).toContain('#### #1 Pay by card - test cases');
+    expect(markdown).toContain(
+      '| Happy path | Logs in \\| remembers me | Profile in the header | Passed | qa |',
+    );
+    expect(markdown).toContain('| Not applicable | qa | SSO only |');
+  });
+
+  it('renders a report frozen before test cases existed without a test case table', () => {
+    const before = buildQaProjectReport({
+      generatedAt: '2026-10-01T02:00:00.000Z',
+      frozen: true,
+      run: run([item()]),
+      signoffHistory: [],
+    });
+
+    expect(renderQaProjectReportMarkdown(before)).not.toContain('test cases');
   });
 });

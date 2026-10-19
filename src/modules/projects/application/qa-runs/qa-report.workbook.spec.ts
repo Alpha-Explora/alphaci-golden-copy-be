@@ -203,6 +203,71 @@ describe('QA report workbook', () => {
     ]);
   });
 
+  it('adds a Test cases sheet after the Checklist when a story has test cases', () => {
+    const withTestCases = buildQaProjectReport({
+      generatedAt: '2026-10-01T02:00:00.000Z',
+      frozen: false,
+      run: run([
+        item({
+          testCategories: [
+            {
+              id: 'cat-1',
+              name: 'Happy path',
+              rowVersion: null,
+              testCases: [
+                {
+                  id: 'rtc-1',
+                  sourceTestCaseId: 'tc-1',
+                  position: 0,
+                  title: 'Logs in | remembers me',
+                  expectedResult: 'Profile in the header',
+                  status: 'passed',
+                  notes: null,
+                  verifiedBy: { id: 'qa-1', login: 'qa' },
+                  verifiedAt: '2026-10-01T00:30:00.000Z',
+                  rowVersion: 2,
+                  definitionRowVersion: null,
+                },
+                {
+                  id: 'rtc-2',
+                  sourceTestCaseId: 'tc-2',
+                  position: 1,
+                  title: 'Wrong password',
+                  expectedResult: null,
+                  status: 'not_applicable',
+                  notes: 'SSO only',
+                  verifiedBy: { id: 'qa-1', login: 'qa' },
+                  verifiedAt: '2026-10-01T00:31:00.000Z',
+                  rowVersion: 2,
+                  definitionRowVersion: null,
+                },
+              ],
+            },
+          ],
+        }),
+      ]),
+      signoffHistory: [],
+    });
+
+    const sheets = qaReportSheets(withTestCases);
+    expect(sheets.map((s) => s.name)).toEqual([
+      'Summary',
+      'Repositories',
+      'Checklist',
+      'Test cases',
+      'Defects',
+      'Automated tests',
+      'Sign-off',
+    ]);
+    const rows = sheets.find((s) => s.name === 'Test cases')?.rows ?? [];
+    expect(rows.map((row) => [row[0], row[2], row[3], row[5], row[6]])).toEqual(
+      [
+        [1, 'Happy path', 'Logs in | remembers me', 'Passed', 'qa'],
+        [1, 'Happy path', 'Wrong password', 'Not applicable', 'qa'],
+      ],
+    );
+  });
+
   it('lists every checklist item with its requirement and automated result', () => {
     const checklist = sheet('Checklist');
     expect(checklist.columns.map((c) => c.header)).toContain('Requirement');

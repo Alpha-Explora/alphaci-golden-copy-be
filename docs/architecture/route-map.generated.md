@@ -1,7 +1,7 @@
 ---
 type: "Route Map"
 title: "HTTP route map"
-description: "Generated inventory of the 261 current API routes."
+description: "Generated inventory of the 268 current API routes."
 tags: [architecture, http, routes, map]
 status: stable
 sources:
@@ -15,7 +15,7 @@ sources:
 
 # HTTP route map
 
-The current compiled API exposes **261 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
+The current compiled API exposes **268 routes** under the global `/api/v1` prefix. The list below is generated from the checked-in pre-PR baseline used by the route inventory test.
 
 ## Routes
 
@@ -35,6 +35,8 @@ The current compiled API exposes **261 routes** under the global `/api/v1` prefi
 - `DELETE /api/v1/repositories/{repositoryId}/assignments/{assignmentId}`
 - `DELETE /api/v1/repositories/{repositoryId}/configuration/{configurationType}/{name}`
 - `DELETE /api/v1/requirements/{id}/items/{itemId}`
+- `DELETE /api/v1/requirements/{id}/items/{itemId}/test-cases/{testCaseId}`
+- `DELETE /api/v1/requirements/{id}/items/{itemId}/test-categories/{categoryId}`
 - `GET /api/v1`
 - `GET /api/v1/admin/access-log`
 - `GET /api/v1/admin/admins`
@@ -163,6 +165,7 @@ The current compiled API exposes **261 routes** under the global `/api/v1` prefi
 - `PATCH /api/v1/admin/users/{id}/app-role`
 - `PATCH /api/v1/delivery-projects/{deliveryProjectId}`
 - `PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}`
+- `PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/test-cases/{testCaseId}`
 - `PATCH /api/v1/groups/{groupId}`
 - `PATCH /api/v1/groups/{groupId}/members/{memberId}`
 - `PATCH /api/v1/notifications/preferences`
@@ -175,6 +178,8 @@ The current compiled API exposes **261 routes** under the global `/api/v1` prefi
 - `PATCH /api/v1/requirements/{id}`
 - `PATCH /api/v1/requirements/{id}/items/{itemId}`
 - `PATCH /api/v1/requirements/{id}/items/{itemId}/progress`
+- `PATCH /api/v1/requirements/{id}/items/{itemId}/test-cases/{testCaseId}`
+- `PATCH /api/v1/requirements/{id}/items/{itemId}/test-categories/{categoryId}`
 - `PATCH /api/v1/systems/{systemId}`
 - `POST /api/v1/admin/branch-protection/apply`
 - `POST /api/v1/admin/users/{id}/app-role/reset`
@@ -265,6 +270,8 @@ The current compiled API exposes **261 routes** under the global `/api/v1` prefi
 - `POST /api/v1/repositories/{repositoryId}/move`
 - `POST /api/v1/requirements/{id}/archive`
 - `POST /api/v1/requirements/{id}/items`
+- `POST /api/v1/requirements/{id}/items/{itemId}/test-categories`
+- `POST /api/v1/requirements/{id}/items/{itemId}/test-categories/{categoryId}/test-cases`
 - `POST /api/v1/subscription/monthly/activate`
 - `POST /api/v1/subscription/monthly/cancel`
 - `POST /api/v1/systems/{systemId}/archive`

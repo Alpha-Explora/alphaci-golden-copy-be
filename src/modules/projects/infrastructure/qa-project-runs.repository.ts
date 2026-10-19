@@ -19,6 +19,7 @@ import type {
   QaRunRepositoryRow,
   QaRunSignoffRow,
 } from './qa-runs.repository';
+import { syncOpenRunTestCases } from './qa-test-cases.repository';
 
 /** One requirement item, frozen into a run item at run start. */
 export interface ProjectRunSnapshotItem {
@@ -579,7 +580,9 @@ export class QaProjectRunsRepository {
    * existed when it started; without this, a story written later could never
    * be verified on unchanged heads (one run per Iteration and heads), and the
    * gate, which needs every item passed, would stay closed. Each open run row
-   * is locked first, as every other run write does. Returns the rows added.
+   * is locked first, as every other run write does. The stories' test cases
+   * follow them in the same transaction (syncOpenRunTestCases). Returns the
+   * rows added.
    */
   async appendMissingItemsToOpenRuns(iterationId: string): Promise<number> {
     return this.databaseService.withTransaction(async (client) => {
@@ -624,6 +627,9 @@ export class QaProjectRunsRepository {
           [run.id, iterationId],
         );
         added += result.rowCount ?? 0;
+      }
+      if (open.rows.length > 0) {
+        await syncOpenRunTestCases(client, iterationId);
       }
       return added;
     });

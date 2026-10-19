@@ -21,6 +21,7 @@ import type {
 } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import type { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
+import type { QaTestCasesRepository } from '../../infrastructure/qa-test-cases.repository';
 import type { QaAccessService } from './qa-access.service';
 import type {
   QaProjectContext,
@@ -202,6 +203,9 @@ function setup({
   const notifications = { record: jest.fn().mockResolvedValue(undefined) };
   const { service: iterations, repository: iterationRepository } =
     fakeIterations(iteration);
+  const testCases = {
+    listByItemIds: jest.fn().mockResolvedValue(new Map()),
+  } as unknown as jest.Mocked<QaTestCasesRepository>;
   const service = new QaRequirementsService(
     checklists,
     requirements,
@@ -210,6 +214,7 @@ function setup({
     access,
     projectContext,
     iterations,
+    testCases,
     audit,
     notifications,
   );
@@ -218,6 +223,7 @@ function setup({
     iterationRepository,
     checklists,
     requirements,
+    testCases,
     projectRuns,
     runs,
     access,
@@ -504,6 +510,7 @@ describe('QaRequirementsService reads', () => {
     expect(result.permissions).toEqual({
       canManage: false,
       canSetProgress: true,
+      canManageTestCases: false,
     });
     expect(result.requirements[0]?.items[0]?.canSetProgress).toBe(true);
   });

@@ -21,6 +21,7 @@ import {
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { DispatchProjectRunDto } from '../application/qa-runs/dto/dispatch-project-run.dto';
 import { PatchQaRunItemDto } from '../application/qa-runs/dto/patch-qa-run-item.dto';
+import { PatchRunTestCaseDto } from '../application/qa-runs/dto/patch-run-test-case.dto';
 import { SignoffQaRunDto } from '../application/qa-runs/dto/signoff-qa-run.dto';
 import { QaAutomationDispatchService } from '../application/qa-runs/qa-automation-dispatch.service';
 import {
@@ -158,6 +159,26 @@ export class DeliveryProjectQaRunsController {
       actorContext(req),
       runId,
       itemId,
+      body,
+    );
+  }
+
+  /** QA's result on one test case of a story (pending, passed, failed, blocked, not_applicable). */
+  @Patch(':runId/items/:itemId/test-cases/:testCaseId')
+  updateTestCase(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+    @Param('runId') runId: string,
+    @Param('itemId') itemId: string,
+    @Param('testCaseId') testCaseId: string,
+    @Body() body: PatchRunTestCaseDto,
+  ) {
+    return this.qaProjectRunsService.updateTestCase(
+      deliveryProjectId,
+      actorContext(req),
+      runId,
+      itemId,
+      testCaseId,
       body,
     );
   }

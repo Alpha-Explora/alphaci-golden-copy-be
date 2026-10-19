@@ -13,7 +13,10 @@ import { Workbook } from 'exceljs';
 
 import type { QaChecklistTargetPersona } from '../qa-checklists/qa-checklists.contracts';
 import type { QaReport, QaReportDefect } from './qa-report.contracts';
-import type { QaProjectReport } from './qa-project-report';
+import {
+  TEST_CASE_STATUS_LABELS,
+  type QaProjectReport,
+} from './qa-project-report';
 import type {
   QaAutomatedResult,
   QaAutomationItemStatus,
@@ -267,6 +270,44 @@ function defectsSheet(report: AnyQaReport): QaSheet {
 
 const STAGE_LABELS = { verify: 'Verify', quality: 'Quality' } as const;
 
+/**
+ * One row per test case of every story (Project reports only). Omitted when
+ * no story has a test case, so older and simpler reports keep their tabs.
+ */
+function testCasesSheet(report: QaProjectReport): QaSheet | null {
+  const rows: QaSheetCell[][] = report.run.items.flatMap((item) =>
+    (item.testCategories ?? []).flatMap((category) =>
+      category.testCases.map((testCase) => [
+        item.position + 1,
+        item.title,
+        category.name,
+        testCase.title,
+        testCase.expectedResult,
+        TEST_CASE_STATUS_LABELS[testCase.status],
+        testCase.verifiedBy?.login ?? null,
+        when(testCase.verifiedAt),
+        testCase.notes,
+      ]),
+    ),
+  );
+  if (rows.length === 0) return null;
+  return {
+    name: 'Test cases',
+    columns: [
+      { header: '#', width: 6 },
+      { header: 'Story', width: 40, wrap: true },
+      { header: 'Category', width: 20, wrap: true },
+      { header: 'Test case', width: 40, wrap: true },
+      { header: 'Expected result', width: 40, wrap: true },
+      { header: 'Result', width: 14 },
+      { header: 'Verified by', width: 18 },
+      { header: 'Verified at (UTC)', width: 20 },
+      { header: 'Notes', width: 40, wrap: true },
+    ],
+    rows,
+  };
+}
+
 function stageRows(
   repository: string,
   stage: QaStageAutomation,
@@ -436,10 +477,12 @@ function signoffSheet(report: AnyQaReport): QaSheet {
 
 /** Every sheet of the workbook, in tab order. Pure: the same report gives the same rows. */
 export function qaReportSheets(report: AnyQaReport): QaSheet[] {
+  const testCases = isProjectReport(report) ? testCasesSheet(report) : null;
   return [
     summarySheet(report),
     ...(isProjectReport(report) ? [repositoriesSheet(report)] : []),
     checklistSheet(report),
+    ...(testCases ? [testCases] : []),
     defectsSheet(report),
     automatedTestsSheet(report),
     signoffSheet(report),

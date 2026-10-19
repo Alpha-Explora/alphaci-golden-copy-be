@@ -19,9 +19,18 @@ import type {
   ProjectQaRunItem,
   QaRunAutomation,
   QaRunItemStatus,
+  QaTestCaseStatus,
 } from './qa-runs.contracts';
 
 export const QA_PROJECT_REPORT_SCHEMA_VERSION = 'qa-report/v2' as const;
+
+export const TEST_CASE_STATUS_LABELS: Record<QaTestCaseStatus, string> = {
+  pending: 'Pending',
+  passed: 'Passed',
+  failed: 'Failed',
+  blocked: 'Blocked',
+  not_applicable: 'Not applicable',
+};
 
 export interface QaProjectReportRepository {
   projectId: string;
@@ -212,6 +221,42 @@ function screenshotLines(items: readonly ProjectQaRunItem[]): string[] {
   return lines.length > 0 ? ['', ...lines] : [];
 }
 
+/**
+ * One table of test cases per story that has any, under its requirement. A
+ * report frozen before test cases existed has no `testCategories` key.
+ */
+function testCaseLines(items: readonly ProjectQaRunItem[]): string[] {
+  return items.flatMap((item) => {
+    const rows = (item.testCategories ?? []).flatMap((category) =>
+      category.testCases.map((testCase) => [
+        cell(category.name),
+        cell(testCase.title),
+        cell(testCase.expectedResult),
+        TEST_CASE_STATUS_LABELS[testCase.status],
+        cell(testCase.verifiedBy?.login ?? null),
+        cell(testCase.notes),
+      ]),
+    );
+    if (rows.length === 0) return [];
+    return [
+      '',
+      `#### #${item.position + 1} ${inline(item.title)} - test cases`,
+      '',
+      table(
+        [
+          'Category',
+          'Test case',
+          'Expected result',
+          'Result',
+          'Verified by',
+          'Notes',
+        ],
+        rows,
+      ),
+    ];
+  });
+}
+
 export function renderQaProjectReportMarkdown(report: QaProjectReport): string {
   const { run, summary } = report;
   const sections: string[] = [];
@@ -270,6 +315,7 @@ export function renderQaProjectReportMarkdown(report: QaProjectReport): string {
         ]),
       ),
       ...screenshotLines(group.items),
+      ...testCaseLines(group.items),
     ].join('\n'),
   );
   sections.push(['## Checklist', '', ...checklist].join('\n'));

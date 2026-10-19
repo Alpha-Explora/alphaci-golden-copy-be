@@ -1,11 +1,11 @@
 {
-  "routeCount": 261,
+  "routeCount": 268,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "795fbc6a65ba83abc561252ca130ac09aa9e524741143980d11a14d3ee5c87b0",
+  "referenceSha256": "22f0d29db977cfddd7f950d4249e3fc0e8d9e10d723e354c7e8af20f2c6d7ce1",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "795fbc6a65ba83abc561252ca130ac09aa9e524741143980d11a14d3ee5c87b0",
+  "baselineSha256": "22f0d29db977cfddd7f950d4249e3fc0e8d9e10d723e354c7e8af20f2c6d7ce1",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -287,6 +287,18 @@
       "reason": "Deliver recipient-scoped live Inbox snapshots for workspace membership notifications, protected by session and notification capability guards.",
       "routes": [
         "GET /api/v1/notifications/stream"
+      ]
+    },
+    {
+      "reason": "QA test cases: QA writes test case categories and test cases under a User story, and records each test case result in a Project run (ADR-0014, amendment 10).",
+      "routes": [
+        "POST /api/v1/requirements/{id}/items/{itemId}/test-categories",
+        "PATCH /api/v1/requirements/{id}/items/{itemId}/test-categories/{categoryId}",
+        "DELETE /api/v1/requirements/{id}/items/{itemId}/test-categories/{categoryId}",
+        "POST /api/v1/requirements/{id}/items/{itemId}/test-categories/{categoryId}/test-cases",
+        "PATCH /api/v1/requirements/{id}/items/{itemId}/test-cases/{testCaseId}",
+        "DELETE /api/v1/requirements/{id}/items/{itemId}/test-cases/{testCaseId}",
+        "PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/test-cases/{testCaseId}"
       ]
     }
   ]

@@ -326,6 +326,64 @@ export interface ProjectQaRunItem extends QaRunItem {
    * (and so in the report frozen at sign-off); never on a plain run payload.
    */
   attachments?: QaRunItemAttachmentRef[];
+  /**
+   * QA's test cases for this story in this run, by category, with each
+   * result. An open run also lists categories that hold no test case yet.
+   * Absent on reports frozen before test cases existed.
+   */
+  testCategories?: ProjectQaRunTestCategory[];
+}
+
+/** A test case's result in one run. 'not_applicable' counts as resolved, like 'passed'. */
+export type QaTestCaseStatus =
+  | 'pending'
+  | 'passed'
+  | 'failed'
+  | 'blocked'
+  | 'not_applicable';
+
+export const QA_TEST_CASE_STATUSES: readonly QaTestCaseStatus[] = [
+  'pending',
+  'passed',
+  'failed',
+  'blocked',
+  'not_applicable',
+];
+
+/** Results that keep a story from passing (and a run from an APPROVED sign-off). */
+export const QA_OPEN_TEST_CASE_STATUSES: readonly QaTestCaseStatus[] = [
+  'pending',
+  'failed',
+  'blocked',
+];
+
+/** One test case as tested in one Project run. */
+export interface ProjectQaRunTestCase {
+  id: string;
+  /** The test case definition; null once it was deleted (signed-off runs keep their copy). */
+  sourceTestCaseId: string | null;
+  position: number;
+  title: string;
+  expectedResult: string | null;
+  status: QaTestCaseStatus;
+  notes: string | null;
+  verifiedBy: QaActor | null;
+  verifiedAt: string | null;
+  rowVersion: number;
+  /**
+   * The definition's row_version, for editing it from the run (open runs
+   * only; null on a signed-off run or once the definition was deleted).
+   */
+  definitionRowVersion: number | null;
+}
+
+export interface ProjectQaRunTestCategory {
+  /** The category definition; null once it was deleted. */
+  id: string | null;
+  name: string;
+  /** The definition's row_version, for renaming it from the run (open runs only). */
+  rowVersion: number | null;
+  testCases: ProjectQaRunTestCase[];
 }
 
 export type QaAttachmentKind = 'evidence' | 'fix_proof' | 'automated';
@@ -386,6 +444,8 @@ export interface ProjectQaRunPermissions {
   canSignOff: boolean;
   canReopen: boolean;
   canDispatch: boolean;
+  /** The run is open and the caller is QA or an admin: may add, edit and delete test cases. */
+  canManageTestCases: boolean;
 }
 
 export interface ProjectQaRunListItem {
