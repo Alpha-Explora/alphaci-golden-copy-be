@@ -110,6 +110,22 @@ const QA_RUN_EVENTS = {
 
 const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
 const SIGNOFF_SUMMARY_TRUNCATE_LENGTH = 300;
+
+/** The statuses that refuse an item, and how their notification names it. */
+const QA_REFUSAL_NOTICES: Partial<
+  Record<QaRunItemRow['status'], { eventCode: string; verb: string }>
+> = {
+  failed: { eventCode: 'qa.item.failed', verb: 'failed' },
+  blocked: { eventCode: 'qa.item.blocked', verb: 'blocked' },
+  returned_to_dev: { eventCode: 'qa.item.returned_to_dev', verb: 'returned' },
+};
+
+/** An item in one of these is an open defect: the run cannot be signed off. */
+const OPEN_DEFECT_STATUSES: ReadonlySet<QaRunItemRow['status']> = new Set([
+  'failed',
+  'blocked',
+  'returned_to_dev',
+]);
 /** A run view re-reads the repository heads on every item write; reuse a recent reading. */
 const DISPLAY_HEAD_MAX_AGE_MS = 15_000;
 
@@ -616,7 +632,12 @@ export class QaProjectRunsService {
         run,
         { itemId, fromStatus: item.status, toStatus: updated.status },
       );
-      await this.notifyOnStatusChange(project, updated, actor.userId);
+      await this.notifyOnStatusChange(
+        project,
+        updated,
+        item.status,
+        actor.userId,
+      );
     }
 
     return this.reload(project, run, role, actor);
@@ -974,6 +995,18 @@ export class QaProjectRunsService {
   }
 
   private validateVerdict(dto: SignoffQaRunDto, items: QaRunItemRow[]): void {
+    // No verdict while QA still has a failure open: the developers fix it and
+    // QA verifies it first, so a run is only ever signed off on its outcome.
+    const openDefects = items.filter((item) =>
+      OPEN_DEFECT_STATUSES.has(item.status),
+    ).length;
+    if (openDefects > 0) {
+      throw new ConflictException({
+        code: 'QA_RUN_OPEN_DEFECTS',
+        message: `${openDefects} item${openDefects === 1 ? ' is' : 's are'} failed, blocked or returned to dev. Sign off once QA has verified the fix${openDefects === 1 ? '' : 'es'}.`,
+        openDefects,
+      });
+    }
     if (dto.verdict === 'APPROVED') {
       const notPassed = items.filter((item) => item.status !== 'passed').length;
       if (notPassed > 0) {
@@ -998,7 +1031,7 @@ export class QaProjectRunsService {
         );
       }
     }
-    // REJECTED: always allowed, no item-state requirement.
+    // REJECTED: allowed with no defect open (pending items may remain).
   }
 
   // ---------------------------------------------------------------------
@@ -1212,51 +1245,43 @@ export class QaProjectRunsService {
     });
   }
 
+  /**
+   * QA refused an item (failed, blocked, or returned to dev): the people who
+   * fix it hear about it straight away - the repository owner, the workspace
+   * leads and every Developer, never the QA tester who set it. Only on the
+   * change itself: re-saving notes on an item already failed tells no one
+   * twice.
+   */
   private async notifyOnStatusChange(
     project: QaProjectContext,
     updated: QaRunItemRow,
+    fromStatus: QaRunItemRow['status'],
     actorId: string,
   ): Promise<void> {
-    if (updated.status === 'returned_to_dev') {
-      const [anchor, teamIds] = await Promise.all([
-        this.projectContext.anchorProjectId(project),
-        this.access.listWorkspaceLeadAndDeveloperIds(project.groupId),
-      ]);
-      const ownerId = anchor
-        ? await this.access.findProjectOwnerId(anchor)
-        : null;
-      const parts = [
-        updated.defect_severity
-          ? `Severity: ${updated.defect_severity}.`
-          : null,
-        updated.notes
-          ? this.truncate(updated.notes, NOTIFICATION_BODY_TRUNCATE_LENGTH)
-          : null,
-      ].filter((part): part is string => Boolean(part));
-      await this.notifyMany(
-        this.dedupeExcludingActor([ownerId, ...teamIds], actorId),
-        anchor,
-        'qa.item.returned_to_dev',
-        `QA returned "${updated.title}" in ${project.name}`,
-        parts.length > 0 ? parts.join(' ') : 'No additional notes.',
-      );
+    const notice = QA_REFUSAL_NOTICES[updated.status];
+    if (!notice || fromStatus === updated.status) {
+      return;
     }
-
-    if (updated.status === 'blocked' && updated.defect_severity === 'blocker') {
-      const [anchor, leadIds] = await Promise.all([
-        this.projectContext.anchorProjectId(project),
-        this.access.listWorkspaceLeadIds(project.groupId),
-      ]);
-      await this.notifyMany(
-        this.dedupeExcludingActor(leadIds, actorId),
-        anchor,
-        'qa.item.blocked',
-        `QA marked "${updated.title}" a blocker in ${project.name}`,
-        updated.notes
-          ? this.truncate(updated.notes, NOTIFICATION_BODY_TRUNCATE_LENGTH)
-          : 'No additional notes.',
-      );
-    }
+    const [anchor, teamIds] = await Promise.all([
+      this.projectContext.anchorProjectId(project),
+      this.access.listWorkspaceLeadAndDeveloperIds(project.groupId),
+    ]);
+    const ownerId = anchor
+      ? await this.access.findProjectOwnerId(anchor)
+      : null;
+    const parts = [
+      updated.defect_severity ? `Severity: ${updated.defect_severity}.` : null,
+      updated.notes
+        ? this.truncate(updated.notes, NOTIFICATION_BODY_TRUNCATE_LENGTH)
+        : null,
+    ].filter((part): part is string => Boolean(part));
+    await this.notifyMany(
+      this.dedupeExcludingActor([ownerId, ...teamIds], actorId),
+      anchor,
+      notice.eventCode,
+      `QA ${notice.verb} "${updated.title}" in ${project.name}`,
+      parts.length > 0 ? parts.join(' ') : 'No additional notes.',
+    );
   }
 
   private async notifySignoff(

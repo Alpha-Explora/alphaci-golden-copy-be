@@ -569,10 +569,51 @@ describe('QaProjectRunsService.updateItem (Verification track)', () => {
     expect(calls[0]?.eventCode).toBe('qa.item.returned_to_dev');
   });
 
-  it('a blocker tells the leads only', async () => {
-    const { service, runs, notifications } = setup();
+  it.each([
+    ['blocked', null, 'qa.item.blocked', 'QA blocked'],
+    ['failed', 'major', 'qa.item.failed', 'QA failed'],
+  ] as const)(
+    'a %s item tells the owner, leads and developers too, whatever its severity',
+    async (status, severity, eventCode, verb) => {
+      const { service, runs, notifications } = setup();
+      runs.updateItem.mockResolvedValue(
+        itemRow({ status, defect_severity: severity, notes: 'this wrong' }),
+      );
+
+      await service.updateItem(
+        DP,
+        actor(),
+        'run-1',
+        'ri-1',
+        patch({ status, defectSeverity: severity }),
+      );
+
+      const calls = notifications.record.mock.calls.map(
+        (call) =>
+          call[0] as {
+            userId: string;
+            eventCode: string;
+            title: string;
+            body: string;
+          },
+      );
+      expect(calls.map((call) => call.userId).sort()).toEqual([
+        'dev-1',
+        'lead-1',
+        'owner-1',
+      ]);
+      expect(calls[0]?.eventCode).toBe(eventCode);
+      expect(calls[0]?.title.startsWith(verb)).toBe(true);
+      expect(calls[0]?.body).toContain('this wrong');
+    },
+  );
+
+  it('re-saving an item already failed tells no one again', async () => {
+    const { service, runs, notifications } = setup({
+      items: [itemRow({ status: 'failed', defect_severity: 'major' })],
+    });
     runs.updateItem.mockResolvedValue(
-      itemRow({ status: 'blocked', defect_severity: 'blocker' }),
+      itemRow({ status: 'failed', defect_severity: 'major', notes: 'more' }),
     );
 
     await service.updateItem(
@@ -580,14 +621,10 @@ describe('QaProjectRunsService.updateItem (Verification track)', () => {
       actor(),
       'run-1',
       'ri-1',
-      patch({ status: 'blocked', defectSeverity: 'blocker' }),
+      patch({ status: 'failed', notes: 'more' }),
     );
 
-    expect(
-      notifications.record.mock.calls.map(
-        (call) => (call[0] as { userId: string }).userId,
-      ),
-    ).toEqual(['lead-1']);
+    expect(notifications.record).not.toHaveBeenCalled();
   });
 });
 
@@ -649,9 +686,32 @@ describe('QaProjectRunsService sign-off, reopen, current', () => {
     expect(runs.createSignoff).not.toHaveBeenCalled();
   });
 
+  it.each(['APPROVED', 'REJECTED', 'CONDITIONAL'] as const)(
+    'refuses a %s sign-off while an item is failed, blocked or returned to dev',
+    async (verdict) => {
+      const { service, runs } = setup({
+        items: [
+          itemRow({ id: 'ri-1', status: 'passed' }),
+          itemRow({ id: 'ri-2', status: 'blocked' }),
+        ],
+      });
+
+      const error = await service
+        .signoff(DP, actor(), 'run-1', { verdict, conditions: 'x' })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'QA_RUN_OPEN_DEFECTS',
+        openDefects: 1,
+      });
+      expect(runs.createSignoff).not.toHaveBeenCalled();
+    },
+  );
+
   it('a REJECTED sign-off does not need every item of the Iteration', async () => {
     const { service, runs, projectRuns } = setup({
-      items: [itemRow({ status: 'failed' })],
+      items: [itemRow({ status: 'pending' })],
     });
     projectRuns.countIterationItemsNotPassed.mockResolvedValue(3);
     runs.createSignoff.mockResolvedValue({
