@@ -28,6 +28,17 @@ export interface EmbeddabilityVerdict {
 const PROBEABLE_HOST_SUFFIXES = ['.vercel.app', '.onrender.com'] as const;
 
 /**
+ * Addresses AlphaCI itself gives on-prem environments: a Cloudflare quick
+ * tunnel, or a name under this install's ONPREM_APPS_DOMAIN (single-server
+ * installs). Without them every on-prem preview was refused a check, so QA
+ * Studio never framed one.
+ */
+function onpremHostSuffixes(): string[] {
+  const domain = process.env['ONPREM_APPS_DOMAIN']?.trim().toLowerCase();
+  return ['.trycloudflare.com', ...(domain ? [`.${domain}`] : [])];
+}
+
+/**
  * Hosts a deployment redirects to when it is behind deployment protection.
  *
  * Vercel Authentication answers an unauthenticated visitor with a redirect to
@@ -99,7 +110,9 @@ export class UrlEmbeddabilityProbe {
     }
 
     const host = parsed.hostname.toLowerCase();
-    return PROBEABLE_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+    return [...PROBEABLE_HOST_SUFFIXES, ...onpremHostSuffixes()].some(
+      (suffix) => host.endsWith(suffix),
+    );
   }
 
   private async probe(url: string): Promise<EmbeddabilityVerdict> {
