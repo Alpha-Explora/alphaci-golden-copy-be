@@ -1,11 +1,11 @@
 {
-  "routeCount": 257,
+  "routeCount": 258,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "b047b40e9c2e136ce2a8e64389349de62072d7d96fe3ff0e3559f69e0dc8fbf4",
+  "referenceSha256": "27a958d46fa55be942b9bc3ff8b4d3de8a2b96c6811f2256b58936fce58083fb",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "b047b40e9c2e136ce2a8e64389349de62072d7d96fe3ff0e3559f69e0dc8fbf4",
+  "baselineSha256": "27a958d46fa55be942b9bc3ff8b4d3de8a2b96c6811f2256b58936fce58083fb",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -268,6 +268,12 @@
       "reason": "Code tab commit column: the latest commit of the opened folder or file and of each entry in it, read in batched GraphQL requests so the file list can show what last changed each path and when.",
       "routes": [
         "GET /api/v1/projects/{projectId}/workspace/files/commits"
+      ]
+    },
+    {
+      "reason": "Self-hosted storage (WP-A): screenshot bytes for STORAGE_DRIVER=postgres are served at a short-lived HMAC-signed link. No session guard, because the signed link is the authorization and <img> loads cannot send the session cookie cross-site.",
+      "routes": [
+        "GET /api/v1/qa-attachments/content"
       ]
     }
   ]

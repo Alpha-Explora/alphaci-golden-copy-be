@@ -19,6 +19,19 @@ export async function readLabSigningKey(keyPath: string): Promise<string> {
       `${RELEASE_SIGNING_LAB_KEY_PATH_ENV} points to a file that cannot be read`,
     );
   }
+  const problem = p256PrivateKeyProblem(pem, RELEASE_SIGNING_LAB_KEY_PATH_ENV);
+  if (problem !== undefined) throw new Error(problem);
+  return pem;
+}
+
+/**
+ * Why a PEM is not a usable P-256 private key, named after the setting that
+ * supplied it, or undefined when it is usable. Never includes the key material.
+ */
+export function p256PrivateKeyProblem(
+  pem: string,
+  setting: string,
+): string | undefined {
   let keyType: string;
   let namedCurve: string | undefined;
   try {
@@ -26,16 +39,12 @@ export async function readLabSigningKey(keyPath: string): Promise<string> {
     keyType = key.asymmetricKeyType ?? '';
     namedCurve = key.asymmetricKeyDetails?.namedCurve;
   } catch {
-    throw new Error(
-      `${RELEASE_SIGNING_LAB_KEY_PATH_ENV} does not contain a PEM private key`,
-    );
+    return `${setting} does not contain a PEM private key`;
   }
   if (keyType !== 'ec' || namedCurve !== 'prime256v1') {
-    throw new Error(
-      `${RELEASE_SIGNING_LAB_KEY_PATH_ENV} must contain a P-256 private key`,
-    );
+    return `${setting} must contain a P-256 private key`;
   }
-  return pem;
+  return undefined;
 }
 
 /**

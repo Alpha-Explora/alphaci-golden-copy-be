@@ -1,0 +1,2108 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-identical: environments with a hosted first environment 1`] = `
+{
+  "files": {
+    ".github/workflows/00-alphaci-access.yml": {
+      "bytes": 15546,
+      "sha256": "98b3ff1cd9ef146080f9e1c581ce0ab1c31a868c6b0b6f69dbbf9debc0760ef6",
+    },
+    ".github/workflows/05-alphaci-env-guard.yml": {
+      "bytes": 4192,
+      "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
+    },
+    ".github/workflows/10-alphaci-quality.yml": {
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+    },
+    ".github/workflows/20-alphaci-package.yml": {
+      "bytes": 26943,
+      "sha256": "e737eeb0a2e1f5680a6d12d9a39ed6739d9757636da242d6509564c36bf491d3",
+    },
+    ".github/workflows/30-alphaci-promote.yml": {
+      "bytes": 4316,
+      "sha256": "6f6691bb3239208a8bb080d57c8a75a1e85780975e0eff149695625d5cf137c0",
+    },
+  },
+  "packageStage": "name: ALPHACI 3 Build and Deploy
+run-name: \${{ github.event.workflow_run.display_title || github.sha }}
+'on':
+  workflow_run:
+    workflows:
+      - ALPHACI 2 Quality
+    types:
+      - completed
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  ALPHACI_VALIDATE_URL: http://localhost:4000/api/v1/ci/validate
+  ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+jobs:
+  pipeline-context:
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      branch: \${{ steps.context.outputs.branch }}
+      sha: \${{ steps.context.outputs.sha }}
+    steps:
+      - name: Resolve the originating branch and commit
+        id: context
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          EVENT_NAME: \${{ github.event_name }}
+          TRIGGER_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          ARTIFACT_NAME: alphaci-pipeline-context
+          FALLBACK_BRANCH: \${{ github.event.workflow_run.head_branch || github.ref_name }}
+          FALLBACK_SHA: \${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |-
+          set -euo pipefail
+
+          branch="\${FALLBACK_BRANCH}"
+          sha="\${FALLBACK_SHA}"
+          source="the triggering event"
+
+          # An artifact published by the previous stage is the only channel that
+          # survives a second workflow_run hop, so it wins when it is there.
+          if [ "\${EVENT_NAME}" = "workflow_run" ] && [ -n "\${TRIGGER_RUN_ID}" ]; then
+            api="https://api.github.com/repos/\${GH_REPO}/actions/runs/\${TRIGGER_RUN_ID}/artifacts"
+            filter='[.artifacts[]? | select(.name == $name) | .archive_download_url] | first // ""'
+            url=$(curl -sf --max-time 10 -H "Authorization: Bearer \${GH_TOKEN}" -H "Accept: application/vnd.github+json" "\${api}" | jq -r --arg name "\${ARTIFACT_NAME}" "\${filter}" || printf "")
+
+            if [ -n "\${url}" ] && curl -sfL --max-time 20 -o context.zip -H "Authorization: Bearer \${GH_TOKEN}" "\${url}"; then
+              unzip -o -q context.zip -d context-dir
+              if [ -f context-dir/pipeline-context.env ]; then
+                branch=$(grep -m1 "^branch=" context-dir/pipeline-context.env | cut -d= -f2-)
+                sha=$(grep -m1 "^sha=" context-dir/pipeline-context.env | cut -d= -f2-)
+                source="the \${PREVIOUS_NAME} stage"
+              fi
+            fi
+          fi
+
+          # Refusing to guess. Every later job is branch-scoped, so an empty branch
+          # selects nothing - or worse, matches the wrong environment.
+          if [ -z "\${branch}" ] || [ -z "\${sha}" ]; then
+            echo "::error::Could not determine which branch or commit this run is for. Without it every branch-scoped job would be selected wrongly, so the stage stops here."
+            exit 1
+          fi
+
+          {
+            echo "branch=\${branch}"
+            echo "sha=\${sha}"
+          } | tee pipeline-context.env >> "$GITHUB_OUTPUT"
+
+          echo "Branch \${branch} at \${sha}, according to \${source}."
+      - name: Publish the context for the next stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: alphaci-pipeline-context
+          path: pipeline-context.env
+          retention-days: 1
+  upstream-work-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ran: \${{ steps.check.outputs.ran }}
+    steps:
+      - name: Check the previous stage did its work
+        id: check
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          PREVIOUS_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          EVENT_NAME: \${{ github.event_name }}
+          GATE_JOB: validate-access
+        run: |-
+          set -euo pipefail
+
+          # A manual run has no previous stage to inspect and is always allowed.
+          if [ "$EVENT_NAME" != "workflow_run" ]; then
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          JOBS=$(curl -sf --max-time 10 \\
+            -H "Authorization: Bearer $GH_TOKEN" \\
+            -H "Accept: application/vnd.github+json" \\
+            "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest&per_page=100" \\
+            || printf '{"jobs":[]}')
+
+          # An unreachable API is not evidence of a skipped stage. Letting the stage
+          # through on a failed lookup keeps a GitHub outage from silently halting
+          # every pipeline.
+          TOTAL=$(printf '%s' "$JOBS" | jq '[.jobs[]?] | length')
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::warning::Could not read the jobs of $PREVIOUS_NAME, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          GATE=$(printf '%s' "$JOBS" | jq -r --arg gate "$GATE_JOB" '[.jobs[]? | select(.name == $gate) | (.conclusion // "pending")] | first // "missing"')
+
+          if [ "$GATE" = "success" ]; then
+            echo "$PREVIOUS_NAME passed its $GATE_JOB gate."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Same reasoning as an unreachable API: a stage without the gate job is
+          # not one this generator wrote, and its absence proves nothing.
+          if [ "$GATE" = "missing" ]; then
+            echo "::warning::$PREVIOUS_NAME has no $GATE_JOB job, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::$PREVIOUS_NAME did not pass its $GATE_JOB gate ($GATE), so this stage has nothing to act on and will skip. That gate closes when the stage before IT did not pass - fix that one."
+          echo "ran=false" >> "$GITHUB_OUTPUT"
+    needs:
+      - pipeline-context
+  validate-access:
+    needs:
+      - pipeline-context
+      - upstream-work-check
+    if: \${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && needs.upstream-work-check.outputs.ran == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check ALPHACI API connectivity configuration
+        run: |-
+          node <<'ALPHACI_PREFLIGHT'
+          const validate = function validateCiApiConnectivity(baseUrl, execution) {
+              const problem = 'Configure PLATFORM_PUBLIC_URL with an HTTPS API address reachable from the GitHub runner. Localhost and private addresses cannot reach this laptop from GitHub-hosted jobs.';
+              let url;
+              try {
+                  url = new URL(baseUrl);
+              }
+              catch {
+                  throw new Error(problem);
+              }
+              if (url.username ||
+                  url.password ||
+                  !['http:', 'https:'].includes(url.protocol))
+                  throw new Error(problem);
+              if (execution === 'private-network')
+                  return;
+              if (url.protocol !== 'https:')
+                  throw new Error(problem);
+              const host = url.hostname
+                  .toLowerCase()
+                  .replace(/^\\[|\\]$/g, '')
+                  .replace(/\\.$/, '');
+              if (host.includes(':')) {
+                  // IPv6 global unicast only; excludes mapped IPv4, loopback, ULA and link local.
+                  if (!/^[23][0-9a-f]{3}:/.test(host))
+                      throw new Error(problem);
+              }
+              else if (/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(host)) {
+                  const [a = 0, b = 0] = host.split('.').map(Number);
+                  if (a === 0 ||
+                      a === 10 ||
+                      a === 127 ||
+                      a >= 224 ||
+                      (a === 169 && b === 254) ||
+                      (a === 172 && b >= 16 && b <= 31) ||
+                      (a === 192 && (b === 168 || b === 0)) ||
+                      (a === 100 && b >= 64 && b <= 127) ||
+                      (a === 198 && (b === 18 || b === 19)))
+                      throw new Error(problem);
+              }
+              else if (!host.includes('.') ||
+                  /(^|\\.)(localhost|local|internal|lan)$/.test(host)) {
+                  throw new Error(problem);
+              }
+          };
+          validate(process.env.ALPHACI_VALIDATE_URL, 'github-hosted');
+          ALPHACI_PREFLIGHT
+      - name: Validate ALPHACI access
+        run: |-
+          RESPONSE=$(curl -sf -w "\\n%{http_code}" \\
+            -X POST \\
+            -H "Authorization: Bearer \${{ secrets.ALPHACI_TOKEN }}" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"repo\\":\\"\${{ github.repository }}\\",\\"stage\\":\\"package\\",\\"workflowRunId\\":\\"\${{ github.run_id }}\\",\\"headSha\\":\\"\${{ needs.pipeline-context.outputs.sha }}\\"}" \\
+            "$ALPHACI_VALIDATE_URL") || true
+          HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
+          BODY=$(printf '%s' "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::ALPHACI authorization failed (HTTP $HTTP_CODE). \${BODY}"
+            exit 1
+          fi
+          echo "ALPHACI authorization validated."
+  build:
+    needs:
+      - pipeline-context
+      - validate-access
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' || (needs.pipeline-context.outputs.branch) == 'main' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: \${{ needs.pipeline-context.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+      - run: npm run build
+  image-backend:
+    needs:
+      - pipeline-context
+      - build
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' }}
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1
+    with:
+      working-directory: .
+      image-name: orders-api-backend
+      push-image: true
+      checkout-ref: \${{ needs.pipeline-context.outputs.sha }}
+      pipeline-branch: dev
+    secrets: inherit
+  register-release:
+    needs:
+      - pipeline-context
+      - build
+      - image-backend
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' }}
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: \${{ steps.register.outputs.release-id }}
+    steps:
+      - name: Register the release with AlphaCI
+        id: register
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_API_URL: http://localhost:4000
+          HEAD_SHA: \${{ needs.pipeline-context.outputs.sha }}
+          SOURCE_ENVIRONMENT_ID: env-dev
+          SOURCE_BRANCH: dev
+          IMAGE_BACKEND: \${{ needs.image-backend.outputs.image-ref }}
+        run: |-
+          set -euo pipefail
+          ARTIFACTS=$(jq -n '[{slot:"backend",reference:env.IMAGE_BACKEND}]')
+          BODY=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg env "$SOURCE_ENVIRONMENT_ID" --arg branch "$SOURCE_BRANCH" --arg sha "$HEAD_SHA" --arg run "$GITHUB_RUN_ID" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --argjson artifacts "$ARTIFACTS" '{repoFullName:$repo, sourceEnvironmentId:$env, sourceBranch:$branch, commitSha:$sha, artifacts:$artifacts, workflowRun:{provider:"github_actions", repo:$repo, runId:$run, url:$url}}')
+          RESPONSE=$(curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$BODY")
+          RELEASE_ID=$(printf '%s' "$RESPONSE" | jq -r '.releaseId')
+          curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"deploying"}')"
+          echo "release-id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+  sign-release:
+    needs:
+      - pipeline-context
+      - register-release
+    permissions:
+      contents: read
+      id-token: write
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/sign-release.yml@v1
+    with:
+      release-id: \${{ needs.register-release.outputs.release-id }}
+      api-url: http://localhost:4000
+    secrets:
+      ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_RELEASE_SIGNING_KEY: \${{ secrets.ALPHACI_RELEASE_SIGNING_KEY }}
+  deploy-dev-backend:
+    needs:
+      - pipeline-context
+      - register-release
+      - image-backend
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' }}
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/render-deploy.yml@v1
+    with:
+      system-name: orders-api
+      environment: uat
+      branch: dev
+      environment-id: env-dev
+      environment-name: dev
+      target-id: target-dev
+      commit-sha: \${{ needs.pipeline-context.outputs.sha }}
+      artifact: \${{ needs.image-backend.outputs.image-ref }}
+    secrets: inherit
+  report-deployment:
+    needs:
+      - pipeline-context
+      - register-release
+      - deploy-dev-backend
+    if: \${{ always() && needs.register-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the first environment deployment
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_API_URL: http://localhost:4000
+          RELEASE_ID: \${{ needs.register-release.outputs.release-id }}
+          RESULTS: \${{ join(needs.*.result, ' ') }}
+        run: |-
+          set -euo pipefail
+          STATUS=healthy
+          for RESULT in $RESULTS; do [ "$RESULT" = success ] || STATUS=failed; done
+          curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg status "$STATUS" '{repoFullName:$repo,status:$status}')"
+          [ "$STATUS" = healthy ]
+  report-results:
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
+    needs:
+      - pipeline-context
+      - validate-access
+      - build
+      - register-release
+      - sign-release
+      - deploy-dev-backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: write
+    env:
+      ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+    steps:
+      - name: Report stage results to ALPHACI
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+          GH_REPO: \${{ github.repository }}
+          GH_BRANCH: \${{ needs.pipeline-context.outputs.branch }}
+          GH_SHA: \${{ needs.pipeline-context.outputs.sha }}
+          GH_RUN_ID: \${{ github.run_id }}
+          GITHUB_TOKEN: \${{ github.token }}
+          STATUS_CONTEXT: alphaci/package
+          STAGE_FAILED: \${{ contains(needs.*.result, 'failure') }}
+          STAGE_CANCELLED: \${{ contains(needs.*.result, 'cancelled') }}
+          STAGE_WORK_RAN: \${{ needs.build.result != 'skipped' }}
+        run: |-
+          # Put this stage's verdict on the commit, where branch protection can
+          # require it.
+          #
+          # Defined before anything that can exit, and called on every path that
+          # reaches a verdict, because a REQUIRED status that never arrives leaves a
+          # pull request pending for ever. Blocking every merge is a worse failure
+          # than the one this is here to prevent, so the ordering is deliberate.
+          #
+          # Never fails the stage. A green pipeline must not turn red because GitHub
+          # would not take a status, but a silently broken status path is how a gate
+          # stops gating without anyone noticing - so it warns, loudly, in the log.
+          post_commit_status() {
+            if [ -z "\${GH_SHA}" ]; then
+              echo "::warning::No commit sha resolved, so no \${STATUS_CONTEXT} status was posted."
+              return 0
+            fi
+            STATUS_PAYLOAD=$(jq -n \\
+              --arg state "$1" \\
+              --arg description "$2" \\
+              --arg context "$STATUS_CONTEXT" \\
+              --arg url "https://github.com/\${GH_REPO}/actions/runs/\${GH_RUN_ID}" \\
+              '{state:$state,description:$description,context:$context,target_url:$url}')
+            curl -sf --max-time 5 \\
+              -X POST "https://api.github.com/repos/\${GH_REPO}/statuses/\${GH_SHA}" \\
+              -H "Authorization: Bearer \${GITHUB_TOKEN}" \\
+              -H "Accept: application/vnd.github+json" \\
+              -d "$STATUS_PAYLOAD" >/dev/null \\
+              || echo "::warning::Could not post the \${STATUS_CONTEXT} status. Branch protection requiring it will hold this commit as pending."
+          }
+
+          # Derive stage conclusion from upstream needs results
+          if [ "$STAGE_FAILED" = "true" ]; then
+            CONCLUSION="failure"
+            post_commit_status "failure" "The \${STATUS_CONTEXT#alphaci/} stage failed."
+          elif [ "$STAGE_CANCELLED" = "true" ]; then
+            CONCLUSION="cancelled"
+            post_commit_status "error" "The \${STATUS_CONTEXT#alphaci/} stage was cancelled."
+          elif [ "$STAGE_WORK_RAN" != "true" ]; then
+            # THE WORK OF THIS STAGE NEVER RAN.
+            #
+            # Two ways to get here. The stage before it did not pass, so the access
+            # gate skipped and everything needing it skipped in turn; or the gate
+            # passed but the work is branch-scoped and this branch is not one it
+            # builds — a pull request into dev, whose head branch is the PR branch.
+            # \`skipped\` is neither failure nor cancelled, so this used to fall
+            # through to "success" and the platform recorded a package stage that
+            # built nothing and deployed nothing as a green deploy.
+            #
+            # Reporting nothing is the honest answer. When an earlier stage failed,
+            # it is also the complete one: a stage with no report resolves on read
+            # as \`blocked\`, naming the stage that stopped it. When the gate passed
+            # and only the branch scope skipped the work, the reader currently sees
+            # \`pending\`, which is imprecise but not a lie — unlike the \`success\` it
+            # replaces. Saying \`skipped\` outright would need a migration.
+            echo "This stage did no work, so there is nothing to report."
+            echo "Either the stage before it did not pass, or this branch is not one"
+            echo "this stage builds."
+            # NO STATUS EITHER, deliberately.
+            #
+            # A green status here would say this commit cleared a stage that never
+            # examined it - the same claim as the package rows that recorded a build
+            # of nothing as a successful deploy, moved to the one place that decides
+            # whether code reaches uat and main.
+            #
+            # The cost is that only a stage which ALWAYS does work can safely be a
+            # required check: require one that skips on some branches and those pull
+            # requests wait for a status that is never coming. \`quality\` runs on
+            # every branch and is the one meant to be required; package and verify
+            # are branch-scoped and are published for reading, not for gating.
+            exit 0
+          else
+            CONCLUSION="success"
+            post_commit_status "success" "The \${STATUS_CONTEXT#alphaci/} stage passed."
+          fi
+
+          # Capture WHY the stage failed: the job, the step inside it that failed,
+          # and the annotations GitHub recorded (lint errors, failing tests,
+          # compiler output). Without these the product can only say THAT a stage
+          # failed, which is what sent people to GitHub to learn anything useful.
+          FAILED_JOBS=""
+          ANNOTATIONS="[]"
+          CHECKS="[]"
+
+          # ALWAYS fetch, on success as well as failure.
+          #
+          # This used to sit behind \`if [ "$CONCLUSION" = "failure" ]\`, which meant
+          # the branch that most needs the detail never collected any. On dev the
+          # gates are advisory - \`fail-on-warning\` is false - so a stage carrying
+          # twelve real diagnostics still concludes SUCCESS, skipped the capture
+          # entirely, and the developer saw a green tick and a coverage number.
+          # The warnings that would block them at uat were recorded nowhere, on the
+          # one branch where there was still time to fix them.
+          JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf '{"jobs":[]}')
+
+          # Every job, with what it concluded - the per-TOOL view.
+          #
+          # A stage status answers "did the quality stage pass". It cannot answer
+          # "did the licence scan pass", and one red bar covering seven tools sends
+          # the reader to GitHub to find out which one. The reporting job is the only
+          # place that can see all of them at once, so it is the place that lists them.
+          #
+          # The reporting job itself is excluded: it is still running, so its
+          # conclusion is null, and it is plumbing rather than a check anyone asked for.
+          CHECKS=$(printf '%s' "$JOBS_JSON" | jq -c '[.jobs[]? | select(.name != "report-results") | {name: .name, conclusion: (.conclusion // "running"), startedAt: .started_at, completedAt: .completed_at}]' || printf '[]')
+
+          if [ "$CONCLUSION" = "failure" ]; then
+            FAILED_JOBS=$(printf '%s' "$JOBS_JSON" | jq -r '.jobs[] | select(.conclusion == "failure") | . as $job | (([$job.steps[]? | select(.conclusion == "failure") | .name] | first) // "") as $step | if $step == "" then "Failed GitHub Actions job: \\($job.name)" else "Failed GitHub Actions job: \\($job.name) > \\($step)" end' | head -n 5 || true)
+          fi
+
+          # Annotations are the actual diagnostics - "Program.cs:11 Await RunAsync
+          # instead of blocking". Collected from every job that ran, not only the
+          # failed ones, because an advisory job on dev reports its findings as
+          # annotations and passes. Those ARE the errors the developer needs.
+          #
+          # A job id is its check-run id for Actions, so one id addresses both.
+          # Failed jobs first, so a capped list keeps the diagnostics that explain a
+          # failure ahead of the advisory noise from jobs that passed.
+          ANNOTATION_IDS=$(printf '%s' "$JOBS_JSON" | jq -r '[.jobs[]? | select(.name != "report-results")] | sort_by(.conclusion != "failure") | .[].id' | head -n 8)
+          for JOB_ID in $ANNOTATION_IDS; do
+            JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf '[]')
+            # Keep the annotations that point at CODE, at any level.
+            #
+            # Filtering on annotation_level == "failure" looked right and threw away
+            # every useful annotation. A Roslyn analyzer or formatter reports its
+            # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -
+            # while the only failure-level annotation is the runner's own "Process
+            # completed with exit code 1", whose path is the workflow file. So the
+            # filter kept the one annotation that says nothing and discarded every
+            # one that named the actual problem.
+            #
+            #
+            # \`.github\` paths ARE kept when the level is failure. Every \`::error::\` a
+            # workflow step prints is attributed to \`.github\` - "AlphaCI refused the
+            # release (HTTP 502)", "Repository variable VERCEL_ALIAS is not set" - and
+            # dropping that path dropped the only place the real reason was written.
+            # The runner's own "Process completed with exit code N" arrives the same
+            # way and says nothing, so that one stays filtered (second select).
+            #
+            # Deduplicated because a solution built more than once (analyze, then
+            # sonar) reports the same diagnostic on each pass.
+            ANNOTATIONS=$(printf '%s %s' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c 'add | map(select(.path and ((.path | startswith(".github") | not) or .annotation_level == "failure"))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]' || printf '%s' "$ANNOTATIONS")
+          done
+
+          # Build results sub-object (reads from job outputs)
+          RESULTS="{}"
+
+          # Build and POST the payload with jq — no string interpolation of context values
+          PAYLOAD=$(jq -n \\
+            --arg repo     "$GH_REPO" \\
+            --arg branch   "$GH_BRANCH" \\
+            --arg sha      "$GH_SHA" \\
+            --argjson runId "$GH_RUN_ID" \\
+            --arg stage    "package" \\
+            --arg conclusion "$CONCLUSION" \\
+            --arg rawLogs "$FAILED_JOBS" \\
+            --argjson results "$RESULTS" \\
+            --argjson annotations "$ANNOTATIONS" \\
+            --argjson checks "$CHECKS" \\
+            '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations,checks:$checks}')
+          curl -sf --max-time 5 \\
+            -X POST "$ALPHACI_REPORT_URL" \\
+            -H "Authorization: Bearer $ALPHACI_TOKEN" \\
+            -H "Content-Type: application/json" \\
+            -d "$PAYLOAD" \\
+            || echo "::warning::Failed to report pipeline results to ALPHACI"
+",
+}
+`;
+
+exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-identical: environments with an on-prem first environment and no signer identity 1`] = `
+{
+  "files": {
+    ".github/workflows/00-alphaci-access.yml": {
+      "bytes": 15546,
+      "sha256": "98b3ff1cd9ef146080f9e1c581ce0ab1c31a868c6b0b6f69dbbf9debc0760ef6",
+    },
+    ".github/workflows/05-alphaci-env-guard.yml": {
+      "bytes": 4192,
+      "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
+    },
+    ".github/workflows/10-alphaci-quality.yml": {
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+    },
+    ".github/workflows/20-alphaci-package.yml": {
+      "bytes": 25993,
+      "sha256": "c3a57624c78a97f8bf9eecb748bdeba6b8f2f18f98eda444fbf4f09cd30d80ec",
+    },
+    ".github/workflows/30-alphaci-promote.yml": {
+      "bytes": 4316,
+      "sha256": "6f6691bb3239208a8bb080d57c8a75a1e85780975e0eff149695625d5cf137c0",
+    },
+  },
+  "packageStage": "name: ALPHACI 3 Build and Deploy
+run-name: \${{ github.event.workflow_run.display_title || github.sha }}
+'on':
+  workflow_run:
+    workflows:
+      - ALPHACI 2 Quality
+    types:
+      - completed
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  ALPHACI_VALIDATE_URL: http://localhost:4000/api/v1/ci/validate
+  ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+jobs:
+  pipeline-context:
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      branch: \${{ steps.context.outputs.branch }}
+      sha: \${{ steps.context.outputs.sha }}
+    steps:
+      - name: Resolve the originating branch and commit
+        id: context
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          EVENT_NAME: \${{ github.event_name }}
+          TRIGGER_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          ARTIFACT_NAME: alphaci-pipeline-context
+          FALLBACK_BRANCH: \${{ github.event.workflow_run.head_branch || github.ref_name }}
+          FALLBACK_SHA: \${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |-
+          set -euo pipefail
+
+          branch="\${FALLBACK_BRANCH}"
+          sha="\${FALLBACK_SHA}"
+          source="the triggering event"
+
+          # An artifact published by the previous stage is the only channel that
+          # survives a second workflow_run hop, so it wins when it is there.
+          if [ "\${EVENT_NAME}" = "workflow_run" ] && [ -n "\${TRIGGER_RUN_ID}" ]; then
+            api="https://api.github.com/repos/\${GH_REPO}/actions/runs/\${TRIGGER_RUN_ID}/artifacts"
+            filter='[.artifacts[]? | select(.name == $name) | .archive_download_url] | first // ""'
+            url=$(curl -sf --max-time 10 -H "Authorization: Bearer \${GH_TOKEN}" -H "Accept: application/vnd.github+json" "\${api}" | jq -r --arg name "\${ARTIFACT_NAME}" "\${filter}" || printf "")
+
+            if [ -n "\${url}" ] && curl -sfL --max-time 20 -o context.zip -H "Authorization: Bearer \${GH_TOKEN}" "\${url}"; then
+              unzip -o -q context.zip -d context-dir
+              if [ -f context-dir/pipeline-context.env ]; then
+                branch=$(grep -m1 "^branch=" context-dir/pipeline-context.env | cut -d= -f2-)
+                sha=$(grep -m1 "^sha=" context-dir/pipeline-context.env | cut -d= -f2-)
+                source="the \${PREVIOUS_NAME} stage"
+              fi
+            fi
+          fi
+
+          # Refusing to guess. Every later job is branch-scoped, so an empty branch
+          # selects nothing - or worse, matches the wrong environment.
+          if [ -z "\${branch}" ] || [ -z "\${sha}" ]; then
+            echo "::error::Could not determine which branch or commit this run is for. Without it every branch-scoped job would be selected wrongly, so the stage stops here."
+            exit 1
+          fi
+
+          {
+            echo "branch=\${branch}"
+            echo "sha=\${sha}"
+          } | tee pipeline-context.env >> "$GITHUB_OUTPUT"
+
+          echo "Branch \${branch} at \${sha}, according to \${source}."
+      - name: Publish the context for the next stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: alphaci-pipeline-context
+          path: pipeline-context.env
+          retention-days: 1
+  upstream-work-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ran: \${{ steps.check.outputs.ran }}
+    steps:
+      - name: Check the previous stage did its work
+        id: check
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          PREVIOUS_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          EVENT_NAME: \${{ github.event_name }}
+          GATE_JOB: validate-access
+        run: |-
+          set -euo pipefail
+
+          # A manual run has no previous stage to inspect and is always allowed.
+          if [ "$EVENT_NAME" != "workflow_run" ]; then
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          JOBS=$(curl -sf --max-time 10 \\
+            -H "Authorization: Bearer $GH_TOKEN" \\
+            -H "Accept: application/vnd.github+json" \\
+            "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest&per_page=100" \\
+            || printf '{"jobs":[]}')
+
+          # An unreachable API is not evidence of a skipped stage. Letting the stage
+          # through on a failed lookup keeps a GitHub outage from silently halting
+          # every pipeline.
+          TOTAL=$(printf '%s' "$JOBS" | jq '[.jobs[]?] | length')
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::warning::Could not read the jobs of $PREVIOUS_NAME, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          GATE=$(printf '%s' "$JOBS" | jq -r --arg gate "$GATE_JOB" '[.jobs[]? | select(.name == $gate) | (.conclusion // "pending")] | first // "missing"')
+
+          if [ "$GATE" = "success" ]; then
+            echo "$PREVIOUS_NAME passed its $GATE_JOB gate."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Same reasoning as an unreachable API: a stage without the gate job is
+          # not one this generator wrote, and its absence proves nothing.
+          if [ "$GATE" = "missing" ]; then
+            echo "::warning::$PREVIOUS_NAME has no $GATE_JOB job, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::$PREVIOUS_NAME did not pass its $GATE_JOB gate ($GATE), so this stage has nothing to act on and will skip. That gate closes when the stage before IT did not pass - fix that one."
+          echo "ran=false" >> "$GITHUB_OUTPUT"
+    needs:
+      - pipeline-context
+  validate-access:
+    needs:
+      - pipeline-context
+      - upstream-work-check
+    if: \${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && needs.upstream-work-check.outputs.ran == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check ALPHACI API connectivity configuration
+        run: |-
+          node <<'ALPHACI_PREFLIGHT'
+          const validate = function validateCiApiConnectivity(baseUrl, execution) {
+              const problem = 'Configure PLATFORM_PUBLIC_URL with an HTTPS API address reachable from the GitHub runner. Localhost and private addresses cannot reach this laptop from GitHub-hosted jobs.';
+              let url;
+              try {
+                  url = new URL(baseUrl);
+              }
+              catch {
+                  throw new Error(problem);
+              }
+              if (url.username ||
+                  url.password ||
+                  !['http:', 'https:'].includes(url.protocol))
+                  throw new Error(problem);
+              if (execution === 'private-network')
+                  return;
+              if (url.protocol !== 'https:')
+                  throw new Error(problem);
+              const host = url.hostname
+                  .toLowerCase()
+                  .replace(/^\\[|\\]$/g, '')
+                  .replace(/\\.$/, '');
+              if (host.includes(':')) {
+                  // IPv6 global unicast only; excludes mapped IPv4, loopback, ULA and link local.
+                  if (!/^[23][0-9a-f]{3}:/.test(host))
+                      throw new Error(problem);
+              }
+              else if (/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(host)) {
+                  const [a = 0, b = 0] = host.split('.').map(Number);
+                  if (a === 0 ||
+                      a === 10 ||
+                      a === 127 ||
+                      a >= 224 ||
+                      (a === 169 && b === 254) ||
+                      (a === 172 && b >= 16 && b <= 31) ||
+                      (a === 192 && (b === 168 || b === 0)) ||
+                      (a === 100 && b >= 64 && b <= 127) ||
+                      (a === 198 && (b === 18 || b === 19)))
+                      throw new Error(problem);
+              }
+              else if (!host.includes('.') ||
+                  /(^|\\.)(localhost|local|internal|lan)$/.test(host)) {
+                  throw new Error(problem);
+              }
+          };
+          validate(process.env.ALPHACI_VALIDATE_URL, 'github-hosted');
+          ALPHACI_PREFLIGHT
+      - name: Validate ALPHACI access
+        run: |-
+          RESPONSE=$(curl -sf -w "\\n%{http_code}" \\
+            -X POST \\
+            -H "Authorization: Bearer \${{ secrets.ALPHACI_TOKEN }}" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"repo\\":\\"\${{ github.repository }}\\",\\"stage\\":\\"package\\",\\"workflowRunId\\":\\"\${{ github.run_id }}\\",\\"headSha\\":\\"\${{ needs.pipeline-context.outputs.sha }}\\"}" \\
+            "$ALPHACI_VALIDATE_URL") || true
+          HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
+          BODY=$(printf '%s' "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::ALPHACI authorization failed (HTTP $HTTP_CODE). \${BODY}"
+            exit 1
+          fi
+          echo "ALPHACI authorization validated."
+  build:
+    needs:
+      - pipeline-context
+      - validate-access
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' || (needs.pipeline-context.outputs.branch) == 'main' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: \${{ needs.pipeline-context.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+      - run: npm run build
+  image-backend:
+    needs:
+      - pipeline-context
+      - build
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' }}
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1
+    with:
+      working-directory: .
+      image-name: orders-api-backend
+      push-image: true
+      checkout-ref: \${{ needs.pipeline-context.outputs.sha }}
+      pipeline-branch: dev
+    secrets: inherit
+  register-release:
+    needs:
+      - pipeline-context
+      - build
+      - image-backend
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' }}
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: \${{ steps.register.outputs.release-id }}
+    steps:
+      - name: Register the release with AlphaCI
+        id: register
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_API_URL: http://localhost:4000
+          HEAD_SHA: \${{ needs.pipeline-context.outputs.sha }}
+          SOURCE_ENVIRONMENT_ID: env-dev
+          SOURCE_BRANCH: dev
+          IMAGE_BACKEND: \${{ needs.image-backend.outputs.image-ref }}
+        run: |-
+          set -euo pipefail
+          ARTIFACTS=$(jq -n '[{slot:"backend",reference:env.IMAGE_BACKEND}]')
+          BODY=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg env "$SOURCE_ENVIRONMENT_ID" --arg branch "$SOURCE_BRANCH" --arg sha "$HEAD_SHA" --arg run "$GITHUB_RUN_ID" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --argjson artifacts "$ARTIFACTS" '{repoFullName:$repo, sourceEnvironmentId:$env, sourceBranch:$branch, commitSha:$sha, artifacts:$artifacts, workflowRun:{provider:"github_actions", repo:$repo, runId:$run, url:$url}}')
+          RESPONSE=$(curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$BODY")
+          RELEASE_ID=$(printf '%s' "$RESPONSE" | jq -r '.releaseId')
+          echo "release-id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+  sign-release:
+    needs:
+      - pipeline-context
+      - register-release
+    permissions:
+      contents: read
+      id-token: write
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/sign-release.yml@v1
+    with:
+      release-id: \${{ needs.register-release.outputs.release-id }}
+      api-url: http://localhost:4000
+    secrets:
+      ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_RELEASE_SIGNING_KEY: \${{ secrets.ALPHACI_RELEASE_SIGNING_KEY }}
+  report-signing-failure:
+    needs:
+      - pipeline-context
+      - register-release
+      - sign-release
+    if: \${{ always() && needs.register-release.result == 'success' && needs.sign-release.result != 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clear the unsigned host deployment after signing fails
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_API_URL: http://localhost:4000
+          RELEASE_ID: \${{ needs.register-release.outputs.release-id }}
+        run: |-
+          set -euo pipefail
+          curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"failed",detail:"Release signing failed or was cancelled before host delivery."}')"
+  report-results:
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
+    needs:
+      - pipeline-context
+      - validate-access
+      - build
+      - register-release
+      - sign-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: write
+    env:
+      ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+    steps:
+      - name: Report stage results to ALPHACI
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+          GH_REPO: \${{ github.repository }}
+          GH_BRANCH: \${{ needs.pipeline-context.outputs.branch }}
+          GH_SHA: \${{ needs.pipeline-context.outputs.sha }}
+          GH_RUN_ID: \${{ github.run_id }}
+          GITHUB_TOKEN: \${{ github.token }}
+          STATUS_CONTEXT: alphaci/package
+          STAGE_FAILED: \${{ contains(needs.*.result, 'failure') }}
+          STAGE_CANCELLED: \${{ contains(needs.*.result, 'cancelled') }}
+          STAGE_WORK_RAN: \${{ needs.build.result != 'skipped' }}
+        run: |-
+          # Put this stage's verdict on the commit, where branch protection can
+          # require it.
+          #
+          # Defined before anything that can exit, and called on every path that
+          # reaches a verdict, because a REQUIRED status that never arrives leaves a
+          # pull request pending for ever. Blocking every merge is a worse failure
+          # than the one this is here to prevent, so the ordering is deliberate.
+          #
+          # Never fails the stage. A green pipeline must not turn red because GitHub
+          # would not take a status, but a silently broken status path is how a gate
+          # stops gating without anyone noticing - so it warns, loudly, in the log.
+          post_commit_status() {
+            if [ -z "\${GH_SHA}" ]; then
+              echo "::warning::No commit sha resolved, so no \${STATUS_CONTEXT} status was posted."
+              return 0
+            fi
+            STATUS_PAYLOAD=$(jq -n \\
+              --arg state "$1" \\
+              --arg description "$2" \\
+              --arg context "$STATUS_CONTEXT" \\
+              --arg url "https://github.com/\${GH_REPO}/actions/runs/\${GH_RUN_ID}" \\
+              '{state:$state,description:$description,context:$context,target_url:$url}')
+            curl -sf --max-time 5 \\
+              -X POST "https://api.github.com/repos/\${GH_REPO}/statuses/\${GH_SHA}" \\
+              -H "Authorization: Bearer \${GITHUB_TOKEN}" \\
+              -H "Accept: application/vnd.github+json" \\
+              -d "$STATUS_PAYLOAD" >/dev/null \\
+              || echo "::warning::Could not post the \${STATUS_CONTEXT} status. Branch protection requiring it will hold this commit as pending."
+          }
+
+          # Derive stage conclusion from upstream needs results
+          if [ "$STAGE_FAILED" = "true" ]; then
+            CONCLUSION="failure"
+            post_commit_status "failure" "The \${STATUS_CONTEXT#alphaci/} stage failed."
+          elif [ "$STAGE_CANCELLED" = "true" ]; then
+            CONCLUSION="cancelled"
+            post_commit_status "error" "The \${STATUS_CONTEXT#alphaci/} stage was cancelled."
+          elif [ "$STAGE_WORK_RAN" != "true" ]; then
+            # THE WORK OF THIS STAGE NEVER RAN.
+            #
+            # Two ways to get here. The stage before it did not pass, so the access
+            # gate skipped and everything needing it skipped in turn; or the gate
+            # passed but the work is branch-scoped and this branch is not one it
+            # builds — a pull request into dev, whose head branch is the PR branch.
+            # \`skipped\` is neither failure nor cancelled, so this used to fall
+            # through to "success" and the platform recorded a package stage that
+            # built nothing and deployed nothing as a green deploy.
+            #
+            # Reporting nothing is the honest answer. When an earlier stage failed,
+            # it is also the complete one: a stage with no report resolves on read
+            # as \`blocked\`, naming the stage that stopped it. When the gate passed
+            # and only the branch scope skipped the work, the reader currently sees
+            # \`pending\`, which is imprecise but not a lie — unlike the \`success\` it
+            # replaces. Saying \`skipped\` outright would need a migration.
+            echo "This stage did no work, so there is nothing to report."
+            echo "Either the stage before it did not pass, or this branch is not one"
+            echo "this stage builds."
+            # NO STATUS EITHER, deliberately.
+            #
+            # A green status here would say this commit cleared a stage that never
+            # examined it - the same claim as the package rows that recorded a build
+            # of nothing as a successful deploy, moved to the one place that decides
+            # whether code reaches uat and main.
+            #
+            # The cost is that only a stage which ALWAYS does work can safely be a
+            # required check: require one that skips on some branches and those pull
+            # requests wait for a status that is never coming. \`quality\` runs on
+            # every branch and is the one meant to be required; package and verify
+            # are branch-scoped and are published for reading, not for gating.
+            exit 0
+          else
+            CONCLUSION="success"
+            post_commit_status "success" "The \${STATUS_CONTEXT#alphaci/} stage passed."
+          fi
+
+          # Capture WHY the stage failed: the job, the step inside it that failed,
+          # and the annotations GitHub recorded (lint errors, failing tests,
+          # compiler output). Without these the product can only say THAT a stage
+          # failed, which is what sent people to GitHub to learn anything useful.
+          FAILED_JOBS=""
+          ANNOTATIONS="[]"
+          CHECKS="[]"
+
+          # ALWAYS fetch, on success as well as failure.
+          #
+          # This used to sit behind \`if [ "$CONCLUSION" = "failure" ]\`, which meant
+          # the branch that most needs the detail never collected any. On dev the
+          # gates are advisory - \`fail-on-warning\` is false - so a stage carrying
+          # twelve real diagnostics still concludes SUCCESS, skipped the capture
+          # entirely, and the developer saw a green tick and a coverage number.
+          # The warnings that would block them at uat were recorded nowhere, on the
+          # one branch where there was still time to fix them.
+          JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf '{"jobs":[]}')
+
+          # Every job, with what it concluded - the per-TOOL view.
+          #
+          # A stage status answers "did the quality stage pass". It cannot answer
+          # "did the licence scan pass", and one red bar covering seven tools sends
+          # the reader to GitHub to find out which one. The reporting job is the only
+          # place that can see all of them at once, so it is the place that lists them.
+          #
+          # The reporting job itself is excluded: it is still running, so its
+          # conclusion is null, and it is plumbing rather than a check anyone asked for.
+          CHECKS=$(printf '%s' "$JOBS_JSON" | jq -c '[.jobs[]? | select(.name != "report-results") | {name: .name, conclusion: (.conclusion // "running"), startedAt: .started_at, completedAt: .completed_at}]' || printf '[]')
+
+          if [ "$CONCLUSION" = "failure" ]; then
+            FAILED_JOBS=$(printf '%s' "$JOBS_JSON" | jq -r '.jobs[] | select(.conclusion == "failure") | . as $job | (([$job.steps[]? | select(.conclusion == "failure") | .name] | first) // "") as $step | if $step == "" then "Failed GitHub Actions job: \\($job.name)" else "Failed GitHub Actions job: \\($job.name) > \\($step)" end' | head -n 5 || true)
+          fi
+
+          # Annotations are the actual diagnostics - "Program.cs:11 Await RunAsync
+          # instead of blocking". Collected from every job that ran, not only the
+          # failed ones, because an advisory job on dev reports its findings as
+          # annotations and passes. Those ARE the errors the developer needs.
+          #
+          # A job id is its check-run id for Actions, so one id addresses both.
+          # Failed jobs first, so a capped list keeps the diagnostics that explain a
+          # failure ahead of the advisory noise from jobs that passed.
+          ANNOTATION_IDS=$(printf '%s' "$JOBS_JSON" | jq -r '[.jobs[]? | select(.name != "report-results")] | sort_by(.conclusion != "failure") | .[].id' | head -n 8)
+          for JOB_ID in $ANNOTATION_IDS; do
+            JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf '[]')
+            # Keep the annotations that point at CODE, at any level.
+            #
+            # Filtering on annotation_level == "failure" looked right and threw away
+            # every useful annotation. A Roslyn analyzer or formatter reports its
+            # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -
+            # while the only failure-level annotation is the runner's own "Process
+            # completed with exit code 1", whose path is the workflow file. So the
+            # filter kept the one annotation that says nothing and discarded every
+            # one that named the actual problem.
+            #
+            #
+            # \`.github\` paths ARE kept when the level is failure. Every \`::error::\` a
+            # workflow step prints is attributed to \`.github\` - "AlphaCI refused the
+            # release (HTTP 502)", "Repository variable VERCEL_ALIAS is not set" - and
+            # dropping that path dropped the only place the real reason was written.
+            # The runner's own "Process completed with exit code N" arrives the same
+            # way and says nothing, so that one stays filtered (second select).
+            #
+            # Deduplicated because a solution built more than once (analyze, then
+            # sonar) reports the same diagnostic on each pass.
+            ANNOTATIONS=$(printf '%s %s' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c 'add | map(select(.path and ((.path | startswith(".github") | not) or .annotation_level == "failure"))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]' || printf '%s' "$ANNOTATIONS")
+          done
+
+          # Build results sub-object (reads from job outputs)
+          RESULTS="{}"
+
+          # Build and POST the payload with jq — no string interpolation of context values
+          PAYLOAD=$(jq -n \\
+            --arg repo     "$GH_REPO" \\
+            --arg branch   "$GH_BRANCH" \\
+            --arg sha      "$GH_SHA" \\
+            --argjson runId "$GH_RUN_ID" \\
+            --arg stage    "package" \\
+            --arg conclusion "$CONCLUSION" \\
+            --arg rawLogs "$FAILED_JOBS" \\
+            --argjson results "$RESULTS" \\
+            --argjson annotations "$ANNOTATIONS" \\
+            --argjson checks "$CHECKS" \\
+            '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations,checks:$checks}')
+          curl -sf --max-time 5 \\
+            -X POST "$ALPHACI_REPORT_URL" \\
+            -H "Authorization: Bearer $ALPHACI_TOKEN" \\
+            -H "Content-Type: application/json" \\
+            -d "$PAYLOAD" \\
+            || echo "::warning::Failed to report pipeline results to ALPHACI"
+",
+}
+`;
+
+exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-identical: environments with an on-prem first environment and the Cloud KMS signer 1`] = `
+{
+  "files": {
+    ".github/workflows/00-alphaci-access.yml": {
+      "bytes": 15546,
+      "sha256": "98b3ff1cd9ef146080f9e1c581ce0ab1c31a868c6b0b6f69dbbf9debc0760ef6",
+    },
+    ".github/workflows/05-alphaci-env-guard.yml": {
+      "bytes": 4192,
+      "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
+    },
+    ".github/workflows/10-alphaci-quality.yml": {
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+    },
+    ".github/workflows/20-alphaci-package.yml": {
+      "bytes": 26193,
+      "sha256": "a9f45f8bccbc7e7bb396deb1dd0f129d3cdc056e3db800c3dea9afa4f57b6b3c",
+    },
+    ".github/workflows/30-alphaci-promote.yml": {
+      "bytes": 4316,
+      "sha256": "6f6691bb3239208a8bb080d57c8a75a1e85780975e0eff149695625d5cf137c0",
+    },
+  },
+  "packageStage": "name: ALPHACI 3 Build and Deploy
+run-name: \${{ github.event.workflow_run.display_title || github.sha }}
+'on':
+  workflow_run:
+    workflows:
+      - ALPHACI 2 Quality
+    types:
+      - completed
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  ALPHACI_VALIDATE_URL: http://localhost:4000/api/v1/ci/validate
+  ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+jobs:
+  pipeline-context:
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      branch: \${{ steps.context.outputs.branch }}
+      sha: \${{ steps.context.outputs.sha }}
+    steps:
+      - name: Resolve the originating branch and commit
+        id: context
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          EVENT_NAME: \${{ github.event_name }}
+          TRIGGER_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          ARTIFACT_NAME: alphaci-pipeline-context
+          FALLBACK_BRANCH: \${{ github.event.workflow_run.head_branch || github.ref_name }}
+          FALLBACK_SHA: \${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |-
+          set -euo pipefail
+
+          branch="\${FALLBACK_BRANCH}"
+          sha="\${FALLBACK_SHA}"
+          source="the triggering event"
+
+          # An artifact published by the previous stage is the only channel that
+          # survives a second workflow_run hop, so it wins when it is there.
+          if [ "\${EVENT_NAME}" = "workflow_run" ] && [ -n "\${TRIGGER_RUN_ID}" ]; then
+            api="https://api.github.com/repos/\${GH_REPO}/actions/runs/\${TRIGGER_RUN_ID}/artifacts"
+            filter='[.artifacts[]? | select(.name == $name) | .archive_download_url] | first // ""'
+            url=$(curl -sf --max-time 10 -H "Authorization: Bearer \${GH_TOKEN}" -H "Accept: application/vnd.github+json" "\${api}" | jq -r --arg name "\${ARTIFACT_NAME}" "\${filter}" || printf "")
+
+            if [ -n "\${url}" ] && curl -sfL --max-time 20 -o context.zip -H "Authorization: Bearer \${GH_TOKEN}" "\${url}"; then
+              unzip -o -q context.zip -d context-dir
+              if [ -f context-dir/pipeline-context.env ]; then
+                branch=$(grep -m1 "^branch=" context-dir/pipeline-context.env | cut -d= -f2-)
+                sha=$(grep -m1 "^sha=" context-dir/pipeline-context.env | cut -d= -f2-)
+                source="the \${PREVIOUS_NAME} stage"
+              fi
+            fi
+          fi
+
+          # Refusing to guess. Every later job is branch-scoped, so an empty branch
+          # selects nothing - or worse, matches the wrong environment.
+          if [ -z "\${branch}" ] || [ -z "\${sha}" ]; then
+            echo "::error::Could not determine which branch or commit this run is for. Without it every branch-scoped job would be selected wrongly, so the stage stops here."
+            exit 1
+          fi
+
+          {
+            echo "branch=\${branch}"
+            echo "sha=\${sha}"
+          } | tee pipeline-context.env >> "$GITHUB_OUTPUT"
+
+          echo "Branch \${branch} at \${sha}, according to \${source}."
+      - name: Publish the context for the next stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: alphaci-pipeline-context
+          path: pipeline-context.env
+          retention-days: 1
+  upstream-work-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ran: \${{ steps.check.outputs.ran }}
+    steps:
+      - name: Check the previous stage did its work
+        id: check
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          PREVIOUS_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          EVENT_NAME: \${{ github.event_name }}
+          GATE_JOB: validate-access
+        run: |-
+          set -euo pipefail
+
+          # A manual run has no previous stage to inspect and is always allowed.
+          if [ "$EVENT_NAME" != "workflow_run" ]; then
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          JOBS=$(curl -sf --max-time 10 \\
+            -H "Authorization: Bearer $GH_TOKEN" \\
+            -H "Accept: application/vnd.github+json" \\
+            "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest&per_page=100" \\
+            || printf '{"jobs":[]}')
+
+          # An unreachable API is not evidence of a skipped stage. Letting the stage
+          # through on a failed lookup keeps a GitHub outage from silently halting
+          # every pipeline.
+          TOTAL=$(printf '%s' "$JOBS" | jq '[.jobs[]?] | length')
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::warning::Could not read the jobs of $PREVIOUS_NAME, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          GATE=$(printf '%s' "$JOBS" | jq -r --arg gate "$GATE_JOB" '[.jobs[]? | select(.name == $gate) | (.conclusion // "pending")] | first // "missing"')
+
+          if [ "$GATE" = "success" ]; then
+            echo "$PREVIOUS_NAME passed its $GATE_JOB gate."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Same reasoning as an unreachable API: a stage without the gate job is
+          # not one this generator wrote, and its absence proves nothing.
+          if [ "$GATE" = "missing" ]; then
+            echo "::warning::$PREVIOUS_NAME has no $GATE_JOB job, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::$PREVIOUS_NAME did not pass its $GATE_JOB gate ($GATE), so this stage has nothing to act on and will skip. That gate closes when the stage before IT did not pass - fix that one."
+          echo "ran=false" >> "$GITHUB_OUTPUT"
+    needs:
+      - pipeline-context
+  validate-access:
+    needs:
+      - pipeline-context
+      - upstream-work-check
+    if: \${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && needs.upstream-work-check.outputs.ran == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check ALPHACI API connectivity configuration
+        run: |-
+          node <<'ALPHACI_PREFLIGHT'
+          const validate = function validateCiApiConnectivity(baseUrl, execution) {
+              const problem = 'Configure PLATFORM_PUBLIC_URL with an HTTPS API address reachable from the GitHub runner. Localhost and private addresses cannot reach this laptop from GitHub-hosted jobs.';
+              let url;
+              try {
+                  url = new URL(baseUrl);
+              }
+              catch {
+                  throw new Error(problem);
+              }
+              if (url.username ||
+                  url.password ||
+                  !['http:', 'https:'].includes(url.protocol))
+                  throw new Error(problem);
+              if (execution === 'private-network')
+                  return;
+              if (url.protocol !== 'https:')
+                  throw new Error(problem);
+              const host = url.hostname
+                  .toLowerCase()
+                  .replace(/^\\[|\\]$/g, '')
+                  .replace(/\\.$/, '');
+              if (host.includes(':')) {
+                  // IPv6 global unicast only; excludes mapped IPv4, loopback, ULA and link local.
+                  if (!/^[23][0-9a-f]{3}:/.test(host))
+                      throw new Error(problem);
+              }
+              else if (/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(host)) {
+                  const [a = 0, b = 0] = host.split('.').map(Number);
+                  if (a === 0 ||
+                      a === 10 ||
+                      a === 127 ||
+                      a >= 224 ||
+                      (a === 169 && b === 254) ||
+                      (a === 172 && b >= 16 && b <= 31) ||
+                      (a === 192 && (b === 168 || b === 0)) ||
+                      (a === 100 && b >= 64 && b <= 127) ||
+                      (a === 198 && (b === 18 || b === 19)))
+                      throw new Error(problem);
+              }
+              else if (!host.includes('.') ||
+                  /(^|\\.)(localhost|local|internal|lan)$/.test(host)) {
+                  throw new Error(problem);
+              }
+          };
+          validate(process.env.ALPHACI_VALIDATE_URL, 'github-hosted');
+          ALPHACI_PREFLIGHT
+      - name: Validate ALPHACI access
+        run: |-
+          RESPONSE=$(curl -sf -w "\\n%{http_code}" \\
+            -X POST \\
+            -H "Authorization: Bearer \${{ secrets.ALPHACI_TOKEN }}" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"repo\\":\\"\${{ github.repository }}\\",\\"stage\\":\\"package\\",\\"workflowRunId\\":\\"\${{ github.run_id }}\\",\\"headSha\\":\\"\${{ needs.pipeline-context.outputs.sha }}\\"}" \\
+            "$ALPHACI_VALIDATE_URL") || true
+          HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
+          BODY=$(printf '%s' "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::ALPHACI authorization failed (HTTP $HTTP_CODE). \${BODY}"
+            exit 1
+          fi
+          echo "ALPHACI authorization validated."
+  build:
+    needs:
+      - pipeline-context
+      - validate-access
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' || (needs.pipeline-context.outputs.branch) == 'main' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: \${{ needs.pipeline-context.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+      - run: npm run build
+  image-backend:
+    needs:
+      - pipeline-context
+      - build
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' }}
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1
+    with:
+      working-directory: .
+      image-name: orders-api-backend
+      push-image: true
+      checkout-ref: \${{ needs.pipeline-context.outputs.sha }}
+      pipeline-branch: dev
+    secrets: inherit
+  register-release:
+    needs:
+      - pipeline-context
+      - build
+      - image-backend
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' }}
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: \${{ steps.register.outputs.release-id }}
+    steps:
+      - name: Register the release with AlphaCI
+        id: register
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_API_URL: http://localhost:4000
+          HEAD_SHA: \${{ needs.pipeline-context.outputs.sha }}
+          SOURCE_ENVIRONMENT_ID: env-dev
+          SOURCE_BRANCH: dev
+          IMAGE_BACKEND: \${{ needs.image-backend.outputs.image-ref }}
+        run: |-
+          set -euo pipefail
+          ARTIFACTS=$(jq -n '[{slot:"backend",reference:env.IMAGE_BACKEND}]')
+          BODY=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg env "$SOURCE_ENVIRONMENT_ID" --arg branch "$SOURCE_BRANCH" --arg sha "$HEAD_SHA" --arg run "$GITHUB_RUN_ID" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --argjson artifacts "$ARTIFACTS" '{repoFullName:$repo, sourceEnvironmentId:$env, sourceBranch:$branch, commitSha:$sha, artifacts:$artifacts, workflowRun:{provider:"github_actions", repo:$repo, runId:$run, url:$url}}')
+          RESPONSE=$(curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$BODY")
+          RELEASE_ID=$(printf '%s' "$RESPONSE" | jq -r '.releaseId')
+          echo "release-id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+  sign-release:
+    needs:
+      - pipeline-context
+      - register-release
+    permissions:
+      contents: read
+      id-token: write
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/sign-release.yml@v1
+    with:
+      release-id: \${{ needs.register-release.outputs.release-id }}
+      api-url: http://localhost:4000
+      workload-identity-provider: projects/123456789/locations/global/workloadIdentityPools/alphaci-release/providers/github
+      service-account: release-signer@alphaci-prod.iam.gserviceaccount.com
+    secrets:
+      ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_RELEASE_SIGNING_KEY: \${{ secrets.ALPHACI_RELEASE_SIGNING_KEY }}
+  report-signing-failure:
+    needs:
+      - pipeline-context
+      - register-release
+      - sign-release
+    if: \${{ always() && needs.register-release.result == 'success' && needs.sign-release.result != 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clear the unsigned host deployment after signing fails
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_API_URL: http://localhost:4000
+          RELEASE_ID: \${{ needs.register-release.outputs.release-id }}
+        run: |-
+          set -euo pipefail
+          curl -sf --max-time 30 -X POST "$ALPHACI_API_URL/api/v1/ci/releases/$RELEASE_ID/deployment-status" -H "Authorization: Bearer $ALPHACI_TOKEN" -H "Content-Type: application/json" -d "$(jq -n --arg repo "$GITHUB_REPOSITORY" '{repoFullName:$repo,status:"failed",detail:"Release signing failed or was cancelled before host delivery."}')"
+  report-results:
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
+    needs:
+      - pipeline-context
+      - validate-access
+      - build
+      - register-release
+      - sign-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: write
+    env:
+      ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+    steps:
+      - name: Report stage results to ALPHACI
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+          GH_REPO: \${{ github.repository }}
+          GH_BRANCH: \${{ needs.pipeline-context.outputs.branch }}
+          GH_SHA: \${{ needs.pipeline-context.outputs.sha }}
+          GH_RUN_ID: \${{ github.run_id }}
+          GITHUB_TOKEN: \${{ github.token }}
+          STATUS_CONTEXT: alphaci/package
+          STAGE_FAILED: \${{ contains(needs.*.result, 'failure') }}
+          STAGE_CANCELLED: \${{ contains(needs.*.result, 'cancelled') }}
+          STAGE_WORK_RAN: \${{ needs.build.result != 'skipped' }}
+        run: |-
+          # Put this stage's verdict on the commit, where branch protection can
+          # require it.
+          #
+          # Defined before anything that can exit, and called on every path that
+          # reaches a verdict, because a REQUIRED status that never arrives leaves a
+          # pull request pending for ever. Blocking every merge is a worse failure
+          # than the one this is here to prevent, so the ordering is deliberate.
+          #
+          # Never fails the stage. A green pipeline must not turn red because GitHub
+          # would not take a status, but a silently broken status path is how a gate
+          # stops gating without anyone noticing - so it warns, loudly, in the log.
+          post_commit_status() {
+            if [ -z "\${GH_SHA}" ]; then
+              echo "::warning::No commit sha resolved, so no \${STATUS_CONTEXT} status was posted."
+              return 0
+            fi
+            STATUS_PAYLOAD=$(jq -n \\
+              --arg state "$1" \\
+              --arg description "$2" \\
+              --arg context "$STATUS_CONTEXT" \\
+              --arg url "https://github.com/\${GH_REPO}/actions/runs/\${GH_RUN_ID}" \\
+              '{state:$state,description:$description,context:$context,target_url:$url}')
+            curl -sf --max-time 5 \\
+              -X POST "https://api.github.com/repos/\${GH_REPO}/statuses/\${GH_SHA}" \\
+              -H "Authorization: Bearer \${GITHUB_TOKEN}" \\
+              -H "Accept: application/vnd.github+json" \\
+              -d "$STATUS_PAYLOAD" >/dev/null \\
+              || echo "::warning::Could not post the \${STATUS_CONTEXT} status. Branch protection requiring it will hold this commit as pending."
+          }
+
+          # Derive stage conclusion from upstream needs results
+          if [ "$STAGE_FAILED" = "true" ]; then
+            CONCLUSION="failure"
+            post_commit_status "failure" "The \${STATUS_CONTEXT#alphaci/} stage failed."
+          elif [ "$STAGE_CANCELLED" = "true" ]; then
+            CONCLUSION="cancelled"
+            post_commit_status "error" "The \${STATUS_CONTEXT#alphaci/} stage was cancelled."
+          elif [ "$STAGE_WORK_RAN" != "true" ]; then
+            # THE WORK OF THIS STAGE NEVER RAN.
+            #
+            # Two ways to get here. The stage before it did not pass, so the access
+            # gate skipped and everything needing it skipped in turn; or the gate
+            # passed but the work is branch-scoped and this branch is not one it
+            # builds — a pull request into dev, whose head branch is the PR branch.
+            # \`skipped\` is neither failure nor cancelled, so this used to fall
+            # through to "success" and the platform recorded a package stage that
+            # built nothing and deployed nothing as a green deploy.
+            #
+            # Reporting nothing is the honest answer. When an earlier stage failed,
+            # it is also the complete one: a stage with no report resolves on read
+            # as \`blocked\`, naming the stage that stopped it. When the gate passed
+            # and only the branch scope skipped the work, the reader currently sees
+            # \`pending\`, which is imprecise but not a lie — unlike the \`success\` it
+            # replaces. Saying \`skipped\` outright would need a migration.
+            echo "This stage did no work, so there is nothing to report."
+            echo "Either the stage before it did not pass, or this branch is not one"
+            echo "this stage builds."
+            # NO STATUS EITHER, deliberately.
+            #
+            # A green status here would say this commit cleared a stage that never
+            # examined it - the same claim as the package rows that recorded a build
+            # of nothing as a successful deploy, moved to the one place that decides
+            # whether code reaches uat and main.
+            #
+            # The cost is that only a stage which ALWAYS does work can safely be a
+            # required check: require one that skips on some branches and those pull
+            # requests wait for a status that is never coming. \`quality\` runs on
+            # every branch and is the one meant to be required; package and verify
+            # are branch-scoped and are published for reading, not for gating.
+            exit 0
+          else
+            CONCLUSION="success"
+            post_commit_status "success" "The \${STATUS_CONTEXT#alphaci/} stage passed."
+          fi
+
+          # Capture WHY the stage failed: the job, the step inside it that failed,
+          # and the annotations GitHub recorded (lint errors, failing tests,
+          # compiler output). Without these the product can only say THAT a stage
+          # failed, which is what sent people to GitHub to learn anything useful.
+          FAILED_JOBS=""
+          ANNOTATIONS="[]"
+          CHECKS="[]"
+
+          # ALWAYS fetch, on success as well as failure.
+          #
+          # This used to sit behind \`if [ "$CONCLUSION" = "failure" ]\`, which meant
+          # the branch that most needs the detail never collected any. On dev the
+          # gates are advisory - \`fail-on-warning\` is false - so a stage carrying
+          # twelve real diagnostics still concludes SUCCESS, skipped the capture
+          # entirely, and the developer saw a green tick and a coverage number.
+          # The warnings that would block them at uat were recorded nowhere, on the
+          # one branch where there was still time to fix them.
+          JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf '{"jobs":[]}')
+
+          # Every job, with what it concluded - the per-TOOL view.
+          #
+          # A stage status answers "did the quality stage pass". It cannot answer
+          # "did the licence scan pass", and one red bar covering seven tools sends
+          # the reader to GitHub to find out which one. The reporting job is the only
+          # place that can see all of them at once, so it is the place that lists them.
+          #
+          # The reporting job itself is excluded: it is still running, so its
+          # conclusion is null, and it is plumbing rather than a check anyone asked for.
+          CHECKS=$(printf '%s' "$JOBS_JSON" | jq -c '[.jobs[]? | select(.name != "report-results") | {name: .name, conclusion: (.conclusion // "running"), startedAt: .started_at, completedAt: .completed_at}]' || printf '[]')
+
+          if [ "$CONCLUSION" = "failure" ]; then
+            FAILED_JOBS=$(printf '%s' "$JOBS_JSON" | jq -r '.jobs[] | select(.conclusion == "failure") | . as $job | (([$job.steps[]? | select(.conclusion == "failure") | .name] | first) // "") as $step | if $step == "" then "Failed GitHub Actions job: \\($job.name)" else "Failed GitHub Actions job: \\($job.name) > \\($step)" end' | head -n 5 || true)
+          fi
+
+          # Annotations are the actual diagnostics - "Program.cs:11 Await RunAsync
+          # instead of blocking". Collected from every job that ran, not only the
+          # failed ones, because an advisory job on dev reports its findings as
+          # annotations and passes. Those ARE the errors the developer needs.
+          #
+          # A job id is its check-run id for Actions, so one id addresses both.
+          # Failed jobs first, so a capped list keeps the diagnostics that explain a
+          # failure ahead of the advisory noise from jobs that passed.
+          ANNOTATION_IDS=$(printf '%s' "$JOBS_JSON" | jq -r '[.jobs[]? | select(.name != "report-results")] | sort_by(.conclusion != "failure") | .[].id' | head -n 8)
+          for JOB_ID in $ANNOTATION_IDS; do
+            JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf '[]')
+            # Keep the annotations that point at CODE, at any level.
+            #
+            # Filtering on annotation_level == "failure" looked right and threw away
+            # every useful annotation. A Roslyn analyzer or formatter reports its
+            # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -
+            # while the only failure-level annotation is the runner's own "Process
+            # completed with exit code 1", whose path is the workflow file. So the
+            # filter kept the one annotation that says nothing and discarded every
+            # one that named the actual problem.
+            #
+            #
+            # \`.github\` paths ARE kept when the level is failure. Every \`::error::\` a
+            # workflow step prints is attributed to \`.github\` - "AlphaCI refused the
+            # release (HTTP 502)", "Repository variable VERCEL_ALIAS is not set" - and
+            # dropping that path dropped the only place the real reason was written.
+            # The runner's own "Process completed with exit code N" arrives the same
+            # way and says nothing, so that one stays filtered (second select).
+            #
+            # Deduplicated because a solution built more than once (analyze, then
+            # sonar) reports the same diagnostic on each pass.
+            ANNOTATIONS=$(printf '%s %s' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c 'add | map(select(.path and ((.path | startswith(".github") | not) or .annotation_level == "failure"))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]' || printf '%s' "$ANNOTATIONS")
+          done
+
+          # Build results sub-object (reads from job outputs)
+          RESULTS="{}"
+
+          # Build and POST the payload with jq — no string interpolation of context values
+          PAYLOAD=$(jq -n \\
+            --arg repo     "$GH_REPO" \\
+            --arg branch   "$GH_BRANCH" \\
+            --arg sha      "$GH_SHA" \\
+            --argjson runId "$GH_RUN_ID" \\
+            --arg stage    "package" \\
+            --arg conclusion "$CONCLUSION" \\
+            --arg rawLogs "$FAILED_JOBS" \\
+            --argjson results "$RESULTS" \\
+            --argjson annotations "$ANNOTATIONS" \\
+            --argjson checks "$CHECKS" \\
+            '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations,checks:$checks}')
+          curl -sf --max-time 5 \\
+            -X POST "$ALPHACI_REPORT_URL" \\
+            -H "Authorization: Bearer $ALPHACI_TOKEN" \\
+            -H "Content-Type: application/json" \\
+            -d "$PAYLOAD" \\
+            || echo "::warning::Failed to report pipeline results to ALPHACI"
+",
+}
+`;
+
+exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-identical: legacy 1`] = `
+{
+  "files": {
+    ".github/workflows/00-alphaci-access.yml": {
+      "bytes": 15570,
+      "sha256": "2bdd27d92ea82e02057ea8a4c5e0a08d870e16525aebf9b6ccec7c3a0e43ce0d",
+    },
+    ".github/workflows/05-alphaci-env-guard.yml": {
+      "bytes": 4216,
+      "sha256": "e46ba999af6c9c62152910807d3257de0bf969ab4891573e31ec6bffc23bf37f",
+    },
+    ".github/workflows/10-alphaci-quality.yml": {
+      "bytes": 34388,
+      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+    },
+    ".github/workflows/20-alphaci-package.yml": {
+      "bytes": 24056,
+      "sha256": "4ee5dc8afc71f9fb1bb1ea569d91664728ebfb7913992601fede1fe91a9d20c7",
+    },
+  },
+  "packageStage": "name: ALPHACI 3 Build and Deploy
+run-name: \${{ github.event.workflow_run.display_title || github.sha }}
+'on':
+  workflow_run:
+    workflows:
+      - ALPHACI 2 Quality
+    types:
+      - completed
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  ALPHACI_VALIDATE_URL: http://localhost:4000/api/v1/ci/validate
+  ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+jobs:
+  pipeline-context:
+    if: \${{ (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      branch: \${{ steps.context.outputs.branch }}
+      sha: \${{ steps.context.outputs.sha }}
+    steps:
+      - name: Resolve the originating branch and commit
+        id: context
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          EVENT_NAME: \${{ github.event_name }}
+          TRIGGER_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          ARTIFACT_NAME: alphaci-pipeline-context
+          FALLBACK_BRANCH: \${{ github.event.workflow_run.head_branch || github.ref_name }}
+          FALLBACK_SHA: \${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |-
+          set -euo pipefail
+
+          branch="\${FALLBACK_BRANCH}"
+          sha="\${FALLBACK_SHA}"
+          source="the triggering event"
+
+          # An artifact published by the previous stage is the only channel that
+          # survives a second workflow_run hop, so it wins when it is there.
+          if [ "\${EVENT_NAME}" = "workflow_run" ] && [ -n "\${TRIGGER_RUN_ID}" ]; then
+            api="https://api.github.com/repos/\${GH_REPO}/actions/runs/\${TRIGGER_RUN_ID}/artifacts"
+            filter='[.artifacts[]? | select(.name == $name) | .archive_download_url] | first // ""'
+            url=$(curl -sf --max-time 10 -H "Authorization: Bearer \${GH_TOKEN}" -H "Accept: application/vnd.github+json" "\${api}" | jq -r --arg name "\${ARTIFACT_NAME}" "\${filter}" || printf "")
+
+            if [ -n "\${url}" ] && curl -sfL --max-time 20 -o context.zip -H "Authorization: Bearer \${GH_TOKEN}" "\${url}"; then
+              unzip -o -q context.zip -d context-dir
+              if [ -f context-dir/pipeline-context.env ]; then
+                branch=$(grep -m1 "^branch=" context-dir/pipeline-context.env | cut -d= -f2-)
+                sha=$(grep -m1 "^sha=" context-dir/pipeline-context.env | cut -d= -f2-)
+                source="the \${PREVIOUS_NAME} stage"
+              fi
+            fi
+          fi
+
+          # Refusing to guess. Every later job is branch-scoped, so an empty branch
+          # selects nothing - or worse, matches the wrong environment.
+          if [ -z "\${branch}" ] || [ -z "\${sha}" ]; then
+            echo "::error::Could not determine which branch or commit this run is for. Without it every branch-scoped job would be selected wrongly, so the stage stops here."
+            exit 1
+          fi
+
+          {
+            echo "branch=\${branch}"
+            echo "sha=\${sha}"
+          } | tee pipeline-context.env >> "$GITHUB_OUTPUT"
+
+          echo "Branch \${branch} at \${sha}, according to \${source}."
+      - name: Publish the context for the next stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: alphaci-pipeline-context
+          path: pipeline-context.env
+          retention-days: 1
+  upstream-work-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ran: \${{ steps.check.outputs.ran }}
+    steps:
+      - name: Check the previous stage did its work
+        id: check
+        env:
+          GH_TOKEN: \${{ github.token }}
+          GH_REPO: \${{ github.repository }}
+          PREVIOUS_RUN_ID: \${{ github.event.workflow_run.id }}
+          PREVIOUS_NAME: \${{ github.event.workflow_run.name }}
+          EVENT_NAME: \${{ github.event_name }}
+          GATE_JOB: validate-access
+        run: |-
+          set -euo pipefail
+
+          # A manual run has no previous stage to inspect and is always allowed.
+          if [ "$EVENT_NAME" != "workflow_run" ]; then
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          JOBS=$(curl -sf --max-time 10 \\
+            -H "Authorization: Bearer $GH_TOKEN" \\
+            -H "Accept: application/vnd.github+json" \\
+            "https://api.github.com/repos/$GH_REPO/actions/runs/$PREVIOUS_RUN_ID/jobs?filter=latest&per_page=100" \\
+            || printf '{"jobs":[]}')
+
+          # An unreachable API is not evidence of a skipped stage. Letting the stage
+          # through on a failed lookup keeps a GitHub outage from silently halting
+          # every pipeline.
+          TOTAL=$(printf '%s' "$JOBS" | jq '[.jobs[]?] | length')
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::warning::Could not read the jobs of $PREVIOUS_NAME, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          GATE=$(printf '%s' "$JOBS" | jq -r --arg gate "$GATE_JOB" '[.jobs[]? | select(.name == $gate) | (.conclusion // "pending")] | first // "missing"')
+
+          if [ "$GATE" = "success" ]; then
+            echo "$PREVIOUS_NAME passed its $GATE_JOB gate."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Same reasoning as an unreachable API: a stage without the gate job is
+          # not one this generator wrote, and its absence proves nothing.
+          if [ "$GATE" = "missing" ]; then
+            echo "::warning::$PREVIOUS_NAME has no $GATE_JOB job, so this stage proceeds without checking whether it did any work."
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::$PREVIOUS_NAME did not pass its $GATE_JOB gate ($GATE), so this stage has nothing to act on and will skip. That gate closes when the stage before IT did not pass - fix that one."
+          echo "ran=false" >> "$GITHUB_OUTPUT"
+    needs:
+      - pipeline-context
+  validate-access:
+    needs:
+      - pipeline-context
+      - upstream-work-check
+    if: \${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && needs.upstream-work-check.outputs.ran == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check ALPHACI API connectivity configuration
+        run: |-
+          node <<'ALPHACI_PREFLIGHT'
+          const validate = function validateCiApiConnectivity(baseUrl, execution) {
+              const problem = 'Configure PLATFORM_PUBLIC_URL with an HTTPS API address reachable from the GitHub runner. Localhost and private addresses cannot reach this laptop from GitHub-hosted jobs.';
+              let url;
+              try {
+                  url = new URL(baseUrl);
+              }
+              catch {
+                  throw new Error(problem);
+              }
+              if (url.username ||
+                  url.password ||
+                  !['http:', 'https:'].includes(url.protocol))
+                  throw new Error(problem);
+              if (execution === 'private-network')
+                  return;
+              if (url.protocol !== 'https:')
+                  throw new Error(problem);
+              const host = url.hostname
+                  .toLowerCase()
+                  .replace(/^\\[|\\]$/g, '')
+                  .replace(/\\.$/, '');
+              if (host.includes(':')) {
+                  // IPv6 global unicast only; excludes mapped IPv4, loopback, ULA and link local.
+                  if (!/^[23][0-9a-f]{3}:/.test(host))
+                      throw new Error(problem);
+              }
+              else if (/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(host)) {
+                  const [a = 0, b = 0] = host.split('.').map(Number);
+                  if (a === 0 ||
+                      a === 10 ||
+                      a === 127 ||
+                      a >= 224 ||
+                      (a === 169 && b === 254) ||
+                      (a === 172 && b >= 16 && b <= 31) ||
+                      (a === 192 && (b === 168 || b === 0)) ||
+                      (a === 100 && b >= 64 && b <= 127) ||
+                      (a === 198 && (b === 18 || b === 19)))
+                      throw new Error(problem);
+              }
+              else if (!host.includes('.') ||
+                  /(^|\\.)(localhost|local|internal|lan)$/.test(host)) {
+                  throw new Error(problem);
+              }
+          };
+          validate(process.env.ALPHACI_VALIDATE_URL, 'github-hosted');
+          ALPHACI_PREFLIGHT
+      - name: Validate ALPHACI access
+        run: |-
+          RESPONSE=$(curl -sf -w "\\n%{http_code}" \\
+            -X POST \\
+            -H "Authorization: Bearer \${{ secrets.ALPHACI_TOKEN }}" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"repo\\":\\"\${{ github.repository }}\\",\\"stage\\":\\"package\\",\\"workflowRunId\\":\\"\${{ github.run_id }}\\",\\"headSha\\":\\"\${{ needs.pipeline-context.outputs.sha }}\\"}" \\
+            "$ALPHACI_VALIDATE_URL") || true
+          HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
+          BODY=$(printf '%s' "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::ALPHACI authorization failed (HTTP $HTTP_CODE). \${BODY}"
+            exit 1
+          fi
+          echo "ALPHACI authorization validated."
+  build:
+    needs:
+      - pipeline-context
+      - validate-access
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'dev' || (needs.pipeline-context.outputs.branch) == 'uat' || (needs.pipeline-context.outputs.branch) == 'main' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: \${{ needs.pipeline-context.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+      - run: npm run build
+  production-gate:
+    needs:
+      - pipeline-context
+      - build
+    if: \${{ (needs.pipeline-context.outputs.branch) == 'main' }}
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/production-gate.yml@v1
+    with:
+      system-dir: orders-api
+      app-type: api
+      require-approval: false
+  promote-to-uat:
+    permissions:
+      contents: read
+      pull-requests: write
+    needs:
+      - pipeline-context
+      - build
+    if: \${{ !cancelled() && (needs.pipeline-context.outputs.branch) == 'dev' && needs.build.result == 'success' }}
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/promotion.yml@v1
+    with:
+      pipeline-kind: single
+      direction: dev-to-uat
+      system1-name: orders-api
+      pipeline-result: success
+    secrets:
+      PR_TOKEN: \${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}
+  promote-to-main:
+    permissions:
+      contents: read
+      pull-requests: write
+    needs:
+      - pipeline-context
+      - build
+    if: \${{ !cancelled() && (needs.pipeline-context.outputs.branch) == 'uat' && needs.build.result == 'success' }}
+    uses: Alpha-Explora/alphaci-workflow/.github/workflows/promotion.yml@v1
+    with:
+      pipeline-kind: single
+      direction: uat-to-main
+      system1-name: orders-api
+      pipeline-result: success
+    secrets:
+      PR_TOKEN: \${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}
+  report-results:
+    if: \${{ always() && ((github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request' || !contains(fromJSON('["dev","uat","main"]'), github.event.workflow_run.pull_requests[0].head.ref))) }}
+    needs:
+      - pipeline-context
+      - validate-access
+      - build
+      - production-gate
+      - promote-to-uat
+      - promote-to-main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: write
+    env:
+      ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+      ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+    steps:
+      - name: Report stage results to ALPHACI
+        env:
+          ALPHACI_TOKEN: \${{ secrets.ALPHACI_TOKEN }}
+          ALPHACI_REPORT_URL: \${{ secrets.ALPHACI_REPORT_URL }}
+          GH_REPO: \${{ github.repository }}
+          GH_BRANCH: \${{ needs.pipeline-context.outputs.branch }}
+          GH_SHA: \${{ needs.pipeline-context.outputs.sha }}
+          GH_RUN_ID: \${{ github.run_id }}
+          GITHUB_TOKEN: \${{ github.token }}
+          STATUS_CONTEXT: alphaci/package
+          STAGE_FAILED: \${{ contains(needs.*.result, 'failure') }}
+          STAGE_CANCELLED: \${{ contains(needs.*.result, 'cancelled') }}
+          STAGE_WORK_RAN: \${{ needs.build.result != 'skipped' }}
+        run: |-
+          # Put this stage's verdict on the commit, where branch protection can
+          # require it.
+          #
+          # Defined before anything that can exit, and called on every path that
+          # reaches a verdict, because a REQUIRED status that never arrives leaves a
+          # pull request pending for ever. Blocking every merge is a worse failure
+          # than the one this is here to prevent, so the ordering is deliberate.
+          #
+          # Never fails the stage. A green pipeline must not turn red because GitHub
+          # would not take a status, but a silently broken status path is how a gate
+          # stops gating without anyone noticing - so it warns, loudly, in the log.
+          post_commit_status() {
+            if [ -z "\${GH_SHA}" ]; then
+              echo "::warning::No commit sha resolved, so no \${STATUS_CONTEXT} status was posted."
+              return 0
+            fi
+            STATUS_PAYLOAD=$(jq -n \\
+              --arg state "$1" \\
+              --arg description "$2" \\
+              --arg context "$STATUS_CONTEXT" \\
+              --arg url "https://github.com/\${GH_REPO}/actions/runs/\${GH_RUN_ID}" \\
+              '{state:$state,description:$description,context:$context,target_url:$url}')
+            curl -sf --max-time 5 \\
+              -X POST "https://api.github.com/repos/\${GH_REPO}/statuses/\${GH_SHA}" \\
+              -H "Authorization: Bearer \${GITHUB_TOKEN}" \\
+              -H "Accept: application/vnd.github+json" \\
+              -d "$STATUS_PAYLOAD" >/dev/null \\
+              || echo "::warning::Could not post the \${STATUS_CONTEXT} status. Branch protection requiring it will hold this commit as pending."
+          }
+
+          # Derive stage conclusion from upstream needs results
+          if [ "$STAGE_FAILED" = "true" ]; then
+            CONCLUSION="failure"
+            post_commit_status "failure" "The \${STATUS_CONTEXT#alphaci/} stage failed."
+          elif [ "$STAGE_CANCELLED" = "true" ]; then
+            CONCLUSION="cancelled"
+            post_commit_status "error" "The \${STATUS_CONTEXT#alphaci/} stage was cancelled."
+          elif [ "$STAGE_WORK_RAN" != "true" ]; then
+            # THE WORK OF THIS STAGE NEVER RAN.
+            #
+            # Two ways to get here. The stage before it did not pass, so the access
+            # gate skipped and everything needing it skipped in turn; or the gate
+            # passed but the work is branch-scoped and this branch is not one it
+            # builds — a pull request into dev, whose head branch is the PR branch.
+            # \`skipped\` is neither failure nor cancelled, so this used to fall
+            # through to "success" and the platform recorded a package stage that
+            # built nothing and deployed nothing as a green deploy.
+            #
+            # Reporting nothing is the honest answer. When an earlier stage failed,
+            # it is also the complete one: a stage with no report resolves on read
+            # as \`blocked\`, naming the stage that stopped it. When the gate passed
+            # and only the branch scope skipped the work, the reader currently sees
+            # \`pending\`, which is imprecise but not a lie — unlike the \`success\` it
+            # replaces. Saying \`skipped\` outright would need a migration.
+            echo "This stage did no work, so there is nothing to report."
+            echo "Either the stage before it did not pass, or this branch is not one"
+            echo "this stage builds."
+            # NO STATUS EITHER, deliberately.
+            #
+            # A green status here would say this commit cleared a stage that never
+            # examined it - the same claim as the package rows that recorded a build
+            # of nothing as a successful deploy, moved to the one place that decides
+            # whether code reaches uat and main.
+            #
+            # The cost is that only a stage which ALWAYS does work can safely be a
+            # required check: require one that skips on some branches and those pull
+            # requests wait for a status that is never coming. \`quality\` runs on
+            # every branch and is the one meant to be required; package and verify
+            # are branch-scoped and are published for reading, not for gating.
+            exit 0
+          else
+            CONCLUSION="success"
+            post_commit_status "success" "The \${STATUS_CONTEXT#alphaci/} stage passed."
+          fi
+
+          # Capture WHY the stage failed: the job, the step inside it that failed,
+          # and the annotations GitHub recorded (lint errors, failing tests,
+          # compiler output). Without these the product can only say THAT a stage
+          # failed, which is what sent people to GitHub to learn anything useful.
+          FAILED_JOBS=""
+          ANNOTATIONS="[]"
+          CHECKS="[]"
+
+          # ALWAYS fetch, on success as well as failure.
+          #
+          # This used to sit behind \`if [ "$CONCLUSION" = "failure" ]\`, which meant
+          # the branch that most needs the detail never collected any. On dev the
+          # gates are advisory - \`fail-on-warning\` is false - so a stage carrying
+          # twelve real diagnostics still concludes SUCCESS, skipped the capture
+          # entirely, and the developer saw a green tick and a coverage number.
+          # The warnings that would block them at uat were recorded nowhere, on the
+          # one branch where there was still time to fix them.
+          JOBS_JSON=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/runs/$GH_RUN_ID/jobs?filter=latest" || printf '{"jobs":[]}')
+
+          # Every job, with what it concluded - the per-TOOL view.
+          #
+          # A stage status answers "did the quality stage pass". It cannot answer
+          # "did the licence scan pass", and one red bar covering seven tools sends
+          # the reader to GitHub to find out which one. The reporting job is the only
+          # place that can see all of them at once, so it is the place that lists them.
+          #
+          # The reporting job itself is excluded: it is still running, so its
+          # conclusion is null, and it is plumbing rather than a check anyone asked for.
+          CHECKS=$(printf '%s' "$JOBS_JSON" | jq -c '[.jobs[]? | select(.name != "report-results") | {name: .name, conclusion: (.conclusion // "running"), startedAt: .started_at, completedAt: .completed_at}]' || printf '[]')
+
+          if [ "$CONCLUSION" = "failure" ]; then
+            FAILED_JOBS=$(printf '%s' "$JOBS_JSON" | jq -r '.jobs[] | select(.conclusion == "failure") | . as $job | (([$job.steps[]? | select(.conclusion == "failure") | .name] | first) // "") as $step | if $step == "" then "Failed GitHub Actions job: \\($job.name)" else "Failed GitHub Actions job: \\($job.name) > \\($step)" end' | head -n 5 || true)
+          fi
+
+          # Annotations are the actual diagnostics - "Program.cs:11 Await RunAsync
+          # instead of blocking". Collected from every job that ran, not only the
+          # failed ones, because an advisory job on dev reports its findings as
+          # annotations and passes. Those ARE the errors the developer needs.
+          #
+          # A job id is its check-run id for Actions, so one id addresses both.
+          # Failed jobs first, so a capped list keeps the diagnostics that explain a
+          # failure ahead of the advisory noise from jobs that passed.
+          ANNOTATION_IDS=$(printf '%s' "$JOBS_JSON" | jq -r '[.jobs[]? | select(.name != "report-results")] | sort_by(.conclusion != "failure") | .[].id' | head -n 8)
+          for JOB_ID in $ANNOTATION_IDS; do
+            JOB_ANN=$(curl -sf --max-time 10 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/check-runs/$JOB_ID/annotations" || printf '[]')
+            # Keep the annotations that point at CODE, at any level.
+            #
+            # Filtering on annotation_level == "failure" looked right and threw away
+            # every useful annotation. A Roslyn analyzer or formatter reports its
+            # diagnostics as WARNINGS - "Program.cs:11 Await RunAsync instead" -
+            # while the only failure-level annotation is the runner's own "Process
+            # completed with exit code 1", whose path is the workflow file. So the
+            # filter kept the one annotation that says nothing and discarded every
+            # one that named the actual problem.
+            #
+            #
+            # \`.github\` paths ARE kept when the level is failure. Every \`::error::\` a
+            # workflow step prints is attributed to \`.github\` - "AlphaCI refused the
+            # release (HTTP 502)", "Repository variable VERCEL_ALIAS is not set" - and
+            # dropping that path dropped the only place the real reason was written.
+            # The runner's own "Process completed with exit code N" arrives the same
+            # way and says nothing, so that one stays filtered (second select).
+            #
+            # Deduplicated because a solution built more than once (analyze, then
+            # sonar) reports the same diagnostic on each pass.
+            ANNOTATIONS=$(printf '%s %s' "$ANNOTATIONS" "$JOB_ANN" | jq -s -c 'add | map(select(.path and ((.path | startswith(".github") | not) or .annotation_level == "failure"))) | map(select(.message and (.message | test("Process completed with exit code") | not))) | map({path: .path, line: .start_line, level: .annotation_level, title: .title, message: .message}) | unique_by([.path, .line, .message]) | .[0:20]' || printf '%s' "$ANNOTATIONS")
+          done
+
+          # Build results sub-object (reads from job outputs)
+          RESULTS="{}"
+
+          # Build and POST the payload with jq — no string interpolation of context values
+          PAYLOAD=$(jq -n \\
+            --arg repo     "$GH_REPO" \\
+            --arg branch   "$GH_BRANCH" \\
+            --arg sha      "$GH_SHA" \\
+            --argjson runId "$GH_RUN_ID" \\
+            --arg stage    "package" \\
+            --arg conclusion "$CONCLUSION" \\
+            --arg rawLogs "$FAILED_JOBS" \\
+            --argjson results "$RESULTS" \\
+            --argjson annotations "$ANNOTATIONS" \\
+            --argjson checks "$CHECKS" \\
+            '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results,rawLogs:$rawLogs,annotations:$annotations,checks:$checks}')
+          curl -sf --max-time 5 \\
+            -X POST "$ALPHACI_REPORT_URL" \\
+            -H "Authorization: Bearer $ALPHACI_TOKEN" \\
+            -H "Content-Type: application/json" \\
+            -d "$PAYLOAD" \\
+            || echo "::warning::Failed to report pipeline results to ALPHACI"
+",
+}
+`;

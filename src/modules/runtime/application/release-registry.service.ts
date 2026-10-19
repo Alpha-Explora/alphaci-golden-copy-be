@@ -35,6 +35,7 @@ import {
   COMMIT_SHA,
   SIGNATURE_ALGORITHMS,
   canonicalJson,
+  manifestFromRelease,
   manifestProblem,
   manifestSha256,
   parseImageReference,
@@ -43,7 +44,14 @@ import {
   type ReleaseSlot,
   type WorkflowRun,
 } from '../domain/release-manifest';
-import { verifyReleaseSignature } from '../domain/release-signature';
+import {
+  trustKeysWithSigner,
+  verifyReleaseSignature,
+} from '../domain/release-signature';
+import {
+  RELEASE_SIGNER,
+  type ReleaseSigner,
+} from './ports/release-signer.port';
 import type { DeploymentProvider } from '../core/deployment-provider.contract';
 import { DeploymentProviderRegistry } from '../core/deployment-provider.registry';
 import { DeploymentTargetsRepository } from '../infrastructure/repositories/deployment-targets.repository';
@@ -137,6 +145,9 @@ export class ReleaseRegistryService {
     private readonly githubActions?: GithubActionsSecretsPort,
     @Optional()
     private readonly machineAssignments?: OnpremAssignmentsRepository,
+    @Optional()
+    @Inject(RELEASE_SIGNER)
+    private readonly releaseSigner?: ReleaseSigner,
   ) {}
 
   async registerRelease(
@@ -203,6 +214,13 @@ export class ReleaseRegistryService {
     }
     const automaticDelivery = this.deliveryOf(sourceTargets, source.slug);
 
+    // A file signer that cannot sign refuses before anything is written.
+    const serverSigner = this.serverSigner();
+    if (serverSigner?.problem !== undefined) {
+      throw new ServiceUnavailableException(
+        'Release signing is not configured: ' + serverSigner.problem,
+      );
+    }
     try {
       const release = await this.releases.registerRelease({
         projectId: input.projectId,
@@ -214,7 +232,8 @@ export class ReleaseRegistryService {
         automaticTargetIds: sourceTargets.map(({ id }) => id),
         automaticDelivery,
       });
-      return this.view(release);
+      if (!serverSigner) return this.view(release);
+      return this.signServerRelease(release, serverSigner, automaticDelivery);
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictException(
@@ -241,6 +260,18 @@ export class ReleaseRegistryService {
   ): Promise<ReleaseRegistryView> {
     this.assertReleasesEnabled();
     const release = await this.requireRelease(projectId, releaseId);
+    return this.attachVerifiedManifest(release, input);
+  }
+
+  /**
+   * Checks a signed manifest against its release, verifies the signature with
+   * the trust set, and stores it. CI's attach and the backend's own signature
+   * both take this path, so both get the same checks and the same persistence.
+   */
+  private async attachVerifiedManifest(
+    release: ReleaseRecord,
+    input: SignedManifestInput,
+  ): Promise<ReleaseRegistryView> {
     const problem = manifestProblem(input.manifest, {
       releaseId: release.id,
       projectId: release.projectId,
@@ -281,8 +312,9 @@ export class ReleaseRegistryService {
       keyId: input.signature.keyId,
       value: input.signature.value,
       canonicalManifest: canonicalJson(input.manifest),
-      trustedKeysJson: this.configService.get<string>(
-        'ALPHACI_RELEASE_TRUST_KEYS_JSON',
+      trustedKeysJson: trustKeysWithSigner(
+        this.configService.get<string>('ALPHACI_RELEASE_TRUST_KEYS_JSON'),
+        this.releaseSigner?.identity,
       ),
     });
     if (!verification.valid) {
@@ -326,7 +358,44 @@ export class ReleaseRegistryService {
       throw new ConflictException(
         'The release was signed concurrently or its host deployment is no longer pending. Reload it.',
       );
-    return this.view(await this.requireRelease(projectId, releaseId));
+    return this.view(await this.requireRelease(release.projectId, release.id));
+  }
+
+  /**
+   * File mode: signs the release this request just registered, with the manifest
+   * the sign-release job would have built. It is attached through the same path
+   * as CI's signature. A verified release is never signed again, because ECDSA
+   * is randomized and a second signature would only conflict. If signing fails
+   * for a host-delivered release, its unsigned deployment is failed, as the
+   * sign-release failure job did in runner mode.
+   */
+  private async signServerRelease(
+    release: ReleaseRecord,
+    signer: ReleaseSigner,
+    delivery: DeploymentDelivery,
+  ): Promise<ReleaseRegistryView> {
+    if (release.verificationStatus === 'verified') return this.view(release);
+    try {
+      const manifest = manifestFromRelease(release);
+      return await this.attachVerifiedManifest(release, {
+        manifest: manifest as unknown as Record<string, unknown>,
+        manifestSha256: manifestSha256(manifest),
+        signature: signer.sign(canonicalJson(manifest)),
+      });
+    } catch (error) {
+      if (delivery === 'host') {
+        await this.releases.failUnsignedHostDeployment(
+          release.id,
+          'Release signing failed before host delivery.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** The backend's own signer, or undefined when CI signs (runner mode). */
+  private serverSigner(): ReleaseSigner | undefined {
+    return this.releaseSigner?.mode === 'file' ? this.releaseSigner : undefined;
   }
 
   /** CI reports the automatic deployment of the first environment. */

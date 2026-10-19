@@ -1,5 +1,9 @@
 import type { SubscriptionPlan } from '#kernel/auth/session-user.interface';
 import type {
+  DeploymentMode,
+  StorageDriver,
+} from '#kernel/config/deployment-mode';
+import type {
   BuildProfile,
   Edition,
 } from '#kernel/composition/capability-types';
@@ -221,9 +225,20 @@ export interface AppConfig {
   notifications: {
     enabled: boolean;
   };
+  /**
+   * The Postgres pool's connection. dbUrl is DATABASE_URL, falling back to
+   * SUPABASE_DB_URL. The key keeps its historical name; it no longer implies
+   * a Supabase dependency.
+   */
   supabase: {
     dbUrl: string | undefined;
     dbCaCert?: string;
+  };
+  /** ALPHACI_DEPLOYMENT_MODE. `selfhosted` enables the no-Supabase rules. */
+  deploymentMode: DeploymentMode;
+  /** Where QA screenshot bytes live. See STORAGE_DRIVER. */
+  storage: {
+    driver: StorageDriver;
   };
   session: {
     secret: string;

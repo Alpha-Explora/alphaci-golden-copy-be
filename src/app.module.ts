@@ -12,7 +12,6 @@ import { AppService } from './app.service.js';
 import { validateEnv } from '#kernel/config/env.validation.js';
 import { CorrelationIdMiddleware } from '#kernel/http/middleware/correlation-id.middleware.js';
 import { HealthModule } from './health/health.module.js';
-import { SupabaseModule } from '#kernel/db/supabase/supabase.module.js';
 import { CompositionModule } from '#kernel/composition/composition.module.js';
 
 // Bounded-context composition roots. Feature modules are wired behind these
@@ -59,7 +58,6 @@ import { PlatformOpsModule } from '#modules/platform-ops/platform-ops.module.js'
       // Per-key fixed windows; the bundled storage cancels other keys' expiry timers.
       storage: new FixedWindowThrottlerStorage(),
     }),
-    SupabaseModule,
     CompositionModule,
     HealthModule,
 

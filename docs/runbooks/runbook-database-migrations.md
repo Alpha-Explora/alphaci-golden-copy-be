@@ -36,6 +36,17 @@ The ownership check covers migration SQL and repository inline SQL. The replay p
 - Migration filenames must have unique timestamp versions across the complete tree.
 - Review destructive data operations and rollback SQL separately from ordering.
 
+## Self-hosted (plain PostgreSQL)
+
+The self-hosted deployment runs on plain PostgreSQL 16, which has no Supabase roles or Storage. Use the runner there instead of `db:apply:all`:
+
+```bash
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db> npm run db:migrate:selfhost -- --dry-run
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db> node dist/src/scripts/migrate-selfhost.js
+```
+
+The runner takes a session advisory lock, creates the `anon` and `authenticated` roles if they are missing, and applies each pending migration in the `db:apply:all` order. A migration with its own `BEGIN` or a non-transactional statement runs unwrapped, so a failure in one of those can leave partial effects; the runner prints a warning when it starts one. It stops at the first failure and fails before applying anything if an applied file has changed. Migrations keyed by full filename are recorded in `public.schema_migrations`; SaaS still uses the Supabase CLI ledger.
+
 ## Apply
 
 For an approved configured database, use the repository migration tooling with the required environment values:

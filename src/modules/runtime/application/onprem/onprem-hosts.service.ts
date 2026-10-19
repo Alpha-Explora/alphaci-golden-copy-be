@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -32,6 +33,11 @@ import type {
   MachineHeartbeatInput,
 } from './onprem-host.contracts';
 import { parseTunnelReport } from '../../domain/onprem-tunnel';
+import { trustKeysWithSigner } from '../../domain/release-signature';
+import {
+  RELEASE_SIGNER,
+  type ReleaseSigner,
+} from '../ports/release-signer.port';
 
 export const MACHINE_TOKEN_PREFIX = 'onprem_machine_';
 export const hashMachineSecret = (value: string): string =>
@@ -46,6 +52,9 @@ export class OnpremHostsService {
     private readonly config: ConfigService,
     @Inject(ONPREM_INSTALLER_RELEASE)
     private readonly installerReleases: OnpremInstallerReleasePort,
+    @Optional()
+    @Inject(RELEASE_SIGNER)
+    private readonly releaseSigner?: ReleaseSigner,
   ) {}
   async list(workspaceId: string, userId: string) {
     this.enabled();
@@ -226,8 +235,12 @@ export class OnpremHostsService {
   }
   private trustKeys(): Record<string, string> {
     try {
+      // A file-signing backend trusts its own key, so enrollment hands it out too.
       const keys: unknown = JSON.parse(
-        this.config.get<string>('ALPHACI_RELEASE_TRUST_KEYS_JSON') || '{}',
+        trustKeysWithSigner(
+          this.config.get<string>('ALPHACI_RELEASE_TRUST_KEYS_JSON'),
+          this.releaseSigner?.identity,
+        ) || '{}',
       );
       if (
         !keys ||

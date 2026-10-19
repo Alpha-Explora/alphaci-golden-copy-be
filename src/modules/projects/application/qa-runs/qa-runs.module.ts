@@ -7,6 +7,7 @@ import { CiModule } from '#modules/pipelines/ci/ci.module.js';
 import { GithubModule } from '#modules/pipelines/github/github.module.js';
 import { RuntimeModule } from '#modules/runtime/runtime.module.js';
 import { DeliveryProjectIterationsController } from '../../api/project-iterations.controller';
+import { QaAttachmentContentController } from '../../api/qa-attachment-content.controller';
 import { DeliveryProjectQaAttachmentsController } from '../../api/qa-run-attachments.controller';
 import {
   DeliveryProjectQaMyItemsController,
@@ -76,6 +77,8 @@ import { QaUatHeadsService } from './qa-uat-heads.service';
     DeliveryProjectQaRunsController,
     DeliveryProjectQaMyItemsController,
     DeliveryProjectQaAttachmentsController,
+    // Signed-link bytes for the postgres storage driver (no session: the link is the auth).
+    QaAttachmentContentController,
     DeliveryProjectRequirementsController,
     RequirementsController,
     WorkspaceQaRequirementsController,

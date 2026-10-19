@@ -117,6 +117,43 @@ export function canonicalJson(value: unknown): string {
   throw new TypeError('Canonical JSON cannot represent a ' + typeof value);
 }
 
+/**
+ * The manifest the sign-release job builds from a registered release
+ * (`sign-release.yml`, "Build the canonical manifest"): the same fields, with
+ * artifacts and workflow run reduced to exactly the keys it keeps.
+ */
+export function manifestFromRelease(release: {
+  id: string;
+  projectId: string;
+  sourceEnvironmentId: string;
+  sourceBranch: string;
+  commitSha: string;
+  createdAt: string;
+  artifacts: ReleaseArtifact[];
+  workflowRun: WorkflowRun;
+}): ReleaseManifest {
+  return {
+    schemaVersion: 1,
+    releaseId: release.id,
+    projectId: release.projectId,
+    sourceEnvironmentId: release.sourceEnvironmentId,
+    sourceBranch: release.sourceBranch,
+    commitSha: release.commitSha,
+    createdAt: release.createdAt,
+    artifacts: release.artifacts.map(({ slot, image, digest }) => ({
+      slot,
+      image,
+      digest,
+    })),
+    workflowRun: {
+      provider: release.workflowRun.provider,
+      repo: release.workflowRun.repo,
+      runId: release.workflowRun.runId,
+      url: release.workflowRun.url,
+    },
+  };
+}
+
 /** Lowercase hex SHA-256 of the canonical manifest; the value that is signed. */
 export function manifestSha256(manifest: unknown): string {
   return createHash('sha256')

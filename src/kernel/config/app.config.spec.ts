@@ -472,4 +472,58 @@ describe('appConfig factory', () => {
     const config = appConfig();
     expect(config.archivedAccountRetentionDays).toBe(60);
   });
+
+  describe('database URL, deployment mode and storage driver', () => {
+    beforeEach(() => {
+      delete process.env['DATABASE_URL'];
+      delete process.env['SUPABASE_DB_URL'];
+      delete process.env['ALPHACI_DEPLOYMENT_MODE'];
+      delete process.env['STORAGE_DRIVER'];
+      delete process.env['SUPABASE_URL'];
+      delete process.env['SUPABASE_SERVICE_ROLE_KEY'];
+    });
+
+    it('prefers DATABASE_URL over SUPABASE_DB_URL', () => {
+      process.env['DATABASE_URL'] = 'postgres://app@db:5432/alphaci';
+      process.env['SUPABASE_DB_URL'] = 'postgres://legacy@db:5432/old';
+
+      expect(appConfig().supabase.dbUrl).toBe('postgres://app@db:5432/alphaci');
+    });
+
+    it('falls back to SUPABASE_DB_URL when DATABASE_URL is unset or blank', () => {
+      process.env['SUPABASE_DB_URL'] = 'postgres://legacy@db:5432/old';
+      expect(appConfig().supabase.dbUrl).toBe('postgres://legacy@db:5432/old');
+
+      process.env['DATABASE_URL'] = '   ';
+      expect(appConfig().supabase.dbUrl).toBe('postgres://legacy@db:5432/old');
+    });
+
+    it('leaves dbUrl undefined when neither is set', () => {
+      expect(appConfig().supabase.dbUrl).toBeFalsy();
+    });
+
+    it('defaults to saas deployment mode and the postgres driver without Supabase', () => {
+      const config = appConfig();
+
+      expect(config.deploymentMode).toBe('saas');
+      expect(config.storage.driver).toBe('postgres');
+    });
+
+    it('selects the supabase storage driver for SaaS with SUPABASE_URL set', () => {
+      process.env['SUPABASE_URL'] = 'https://abc.supabase.co';
+      process.env['SUPABASE_SERVICE_ROLE_KEY'] = 'service-role-key';
+
+      expect(appConfig().storage.driver).toBe('supabase');
+    });
+
+    it('reports selfhosted deployment and postgres storage when self-hosted', () => {
+      process.env['ALPHACI_DEPLOYMENT_MODE'] = 'selfhosted';
+      process.env['SUPABASE_URL'] = 'https://abc.supabase.co';
+
+      const config = appConfig();
+
+      expect(config.deploymentMode).toBe('selfhosted');
+      expect(config.storage.driver).toBe('postgres');
+    });
+  });
 });

@@ -39,7 +39,7 @@ export class DatabaseService implements OnModuleDestroy {
     if (!this.config.supabase.dbUrl) {
       this.pool = null;
       this.logger.warn(
-        'SUPABASE_DB_URL is missing. Database-backed features are disabled.',
+        'DATABASE_URL (or SUPABASE_DB_URL) is missing. Database-backed features are disabled.',
       );
       return;
     }
@@ -134,7 +134,7 @@ export class DatabaseService implements OnModuleDestroy {
       );
     } catch {
       this.logger.error(
-        'SUPABASE_DB_URL is not a parseable connection URL. Check for stray ' +
+        'DATABASE_URL is not a parseable connection URL. Check for stray ' +
           'whitespace, a missing scheme (postgres://), or unencoded special ' +
           'characters in the password.',
       );
@@ -375,7 +375,7 @@ export class DatabaseService implements OnModuleDestroy {
   private getPoolOrThrow(): Pool {
     if (!this.pool) {
       throw new ServiceUnavailableException(
-        'Database is not configured. Set SUPABASE_DB_URL.',
+        'Database is not configured. Set DATABASE_URL.',
       );
     }
 
