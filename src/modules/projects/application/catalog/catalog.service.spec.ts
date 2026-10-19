@@ -248,6 +248,19 @@ describe('CatalogService', () => {
             'Alpha-Explora/alphaci-workflow/.github/workflows/service-node.yml@v1',
         }),
       );
+      // The wizard pre-fills on-prem hosting from the scaffold's contract.
+      expect(
+        result.projectTypes.map(({ id, serviceRuntime }) => [
+          id,
+          serviceRuntime,
+        ]),
+      ).toEqual([
+        ['react', { slot: 'frontend', containerPort: 8080, healthPath: '/' }],
+        [
+          'nodejs',
+          { slot: 'backend', containerPort: 3000, healthPath: '/health' },
+        ],
+      ]);
     });
 
     it('falls back to static project options when engine catalog files cannot be read', () => {
@@ -256,6 +269,18 @@ describe('CatalogService', () => {
       });
 
       const result = service.getProjectOptions();
+      // A type with no scaffold has no contract to offer.
+      expect(
+        result.projectTypes.find((type) => type.id === 'expo')?.serviceRuntime,
+      ).toBeUndefined();
+      expect(
+        result.projectTypes.find((type) => type.id === 'nestjs')
+          ?.serviceRuntime,
+      ).toEqual({
+        slot: 'backend',
+        containerPort: 3000,
+        healthPath: '/health',
+      });
 
       expect(result.projectTypes.map((projectType) => projectType.id)).toEqual(
         expect.arrayContaining(['nextjs', 'nestjs']),

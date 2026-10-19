@@ -11,6 +11,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '#kernel/config/app.config';
+import type { ServiceRuntimeContract } from '#kernel/ports/deployment-runtime.port';
+import { scaffoldRuntimeContract } from '../../scaffold.builder';
 import type { ListCatalogQueryDto } from './dto/list-catalog-query.dto';
 
 // ─── Project Options types ────────────────────────────────────────────────────
@@ -45,6 +47,25 @@ export interface ProjectTypeOption {
   defaultRecipe: string;
   allowedRecipes: string[];
   defaultOptions: ProjectOptionSet;
+  /**
+   * The container port and health path of the app AlphaCI scaffolds for this
+   * type, from the scaffold's own declaration. Absent for a type with no
+   * scaffold. The create wizard pre-fills on-prem hosting with it.
+   */
+  serviceRuntime?: ServiceRuntimeContract;
+}
+
+/** Joins each project type to its scaffold's runtime contract. */
+function withServiceRuntime(
+  options: ProjectOptionsResult,
+): ProjectOptionsResult {
+  return {
+    ...options,
+    projectTypes: options.projectTypes.map((type) => {
+      const serviceRuntime = scaffoldRuntimeContract(type.id);
+      return serviceRuntime ? { ...type, serviceRuntime } : type;
+    }),
+  };
 }
 
 export interface WorkflowRecipeOption {
@@ -468,14 +489,14 @@ export class CatalogService implements OnModuleInit {
     }
 
     try {
-      const options = this.loadEngineProjectOptions();
+      const options = withServiceRuntime(this.loadEngineProjectOptions());
       this.projectOptionsCache = options;
       return options;
     } catch (error) {
       this.logger.warn(
         `Could not load engine project catalog; using static fallback: ${(error as Error).message}`,
       );
-      return STATIC_PROJECT_OPTIONS;
+      return withServiceRuntime(STATIC_PROJECT_OPTIONS);
     }
   }
 

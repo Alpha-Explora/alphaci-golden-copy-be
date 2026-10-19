@@ -1,11 +1,11 @@
 {
   "routeCount": 269,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "3c227a9ae899cc51b64cbf219350f7cdbf792fd5d2c9acbbe28322eb91cadbaa",
+  "referenceSha256": "26a9adba87c51cf5126c0387f754994402cd8ae371e376ed024b86948a8d7c1d",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "3c227a9ae899cc51b64cbf219350f7cdbf792fd5d2c9acbbe28322eb91cadbaa",
+  "baselineSha256": "26a9adba87c51cf5126c0387f754994402cd8ae371e376ed024b86948a8d7c1d",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -302,9 +302,9 @@
       ]
     },
     {
-      "reason": "Product owner acceptance of a signed-off Project run item (ADR-0014 amendment 12)",
+      "reason": "Hosting pre-fills an on-prem assignment with the container port and health path of the app AlphaCI scaffolded for the project, the same values automatic assignment uses.",
       "routes": [
-        "PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/acceptance"
+        "GET /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment/defaults"
       ]
     }
   ]

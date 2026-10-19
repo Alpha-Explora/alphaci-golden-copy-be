@@ -2,7 +2,7 @@
 
 ## 2026-10-20
 
-- **Update**: Recorded ADR-0014 amendment 12: the Product owner accepts a signed-off run item by item, a failure reopens the run and returns the story to development, and Merge to main waits for every acceptance. Updated the persona matrix and section 7.2 of `docs/design/project-requirements.md`; the route inventory gained one route.
+- **Update**: On-prem default container ports and health paths come from the scaffolded app's runtime contract (`SCAFFOLD_RUNTIME_CONTRACTS`), with the 3000/4000 and `/` fallback kept for repositories AlphaCI did not scaffold. Recorded in the release registry contract and the on-prem host setup runbook ("Default container ports", including how to fix an existing environment). Route inventory gained `GET .../host-assignment/defaults`; the generated maps were regenerated. See CHANGELOG.
 
 ## 2026-10-19
 

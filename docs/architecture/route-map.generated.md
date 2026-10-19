@@ -117,6 +117,7 @@ The current compiled API exposes **269 routes** under the global `/api/v1` prefi
 - `GET /api/v1/projects/{projectId}/environments/{environmentId}/deployment-targets/{slot}`
 - `GET /api/v1/projects/{projectId}/environments/{environmentId}/deployments`
 - `GET /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment`
+- `GET /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment/defaults`
 - `GET /api/v1/projects/{projectId}/environments/{environmentId}/onprem-readiness`
 - `GET /api/v1/projects/{projectId}/folder`
 - `GET /api/v1/projects/{projectId}/qa-checklists`
