@@ -1,39 +1,37 @@
 ---
 type: "Runbook"
 title: "Workspace member notifications"
-description: "Deploy and verify durable, recipient-scoped live notifications when a member is added to a workspace."
+description: "Enable and verify durable, recipient-scoped live notifications when a member is added to a workspace."
 tags: [notifications, workspaces, operations]
 status: draft
 sources:
   - id: notification-controller
     resource: "src/modules/platform-ops/notifications/api/notifications.controller.ts"
     title: "Notification API and authenticated stream"
+  - id: notification-relay
+    resource: "src/modules/platform-ops/application/notification-relay.worker.ts"
+    title: "Notification relay timer"
 ---
 
 # Workspace member notifications
 
-Adding a member grants access immediately and queues `hierarchy.group.member_added` for that recipient in the membership transaction. The notification Inbox retains offline deliveries. Active clients receive updates through `GET /api/v1/notifications/stream` using their existing session cookie.
+Adding a member grants access immediately and queues `hierarchy.group.member_added` for that recipient in the membership transaction. The notification Inbox keeps deliveries made while the recipient is offline. Active clients receive updates through `GET /api/v1/notifications/stream`, authenticated with their session cookie. The frontend falls back to periodic reads when streaming is unavailable.
 
-## Deployment
+## Enable
 
-Apply `supabase/migrations/platform-ops/20261019110735_workspace_member_live_notifications.sql` before starting the new backend. It adds nullable workspace/source-event columns and recipient indexes. The migration is additive and idempotent; older backend code remains compatible.
+1. The schema comes from `supabase/migrations/platform-ops/20261019110735_workspace_member_live_notifications.sql`, applied with the rest of the tree ([database migrations](../runbooks/runbook-database-migrations.md)).
+2. Set `NOTIFICATIONS_ENABLED=true` on the backend. It defaults to false. On the self-hosted appliance, add it to `alphaci.env` and run `docker compose up -d`. Confirm `/api/v1/capabilities` reports notifications enabled.
+3. Leave the relay timers on. `NOTIFICATION_RELAY_INTERVAL_MS` (default 1000, clamped to 250–60000) runs a pass that claims only notification events; `0` turns that pass off. `OUTBOX_RELAY_INTERVAL_MS=0` turns off both automatic workers. See the [outbox relay runbook](../runbooks/runbook-outbox-relay.md).
+4. The ingress must pass `text/event-stream` responses through without buffering. The appliance's Caddy does. Use the same allowed origins and credentialed cookies as the deployment-log streams.
 
-Deploy the backend before the companion frontend. The frontend also supports the existing HTTP notification endpoint and falls back to periodic reads when streaming is unavailable.
-
-Set `NOTIFICATIONS_ENABLED=true` in the target backend environment, and confirm `/api/v1/capabilities` reports notifications enabled. This existing capability flag defaults to false; a fast relay alone does not enable notifications.
-
-`NOTIFICATION_RELAY_INTERVAL_MS` defaults to 1000. This faster pass claims only notification events; GitHub grant/revoke work retains its existing cadence. Setting this variable to 0 disables the fast pass. `OUTBOX_RELAY_INTERVAL_MS=0` disables both automatic workers. Normal notification delivery targets three seconds with a healthy database and no event backlog.
-
-The `platform.notifications` deployment capability and the recipient's `inAppEnabled` preference apply. Notification data is scoped to the signed-in user, including when they do not yet have a selected workspace. Streams are limited to five per recipient per backend instance, share one one-second reader per recipient, validate the session every 15 seconds, and reconnect through the authentication guards after five minutes.
-
-Configure the ingress to preserve `text/event-stream` responses without buffering. Use the same allowed origins and credentialed session cookies as the existing deployment-log streams. Verify keep-alives reach the browser through the actual deployment ingress.
+Delivery targets three seconds with a healthy database and no backlog. The `platform.notifications` capability and the recipient's `inAppEnabled` preference apply. Data is scoped to the signed-in user. Each backend instance allows five streams per recipient, shares one one-second reader per recipient, checks the session and sends a keep-alive every 15 seconds, and ends a stream after five minutes so it reconnects through the authentication guards.
 
 ## Verification
 
-1. Open separate lead and member browser sessions. Add the member and verify one notification appears with the workspace name and an Open workspace link.
-2. Verify the Inbox, unread badge, and workspace picker update without a reload. The current valid workspace selection should stay unchanged.
-3. Disconnect/reconnect the member and retry the delivery handler. Verify the Inbox persists and the source-event ID prevents duplicate inserts.
-4. Confirm another account cannot read or mark the notification. End the recipient session and verify the stream terminates at its next session check.
-5. Confirm opt-out and capability-disabled behavior, then test a stream connected to a different backend instance from the event worker.
+1. Open separate lead and member sessions. Add the member and check that one notification appears with the workspace name and an Open workspace link.
+2. Check that the Inbox, unread badge, and workspace picker update without a reload, and that the member's current workspace selection stays.
+3. Disconnect and reconnect the member, and retry the delivery handler. The Inbox keeps the notification, and the source-event ID prevents a duplicate.
+4. Confirm another account cannot read or mark the notification. End the recipient's session and check that the stream ends.
+5. Confirm opt-out and capability-disabled behavior. With several backend instances, test a stream on a different instance from the worker that delivered the event.
 
-Observe notification outbox retry/quarantine records and database/stream load. Do not enable a shorter interval for GitHub provisioning to diagnose notification latency.
+Watch notification outbox retries and quarantines, and database and stream load. Do not shorten the GitHub provisioning interval to diagnose notification latency.

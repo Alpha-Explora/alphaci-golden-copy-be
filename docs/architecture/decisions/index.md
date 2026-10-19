@@ -11,7 +11,7 @@
 * [ADR-0009: Client capability policies](adr-0009-client-capability-policies.md) - deny-only per-client narrowing within an edition.
 * [ADR-0010: Single authoring source for composition](adr-0010-single-authoring-source-for-composition.md) - one capability record, generated registry, manifests, and pack rows.
 * [ADR-0011: Member directory sources](adr-0011-member-directory-sources.md) - one per-deployment directory decides who may join a workspace, served by a public API.
-* [ADR-0012: Configurable deployment targets](adr-0012-configurable-deployment-targets.md) - proposed: provider per project slot and branch; the first planned mix uses Vercel/Render for `dev` and `uat`, and customer-hosted Compose for `main`.
+* [ADR-0012: Configurable deployment targets](adr-0012-configurable-deployment-targets.md) - provider chosen per project environment and slot; managed providers stay the default, customer-hosted Compose (`onprem-compose`) and the self-hosted platform appliance are built, Kubernetes targets are not.
 * [ADR-0013: QA verification runs](adr-0013-qa-verification-runs.md) - QA Team persona, commit-keyed snapshotted runs, server-enforced sign-off with a frozen report, and automated results shown beside manual verdicts.
 * [ADR-0014: Project requirements](adr-0014-project-requirements.md) - requirements owned by a Project, developer Progress and QA Verification as separate tracks, one QA run per Project, and a per-Project merge-to-main gate. Supersedes the per-repository parts of ADR-0013.
 * [ADR-0015: GitHub activity ingest and pull-request-only branches](adr-0015-github-activity-and-pr-only-branches.md) - pull request required on dev, uat and main, and repository GitHub activity polled into the Audit trail.

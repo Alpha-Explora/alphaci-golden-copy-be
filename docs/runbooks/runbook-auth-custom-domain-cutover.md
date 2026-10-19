@@ -18,6 +18,8 @@ sources:
 
 When the frontend and backend use different registrable domains, a secure `SameSite=None` session cookie can be treated as third-party by privacy-focused browsers. A shared parent domain makes the session cookie first-party across the frontend and backend subdomains.
 
+This applies to the hosted deployment (Vercel frontend, Render backend). The self-hosted appliance serves the frontend and `/api/*` on one origin with `SESSION_COOKIE_SAMESITE=lax`, so it needs no cutover.
+
 ## Interim: Vercel rewrite bridge
 
 Use this when no shared parent domain is available yet. The frontend's Vercel deployment proxies `/api/v1/*` to the backend, so the browser only ever talks to the frontend host and the session cookie is first-party there. It is a bridge: every API call takes an extra hop through Vercel, and it is removed at the custom-domain cutover below.
@@ -26,7 +28,7 @@ Vercel preview deployments cannot complete GitHub login through the bridge: the 
 
 ### Enable
 
-1. Backend (Render): confirm `PLATFORM_PUBLIC_URL` is set to the backend origin, e.g. `https://<backend>.onrender.com`. When it is unset, generated customer pipelines derive the platform URL from `GITHUB_CALLBACK_URL` (`resolvePlatformBaseUrl` in `staged-workflow.builder.ts`). Moving the callback to the frontend would then bake the frontend host into customer repositories' report and release URLs, and they would break when the bridge is removed.
+1. Backend (Render): confirm `PLATFORM_PUBLIC_URL` is set to the backend origin, e.g. `https://<backend>.onrender.com`. When it is unset, generated customer pipelines derive the platform URL from `GITHUB_CALLBACK_URL` (`resolvePlatformBaseUrl` in `src/kernel/config/ci-api-base-url.ts`). Moving the callback to the frontend would then bake the frontend host into customer repositories' report and release URLs, and they would break when the bridge is removed.
 2. Frontend (Vercel, Production scope only): set `API_PROXY_TARGET` to the backend origin and redeploy. Nothing changes for users yet. Confirm `https://<frontend>/api/v1/health` answers.
 3. Cut over, back to back, because the GitHub OAuth App has a single callback URL and sign-in fails between these steps:
    1. GitHub OAuth App: set the authorization callback URL to `https://<frontend>/api/v1/auth/github/callback`.

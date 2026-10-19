@@ -23,6 +23,21 @@ sources:
   - id: 'manifest-schema'
     resource: 'docs/architecture/onprem-release-manifest-schema.json'
     title: 'Manifest JSON Schema'
+  - id: 'host-assignment'
+    resource: 'src/modules/runtime/application/onprem/onprem-assignments.service.ts'
+    title: 'Host assignment defaults, addresses, and automatic assignment'
+  - id: 'port-reservations'
+    resource: 'src/modules/runtime/infrastructure/repositories/onprem-assignments.repository.ts'
+    title: 'Host port allocation'
+  - id: 'release-signer'
+    resource: 'src/kernel/config/release-signing.config.ts'
+    title: 'Release signer modes'
+  - id: 'deploy-rollback'
+    resource: 'src/modules/runtime/domain/deploy-rollback.policy.ts'
+    title: 'Hosted target rollback rules'
+  - id: 'app-routes'
+    resource: 'deploy/selfhost/alphaci-app-routes'
+    title: 'Apps-domain routing on the AlphaCI server'
 ---
 
 # Release registry
@@ -31,16 +46,24 @@ sources:
 
 Runtime owns `onprem_workspace_lifecycle`, `onprem_machines`, `onprem_enrollments`,
 and `onprem_port_reservations`. Apply migrations `20261015020000` and
-`20261015030000` after `20261015010000`, then `20261016010000`, before activating
-this version. RLS and
+`20261015030000` after `20261015010000`, then `20261016010000` and
+`20261017010000` (tunnel reports), before activating this version. A
+self-hosted install applies the whole tree in the same order with its ledgered
+runner (`npm run db:migrate:selfhost`, the Compose `migrate` service), which
+finishes before the API starts. RLS and
 explicit revokes deny direct `anon` and `authenticated` access. HTTP requests use
 the existing workspace visibility, application hosting role, and subscription gates.
+Releases need `ENV_PROVISIONING_ENABLED=true`; hosts and machines also need
+`ONPREM_RELEASES_ENABLED=true`.
 
 - `GET /workspaces/:workspaceId/onprem-hosts` lists machines and pending enrollment.
+  Each machine has a status: `enrollment_pending`, `connected`,
+  `prerequisites_failed`, `offline`, or `revoked`.
 - `POST /workspaces/:workspaceId/onprem-host-enrollments` accepts name, platform,
   request UUID, and optional explicit replacement machine ID. It returns a
   256-bit code once, expiring after ten minutes, the public API URL, and a pinned
   installer version/HTTPS URL/SHA-256. Storage receives only the code hash.
+  Re-sending a request UUID returns 409; a code cannot be recovered.
 - `POST /onprem/enroll` consumes that code transactionally and returns one
   `onprem_machine_` credential plus public verification keys. A lost response
   cannot replay credentials. Issue a new enrollment or explicit replacement.
@@ -56,16 +79,21 @@ the existing workspace visibility, application hosting role, and subscription ga
   replacement enrollments, so their codes stop working. It cannot stop offline
   containers or erase host data.
 - `GET`, `POST`, and `DELETE /projects/:projectId/environments/:environmentId/host-assignment`
-  read, explicitly assign/replace, and unassign. POST takes machine ID, request
-  UUID, expected current assignment ID or null, ports, health paths, and ingress.
+  read, explicitly assign/replace, and unassign. POST takes an optional machine
+  ID, request UUID, expected current assignment ID or null, ports, health paths,
+  and ingress. Without a machine ID it uses the workspace's only connected
+  machine and refuses when there is none or several.
   DELETE requires the expected current assignment ID. Stale comparisons return
   409. Identical POST request replays reuse the active assignment. Reads expose
   a legacy binding with null machine/config so it can be explicitly replaced.
 
 One active host binding remains allowed per environment. Legacy registration
 cannot silently revoke a machine binding. Assignment transactions lock the
-machine, environment advisory key, and binding; reserve machine host ports;
-and roll back both replacement and reservations on a conflict. Assignment reads
+machine, environment advisory key, and binding; reserve host ports; and roll
+back both replacement and reservations on a conflict. Host ports come from
+8080–8999, lowest free first, and are unique across all machines, because one
+server enrolled in several workspaces runs one machine per workspace on the
+same ports. A global advisory lock serializes the allocation. Assignment reads
 hold credential and binding locks through release selection. Status writes
 recheck the live credential and exact project/environment binding in the same
 transaction. Revocation either follows an authorized operation's commit or
@@ -75,8 +103,12 @@ codes before deleting Identity's workspace; cleanup failure aborts deletion.
 Production assignment requires an HTTPS address: configured HTTPS ingress, or the
 machine's tunnel address (`tunnel` ingress), which exists once the machine reports it.
 Each target
-slot has a container port, a distinct machine host port, and a health path or
-explicit null. Null records missing health evidence; the agent reports the
+slot has a container port, a host port unique across machines, and a health path or
+explicit null. A request names exactly one port and one health entry per
+target slot. A container port is an integer from 1 to 65535. A health path
+starts with a single `/`, contains no `..`, and has no encoded `.`, `/` or `\`
+(`%2e`, `%2f`, `%5c`). Ingress is `direct`, `configured` (an HTTP or HTTPS URL
+without credentials), or `tunnel`. Null records missing health evidence; the agent reports the
 deployment failed without pulling or applying it until health is configured.
 When nobody chose them, the container port and health path come from the
 runtime contract of the app AlphaCI scaffolded for that project row
@@ -89,6 +121,36 @@ or the create request supplies is used as given. `GET
 /projects/:projectId/environments/:environmentId/host-assignment/defaults`
 returns the same per-slot defaults for Hosting's form. Stored assignments are
 not rewritten.
+
+The default ingress is `tunnel` (the automatic HTTPS address) for an
+environment with a frontend slot, and `direct` for a backend alone; a linked
+frontend on the same machine reaches it over the service link. A `tunnel` request never carries a
+URL. Without `ONPREM_APPS_DOMAIN` the address is the machine's Cloudflare
+quick tunnel (`*.trycloudflare.com`), which changes when the tunnel restarts;
+agent 0.4.1 and newer installs `cloudflared` on Ubuntu when it is missing.
+With `ONPREM_APPS_DOMAIN` set, every `tunnel` request is stored as `configured`
+ingress with a permanent address under that domain:
+`https://<environment slug>-<repository>.<domain>`, and for production
+`https://<repository>.<domain>` (one DNS label, at most 63 characters). On
+the AlphaCI server itself, `deploy/selfhost/alphaci-app-routes` (run by its
+systemd timer every 30 seconds) reads the agent's pending assignments, writes
+one Caddy site per address that proxies to the frontend's host port, and
+reloads Caddy when the routes change. A wildcard DNS record `*.<domain>` must
+point at that server.
+
+Automatic assignment puts an environment whose targets are all on-prem on the
+workspace's only connected machine, with the defaults above. It runs after
+project creation and when an on-prem target is created or attached. Production
+is assigned automatically only when `ONPREM_APPS_DOMAIN` is set; otherwise a
+person names its HTTPS address. A legacy host registration is never replaced
+automatically. Production on `tunnel` ingress is not handed to the machine
+until its tunnel reports a running address.
+
+On-prem deployment history items and an on-prem target's `publicUrl` carry
+the environment's current address: the configured URL, or the tunnel's while
+it runs. QA Studio and previews open that address, and the embedding probe
+accepts `*.trycloudflare.com` and names under `ONPREM_APPS_DOMAIN`.
+
 Readiness distinguishes missing schema, offline/revoked machines, prerequisites,
 missing health paths, and still-unverified runner, registry, port, ingress, and
 application checks. Connected does not mean application healthy.
@@ -135,7 +197,7 @@ environments' deployments:
 - It exists only when the machine runs exactly one backend-only and one
   frontend-only environment with that slug from that delivery project. A single
   app, a missing half, a half on another machine, a different slug, or an
-  ambiguous folder gets no `link`, and the payload is exactly as before.
+  ambiguous folder gets no `link` and deploys as a single app.
 - `network` is `alphaci-<12 hex of sha256(backendEnvId:frontendEnvId)>-<slug>`.
   Both containers join it, each aliased by its slot.
 - The frontend gets `API_URL=http://backend:<backend container port>`.
@@ -164,6 +226,18 @@ fails the `service-link` check and asks for an agent update.
 Linked environments on 0.4.0 pass it. The network is not removed when a link
 ends.
 
+### Registry pull credential
+
+Release images are private registry packages. With `ONPREM_REGISTRY_TOKEN_FILE`
+set (a read-only token file), `GET /onprem/assignments` adds
+`assignment.registry {server, username, password}` to each pending machine
+deployment. `server` defaults to `ghcr.io` (`ONPREM_REGISTRY_SERVER`) and
+`username` to `alphaci` (`ONPREM_REGISTRY_USERNAME`). Like `link`, it sits
+outside the signed envelope. Agent 0.4.3 logs in to a temporary Docker config
+for the image pulls only and deletes it afterwards, so the credential never
+stays in the host's own Docker login. If that login fails, or no credential is
+configured, the host pulls with its own Docker login.
+
 Optional project creation host bindings use the kernel `OnpremAssignmentPort`
 after project creation succeeds. Failures return `hostAssignments` or
 `hostAssignmentError` alongside the created project. Retry assignment through
@@ -176,14 +250,27 @@ that built it. The first environment is the only one that deploys
 automatically; registration records that deployment. Every later environment
 receives a release only through an explicit, signed-in promotion.
 
-With `ALPHACI_RELEASE_SIGNER=file` the backend signs instead of CI. Right after
-a release is registered, the backend builds the manifest the sign job would have
-built, signs it with its own P-256 key, and attaches it through the same
-verification and persistence as CI's attach. The signing key's public half joins
-the trust set and enrollment's `trustKeys`. A verified release is never signed
-again. If signing fails for a host-delivered release, its unsigned deployment is
-failed. The generated pipeline then has no sign-release job and no signing
-secret. Runner mode is unchanged.
+`ALPHACI_RELEASE_SIGNER` selects who signs. `runner` (the default) signs in the
+generated `sign-release` job: with Cloud KMS when
+`ALPHACI_RELEASE_KMS_KEY_VERSION`, `ALPHACI_RELEASE_SIGNER_WORKLOAD_IDENTITY_PROVIDER`
+and `ALPHACI_RELEASE_SIGNER_SERVICE_ACCOUNT` are all set, otherwise with the
+lab key from `ONPREM_LAB_SIGNING_KEY_PATH`, copied into the repository secret
+`ALPHACI_RELEASE_SIGNING_KEY`. A partial Cloud KMS configuration is an error and
+never falls back to the lab key.
+
+With `ALPHACI_RELEASE_SIGNER=file` the backend signs instead of CI, with the
+P-256 private key in `ALPHACI_RELEASE_SIGNING_KEY_FILE`, read once at boot. The
+self-hosted install uses this mode. `file` cannot be combined with Cloud KMS
+settings. If the key is missing or unusable, registration is refused with 503
+before anything is written. Right after a release is registered, the backend
+builds the manifest the sign job would have built, signs it, and attaches it
+through the same verification and persistence as CI's attach. The key's public
+half (key ID `sha256:<hex of its DER public key>`) joins the trust set and
+enrollment's `trustKeys`, so `ALPHACI_RELEASE_TRUST_KEYS_JSON` is needed only
+for extra keys. A verified release is never signed again. If signing fails for a
+host-delivered release, its unsigned deployment is failed. The generated
+pipeline then has no sign-release job, no signing-failure job and no signing
+secret.
 
 Release verification (a signed manifest) and each environment's deployment
 state are separate records. Database triggers refuse any change to a
@@ -197,8 +284,8 @@ release's identity or artifacts, and to a verified release's manifest.
   `image@sha256:<64 hex>` and floating tags are refused; every artifact slot
   must have an active target on the first environment. One release per
   workflow run; one deployment in flight per environment. A body without
-  `sourceEnvironmentId` is the legacy branch release request and keeps its
-  previous behavior.
+  `sourceEnvironmentId` is the legacy branch release request and follows the
+  legacy branch path.
 - GET /ci/releases/:releaseId reads a registered release (UUID IDs) or a legacy
   `<targetId>.<providerReleaseId>` release.
 - PUT /ci/releases/:releaseId/manifest attaches the manifest CI signed. The
@@ -245,32 +332,41 @@ Signed-in users who can see a project also read GET
 deployments) and GET /projects/:projectId/environments/:environmentId/deployments
 (that environment's deployment history, newest first).
 
-When every destination target is a managed provider (Render or Vercel),
-AlphaCI starts the repository's generated `30-alphaci-promote.yml` workflow on
-the release's source branch with the release, deployment, and environment
-IDs. If GitHub refuses the dispatch, the deployment is marked failed, so the
-promotion can be retried.
+Every target of one environment must be delivered the same way: all on-prem
+(host delivery) or all hosted (workflow delivery). Registration and promotion
+refuse a mixed environment with 409. For a hosted destination, AlphaCI starts
+the repository's generated `30-alphaci-promote.yml` workflow on the release's
+source branch with the release, deployment, and environment IDs. If GitHub
+refuses the dispatch, the deployment is marked failed, so the promotion can be
+retried. A host-delivered destination is never dispatched; its host picks the
+deployment up.
 
 ## Generated pipelines
 
 A project generated with environments gets its triggers from them. Access
 and quality run on every distinct source branch. The package stage builds
 and deploys only the first environment, on a push to its branch: it builds
-each container image once, registers the release, has it signed by the
-central `sign-release.yml` workflow, deploys it to the first environment's
-targets, and reports the result. A push to a later environment's branch runs
+each container image once, named `<repository>-<slot>`, registers the
+release, has it signed by the central `sign-release.yml` workflow (runner
+mode only), deploys it to the first environment's targets, and reports the
+result. Project creation writes all workflow files to a branch in one commit,
+so a new project starts one pipeline run per branch. A push to a later environment's branch runs
 the checks and deploys nothing. The promotion workflow deploys a release to
 the one later environment it was dispatched for, using the release's pinned
-commit and image digests, and reports the result. Every deploy job names its
+commit and image digests, and reports the result. It stops when the
+deployment's target IDs differ from the ones it was generated with; regenerate
+the workflow, then promote again. Every deploy job names its
 environment ID, GitHub Environment, and target ID; none is chosen from the
 branch. Projects without environments keep the fixed `dev → uat → main`
 pipeline.
 
-For a host-delivered first environment, signing failure or cancellation runs
-the generated cleanup job to fail its unsigned pending deployment and free
-the environment for a later release. Existing project workflows must be
-regenerated to gain this job. If it cannot run, the same CI status endpoint
-allows explicit cleanup. Package stage results include the signing job.
+In runner mode, for a host-delivered first environment, signing failure or
+cancellation runs the generated `report-signing-failure` job to fail its
+unsigned pending deployment and free the environment for a later release.
+Existing project workflows must be regenerated to gain this job. If it cannot
+run, the same CI status endpoint allows explicit cleanup. Package stage
+results include the signing job. In file mode the backend fails the
+deployment itself when signing fails, so neither job is generated.
 
 ## On-prem hosts (host token)
 
@@ -286,7 +382,7 @@ serialize per environment. Other environments and projects retain their
 tokens. The migration keeps the newest active registration when upgrading
 legacy duplicates, and rolling back its unique index does not reactivate
 revoked credentials. Stop the old agent before replacement: revocation
-refuses future requests but cannot stop Docker commands already running.
+refuses later requests but cannot stop Docker commands already running.
 
 - GET /onprem/assignments returns the host's environment's in-flight
   deployments whose release is signed: the assignment (project, destination
@@ -298,12 +394,14 @@ refuses future requests but cannot stop Docker commands already running.
 The host verifies the signature with its pinned public key before pulling
 any artifact. Neither the manifest nor the assignment carries host secrets.
 
-The agent waits for Compose services on deployment and restoration. When
-`ALPHACI_HEALTH_URL` is configured, that URL must also answer successfully
-after both operations. A rollback reports `rolled_back` only if restoration
-and these checks pass; otherwise it reports `failed`. With the URL unset,
-health is limited to Compose's wait result and the services' own healthchecks;
-it does not verify an application HTTP endpoint.
+The agent waits for Compose services on deployment and restoration. For a
+machine assignment, every slot's `http://127.0.0.1:<host port><health path>`
+must also answer successfully after both operations. A legacy host uses
+`ALPHACI_HEALTH_URL` instead when it is configured. A rollback reports
+`rolled_back` only if restoration and these checks pass; otherwise it reports
+`failed`. A legacy host without the URL is limited to Compose's wait result
+and the services' own healthchecks; it does not verify an application HTTP
+endpoint.
 
 ## Deployment history
 
@@ -313,8 +411,10 @@ project visibility. It returns separate `checks[{id,status,message}]`, with
 status `passed`, `failed`, or `unverified`. It inspects schema objects and
 the validity/uniqueness of the active-host index without applying migrations.
 API URL configuration, actual runner reachability, public signing trust,
-CI signing-secret access, registry pull access, and host state have separate
-results. Unavailable secret inspection remains unverified.
+the release signer (`release-signing`), CI signing-secret access, registry
+pull access, and host state have separate results. Unavailable secret
+inspection remains unverified. In file mode `ci-signing-secret` passes,
+because no signing key or secret is in GitHub.
 
 Generated GitHub-hosted jobs reject loopback/private API addresses before
 authorization. Configure `PLATFORM_PUBLIC_URL` with the reachable HTTPS base
@@ -327,20 +427,40 @@ on-prem source reads environment deployments joined to their immutable
 release identity, restricted by project, the target's environment, and the
 deployment's target IDs. Hosted providers retain authenticated provider API
 history. Empty registry history is a successful live result; query failures
-report unavailable history. A rolled-back attempt remains failed history,
-even when the prior release was restored successfully.
+report unavailable history. On-prem statuses map `pending` to `queued`,
+`deploying` to `building`, `healthy` to `ready`, and `failed` and
+`rolled_back` to `failed`. A rolled-back attempt remains failed history,
+even when the prior release was restored successfully. Vercel history adds the
+recent production deployments (up to ten) that newer previews pushed out of
+the list, so production can be listed and rolled back.
+
+### Rolling back a hosted target
+
+`POST /projects/:projectId/deployment-targets/:targetId/rollback` with
+`{deployId, reason}` puts an earlier provider deploy back live. It needs a
+Developer (`member`) or admin app role, live provider calls, and a target
+linked to its provider. The deploy must be among the target's recent deploys,
+must have gone live, must not be the live deploy, and on Vercel must be a production
+deployment. The reason (3 to 500 characters) and the actor go to the audit
+trail. Render redeploys the old build as a new deploy, and the next pipeline
+deploy replaces it. Vercel Instant Rollback holds new production deploys off
+the domains; the hold is stored on the target, and
+`POST .../rollback/resume` puts the newest production deploy back live. This
+rollback is separate from release promotion and from an on-prem host's
+`rolled_back` status.
 
 ## Signed manifest
 
 The signed payload is the canonical JSON (RFC 8785) of the manifest described
-by [the manifest JSON Schema](onprem-release-manifest-schema.json):
+by [the manifest JSON Schema](/architecture/onprem-release-manifest-schema.json):
 `schemaVersion` (1), `releaseId`, `projectId`, `sourceEnvironmentId`,
 `sourceBranch`, full `commitSha`, `createdAt`, `artifacts[{slot, image,
 digest}]`, optional `migrations[{id, checksum, mode}]`, and
 `workflowRun{provider, repo, runId, url}`. The envelope adds `manifestSha256`,
 the lowercase hex SHA-256 of those canonical bytes, and
 `signature{algorithm, keyId, value}`; `ecdsa-p256-sha256` (Cloud KMS
-`EC_SIGN_P256_SHA256`) is the accepted algorithm. Vercel slots carry no
+`EC_SIGN_P256_SHA256`, or a P-256 key file in lab and file modes) is the only
+accepted algorithm. Vercel slots carry no
 artifact: Vercel builds from the pinned commit and records its own deployment
 ID.
 

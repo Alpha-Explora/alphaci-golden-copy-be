@@ -76,22 +76,24 @@ AlphaCI is one application with six owned areas. This keeps deployment and day-t
 | Product area | Everyday responsibility |
 |---|---|
 | Identity and access | Sign-in, users, workspaces, roles, hierarchy, and deciding who may access what. |
-| Projects and workflows | Projects, repositories, project setup, and the instructions used to build projects. |
+| Projects and workflows | Projects, their ordered environments, repositories, requirements, QA verification runs, project setup, and the pipelines generated to build and deploy them. |
 | Pipelines and CI | GitHub connections, automated build activity, and build-result reporting. |
-| Runtime and deployments | Environments, hosting targets, domains, deployment history, and hosting-provider connections. |
+| Runtime and deployments | Hosting targets, environment settings, domains, deployment history, rollback, hosting-provider connections, customer-hosted machines, and signed releases. |
 | Billing and usage | Subscriptions, usage tracking, limits, and quota rules. |
 | Platform operations | Activity records, notifications, feedback, health, and background tasks. |
 
-The current hosting choices are GCP, Render, and Vercel. They are hosting options inside the Runtime area, not separate versions of AlphaCI.
+Projects deploy to GCP, Render, Vercel, or a customer-hosted machine running Docker Compose. Each project environment picks its own hosting option. These are hosting options inside the Runtime area, not separate versions of AlphaCI.
+
+AlphaCI itself runs in one of two deployment modes. The managed mode runs on Render, Vercel, and Supabase. The self-hosted mode runs as a Docker Compose appliance with its own PostgreSQL database on the customer's server; customers keep github.com, GitHub-hosted runners, GHCR, and SonarCloud. The deployment mode does not change the edition or the capability catalog.
 
 ### Background work and the outbox
 
 Some actions cannot finish during the original request. For example, an access change may need a follow-up action with GitHub, or an important activity may need to be recorded.
 
-AlphaCI handles this by saving a task in the database and having one scheduled process work through the task list:
+AlphaCI handles this by saving a task in the database. Background workers inside the application, and a scheduled job in the managed deployment, work through the task list:
 
 1. The application saves the task.
-2. The scheduled process picks it up.
+2. A worker claims it, so no two workers handle the same task at once.
 3. Successful work is marked complete.
 4. Temporary failures are tried again.
 5. Repeated failures are set aside for review.
@@ -111,7 +113,7 @@ The capability list is shared across all packs. A capability is not copied three
 | Platform operations | Activity records and in-product notifications. | Stable across SaaS, EDU, and Enterprise. Customer data-location controls are not implemented. |
 | Billing and usage | Usage tracking and quota checks. | Limited; configuration and product rules apply. Self-serve checkout is not implemented. |
 | Runtime and hosting | Environment setup, deployment history, previews, drift checking, and drift repair. | Limited; setup and provider support are required. Managed secrets, air-gap packaging, and customer-managed isolation are not implemented. |
-| Projects and workflows | Project synchronization, workflow preview, workflow update requests, and target management. | Stable or limited depending on the capability and setup. |
+| Projects and workflows | Project synchronization, workflow preview, workflow update requests, target management, and QA checklists, requirements, and verification runs. | Stable or limited depending on the capability and setup. |
 | Pipelines and CI | Build-result intake and tracking. | Limited; CI setup and reporting are required. GitHub Enterprise Server support is not implemented. |
 
 ### Pack status
@@ -136,6 +138,7 @@ These catalog keys must remain `not-implemented` until they have working behavio
 | `identity.edu-provisioning` | EDU |
 | `identity.ferpa-workflows` | EDU |
 | `identity.edition-entitlements` | SaaS, EDU, and Enterprise |
+| `platform.public-site` | SaaS |
 | `billing.checkout` | SaaS |
 | `platform.data-residency` | Enterprise |
 | `runtime.managed-secrets` | Enterprise |
@@ -290,8 +293,9 @@ The report should remain readable and portable. The detailed records can contain
 | Area | Current position |
 |---|---|
 | Product structure | One application with six clearly owned areas. |
-| Hosting choices | GCP, Render, and Vercel are supported when the required setup is present. |
-| Background work | A database-backed task list, one scheduled processor, retries, review handling, and repeat-safe processing are defined. |
+| Hosting choices | GCP, Render, Vercel, and customer-hosted Docker Compose machines are supported when the required setup is present. Kubernetes hosting is not built. |
+| Platform hosting | AlphaCI runs as the managed service or as a self-hosted Compose appliance. The appliance still needs github.com and GHCR, so air-gap packaging remains not implemented. |
+| Background work | A database-backed task list, in-application workers, a scheduled processor in the managed deployment, retries, review handling, and repeat-safe processing are defined. |
 | Capability records | Shared capability names and status are recorded for SaaS, EDU, and Enterprise. |
 | Pack records | All three packs list the shared catalog. Pack-specific gaps use `not-implemented` or `not-applicable` status. |
 | Operating guidance | Verification, database changes, background tasks, hosting, authentication, and performance procedures are recorded. |

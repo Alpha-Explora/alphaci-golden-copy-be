@@ -52,6 +52,8 @@ npm run check:documentation
 git diff --check
 ```
 
+`npm run db:migrate:selfhost -- --dry-run` lists the same tree in the self-hosted runner's order, with each file's transaction mode and checksum.
+
 ## Focused checks
 
 ```bash
@@ -74,9 +76,15 @@ provider credentials from its environment. It refuses a non-loopback database.
 To reuse a running loopback PostgreSQL, set `E2E_DATABASE_URL` to its admin
 connection; the suite then leaves the container running.
 
+Scenarios that create projects read the central workflow templates from
+`TEMPLATE_REPO_PATH` (default `../alphaci-workflow`, a sibling checkout of
+`Alpha-Explora/alphaci-workflow`).
+
 Each run writes `artifacts/e2e/<commit>/report.json` with the commit, a dirty
 flag, the command, the database image, and each scenario's result. CI runs the
-same command in the `E2E` job and uploads the report as `e2e-report`.
+same command in the `End-to-end suite (Postgres fixture)` job, against a pinned
+`alphaci-workflow` commit, and uploads the report as `e2e-report` when the job
+fails.
 
 ## Evidence
 

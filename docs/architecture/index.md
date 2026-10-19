@@ -3,6 +3,8 @@
 * [Current architecture](current-architecture.md) - current one-deployable source and deployment composition.
 * [Bounded context map](context-map.generated.md) - generated context ownership and measured source inventory.
 * [Context contracts](context-contracts.md) - current public indexes, ports, and directional edges.
+* [Project environments](project-environments.md) - ordered project environments, per-environment deployment targets, and the creation pipeline.
+* [Release registry](release-registry.md) - immutable releases, signed on-prem manifests, promotion, rollback, and the host polling contract.
 * [Event and outbox map](events-map.generated.md) - current topics, owners, handlers, and delivery semantics.
 * [Provider map](provider-map.generated.md) - current Runtime provider plugins and composition.
 * [HTTP route map](route-map.generated.md) - generated current API route inventory.

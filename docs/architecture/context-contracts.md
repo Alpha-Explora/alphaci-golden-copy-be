@@ -51,7 +51,7 @@ The current source metric reports 15 directional pairs. The generated [context m
 
 ## Focused ports
 
-The reusable ports in `src/kernel/ports/` cover GitHub and CI, workspace and project links, quota and subscription bootstrap, workflow generation, audit, feedback, provider catalog, and deployment runtime. They keep consumers dependent on serialisable inputs and outputs while the current module graph remains in-process.
+The reusable ports in `src/kernel/ports/` cover GitHub, GitHub team roles, and CI stage results; workspaces, app roles, and platform administration; project lookup, links, lifecycle, visibility, and requirements readiness; delivery-project overview, repository provisioning, and data cleanup; quota and subscription bootstrap; workflow generation, workflow and toolchain fragments; Playwright live runs and visual regression; audit and feedback; and the provider catalog, deployment runtime, and on-prem host assignment. They keep consumers dependent on serialisable inputs and outputs while the current module graph remains in-process.
 
 ## Current event contract
 

@@ -1,7 +1,7 @@
 ---
 type: "Playbook"
 title: "On-prem self-enrolling images"
-description: "Build and start an Ubuntu VM or a WSL2 distro that enrolls itself with AlphaCi on first boot from a one-time code."
+description: "Build and start an Ubuntu VM or a WSL2 distro that enrolls itself with AlphaCI on first boot from a one-time code."
 tags: [runbook, runtime, deployment, on-prem]
 status: draft
 sources:
@@ -24,17 +24,20 @@ Two images let a machine enroll itself the first time it starts: an Ubuntu VM
 configured by cloud-init, and a WSL2 distro imported with `wsl --import`. Both
 carry the agent archive, pinned by SHA-256, and a first-boot unit. The one-time
 enrollment code is the only per-machine secret. It works once and expires 10
-minutes after Hosting issues it.
+minutes after it is issued.
 
 Nothing here is published. You build the image yourself from a release archive.
 
 ## Before you start
 
-- A public HTTPS address for the AlphaCi API.
+- A public HTTPS address for the AlphaCI API.
 - The agent archive `alphaci-agent-<version>.tar.gz` and its SHA-256, from the
   release, or from `node scripts/package-onprem-agent.mjs` (see `artifacts/onprem/`).
-- An enrollment code from Hosting, issued for the new machine. Issue it right
-  before you start the machine. For the WSL image, issue it after you import the distro.
+  Use the current agent (0.4.3). Older agents lack the automatic HTTPS address,
+  linked services, and the registry pull credential.
+- An enrollment code from **Hosts** (**Add host**), issued for the new machine.
+  Issue it right before you start the machine. For the WSL image, issue it after
+  you import the distro.
 
 ## Ubuntu VM with cloud-init
 
@@ -46,7 +49,7 @@ Nothing here is published. You build the image yourself from a release archive.
      --api https://YOUR-API \
      --archive-url https://YOUR-ARCHIVE-URL \
      --archive-sha256 YOUR-SHA256 \
-     --archive-version 0.2.0 \
+     --archive-version 0.4.3 \
      --code-file ./enrollment-code.txt \
      --out ./user-data.yaml
    ```
@@ -58,7 +61,7 @@ Nothing here is published. You build the image yourself from a release archive.
    to `/etc/alphaci/enrollment-code`, and starts `alphaci-first-boot.service`.
 3. Follow the first boot on the VM: `journalctl -u alphaci-first-boot.service`.
    It ends with "Enrolled on first boot". The machine then shows as connected in
-   Hosting, and you assign environments to it there.
+   Hosts, and you assign environments to it in Hosting.
 4. Delete `enrollment-code.txt` and `user-data.yaml`.
 
 ## WSL2 distro
@@ -104,7 +107,7 @@ wsl.exe -d AlphaCI-Host -u root -- systemctl start alphaci-first-boot.service
 wsl.exe -d AlphaCI-Host -u root -- journalctl -u alphaci-first-boot.service --no-pager
 ```
 
-Wait for "Enrolled on first boot", then open the host in Hosting and check it is
+Wait for "Enrolled on first boot", then open the host in Hosts and check it is
 connected. The Windows startup and port forwarding are set up separately, with the
 installer from the release's `windows` folder. The machine is already enrolled, so
 it needs no code:
@@ -136,7 +139,7 @@ it needs no code:
 
 Anyone holding the code can enroll the machine until it is used or expires. The
 user-data file, the enrollment code file and the copy inside the VM are all secrets
-until enrollment is complete. The installer deletes the code file once AlphaCi has
+until enrollment is complete. The installer deletes the code file once AlphaCI has
 answered: an accepted enrollment, or a refusal because the code is invalid or
 expired. If the connection failed, the file stays so that starting the unit again
 can use it. Delete any copies you made. Keep the built WSL tarball, which has no

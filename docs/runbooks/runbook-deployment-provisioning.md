@@ -30,6 +30,8 @@ Runtime can create provider deployment targets during project setup and push ini
 | GCP | GCP deployment module and Runtime registry | Cloud Run and Artifact Registry provisioning when enabled |
 | On-prem host (`onprem-compose`) | Runtime registry, available when `ONPREM_RELEASES_ENABLED=true` | A target record only; the environment's host pulls signed releases by digest |
 
+The self-hosted appliance sets none of the managed Render, Vercel, or GCP settings, so managed targets are not available there. Its usual target is an on-prem host.
+
 Provider selection, policy, credentials, workflow fragments, and client availability remain inside Runtime provider packs. Use the [provider map](/architecture/provider-map.generated.md) for the current source locations and capability limits.
 
 ## Delivery
@@ -37,7 +39,7 @@ Provider selection, policy, credentials, workflow fragments, and client availabi
 Every environment is delivered one way, and each deployment records which:
 
 - **Workflow**: Render and Vercel targets. The generated pipeline deploys the first environment on push and runs `30-alphaci-promote.yml` for a promotion; CI reports status with the project CI token.
-- **Host**: on-prem targets. The pipeline builds, registers, and signs the release but runs no deploy job. The environment's host pulls the assignment and is the only party that may report its status.
+- **Host**: on-prem targets. The pipeline builds and registers the release and runs no deploy job. The release is signed by the backend itself (`ALPHACI_RELEASE_SIGNER=file`, the self-hosted appliance) or by a sign-release job in CI (hosted backend). The environment's host pulls the assignment and is the only party that may report its status.
 
 An environment cannot mix the two: creating or attaching a target that would mix them is refused with 409, and project creation refuses it with 400 before the repository exists.
 
@@ -58,7 +60,11 @@ At project creation, give a target an `environmentSlug` to limit it to one envir
 }
 ```
 
-The package workflow builds an image for every slot any environment's container target needs, so the production host can pull a frontend that test deploys to Vercel from source. Register the host with `POST /projects/:projectId/environments/:environmentId/hosts` and install the agent from `deploy/onprem/agent`.
+The package workflow builds an image for every slot any environment's container target needs, so the production host can pull a frontend that test deploys to Vercel from source.
+
+A two-repository project (`repoShape: multi-repo`) accepts the same environments list, each with an optional `hostAssignment`, and per-environment backend and frontend targets, including `onprem-compose`. Each repository gets the environment pipeline for its own slot.
+
+Environments run on enrolled machines. Enroll a machine in **Hosts**, then assign environments in **Hosting**; with one connected machine, non-production environments are assigned automatically. See the [on-prem host setup runbook](runbook-onprem-host-setup.md). A legacy single-environment host registered with `POST /projects/:projectId/environments/:environmentId/hosts` keeps working until it is replaced.
 
 ## Managed Render
 
@@ -81,6 +87,16 @@ When managed Vercel provisioning is enabled:
 3. The package workflow deploys through the central Vercel workflow.
 
 Relevant configuration includes `FLOWCI_VERCEL_TOKEN`, `FLOWCI_VERCEL_TEAM_ID`, and the optional team slug.
+
+## Roll back a Render or Vercel deployment
+
+A deployment target's earlier deploy can be put back live from AlphaCI: `POST /projects/:projectId/deployment-targets/:targetId/rollback` with `{ "deployId": "...", "reason": "..." }`. Only an account whose application role can manage hosting (Admin or Developer) can do it. The reason (3 to 500 characters) goes into the audit trail with the user.
+
+- Only a recent deploy that went live and is not live now can be chosen. On Vercel, only a production deployment.
+- **Render** redeploys the old build as a new rollback deploy. The next pipeline deploy replaces it as usual.
+- **Vercel** uses Instant Rollback, which holds new production deploys off the domains. AlphaCI records the hold on the target. End it with `POST /projects/:projectId/deployment-targets/:targetId/rollback/resume`; the newest deploy goes live again.
+
+Other providers refuse the request. On-prem hosts do not use this route; a host restores the previous release itself when a new one fails its health check.
 
 ## Cost and safety controls
 

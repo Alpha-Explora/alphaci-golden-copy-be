@@ -2,7 +2,8 @@
 # Routes each environment deployed on this server to its permanent address.
 #
 # AlphaCI gives every environment with a frontend
-# https://<environment>-<repository>.<ONPREM_APPS_DOMAIN> when that setting is
+# https://<environment>-<repository>.<ONPREM_APPS_DOMAIN> (production:
+# https://<repository>.<ONPREM_APPS_DOMAIN>) when that setting is
 # present. This reads the on-prem agent's assignments on the same server, writes
 # one Caddy site per address (proxying to the environment's host port), and
 # reloads the install's Caddy only when the routes changed. Caddy then obtains

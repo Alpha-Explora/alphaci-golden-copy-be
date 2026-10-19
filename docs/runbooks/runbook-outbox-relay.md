@@ -36,7 +36,13 @@ Rows outside the registered topic and handler set must not be acknowledged by th
 
 The API process also runs `OutboxRelayWorker` on a timer (`OUTBOX_RELAY_INTERVAL_MS`, default 15 seconds, `0` turns it off). It always delivers the two `platform.*` topics. It additionally delivers the two `hierarchy.repository_assignment.*` topics only when the API process itself has `HIERARCHY_GITHUB_SYNC_MODE=live`, because those handlers add and remove people from GitHub teams. With the mode `stub` or unset, hierarchy jobs are left to the Render cron and the manual command.
 
+A second timer, `NotificationRelayWorker`, delivers only notification events every `NOTIFICATION_RELAY_INTERVAL_MS` (default 1000, clamped to 250–60000, `0` turns it off). `OUTBOX_RELAY_INTERVAL_MS=0` turns off both timers.
+
 The worker and the cron may run at the same time: every pass claims rows through the same lease with `FOR UPDATE SKIP LOCKED`, so a job is never delivered by two runners at once. The cron stays as the fallback for the case where the API process is down or the worker is switched off.
+
+## Self-hosted appliance
+
+The appliance has no cron service. The `api` container's timers are the only delivery path (`OUTBOX_RELAY_INTERVAL_MS=15000` in `alphaci.env`). With `HIERARCHY_GITHUB_SYNC_MODE=stub`, the default there, hierarchy jobs stay pending. `scripts/process-outbox.cjs` does not resolve the `*_FILE` secret settings, so it cannot run inside the appliance as shipped. Inspect rows with `docker compose exec db psql -U alphaci -d alphaci`.
 
 ## Delivery semantics
 

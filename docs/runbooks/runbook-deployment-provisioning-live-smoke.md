@@ -48,6 +48,7 @@ Do not use paid Render instance types for the smoke test.
 8. Push or dispatch the generated package workflow on the test branch.
 9. Confirm access, quality, package, image build, and provider deployment steps complete.
 10. Confirm the smoke environment value is present at both provider targets.
+11. Optional, after a second successful deploy: roll each target back to the first deploy from AlphaCI, as the [deployment provisioning runbook](runbook-deployment-provisioning.md#roll-back-a-render-or-vercel-deployment) describes. Confirm the old deploy serves traffic and the audit trail records the reason. On Vercel, resume deploys afterwards.
 
 ## Existing-service smoke
 

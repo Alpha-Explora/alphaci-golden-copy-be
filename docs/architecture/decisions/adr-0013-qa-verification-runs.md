@@ -20,6 +20,7 @@ sources:
 
 **Decision date:** 2026-09-25
 **Decision status:** Accepted
+**Superseded in part by:** [ADR-0014](adr-0014-project-requirements.md): checklist sharing, per-repository runs, the per-repository gate and per-item persona rights. Repository-scope runs are read-only history; the sign-off and notification rules of Project runs are in ADR-0014 and its amendments.
 **Scope:** The QA Team persona, shared checklists, verification runs, sign-off, report export, and automated results on runs
 
 ## Decision
@@ -30,9 +31,9 @@ sources:
 4. **A verification run is keyed on (project, checklist, branch, commit).** The server resolves the commit under test: the newest ready deployment of the branch, otherwise the branch head. The client never sends a commit. A promoted commit exists on several branches, so nothing is keyed on the commit alone.
 5. **A run snapshots its checklist items.** Editing or deleting the checklist later never changes a run. The run keeps the checklist name and version; its link to the checklist becomes null if the checklist is deleted.
 6. **Item rights follow the item's target persona.** Developer items: Developer, Team lead, Admin. QA items: QA Team, Team lead, Admin. Items for everyone: all four. Only QA Team, Team lead and Admin may return an item to a developer. Failed and returned items require a severity.
-7. **Sign-off is a server-enforced verdict.** Approved requires every item passed; Conditional requires no pending or in-progress item and written conditions; Rejected is always allowed. A signed-off run is read-only until a Team lead or Admin reopens it.
+7. **Sign-off is a server-enforced verdict.** Approved requires every item passed; Conditional requires no pending or in-progress item and written conditions; Rejected needs no item passed. No verdict is allowed while a defect is open ([ADR-0014](adr-0014-project-requirements.md) amendment 14). A signed-off run is read-only until a Team lead or Admin reopens it.
 8. **Concurrent writes serialize on the run row.** Item writes take `FOR SHARE` on the run and sign-off takes `FOR UPDATE`, then re-checks the items' row-version fingerprint. Without this, an edit could land on a signed-off run, or an Approved sign-off could freeze a report that no longer matched its items. Every item write is also guarded by its own `row_version`. The conflicts a reload resolves carry `code: QA_ITEM_STALE` or `QA_RUN_CHANGED`.
-9. **Sign-off freezes the report.** The signed-off run is stored as `report_json`. The report export (`qa-report/v1`, JSON or Markdown) returns that frozen copy exactly for a signed-off run and builds an open run live. The PDF is a browser print of the same JSON.
+9. **Sign-off freezes the report.** The signed-off run is stored as `report_json`. The report export (`qa-report/v1`, JSON, Markdown or Excel `xlsx`) returns that frozen copy exactly for a signed-off run and builds an open run live. The PDF is a browser print of the same JSON.
 10. **Automated results are shown, never decisive.** A run reads the newest `quality` and `verify` CI reports for its exact branch and commit through the `CI_STAGE_RESULTS_LOOKUP` port. A Playwright item matches a failure by spec file; a truncated failure list yields `unknown`, never a guessed pass. A Playwright item with no test identifier is `unlinked` (the stage verdict stays beside it as context), never the stage's pass or fail. Automated results never change an item's recorded status. "Run Playwright" dispatches the verify workflow with the signed-in user's own GitHub token.
 11. **Notifications go to the in-app inbox through the outbox.** Returned to dev, blocker, re-test requested and signed off are recorded with `NotificationEventPublisher`, injected by an explicit token.
 
