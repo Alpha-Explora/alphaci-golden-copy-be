@@ -140,14 +140,28 @@ export class ReleaseRegistryRepository {
       slot: DeploymentHistoryItem['slot'];
       provider_project_name: string;
       environment_id: string;
+      public_url: string | null;
     }>(
       `SELECT d.id, d.status, d.created_at, d.updated_at, r.commit_sha,
-              r.source_branch, t.branch_name, t.slot, t.provider_project_name, t.environment_id
+              r.source_branch, t.branch_name, t.slot, t.provider_project_name, t.environment_id,
+              address.public_url
          FROM env_provisioning.project_deployment_targets t
          JOIN env_provisioning.environment_deployments d
            ON d.project_id = t.project_id AND d.environment_id = t.environment_id
           AND t.id = ANY(d.target_ids)
          JOIN env_provisioning.releases r ON r.id = d.release_id AND r.project_id = d.project_id
+        -- Where the environment answers now: its configured address, or the
+        -- tunnel's while it runs. QA Studio and the previews open this.
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(
+                   NULLIF(h.assignment_config->'ingress'->>'publicUrl', ''),
+                   CASE WHEN h.tunnel_status = 'running' THEN h.tunnel_url END
+                 ) AS public_url
+            FROM env_provisioning.onprem_hosts h
+           WHERE h.project_id = t.project_id AND h.environment_id = t.environment_id
+             AND h.revoked_at IS NULL
+           ORDER BY h.created_at DESC LIMIT 1
+        ) address ON true
         WHERE t.project_id = $1 AND t.id = $2 AND d.delivery = 'host'
         ORDER BY d.created_at DESC, d.id DESC LIMIT 100`,
       [projectId, targetId],
@@ -174,7 +188,7 @@ export class ReleaseRegistryRepository {
       status: statuses[row.status],
       createdAt: iso(row.created_at) ?? '',
       readyAt: row.status === 'healthy' ? iso(row.updated_at) : null,
-      deploymentUrl: null,
+      deploymentUrl: row.public_url ?? null,
       pullRequestNumber: null,
       inspectorUrl: null,
       dashboardUrl: url,
