@@ -1,11 +1,11 @@
 {
-  "routeCount": 269,
+  "routeCount": 271,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "26a9adba87c51cf5126c0387f754994402cd8ae371e376ed024b86948a8d7c1d",
+  "referenceSha256": "5e1f7bae4b10fb8f9ace71306e263cdf5a26b2371967b00d96d7afc1c26f5fea",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "26a9adba87c51cf5126c0387f754994402cd8ae371e376ed024b86948a8d7c1d",
+  "baselineSha256": "5e1f7bae4b10fb8f9ace71306e263cdf5a26b2371967b00d96d7afc1c26f5fea",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -305,6 +305,12 @@
       "reason": "Hosting pre-fills an on-prem assignment with the container port and health path of the app AlphaCI scaffolded for the project, the same values automatic assignment uses.",
       "routes": [
         "GET /api/v1/projects/{projectId}/environments/{environmentId}/host-assignment/defaults"
+      ]
+    },
+    {
+      "reason": "Create a repository branch from the fixed dev source",
+      "routes": [
+        "POST /api/v1/projects/{projectId}/workspace/branches"
       ]
     }
   ]

@@ -143,6 +143,13 @@ export function canAddBrowserTests(
   return role != null && BROWSER_TEST_ROLES.includes(role);
 }
 
+/** Repository branch creation is limited to Developers and project admins. */
+export function canCreateWorkspaceBranch(
+  role: PlatformAppRole | null | undefined,
+): boolean {
+  return role != null && BROWSER_TEST_ROLES.includes(role);
+}
+
 const HOSTING_CONFIG_ROLES: readonly PlatformAppRole[] = ['admin', 'member'];
 
 /** Whether `role` may list, provision, validate, or delete a project's environment variables. */
@@ -256,34 +263,19 @@ export function selfServicePullRequestBase(
 }
 
 /**
- * Whether the branch is named `feature/<login>-*`, the convention that marks a
- * developer's own branch. Case-insensitive because GitHub logins are.
- */
-function isOwnFeatureBranch(name: string, login: string): boolean {
-  return name.toLowerCase().startsWith(`feature/${login.toLowerCase()}-`);
-}
-
-/**
  * The branches `role` may see in the workspace branch list (§4, allow-list,
  * fail closed).
  *
  *   admin, lead: every branch.
  *   qa:          only the pipeline rungs (dev, uat, main) that exist.
- *   member:      dev and uat (uat is the base of the dev -> uat promotion PR;
- *                main is never shown) plus the developer's own branches - a
- *                `feature/<login>-*` name, or a branch whose head commit was
- *                authored by `login`.
+ *   member:      every branch (read-only source browsing).
  *   anything else: dev only.
  *
- * `authorByBranch` maps branch name to the head commit's author login, or is
- * null when that lookup was unavailable; the name convention alone then
- * decides ownership. Order of `branches` is preserved.
+ * Order of `branches` is preserved.
  */
 export function visibleBranchesFor<T extends { name: string }>(
   role: string,
-  login: string | null,
   branches: readonly T[],
-  authorByBranch: ReadonlyMap<string, string | null> | null,
 ): T[] {
   switch (role) {
     case 'admin':
@@ -293,17 +285,8 @@ export function visibleBranchesFor<T extends { name: string }>(
       return branches.filter((b) =>
         (PIPELINE_BRANCHES as readonly string[]).includes(b.name),
       );
-    case 'member': {
-      const wanted = login?.trim().toLowerCase() ?? '';
-      return branches.filter((b) => {
-        if (b.name === WORKING_BRANCH || b.name === QA_BRANCH) return true;
-        // main is never a Developer's branch, even when they authored its head.
-        if (isProductionBranch(b.name)) return false;
-        if (!wanted) return false;
-        if (isOwnFeatureBranch(b.name, wanted)) return true;
-        return authorByBranch?.get(b.name)?.toLowerCase() === wanted;
-      });
-    }
+    case 'member':
+      return [...branches];
     default:
       return branches.filter((b) => b.name === WORKING_BRANCH);
   }

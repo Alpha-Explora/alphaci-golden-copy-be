@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -9,7 +10,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import { QA_PROMOTION_TARGET_BRANCH } from '#kernel/config/pipeline-branches';
+import {
+  QA_PROMOTION_TARGET_BRANCH,
+  WORKING_BRANCH,
+} from '#kernel/config/pipeline-branches';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import type {
   GitHubBranchComparison,
@@ -28,6 +32,7 @@ import {
   type GithubProjectPort,
 } from '#kernel/ports/github.port';
 import {
+  canCreateWorkspaceBranch,
   canCreatePullRequest,
   canMergeViaWorkspace,
   visibleBranchesFor,
@@ -87,6 +92,7 @@ export interface ProjectFileCommitsResponse extends GitHubPathCommits {
 export interface ProjectBranchesResponse {
   defaultBranch: string;
   branches: GitHubBranchSummary[];
+  canCreateBranch: boolean;
 }
 
 export interface ProjectWorkflowRunsResponse {
@@ -238,7 +244,6 @@ export class ProjectWorkspaceService {
     projectId: string,
     userId: string,
     oauthToken: string | null,
-    viewerLogin: string | null = null,
   ): Promise<ProjectBranchesResponse> {
     const { repoFullName, token } = await this.context(
       projectId,
@@ -248,30 +253,66 @@ export class ProjectWorkspaceService {
     const all = await this.githubService.listBranches(token, repoFullName);
     const role = await this.projectsRepository.findAppRole(userId);
 
-    // Head-commit authors only matter for a developer's own-branch match;
-    // never fail (or spend a request) for anyone else.
-    let authors: Map<string, string | null> | null = null;
-    if (role === 'member' && viewerLogin) {
-      try {
-        authors = await this.githubService.listBranchHeadAuthors(
-          token,
-          repoFullName,
-        );
-      } catch (error) {
-        this.logger.debug(
-          `Branch author lookup failed; matching own branches by name only: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-
     // pickDefaultBranch runs on the full list so the default stays main even
     // for roles that cannot see it.
     return {
       defaultBranch: this.pickDefaultBranch(all),
-      branches: visibleBranchesFor(role, viewerLogin, all, authors),
+      branches: visibleBranchesFor(role, all),
+      canCreateBranch: canCreateWorkspaceBranch(role),
     };
+  }
+
+  /** Create a personal feature branch from dev; the source is never client-selectable. */
+  async createBranch(
+    projectId: string,
+    userId: string,
+    oauthToken: string | null,
+    branchName: string,
+  ): Promise<{ branchName: string; sourceBranch: string }> {
+    const { repoFullName, token } = await this.writeContext(
+      projectId,
+      userId,
+      oauthToken,
+      'create branches',
+    );
+    const role = await this.projectsRepository.findAppRole(userId);
+    if (!canCreateWorkspaceBranch(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'BRANCH_CREATION_FORBIDDEN',
+        message: 'Your role cannot create repository branches.',
+      });
+    }
+
+    const branches = await this.githubService.listBranches(token, repoFullName);
+    if (!branches.some((branch) => branch.name === WORKING_BRANCH)) {
+      throw new BadRequestException(
+        'The dev branch does not exist in this repository.',
+      );
+    }
+    if (branches.some((branch) => branch.name === branchName)) {
+      throw new ConflictException('That branch already exists.');
+    }
+
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo)
+      throw new BadRequestException('Invalid repository name.');
+    await this.githubService.createBranch(
+      token,
+      owner,
+      repo,
+      branchName,
+      WORKING_BRANCH,
+    );
+    await this.auditEventPublisher?.recordProjectEvent({
+      actorUserId: userId,
+      projectId,
+      eventCode: 'repository_branch_created',
+      message: `Branch ${branchName} created from ${WORKING_BRANCH}`,
+      metadata: { branchName, sourceBranch: WORKING_BRANCH },
+    });
+    return { branchName, sourceBranch: WORKING_BRANCH };
   }
 
   /**

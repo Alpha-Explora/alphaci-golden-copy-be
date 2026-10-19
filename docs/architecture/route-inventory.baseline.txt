@@ -239,6 +239,7 @@ POST /api/v1/projects/{projectId}/qa-runs/{runId}/items/{itemId}/request-retest
 POST /api/v1/projects/{projectId}/qa-runs/{runId}/reopen
 POST /api/v1/projects/{projectId}/qa-runs/{runId}/signoff
 POST /api/v1/projects/{projectId}/qa/promotion/merge
+POST /api/v1/projects/{projectId}/workspace/branches
 POST /api/v1/projects/{projectId}/workspace/browser-tests
 POST /api/v1/projects/{projectId}/workspace/pull-requests
 POST /api/v1/projects/{projectId}/workspace/pull-requests/{number}/merge

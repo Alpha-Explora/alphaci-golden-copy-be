@@ -16,6 +16,7 @@ import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { BrowserTestsService } from '../application/workspace/browser-tests.service';
 import { ProjectWorkspaceService } from '../application/workspace/project-workspace.service';
 import { CreatePullRequestDto } from './dto/create-pull-request.dto';
+import { CreateBranchDto } from './dto/create-branch.dto';
 
 /**
  * Views of a project's repository — Code, Pull requests and Pipeline runs —
@@ -48,7 +49,20 @@ export class ProjectWorkspaceController {
       projectId,
       this.requireUserId(req),
       this.oauthToken(req),
-      this.viewerLogin(req),
+    );
+  }
+
+  @Post('branches')
+  createBranch(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Body() dto: CreateBranchDto,
+  ) {
+    return this.workspaceService.createBranch(
+      projectId,
+      this.requireUserId(req),
+      this.oauthToken(req),
+      dto.branchName.trim(),
     );
   }
 

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
   UnauthorizedException,
@@ -54,6 +55,7 @@ function build(
       ]),
     ),
     listBranchHeadAuthors: jest.fn(() => Promise.resolve(new Map())),
+    createBranch: jest.fn(() => Promise.resolve()),
     listRepoContents: jest.fn(() =>
       Promise.resolve({ path: '', ref: 'main', entries: [], file: null }),
     ),
@@ -133,13 +135,13 @@ describe('ProjectWorkspaceService', () => {
 
     it('lists every branch for a lead and keeps the default branch', async () => {
       const { service } = build({ appRole: 'lead' });
-      const result = await service.listBranches('p1', 'u1', 'gho_x', 'alice');
+      const result = await service.listBranches('p1', 'u1', 'gho_x');
       expect(result.branches.map((x) => x.name)).toEqual(['develop', 'main']);
       expect(result.defaultBranch).toBe('main');
     });
 
-    it('hides main from a member and queries authors once', async () => {
-      const { service, github } = build({
+    it('shows every branch to a Developer', async () => {
+      const { service } = build({
         appRole: 'member',
         github: {
           listBranches: jest.fn(() =>
@@ -154,38 +156,18 @@ describe('ProjectWorkspaceService', () => {
           ),
         } as unknown as Partial<GithubService>,
       });
-      const result = await service.listBranches('p1', 'u1', 'gho_x', 'alice');
-      expect(result.branches.map((x) => x.name)).toEqual(['dev', 'fix/x']);
-      expect(result.defaultBranch).toBe('main');
-      expect(github.listBranchHeadAuthors).toHaveBeenCalledTimes(1);
-    });
-
-    it('falls back to name matching when the author lookup fails', async () => {
-      const { service } = build({
-        appRole: 'member',
-        github: {
-          listBranches: jest.fn(() =>
-            Promise.resolve([
-              { name: 'dev', protected: false, commitSha: 'a' },
-              { name: 'feature/alice-a', protected: false, commitSha: 'b' },
-              { name: 'fix/x', protected: false, commitSha: 'c' },
-            ]),
-          ),
-          listBranchHeadAuthors: jest.fn(() =>
-            Promise.reject(new Error('rate limited')),
-          ),
-        } as unknown as Partial<GithubService>,
-      });
-      const result = await service.listBranches('p1', 'u1', 'gho_x', 'alice');
+      const result = await service.listBranches('p1', 'u1', 'gho_x');
       expect(result.branches.map((x) => x.name)).toEqual([
         'dev',
-        'feature/alice-a',
+        'main',
+        'fix/x',
       ]);
+      expect(result.defaultBranch).toBe('main');
     });
 
     it('does not query authors for non-members', async () => {
       const { service, github } = build({ appRole: 'qa' });
-      await service.listBranches('p1', 'u1', 'gho_x', 'alice');
+      await service.listBranches('p1', 'u1', 'gho_x');
       expect(github.listBranchHeadAuthors).not.toHaveBeenCalled();
     });
 
@@ -205,6 +187,62 @@ describe('ProjectWorkspaceService', () => {
         'gho_caller',
         ROW.repo_full_name,
       );
+    });
+
+    it('creates Developer branches from dev and audits the action', async () => {
+      const { service, github, recordProjectEvent } = build({
+        appRole: 'member',
+        github: {
+          listBranches: jest.fn(() =>
+            Promise.resolve([
+              { name: 'dev', protected: false, commitSha: 'a' },
+              { name: 'main', protected: true, commitSha: 'b' },
+            ]),
+          ),
+        } as unknown as Partial<GithubService>,
+      });
+      await expect(
+        service.createBranch('p1', 'u1', 'gho_actor', 'feature/cart'),
+      ).resolves.toEqual({ branchName: 'feature/cart', sourceBranch: 'dev' });
+      expect(github.createBranch).toHaveBeenCalledWith(
+        'gho_actor',
+        'Alpha-Explora',
+        'orders-api',
+        'feature/cart',
+        'dev',
+      );
+      expect(recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'repository_branch_created',
+          metadata: { branchName: 'feature/cart', sourceBranch: 'dev' },
+        }),
+      );
+    });
+
+    it('refuses branch creation for QA', async () => {
+      const { service, github } = build({ appRole: 'qa' });
+      await expect(
+        service.createBranch('p1', 'u1', 'gho_actor', 'feature/x'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(github.createBranch).not.toHaveBeenCalled();
+    });
+
+    it('refuses duplicate branch names without creating a ref', async () => {
+      const { service, github } = build({
+        appRole: 'member',
+        github: {
+          listBranches: jest.fn(() =>
+            Promise.resolve([
+              { name: 'dev', protected: false, commitSha: 'a' },
+              { name: 'feature/cart', protected: false, commitSha: 'b' },
+            ]),
+          ),
+        } as unknown as Partial<GithubService>,
+      });
+      await expect(
+        service.createBranch('p1', 'u1', 'gho_actor', 'feature/cart'),
+      ).rejects.toThrow(ConflictException);
+      expect(github.createBranch).not.toHaveBeenCalled();
     });
 
     it('refuses when neither token is available', async () => {
