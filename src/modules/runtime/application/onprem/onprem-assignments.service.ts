@@ -73,7 +73,14 @@ export function defaultAssignmentConfig(
       containerPort: runtime(slot).containerPort,
     })),
     health: known.map((slot) => ({ slot, path: runtime(slot).healthPath })),
-    ingress: { mode: 'direct', publicUrl: null },
+    // A frontend is what people open, from QA Studio and their own browsers,
+    // so it gets the automatic HTTPS address. Direct access only answers on
+    // the machine's own network, which left every new environment with no
+    // address anyone else could reach. A backend alone stays direct: its
+    // frontend reaches it over the machine's private service link.
+    ingress: known.includes('frontend')
+      ? { mode: 'tunnel', publicUrl: null }
+      : { mode: 'direct', publicUrl: null },
   };
 }
 

@@ -59,7 +59,9 @@ jq '.assignment.machine.config as $c | (.assignment.link // null) as $l | {
 while IFS=$'\t' read -r slot host_port container_port; do
   if ss -H -ltn "sport = :$host_port" | grep -q .; then
     own=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter "label=com.docker.compose.service=$slot")
-    [ -n "$own" ] && docker inspect "$own" | jq -e --arg key "$container_port/tcp" --arg port "$host_port" '.[0].NetworkSettings.Ports[$key] | any(.HostPort==$port)' >/dev/null || blocked "Port $host_port is occupied outside this assignment; no stack changed."
+    # The current container of this environment owns the port whatever container port it maps to: a
+    # changed container port must not leave the old release blocking the new one.
+    [ -n "$own" ] && docker inspect "$own" | jq -e --arg port "$host_port" '[.[0].NetworkSettings.Ports // {} | to_entries[] | .value // [] | .[] | .HostPort] | index($port) != null' >/dev/null || blocked "Port $host_port is occupied outside this assignment; no stack changed."
   fi
 done < <(jq -r '.assignment.machine.config.ports[] | [.slot,.hostPort,.containerPort] | @tsv' "$INPUT")
 if [ -n "$NETWORK" ]; then

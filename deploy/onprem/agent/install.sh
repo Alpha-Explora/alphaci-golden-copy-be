@@ -8,6 +8,7 @@ if [ "${1:-}" = --enroll ]; then
   [ "$EUID" -eq 0 ] || { echo 'Run this installer with sudo.' >&2; exit 1; }
   . ./ubuntu-prerequisites.sh
   check_ubuntu_prerequisites
+  install_cloudflared
   # Set explicitly: a restrictive umask must not leave the tunnel user unable to traverse.
   install -d -m 0755 /opt/alphaci
   install -d -m 0755 /opt/alphaci/bin
