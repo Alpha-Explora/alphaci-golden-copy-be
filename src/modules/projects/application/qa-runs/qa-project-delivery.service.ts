@@ -141,18 +141,20 @@ export class QaProjectDeliveryService {
       this.requirements.listActiveByIteration(iteration.id),
       this.projectRuns.findLatestSignedOff(iteration.id),
     ]);
-    const [itemsNotPassed, requirementsChangedAfterSignoff] = latest
-      ? await Promise.all([
-          this.projectRuns.countIterationItemsNotPassed(
-            iteration.id,
-            latest.run.id,
-          ),
-          this.requirements.requirementsChangedSince(
-            iteration.id,
-            latest.signoff.signed_at,
-          ),
-        ])
-      : [0, false];
+    const [itemsNotPassed, requirementsChangedAfterSignoff, itemsNotAccepted] =
+      latest
+        ? await Promise.all([
+            this.projectRuns.countIterationItemsNotPassed(
+              iteration.id,
+              latest.run.id,
+            ),
+            this.requirements.requirementsChangedSince(
+              iteration.id,
+              latest.signoff.signed_at,
+            ),
+            this.projectRuns.countItemsNotAccepted(latest.run.id),
+          ])
+        : [0, false, 0];
 
     const gate = evaluateProjectPromotionGate({
       repositories: readings.map((reading) => ({
@@ -174,6 +176,7 @@ export class QaProjectDeliveryService {
         : null,
       itemsNotPassed,
       requirementsChangedAfterSignoff,
+      itemsNotAccepted,
     });
 
     return {

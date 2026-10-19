@@ -84,6 +84,17 @@ export const verificationForbidden = () =>
     ),
   );
 
+/** Test case results are the QA Team's (and admins'); a Product owner reads them (ADR-0014, amendment 12). */
+export const testCaseResultForbidden = () =>
+  new ForbiddenException(
+    body(
+      403,
+      'Forbidden',
+      'TEST_CASE_RESULT_FORBIDDEN',
+      'The QA Team records test case results; others read them.',
+    ),
+  );
+
 /** `index` (0-based) is set by the batch create: which entry collided. */
 export const requirementNameTaken = (name: string, index?: number) =>
   new ConflictException(

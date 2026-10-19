@@ -91,6 +91,11 @@ export interface QaRunItemRow {
   requirement_name: string | null;
   requirement_kind: 'functional' | 'system' | null;
   acceptance_criteria: string | null;
+  /** Product owner acceptance after QA sign-off (ADR-0014, amendment 12). A QA status write resets it. */
+  po_status: 'pending' | 'passed';
+  po_by: string | null;
+  po_by_login: string | null;
+  po_at: string | null;
 }
 
 export interface QaRunSignoffRow {
@@ -257,6 +262,14 @@ export class QaRunNotOpenError extends Error {
   constructor(runId: string) {
     super(`QA run ${runId} is not open`);
     this.name = 'QaRunNotOpenError';
+  }
+}
+
+/** A Product owner accepts items only on a signed-off run. */
+export class QaRunNotSignedOffError extends Error {
+  constructor(runId: string) {
+    super(`QA run ${runId} is not signed off`);
+    this.name = 'QaRunNotSignedOffError';
   }
 }
 
@@ -682,6 +695,11 @@ export class QaRunsRepository {
             fix_requested_by = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL ELSE fix_requested_by END,
             fix_requested_by_login = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL ELSE fix_requested_by_login END,
             fix_note = CASE WHEN $4::text IN ('failed', 'returned_to_dev') THEN NULL ELSE fix_note END,
+            -- A new QA result is not what the Product owner accepted.
+            po_status = CASE WHEN $4::text IS NULL THEN po_status ELSE 'pending' END,
+            po_by = CASE WHEN $4::text IS NULL THEN po_by ELSE NULL END,
+            po_by_login = CASE WHEN $4::text IS NULL THEN po_by_login ELSE NULL END,
+            po_at = CASE WHEN $4::text IS NULL THEN po_at ELSE NULL END,
             row_version = row_version + 1,
             updated_at = NOW()
           WHERE id = $1 AND run_id = $2 AND row_version = $3
@@ -978,6 +996,66 @@ export class QaRunsRepository {
    * Reopens a SIGNED_OFF run and supersedes its active signoff in the same
    * transaction. Returns null if the run was not signed off.
    */
+  /**
+   * A Product owner passes one item of a signed-off run. Locks the run so a
+   * concurrent reopen cannot slip in between; throws QaRunNotSignedOffError
+   * when the run is open. Returns null on a stale row version.
+   */
+  async acceptItem(
+    runId: string,
+    itemId: string,
+    expectedRowVersion: number,
+    actor: RunActor,
+  ): Promise<QaRunItemRow | null> {
+    return this.databaseService.withTransaction(async (client) => {
+      const runResult = await client.query<{ status: string }>(
+        `SELECT status FROM projects.qa_verification_runs WHERE id = $1 FOR SHARE;`,
+        [runId],
+      );
+      if (runResult.rows[0]?.status !== 'signed_off') {
+        throw new QaRunNotSignedOffError(runId);
+      }
+      const result = await client.query<QaRunItemRow>(
+        `
+          UPDATE projects.qa_run_items
+          SET
+            po_status = 'passed',
+            po_by = $4,
+            po_by_login = $5,
+            po_at = NOW(),
+            row_version = row_version + 1,
+            updated_at = NOW()
+          WHERE id = $1 AND run_id = $2 AND row_version = $3
+          RETURNING *;
+        `,
+        [itemId, runId, expectedRowVersion, actor.id, actor.login],
+      );
+      const updated = result.rows[0];
+      if (!updated) {
+        return null;
+      }
+      // The events table allows status_changed | fix_requested | edited: an
+      // acceptance is an edit of the item, named in its payload.
+      await client.query(
+        `
+          INSERT INTO projects.qa_run_item_events (
+            run_item_id, run_id, actor_user_id, actor_login, event_type,
+            from_status, to_status, payload
+          )
+          VALUES ($1, $2, $3, $4, 'edited', NULL, NULL, $5::jsonb);
+        `,
+        [
+          itemId,
+          runId,
+          actor.id,
+          actor.login,
+          JSON.stringify({ poStatus: 'passed' }),
+        ],
+      );
+      return updated;
+    });
+  }
+
   async reopenRun(runId: string, actor: RunActor): Promise<QaAnyRunRow | null> {
     return this.databaseService.withTransaction(async (client) => {
       const runResult = await client.query<QaAnyRunRow>(

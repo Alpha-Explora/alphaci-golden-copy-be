@@ -281,6 +281,21 @@ describe('evaluateProjectPromotionGate', () => {
     ]);
   });
 
+  it('waits for the Product owner to pass every item of an Approved run', () => {
+    const one = evaluateProjectPromotionGate(input({ itemsNotAccepted: 1 }));
+    expect(one.eligible).toBe(false);
+    expect(one.reasons).toEqual([
+      '1 item is waiting for the Product owner to pass it',
+    ]);
+    const two = evaluateProjectPromotionGate(input({ itemsNotAccepted: 2 }));
+    expect(two.reasons).toEqual([
+      '2 items are waiting for the Product owner to pass them',
+    ]);
+    expect(
+      evaluateProjectPromotionGate(input({ itemsNotAccepted: 0 })).eligible,
+    ).toBe(true);
+  });
+
   it('blocks when requirements changed after the sign-off', () => {
     const result = evaluateProjectPromotionGate(
       input({ requirementsChangedAfterSignoff: true }),

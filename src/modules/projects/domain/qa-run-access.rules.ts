@@ -21,7 +21,10 @@ export { canManageRequirements } from '#kernel/rules/persona-access.rules';
  *   request-retest (compatibility alias that sets Progress to done):
  *     member|lead|admin.
  *   Writing test cases (categories and cases under a User story): qa|admin.
- *     Recording a test case's result is Verification (qa|lead|admin).
+ *   Recording a test case's result: qa|admin. The Product owner reads test
+ *     cases and their results; it does not change them (amendment 12).
+ *   Accepting a signed-off run's items (pass, or fail back to Development):
+ *     lead|admin - the Product owner's check after QA (amendment 12).
  */
 
 /** Setting an item's Progress: the developer track. */
@@ -40,6 +43,16 @@ export function canSetVerification(role: PlatformAppRole): boolean {
  */
 export function canManageTestCases(role: PlatformAppRole): boolean {
   return role === 'qa' || role === 'admin';
+}
+
+/** Recording a test case's result: the QA Team (and admins), read-only for the Product owner. */
+export function canRecordTestCaseResults(role: PlatformAppRole): boolean {
+  return role === 'qa' || role === 'admin';
+}
+
+/** The Product owner's acceptance of a signed-off run's items: lead|admin. */
+export function canAcceptRunItems(role: PlatformAppRole): boolean {
+  return role === 'lead' || role === 'admin';
 }
 
 export function canCreateRun(role: PlatformAppRole): boolean {

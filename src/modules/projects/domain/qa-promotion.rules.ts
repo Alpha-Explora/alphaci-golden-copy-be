@@ -201,6 +201,12 @@ export interface QaProjectGateInput {
   latestSignedOffRun: QaProjectGateRun | null;
   /** Items of the Iteration's active requirements the signed-off run did not pass (0 without a run). */
   itemsNotPassed: number;
+  /**
+   * Items of the signed-off run the Product owner has not passed yet (0
+   * without a run, ADR-0014 amendment 12). Optional for callers that predate
+   * acceptance; absent counts as none.
+   */
+  itemsNotAccepted?: number;
   /** A requirement was created, edited, archived or had items changed after the sign-off. */
   requirementsChangedAfterSignoff: boolean;
 }
@@ -293,6 +299,14 @@ export function evaluateProjectPromotionGate(
     if (input.requirementsChangedAfterSignoff) {
       reasons.push(
         'Requirements changed after QA signed off: a Product owner reopens the run so QA verifies them',
+      );
+    }
+    const notAccepted = input.itemsNotAccepted ?? 0;
+    if (notAccepted > 0) {
+      reasons.push(
+        notAccepted === 1
+          ? '1 item is waiting for the Product owner to pass it'
+          : `${String(notAccepted)} items are waiting for the Product owner to pass them`,
       );
     }
   }

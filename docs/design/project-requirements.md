@@ -565,6 +565,7 @@ Migration `supabase/migrations/projects/20261020010000_qa_test_cases.sql` (addit
 - **Strict pass:** `passed` on a run item is refused while any of its test cases is `pending`, `failed` or `blocked` (`409 QA_TEST_CASES_OPEN` with `openTestCases`). `not_applicable` counts as resolved.
 - **Sign-off:** `APPROVED` is refused while any test case of the run is open (same code), since one can be added or re-marked after its story passed. The merge-to-main gate is unchanged.
 - **Pending, Passed, Failed only (amendment 11):** a test case result and a story's Verification are `pending`, `passed` or `failed`. A failed story goes back to the Developers exactly as `returned_to_dev` did (Progress `in_progress`, the "returned" bucket, re-queued to `pending` when a Developer marks it Done). `blocked`, `returned_to_dev` and `not_applicable` are no longer set; rows written before keep them.
+- **Product owner acceptance (amendment 12):** after QA's `APPROVED` or `CONDITIONAL` sign-off, a Product owner or admin passes or fails each run item (`qa_run_items.po_status`, `po_by`, `po_by_login`, `po_at`; migration `20261021010000_qa_po_acceptance.sql`). Failing needs notes, reopens the run and fails the item, which returns the story to the Developers; QA and the Developers are notified (`qa.item.po_rejected`). A QA status write resets the item's acceptance. Merge to main waits until every item of the latest signed-off run is accepted. Test case results are recorded by QA and admins only (`403 TEST_CASE_RESULT_FORBIDDEN`).
 
 ### 7.3 API
 

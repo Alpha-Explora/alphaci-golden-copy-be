@@ -337,6 +337,15 @@ export interface ProjectQaRunItem extends QaRunItem {
    * Absent on reports frozen before test cases existed.
    */
   testCategories?: ProjectQaRunTestCategory[];
+  /** The Product owner's acceptance after QA's sign-off. Absent on reports frozen before it existed. */
+  poAcceptance?: ProjectQaRunItemAcceptance;
+}
+
+/** The Product owner's acceptance of one item after QA signed the run off (ADR-0014, amendment 12). */
+export interface ProjectQaRunItemAcceptance {
+  status: 'pending' | 'passed';
+  acceptedBy: QaActor | null;
+  acceptedAt: string | null;
 }
 
 /** A test case's result in one run. 'not_applicable' counts as resolved, like 'passed'. */
@@ -462,6 +471,10 @@ export interface ProjectQaRunPermissions {
   canDispatch: boolean;
   /** The run is open and the caller is QA or an admin: may add, edit and delete test cases. */
   canManageTestCases: boolean;
+  /** The run is open and the caller is QA or an admin: may record test case results (read-only for a Product owner). */
+  canRecordTestCases: boolean;
+  /** The run is signed off (not Rejected) and the caller is a Product owner or admin: may pass or fail its items. */
+  canAccept: boolean;
 }
 
 export interface ProjectQaRunListItem {

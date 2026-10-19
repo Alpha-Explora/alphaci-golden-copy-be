@@ -20,9 +20,11 @@ import { isIterationWritable } from '../../domain/project-iteration.rules';
 import { bucketMyQaItem } from '../../domain/qa-my-items.rules';
 import {
   canCreateRun,
+  canAcceptRunItems,
   canAddEvidence,
   canDispatchAutomation,
   canManageTestCases,
+  canRecordTestCaseResults,
   canReopenRun,
   canSetVerification,
   canSignOff,
@@ -38,6 +40,7 @@ import {
   QaProgressNotDoneError,
   QaRunItemsChangedError,
   QaRunNotOpenError,
+  QaRunNotSignedOffError,
   QaRunsRepository,
   QaTestCasesOpenError,
   type QaProjectRunRow,
@@ -65,6 +68,7 @@ import {
   qaUatBranchMissing,
   qaUatHeadUnreadable,
   testCaseStale,
+  testCaseResultForbidden,
   verificationForbidden,
   verificationStatusInvalid,
 } from '../qa-checklists/qa-errors';
@@ -105,6 +109,7 @@ import {
   type QaUatHeadReading,
 } from './qa-uat-heads.service';
 import type { PatchQaRunItemDto } from './dto/patch-qa-run-item.dto';
+import type { AcceptQaRunItemDto } from './dto/accept-qa-run-item.dto';
 import type { PatchRunTestCaseDto } from './dto/patch-run-test-case.dto';
 import type { SignoffQaRunDto } from './dto/signoff-qa-run.dto';
 
@@ -116,6 +121,9 @@ const QA_RUN_EVENTS = {
   signedOff: 'qa.run.signed_off',
   reopened: 'qa.run.reopened',
   itemStatusChanged: 'qa.item.status_changed',
+  // The Product owner's check after QA's sign-off (ADR-0014, amendment 12).
+  poAccepted: 'qa.item.po_accepted',
+  poRejected: 'qa.item.po_rejected',
 } as const;
 
 const NOTIFICATION_BODY_TRUNCATE_LENGTH = 300;
@@ -139,6 +147,14 @@ const OPEN_DEFECT_STATUSES: ReadonlySet<QaRunItemRow['status']> = new Set([
 ]);
 /** A run view re-reads the repository heads on every item write; reuse a recent reading. */
 const DISPLAY_HEAD_MAX_AGE_MS = 15_000;
+
+/** `code` is the machine-readable signal the frontend keys its "Reload run" action on. */
+function itemStale(expectedRowVersion: number): ConflictException {
+  return new ConflictException({
+    code: 'QA_ITEM_STALE',
+    message: `This item has changed (expected row version ${expectedRowVersion}); reload and try again.`,
+  });
+}
 
 /**
  * Everything assembleRun needs about the run it is rendering. `readings` is
@@ -699,8 +715,9 @@ export class QaProjectRunsService {
     this.requireRunOpen(run);
 
     const role = await this.access.findAppRole(actor.userId);
-    if (!canSetVerification(role)) {
-      throw verificationForbidden();
+    // The QA Team records test case results; a Product owner reads them.
+    if (!canRecordTestCaseResults(role)) {
+      throw testCaseResultForbidden();
     }
 
     let updated: QaRunTestCaseRow | null;
@@ -891,6 +908,151 @@ export class QaProjectRunsService {
       actor.userId,
       run,
       {},
+    );
+
+    return this.reload(project, reopened as QaProjectRunRow, role, actor);
+  }
+
+  /**
+   * The Product owner's check of one item after QA signed the run off
+   * (ADR-0014, amendment 12). `passed` records the acceptance; Merge to main
+   * waits until every item has one. `failed` reopens the run and returns the
+   * story to the Developers as Failed, with the Product owner's notes, so QA
+   * re-checks it once a Developer marks it Done again. The QA Team and the
+   * Developers are told.
+   */
+  async acceptItem(
+    deliveryProjectId: string,
+    actor: QaRunActorContext,
+    runId: string,
+    itemId: string,
+    dto: AcceptQaRunItemDto,
+  ): Promise<ProjectQaRun> {
+    const project = await this.projectContext.requireProject(
+      deliveryProjectId,
+      actor.userId,
+    );
+    const run = await this.requireRun(deliveryProjectId, runId);
+    const item = await this.requireItem(run.id, itemId);
+    await this.iterations.assertRowWritable(run);
+
+    const role = await this.access.findAppRole(actor.userId);
+    if (!canAcceptRunItems(role)) {
+      throw new ForbiddenException(
+        'Only a Product owner or an admin may accept a signed-off run.',
+      );
+    }
+    if (run.status !== 'signed_off') {
+      throw new ConflictException(
+        'QA has not signed this run off yet: the Product owner checks it after QA.',
+      );
+    }
+    const signoff = await this.runs.findActiveSignoff(run.id);
+    if (!signoff || signoff.verdict === 'REJECTED') {
+      throw new ConflictException(
+        'QA signed this run off as Rejected: there is nothing to accept.',
+      );
+    }
+    if (item.row_version !== dto.expectedRowVersion) {
+      throw itemStale(dto.expectedRowVersion);
+    }
+    const runActor = { id: actor.userId, login: actor.userLogin };
+
+    if (dto.decision === 'passed') {
+      let accepted: QaRunItemRow | null;
+      try {
+        accepted = await this.runs.acceptItem(
+          run.id,
+          itemId,
+          dto.expectedRowVersion,
+          runActor,
+        );
+      } catch (error) {
+        if (error instanceof QaRunNotSignedOffError) {
+          throw new ConflictException(
+            'This run was reopened. Reload it and try again.',
+          );
+        }
+        throw error;
+      }
+      if (!accepted) {
+        throw itemStale(dto.expectedRowVersion);
+      }
+      await this.recordAudit(
+        QA_RUN_EVENTS.poAccepted,
+        project,
+        actor.userId,
+        run,
+        { itemId },
+      );
+      return this.reload(project, run, role, actor);
+    }
+
+    const notes = dto.notes?.trim();
+    if (!notes) {
+      throw new BadRequestException(
+        'Say what is wrong, so the Developers know what to fix.',
+      );
+    }
+    const reopened = await this.runs.reopenRun(run.id, runActor);
+    if (!reopened) {
+      throw new ConflictException(
+        'This run was reopened. Reload it and try again.',
+      );
+    }
+    let failed: QaRunItemRow | null;
+    try {
+      failed = await this.runs.updateItem(
+        run.id,
+        itemId,
+        dto.expectedRowVersion,
+        {
+          status: 'failed',
+          notes: `Product owner: ${notes}`,
+          defectSeverity: dto.defectSeverity ?? item.defect_severity ?? 'major',
+          reproductionSteps: undefined,
+        },
+        runActor,
+        item.status,
+        {
+          requireProgressDoneForPass: false,
+          resetProgressOnReturn: true,
+          requireTestCasesResolvedForPass: false,
+        },
+      );
+    } catch (error) {
+      if (error instanceof QaRunNotOpenError) {
+        throw new ConflictException(
+          'This run changed. Reload it and try again.',
+        );
+      }
+      throw error;
+    }
+    if (!failed) {
+      throw itemStale(dto.expectedRowVersion);
+    }
+    // As on Reopen: stories written since the run started join it as pending.
+    if (run.iteration_id) {
+      await this.projectRuns.appendMissingItemsToOpenRuns(run.iteration_id);
+    }
+    await this.recordAudit(QA_RUN_EVENTS.reopened, project, actor.userId, run, {
+      reason: 'po_rejected',
+      itemId,
+    });
+    await this.recordAudit(
+      QA_RUN_EVENTS.poRejected,
+      project,
+      actor.userId,
+      run,
+      { itemId, fromStatus: item.status, toStatus: failed.status },
+    );
+    await this.notifyPoRejection(
+      project,
+      run,
+      signoff,
+      failed,
+      notes,
+      actor.userId,
     );
 
     return this.reload(project, reopened as QaProjectRunRow, role, actor);
@@ -1187,6 +1349,13 @@ export class QaProjectRunsService {
       iterationRef === null || isIterationWritable(iterationRef.status);
     const open = run.status === 'open' && writable;
     const mayVerify = open && canSetVerification(role);
+    // After QA's sign-off (not a Rejected one) the Product owner checks each item.
+    const mayAccept =
+      run.status === 'signed_off' &&
+      writable &&
+      signoff !== null &&
+      signoff.verdict !== 'REJECTED' &&
+      canAcceptRunItems(role);
     const merged = this.mergeAutomation(automationByRepository);
 
     const runItems: ProjectQaRunItem[] = items.map((row) => {
@@ -1216,6 +1385,13 @@ export class QaProjectRunsService {
             ? (liveTestCategories.get(row.source_item_id) ?? [])
             : null,
         ),
+        poAcceptance: {
+          status: row.po_status ?? 'pending',
+          acceptedBy: row.po_by
+            ? { id: row.po_by, login: row.po_by_login ?? '' }
+            : null,
+          acceptedAt: row.po_at ?? null,
+        },
       };
     });
 
@@ -1231,6 +1407,8 @@ export class QaProjectRunsService {
         canReopen: run.status !== 'open' && writable && canReopenRun(role),
         canDispatch: open && canDispatchAutomation(role),
         canManageTestCases: open && canManageTestCases(role),
+        canRecordTestCases: open && canRecordTestCaseResults(role),
+        canAccept: mayAccept,
       },
       attachments: {
         enabled: this.attachments.isEnabled(),
@@ -1424,6 +1602,39 @@ export class QaProjectRunsService {
     );
   }
 
+  /**
+   * The Product owner failed an item after QA's sign-off: the QA Team (who
+   * re-checks it) and the Developers (who fix it) hear about it straight away,
+   * with the run's starter and its signer, the repository owner and the
+   * workspace leads - never the Product owner who failed it.
+   */
+  private async notifyPoRejection(
+    project: QaProjectContext,
+    run: QaProjectRunRow,
+    signoff: QaRunSignoffRow,
+    item: QaRunItemRow,
+    notes: string,
+    actorId: string,
+  ): Promise<void> {
+    const [anchor, qaIds, teamIds] = await Promise.all([
+      this.projectContext.anchorProjectId(project),
+      this.access.listWorkspaceQaIds(project.groupId),
+      this.access.listWorkspaceLeadAndDeveloperIds(project.groupId),
+    ]);
+    const ownerId = anchor
+      ? await this.access.findProjectOwnerId(anchor)
+      : null;
+    await this.notifyMany(
+      this.dedupeExcludingActor(
+        [run.created_by, signoff.signed_by, ownerId, ...qaIds, ...teamIds],
+        actorId,
+      ),
+      anchor,
+      QA_RUN_EVENTS.poRejected,
+      `Product owner rejected "${item.title}" in ${project.name}`,
+      this.truncate(notes, NOTIFICATION_BODY_TRUNCATE_LENGTH),
+    );
+  }
   private dedupeExcludingActor(
     ids: Array<string | null | undefined>,
     excludeUserId: string,
