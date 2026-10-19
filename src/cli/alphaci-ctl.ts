@@ -29,10 +29,7 @@ import { parseArgs, UsageError, USAGE, type CliCommand } from './args';
 import { runDoctor, formatResults, type DoctorProbes } from './doctor';
 import { releaseKeyId } from './release-key';
 import { InitError, runInit, SECRET_FILES } from './selfhost-init';
-import {
-  createHostEnrollment,
-  HostEnrollmentError,
-} from './host-enrollment';
+import { createHostEnrollment, HostEnrollmentError } from './host-enrollment';
 
 export interface CliIo {
   readonly out: (line: string) => void;
@@ -186,8 +183,9 @@ async function runHostEnrollment(
           text: string,
           values?: readonly unknown[],
         ) => ({
-          rows: (await client.query<Row>(text, values ? [...values] : undefined))
-            .rows,
+          rows: (
+            await client.query<Row>(text, values ? [...values] : undefined)
+          ).rows,
         }),
       },
       {

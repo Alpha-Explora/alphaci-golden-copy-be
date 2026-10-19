@@ -675,8 +675,11 @@ export class ReleaseRegistryService {
       const password = readFileSync(file, 'utf8').trim();
       if (!password) return null;
       return {
-        server: this.configService.get<string>('ONPREM_REGISTRY_SERVER') || 'ghcr.io',
-        username: this.configService.get<string>('ONPREM_REGISTRY_USERNAME') || 'alphaci',
+        server:
+          this.configService.get<string>('ONPREM_REGISTRY_SERVER') || 'ghcr.io',
+        username:
+          this.configService.get<string>('ONPREM_REGISTRY_USERNAME') ||
+          'alphaci',
         password,
       };
     } catch {
@@ -756,7 +759,9 @@ export class ReleaseRegistryService {
           // The images are private packages; a host has no registry login of
           // its own, so it is lent the install's read-only pull credential for
           // the pull, over this authenticated machine channel.
-          const registry = pending.length ? this.registryPullCredential() : null;
+          const registry = pending.length
+            ? this.registryPullCredential()
+            : null;
           return pending.map(({ bindingId, item }) => {
             const link = links.get(bindingId);
             return {

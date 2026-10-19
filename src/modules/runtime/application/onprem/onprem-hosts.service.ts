@@ -32,6 +32,7 @@ import type {
   MachineCheckIn,
   MachineHeartbeatInput,
 } from './onprem-host.contracts';
+import { ONPREM_AGENT_VERSION } from '../../domain/onprem-agent-version';
 import { parseTunnelReport } from '../../domain/onprem-tunnel';
 import { trustKeysWithSigner } from '../../domain/release-signature';
 import {
@@ -184,7 +185,8 @@ export class OnpremHostsService {
    */
   private async installerRelease(): Promise<InstallerRelease> {
     const version =
-      this.config.get<string>('ONPREM_INSTALLER_VERSION') || '0.2.0';
+      this.config.get<string>('ONPREM_INSTALLER_VERSION') ||
+      ONPREM_AGENT_VERSION;
     const url = this.config.get<string>('ONPREM_INSTALLER_URL') || '';
     const sha256 = this.config.get<string>('ONPREM_INSTALLER_SHA256') || '';
     const releaseRepo =

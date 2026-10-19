@@ -13,6 +13,7 @@ import type { OnpremMachinesRepository } from '../../infrastructure/repositories
 import { machineSummary } from '../../infrastructure/repositories/onprem-machines.repository';
 import type { OnpremInstallerReleasePort } from '../ports/onprem-installer-release.port';
 import { labSigningKeyId } from '#kernel/config/release-signing-key';
+import { ONPREM_AGENT_VERSION } from '../../domain/onprem-agent-version';
 import { createReleaseSigner } from '../../infrastructure/release-signing/release-signer';
 import { OnpremHostsService } from './onprem-hosts.service';
 
@@ -25,8 +26,8 @@ const explicitInstaller = {
 };
 const releaseRepo = { ONPREM_INSTALLER_RELEASE_REPO: 'Alpha-Explora/alphaci' };
 const resolvedInstaller = {
-  version: '0.2.0',
-  url: 'https://github.com/Alpha-Explora/alphaci/releases/download/onprem-agent-v0.2.0/alphaci-agent-0.2.0.tar.gz',
+  version: ONPREM_AGENT_VERSION,
+  url: `https://github.com/Alpha-Explora/alphaci/releases/download/onprem-agent-v${ONPREM_AGENT_VERSION}/alphaci-agent-${ONPREM_AGENT_VERSION}.tar.gz`,
   sha256: 'b'.repeat(64),
 };
 afterEach(() => jest.restoreAllMocks());
@@ -148,7 +149,7 @@ describe('installer release resolution', () => {
     );
     expect(installerReleases.resolve).not.toHaveBeenCalled();
     expect(receipt.installer).toEqual({
-      version: '0.2.0',
+      version: ONPREM_AGENT_VERSION,
       url: explicitInstaller.ONPREM_INSTALLER_URL,
       sha256: explicitInstaller.ONPREM_INSTALLER_SHA256,
     });
@@ -163,7 +164,7 @@ describe('installer release resolution', () => {
     );
     expect(installerReleases.resolve).toHaveBeenCalledWith({
       repo: 'Alpha-Explora/alphaci',
-      version: '0.2.0',
+      version: ONPREM_AGENT_VERSION,
     });
     expect(receipt.installer).toEqual(resolvedInstaller);
     expect(repository.createEnrollment).toHaveBeenCalledTimes(1);
@@ -194,14 +195,14 @@ describe('installer release resolution', () => {
       ONPREM_INSTALLER_RELEASE_TOKEN: 'release-token',
     });
     installerReleases.resolve.mockResolvedValue({
-      version: '0.2.0',
+      version: ONPREM_AGENT_VERSION,
       url: resolvedInstaller.url,
       sha256: 'c'.repeat(64),
     });
     await service.createEnrollment('workspace', 'user', enrollmentInput);
     expect(installerReleases.resolve).toHaveBeenCalledWith({
       repo: 'Alpha-Explora/alphaci',
-      version: '0.2.0',
+      version: ONPREM_AGENT_VERSION,
       pinnedSha256: 'c'.repeat(64),
       token: 'release-token',
     });
