@@ -96,6 +96,12 @@ function setup({
     listCoverageByRunIds: jest
       .fn()
       .mockResolvedValue(new Map([[RUN_ID, coverage]])),
+    // The web app runs on an on-prem host; the API has no host address.
+    environmentAddress: jest.fn((projectId: string) =>
+      Promise.resolve(
+        projectId === 'p-web' ? 'https://uat-web.apps.example.com' : null,
+      ),
+    ),
   } as unknown as jest.Mocked<QaProjectRunsRepository>;
   const github = {
     listBranches: jest
@@ -156,6 +162,18 @@ describe('QaAutomationDispatchService (Project runs)', () => {
       'acme/api',
       '30-alphaci-verify.yml',
       'uat',
+      undefined,
+    );
+    // An environment on a host is tested at its address, passed as inputs.
+    expect(github.dispatchWorkflow).toHaveBeenCalledWith(
+      'app-token',
+      'acme/web',
+      '30-alphaci-verify.yml',
+      'uat',
+      {
+        'ui-url': 'https://uat-web.apps.example.com',
+        'api-url': 'https://uat-web.apps.example.com',
+      },
     );
     expect(result.failed).toEqual([]);
     expect(result.dispatched.map((entry) => entry.repoFullName)).toEqual([
@@ -204,6 +222,7 @@ describe('QaAutomationDispatchService (Project runs)', () => {
       'acme/api',
       '30-alphaci-verify.yml',
       'uat',
+      undefined,
     );
     expect(audit.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({

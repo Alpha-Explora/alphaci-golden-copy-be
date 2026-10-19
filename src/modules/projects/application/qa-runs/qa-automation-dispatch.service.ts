@@ -7,7 +7,11 @@ import {
   Optional,
 } from '@nestjs/common';
 
-import { QA_BRANCH } from '#kernel/config/pipeline-branches';
+import {
+  QA_BRANCH,
+  VERIFY_API_URL_INPUT,
+  VERIFY_UI_URL_INPUT,
+} from '#kernel/config/pipeline-branches';
 import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
 import {
   GITHUB_PROJECT_PORT,
@@ -250,11 +254,20 @@ export class QaAutomationDispatchService {
       const head = branches.find((candidate) => candidate.name === ref);
       const headSha = head?.commitSha ?? target.head_sha;
 
+      // An environment pipeline's verify stage is told where to test: the
+      // address of this repository's environment on the QA branch.
+      const address = await this.projectRuns.environmentAddress(
+        target.project_id,
+        ref,
+      );
       const result = await this.githubService.dispatchWorkflow(
         credential.token,
         target.repo_full_name,
         workflowFile,
         ref,
+        address
+          ? { [VERIFY_UI_URL_INPUT]: address, [VERIFY_API_URL_INPUT]: address }
+          : undefined,
       );
       if (!result.dispatched) {
         if (result.reason === 'unauthorized') {

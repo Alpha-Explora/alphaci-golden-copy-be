@@ -17,14 +17,10 @@
  * what actually answers a mismatch, not this function.
  */
 
-const ACCESS_WORKFLOW_BASENAME_PATTERN =
-  /^00-alphaci-access(-[a-z0-9]+)?\.ya?ml$/i;
+import { verifyWorkflowFileFor } from '#kernel/config/pipeline-branches';
 
 export function resolveVerifyWorkflowFile(
   workflowPath: string | null | undefined,
 ): string {
-  const basename = workflowPath?.split('/').pop() ?? '';
-  const match = ACCESS_WORKFLOW_BASENAME_PATTERN.exec(basename);
-  const suffix = match?.[1] ?? '';
-  return `30-alphaci-verify${suffix}.yml`;
+  return verifyWorkflowFileFor(workflowPath);
 }

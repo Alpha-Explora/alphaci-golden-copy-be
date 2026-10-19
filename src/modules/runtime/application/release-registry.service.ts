@@ -8,6 +8,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
   ServiceUnavailableException,
@@ -30,7 +31,12 @@ import {
 } from '#kernel/ports/app-role.port';
 import { canManageHosting } from '#kernel/rules/persona-access.rules';
 import { canPromoteRelease } from '../domain/release-access.rules';
-import { ENVIRONMENT_PROMOTE_WORKFLOW_FILE } from '#kernel/config/pipeline-branches';
+import {
+  ENVIRONMENT_PROMOTE_WORKFLOW_FILE,
+  VERIFY_API_URL_INPUT,
+  VERIFY_UI_URL_INPUT,
+  verifyWorkflowFileFor,
+} from '#kernel/config/pipeline-branches';
 import {
   DEPLOYMENT_PROJECT_REFERENCE_LOOKUP,
   ENVIRONMENT_DEPLOYMENT_TARGET_RESOLVER,
@@ -135,6 +141,8 @@ const sha256 = (value: string) =>
  */
 @Injectable()
 export class ReleaseRegistryService {
+  private readonly logger = new Logger(ReleaseRegistryService.name);
+
   constructor(
     private readonly releases: ReleaseRegistryRepository,
     private readonly deploymentTargets: DeploymentTargetsRepository,
@@ -797,6 +805,67 @@ export class ReleaseRegistryService {
   }
 
   async reportHostStatus(
+    token: string,
+    deploymentId: string,
+    status: DeploymentStatus,
+    detail: string | null,
+  ): Promise<EnvironmentDeploymentRecord> {
+    const before = await this.releases.findDeployment(deploymentId);
+    const reported = await this.applyHostStatus(
+      token,
+      deploymentId,
+      status,
+      detail,
+    );
+    if (reported.status === 'healthy' && before?.status !== 'healthy') {
+      await this.startVerify(reported);
+    }
+    return reported;
+  }
+
+  /**
+   * Runs the verify stage (Playwright, API tests) against an environment a
+   * promotion just made healthy. A host deploys outside the pipeline, so
+   * nothing in the pipeline knows when the service is up; this is that
+   * moment. Best effort: the deployment stands whether or not it starts, and
+   * a repository generated before its pipeline had the stage has none.
+   */
+  private async startVerify(
+    deployment: EnvironmentDeploymentRecord,
+  ): Promise<void> {
+    if (deployment.trigger !== 'promotion' || !this.githubActions) return;
+    try {
+      const target = await this.releases.verifyTarget(deployment.id);
+      if (!target?.requestedBy || !target.address) return;
+      const [project, environment] = await Promise.all([
+        this.projects.findProjectReference(
+          deployment.projectId,
+          target.requestedBy,
+        ),
+        this.projects.findProjectEnvironment(
+          deployment.projectId,
+          deployment.environmentId,
+        ),
+      ]);
+      if (!project || !environment) return;
+      await this.githubActions.dispatchWorkflow({
+        userId: target.requestedBy,
+        repoFullName: project.repoFullName,
+        workflowFile: verifyWorkflowFileFor(project.workflowPath),
+        ref: environment.sourceBranch,
+        inputs: {
+          [VERIFY_UI_URL_INPUT]: target.address,
+          [VERIFY_API_URL_INPUT]: target.address,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Verify stage not started for deployment ${deployment.id}: ${String(error)}`,
+      );
+    }
+  }
+
+  private async applyHostStatus(
     token: string,
     deploymentId: string,
     status: DeploymentStatus,
