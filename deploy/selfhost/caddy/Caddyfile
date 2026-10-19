@@ -48,3 +48,6 @@
 	}
 }
 
+# Apps deployed on this server, one site per environment address under
+# ONPREM_APPS_DOMAIN. Written by alphaci-app-routes; empty without the setting.
+import /etc/caddy/apps/*.caddy

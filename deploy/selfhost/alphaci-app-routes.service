@@ -1,0 +1,7 @@
+[Unit]
+Description=AlphaCI routes for apps deployed on this server
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/alphaci/bin/alphaci-app-routes
