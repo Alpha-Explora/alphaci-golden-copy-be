@@ -143,8 +143,13 @@ services:
     ports:
       - '${ALPHACI_HTTP_PORT:-80}:80'
       - '${ALPHACI_HTTPS_PORT:-443}:443'
+    # Apps deployed on this same server publish their ports on the host; the
+    # generated routes (alphaci-app-routes) reach them through the host gateway.
+    extra_hosts:
+      - host.docker.internal:host-gateway
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/apps:/etc/caddy/apps:ro
       # Customer certificate, used when ALPHACI_TLS_DIRECTIVE names the files.
       - ./certs:/certs:ro
       - caddy_data:/data

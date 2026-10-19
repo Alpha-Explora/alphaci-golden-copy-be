@@ -84,6 +84,48 @@ export function defaultAssignmentConfig(
   };
 }
 
+/**
+ * `https://<environment>-<repository>.<apps domain>`: one DNS label, so a single
+ * wildcard record (`*.<apps domain>`) and certificate per name cover them all.
+ */
+export function appsDomainAddress(
+  domain: string,
+  environmentSlug: string,
+  repoFullName: string,
+): string {
+  const repo = repoFullName.split('/').at(-1) ?? repoFullName;
+  const label = `${environmentSlug}-${repo}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+/, '')
+    .slice(0, 63)
+    .replace(/-+$/, '');
+  return `https://${label}.${domain}`;
+}
+
+/**
+ * "The automatic HTTPS address", made concrete for this server. With
+ * ONPREM_APPS_DOMAIN set (AlphaCI and its deployments on the customer's own
+ * server, `*.<domain>` pointing at it) it is a permanent address under that
+ * domain, which the server's proxy routes to the environment; without it, the
+ * machine's Cloudflare quick tunnel, whose address changes when it restarts.
+ */
+export function withAppsDomain(
+  config: AssignmentRequestConfig,
+  domain: string | undefined,
+  environmentSlug: string,
+  repoFullName: string,
+): AssignmentRequestConfig {
+  if (!domain || config.ingress?.mode !== 'tunnel') return config;
+  return {
+    ...config,
+    ingress: {
+      mode: 'configured',
+      publicUrl: appsDomainAddress(domain, environmentSlug, repoFullName),
+    },
+  };
+}
+
 /** Host ports are not part of a request: the server allocates them. */
 export function validateAssignmentConfig(
   config: AssignmentRequestConfig,
@@ -246,11 +288,21 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
       config: AssignmentRequestConfig;
     },
   ) {
-    const { environment } = await this.visible(
+    const { environment, project } = await this.visible(
       projectId,
       environmentId,
       userId,
     );
+    input = {
+      ...input,
+      config: withAppsDomain(
+        input.config,
+        this.config.get<string>('ONPREM_APPS_DOMAIN')?.trim().toLowerCase() ||
+          undefined,
+        environment.slug,
+        project.repoFullName,
+      ),
+    };
     const membership = await this.manager(projectId, userId);
     const machineId = input.machineId ?? null;
     if (
