@@ -2,6 +2,7 @@
 
 ## 2026-10-19
 
+- **Update**: Generated pipelines name images after the repository, and every lockfile-less install the generator emits resolves as of one day ago (`--before`). The React Dockerfile installs without a lockfile. See CHANGELOG.
 - **Update**: Recorded ADR-0014 amendment 11: Verification and test case results are Pending, Passed or Failed, and Failed returns the story to development. Updated the persona matrix and section 7.2 of `docs/design/project-requirements.md`.
 
 - **Update**: Two-repository (`multi-repo`) projects accept an `environments` list at creation. Each repository gets the environment pipeline of a single-repository project for its own slot, and host assignment runs for both rows with each row's part of the config. A project with both services in one repository still rejects the list. Recorded in `docs/architecture/project-environments.md`.

@@ -1,4 +1,5 @@
 import { resolveCentralWorkflowBase } from '#kernel/config/central-workflow';
+import { NPM_INSTALL_COOLDOWN } from '../../../domain/npm-install-cooldown.rule';
 import type {
   ToolchainFragment,
   ToolchainUiVerification,
@@ -129,7 +130,7 @@ function typecheckJob(context: ToolchainFragmentContext) {
       },
       {
         name: 'Install dependencies',
-        run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
+        run: `if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts ${NPM_INSTALL_COOLDOWN}; fi`,
       },
       {
         name: 'Run TypeScript type check',
@@ -182,7 +183,7 @@ function packageBuildJob(context: ToolchainFragmentContext) {
         name: 'Install dependencies',
         // Fresh ALPHACI scaffolds have no package-lock.json yet (the customer
         // generates it on first `npm install`), so npm ci would hard-fail.
-        run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
+        run: `if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts ${NPM_INSTALL_COOLDOWN}; fi`,
       },
       { run: 'npm run build' },
     ],

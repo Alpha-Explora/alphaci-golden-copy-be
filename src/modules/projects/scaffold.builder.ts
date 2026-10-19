@@ -12,6 +12,7 @@ import { browserTestDevDependencies } from './application/workflows/browser-test
 import { buildBrowserTestStarterFiles } from './scaffolds/browser-test-starter';
 import { buildDotnetStandaloneScaffold } from './scaffolds/dotnet-scaffold';
 import type { ScaffoldFile } from './scaffolds/scaffold-file';
+import { NPM_INSTALL_COOLDOWN } from './domain/npm-install-cooldown.rule';
 
 export type { ScaffoldFile } from './scaffolds/scaffold-file';
 
@@ -674,7 +675,7 @@ function buildDockerfile(nodeVersion: string, stack: string): string {
     `FROM node:${nodeVersion}-alpine AS deps`,
     'WORKDIR /app',
     'COPY package*.json ./',
-    'RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
+    `RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts ${NPM_INSTALL_COOLDOWN}; fi`,
     '',
     `FROM node:${nodeVersion}-alpine AS builder`,
     'WORKDIR /app',
@@ -691,7 +692,7 @@ function buildDockerfile(nodeVersion: string, stack: string): string {
     'RUN apk upgrade --no-cache',
     'RUN addgroup -S nodejs && adduser -S flowci -G nodejs',
     'COPY --from=builder /app/package*.json ./',
-    'RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi',
+    `RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts ${NPM_INSTALL_COOLDOWN}; fi`,
     // The app runs on node alone. The npm and yarn bundled in the base image
     // carry HIGH findings of their own that fail the release scan, so drop them
     // once the production install is done.
@@ -710,7 +711,7 @@ function buildNextDockerfile(nodeVersion: string): string {
     `FROM node:${nodeVersion}-alpine AS deps`,
     'WORKDIR /app',
     'COPY package*.json ./',
-    'RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
+    `RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts ${NPM_INSTALL_COOLDOWN}; fi`,
     '',
     `FROM node:${nodeVersion}-alpine AS builder`,
     'WORKDIR /app',
@@ -730,7 +731,7 @@ function buildNextDockerfile(nodeVersion: string): string {
     'RUN apk upgrade --no-cache',
     'RUN addgroup -S nodejs && adduser -S flowci -G nodejs',
     'COPY --from=builder /app/package*.json ./',
-    'RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi',
+    `RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts ${NPM_INSTALL_COOLDOWN}; fi`,
     // The app runs on node alone. The npm and yarn bundled in the base image
     // carry HIGH findings of their own that fail the release scan, so drop them
     // once the production install is done.
@@ -768,8 +769,9 @@ function buildReactDockerfile(): string {
   return [
     'FROM node:22.22.2-alpine3.23 AS builder',
     'WORKDIR /app',
-    'COPY package.json package-lock.json ./',
-    'RUN npm ci',
+    // No lockfile ships with the scaffold: install from one once committed.
+    'COPY package*.json ./',
+    `RUN if [ -f package-lock.json ]; then npm ci; else npm install ${NPM_INSTALL_COOLDOWN}; fi`,
     'COPY . .',
     'RUN npm run build',
     '',

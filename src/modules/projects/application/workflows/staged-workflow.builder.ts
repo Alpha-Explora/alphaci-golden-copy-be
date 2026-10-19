@@ -1538,7 +1538,11 @@ function buildEnvironmentPackageWorkflowFile(
         uses: `${CENTRAL_WORKFLOW_BASE}/docker-build.yml@${ctx.centralWorkflowRef}`,
         with: {
           'working-directory': ctx.servicePath,
-          'image-name': ctx.serviceName + '-' + slot,
+          // Named after the repository, which is unique in its owner, not the
+          // service name, which is free text: a GHCR package belongs to the
+          // repository that first pushed it, so two projects sharing a service
+          // name collided and the second one's push was refused with 403.
+          'image-name': '${{ github.event.repository.name }}-' + slot,
           'push-image': true,
           'checkout-ref': HEAD_SHA_EXPR,
           'pipeline-branch': first.sourceBranch,
