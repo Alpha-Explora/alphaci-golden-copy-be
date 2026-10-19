@@ -99,6 +99,19 @@ export function mapVercelDeployHistory(
     .filter((event): event is ProviderDeployEvent => event !== null);
 }
 
+/** Two deploy lists as one: each deployment once, newest first. */
+export function mergeNewestFirst(
+  ...lists: ReadonlyArray<ProviderDeployEvent[]>
+): ProviderDeployEvent[] {
+  const byId = new Map<string, ProviderDeployEvent>();
+  for (const event of lists.flat()) {
+    if (!byId.has(event.id)) byId.set(event.id, event);
+  }
+  return [...byId.values()].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
+}
+
 export interface VercelRuntimeLogEntry {
   timestamp?: number;
   text?: string;

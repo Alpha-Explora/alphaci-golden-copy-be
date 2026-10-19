@@ -1,11 +1,11 @@
 {
-  "routeCount": 258,
+  "routeCount": 260,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "27a958d46fa55be942b9bc3ff8b4d3de8a2b96c6811f2256b58936fce58083fb",
+  "referenceSha256": "3f1853fd5bb450b67faa09b1597dfa155bc6c93e9f6f50c4911c0dd2adfb381b",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "27a958d46fa55be942b9bc3ff8b4d3de8a2b96c6811f2256b58936fce58083fb",
+  "baselineSha256": "3f1853fd5bb450b67faa09b1597dfa155bc6c93e9f6f50c4911c0dd2adfb381b",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -274,6 +274,13 @@
       "reason": "Self-hosted storage (WP-A): screenshot bytes for STORAGE_DRIVER=postgres are served at a short-lived HMAC-signed link. No session guard, because the signed link is the authorization and <img> loads cannot send the session cookie cross-site.",
       "routes": [
         "GET /api/v1/qa-attachments/content"
+      ]
+    },
+    {
+      "reason": "Roll back a deployment from inside ALPHACI: put an earlier Render deploy or Vercel production deployment back live (Developers and admins, reason required, recorded in the Audit trail), and resume a Vercel rollback that holds new deploys.",
+      "routes": [
+        "POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/rollback",
+        "POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/rollback/resume"
       ]
     }
   ]

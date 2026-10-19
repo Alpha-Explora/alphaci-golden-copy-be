@@ -87,6 +87,19 @@ export interface ProviderTargetStatusInput {
   vercelTeamSlug?: string;
 }
 
+export interface ProviderRollbackInput extends ProviderTargetStatusInput {
+  /** The provider's own id for the earlier deploy to put back live. */
+  deployId: string;
+}
+
+export interface ProviderRollbackResult {
+  /** The deploy now serving: Render's new rollback deploy, or Vercel's chosen deployment. */
+  deployId: string;
+  status: string;
+  /** True when the provider stops moving new deploys onto the domain until resumed (Vercel). */
+  holdsNewDeploys: boolean;
+}
+
 export interface ProviderTargetStatus {
   exists: boolean;
   state?: string;
@@ -242,6 +255,17 @@ export interface RuntimeEnvProviderClient {
   getDeployHistory?(
     input: ProviderTargetStatusInput,
   ): Promise<ProviderDeployEvent[]>;
+  // Optional: put an earlier deploy back live without building anything.
+  // Callers must check for its presence before calling.
+  rollbackDeploy?(
+    input: ProviderRollbackInput,
+  ): Promise<ProviderRollbackResult>;
+  // Optional: end a rollback that holds new deploys (Vercel), putting the
+  // newest production deploy back live. Returns that deploy's id, or null
+  // when there is none. Callers must check for its presence before calling.
+  resumeDeploys?(
+    input: ProviderTargetStatusInput,
+  ): Promise<{ deployId: string | null }>;
   // Optional: not every client can fetch runtime logs. Callers must check
   // for its presence before calling. Kept as a thin compatibility wrapper
   // around queryLogs on providers that implement both.

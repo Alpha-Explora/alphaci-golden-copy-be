@@ -10,6 +10,8 @@ import type {
   DeleteProviderTargetResult,
   ProviderAccountSummary,
   ProviderDeployEvent,
+  ProviderRollbackInput,
+  ProviderRollbackResult,
   ProviderDeploymentTarget,
   ProviderLogEntry,
   ProviderLogPage,
@@ -332,6 +334,36 @@ export class RenderEnvClient implements DeploymentProvider {
         commitRef: null,
         inspectorUrl: null,
       }));
+  }
+
+  /**
+   * Puts an earlier deploy back live: Render redeploys that deploy's build or
+   * image as a new "rollback" deploy, without building anything. Render's
+   * auto-deploy is left as it is, so the next pipeline deploy replaces it.
+   */
+  async rollbackDeploy(
+    input: ProviderRollbackInput,
+  ): Promise<ProviderRollbackResult> {
+    const response = await fetch(
+      `${RENDER_API_URL}/services/${encodeURIComponent(input.targetId)}/rollback`,
+      {
+        method: 'POST',
+        headers: this.headers(input.token),
+        body: JSON.stringify({ deployId: input.deployId }),
+      },
+    );
+    await this.assertOk(response, 'Render could not roll back to that deploy');
+    const payload = (await response.json()) as {
+      id?: string;
+      status?: string;
+      deploy?: { id?: string; status?: string };
+    };
+    const deploy = payload.deploy ?? payload;
+    return {
+      deployId: deploy.id ?? input.deployId,
+      status: deploy.status ?? 'created',
+      holdsNewDeploys: false,
+    };
   }
 
   async queryLogs(input: ProviderLogQuery): Promise<ProviderLogPage> {

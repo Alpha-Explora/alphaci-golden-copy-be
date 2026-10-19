@@ -37,6 +37,13 @@ import {
   DeploymentPolicyViolation,
 } from '../domain/deployment-target.policy';
 import { DeploymentStrategyResolver } from '../domain/deployment-strategy.resolver';
+import {
+  DEPLOY_ROLLBACK_METADATA_KEY,
+  readRollbackState,
+  rollbackCandidate,
+  rollbackReasonProblem,
+  type DeployRollbackState,
+} from '../domain/deploy-rollback.policy';
 import type { CreateDeploymentTargetDto } from '../api/dto/create-deployment-target.dto';
 import type { DetachDeploymentTargetDto } from '../api/dto/detach-deployment-target.dto';
 import {
@@ -1026,6 +1033,7 @@ export class DeploymentTargetsService
           enabled: true,
         },
         reinstallDeploymentSecrets: this.reinstallSecretsDescriptor(target),
+        rollback: this.rollbackDescriptor(target),
         openProviderDashboard: {
           enabled: this.providerDashboardUrl(target) !== null,
           url: this.providerDashboardUrl(target),
@@ -1174,6 +1182,243 @@ export class DeploymentTargetsService
         ? { githubVariables: result.githubVariables }
         : {}),
     };
+  }
+
+  /**
+   * Puts an earlier deploy of this service back live, from inside ALPHACI, so
+   * nobody needs the provider's dashboard. Developers and admins only, the
+   * same bar as every other hosting action (canManageHosting). Only a deploy
+   * that went live and is not live now can be chosen, and a reason is
+   * required: it goes into the Audit trail with who did it.
+   *
+   * Render redeploys the old build as a new "rollback" deploy and keeps
+   * deploying as usual, so the next pipeline deploy replaces it. Vercel's
+   * Instant Rollback holds new production deploys off the domains until
+   * resumeDeploymentTarget, so the hold is kept on the target for the UI.
+   */
+  async rollbackDeploymentTarget(
+    projectId: string,
+    targetId: string,
+    userId: string,
+    body: { deployId?: unknown; reason?: unknown } | null | undefined,
+  ): Promise<{
+    rolledBack: true;
+    targetId: string;
+    deployId: string;
+    status: string;
+    rollback: DeployRollbackState | null;
+  }> {
+    const { target, client } = await this.rollbackContext(
+      projectId,
+      targetId,
+      userId,
+    );
+    if (!client.rollbackDeploy || !client.getDeployHistory) {
+      throw new BadRequestException(
+        `${target.provider} deploys cannot be rolled back from ALPHACI.`,
+      );
+    }
+    const deployId =
+      typeof body?.deployId === 'string' ? body.deployId.trim() : '';
+    if (!deployId)
+      throw new BadRequestException('Choose the deploy to put back.');
+    const reasonProblem = rollbackReasonProblem(body?.reason);
+    if (reasonProblem) throw new BadRequestException(reasonProblem);
+    const reason = String(body?.reason).trim();
+
+    const input = await this.providerInputFor(target, userId);
+    const held = readRollbackState(target.providerMetadata);
+    const candidate = rollbackCandidate({
+      provider: target.provider,
+      deployId,
+      events: await client.getDeployHistory(input),
+      rollback: held,
+    });
+    if (!candidate.ok) throw new ConflictException(candidate.reason);
+
+    const result = await client.rollbackDeploy({ ...input, deployId });
+    const rollback: DeployRollbackState | null = result.holdsNewDeploys
+      ? {
+          deployId,
+          commitSha: candidate.event.commitSha,
+          commitMessage: candidate.event.commitMessage,
+          reason,
+          rolledBackBy: userId,
+          rolledBackAt: new Date().toISOString(),
+          holdsNewDeploys: true,
+        }
+      : null;
+    await this.storeRollbackState(target, rollback);
+
+    const shortSha = candidate.event.commitSha?.slice(0, 7) ?? deployId;
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_rolled_back',
+      title: `${target.providerProjectName} rolled back to ${shortSha}`,
+      body: `${target.providerProjectName} is back on ${shortSha}: ${reason}`,
+      metadata: {
+        targetId: target.id,
+        provider: target.provider,
+        deployId,
+        commitSha: candidate.event.commitSha,
+        reason,
+        holdsNewDeploys: result.holdsNewDeploys,
+      },
+    });
+
+    return {
+      rolledBack: true,
+      targetId: target.id,
+      deployId: result.deployId,
+      status: result.status,
+      rollback,
+    };
+  }
+
+  /**
+   * Ends a Vercel rollback: the newest production deploy goes back live and
+   * new production deploys reach the domains again.
+   */
+  async resumeDeploymentTargetDeploys(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<{ resumed: true; targetId: string; deployId: string | null }> {
+    const { target, client } = await this.rollbackContext(
+      projectId,
+      targetId,
+      userId,
+    );
+    const held = readRollbackState(target.providerMetadata);
+    if (!held)
+      throw new ConflictException('This service is not held on a rollback.');
+    if (!client.resumeDeploys) {
+      throw new BadRequestException(
+        `${target.provider} has no rollback to resume.`,
+      );
+    }
+
+    const { deployId } = await client.resumeDeploys(
+      await this.providerInputFor(target, userId),
+    );
+    await this.storeRollbackState(target, null);
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_rollback_resumed',
+      title: `${target.providerProjectName} deploys resumed`,
+      body: `${target.providerProjectName} is no longer held on ${held.commitSha?.slice(0, 7) ?? held.deployId}; new deploys go live again.`,
+      metadata: {
+        targetId: target.id,
+        provider: target.provider,
+        deployId,
+        rolledBackTo: held.deployId,
+      },
+    });
+
+    return { resumed: true, targetId: target.id, deployId };
+  }
+
+  /** The owned target and its client, once the caller may act on its hosting at all. */
+  private async rollbackContext(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ) {
+    if (!this.projectTargetManagementEnabled()) {
+      throw new BadRequestException('Project target management is disabled');
+    }
+    if (!this.liveProvidersEnabled()) {
+      throw new BadRequestException(
+        'Live provider calls are off in this deployment.',
+      );
+    }
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+    const role = await this.appRoleLookup?.findAppRole(userId);
+    if (!canManageHosting(role)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'PROJECT_ROLE_FORBIDDEN',
+        message: 'Only Developers and admins can roll back a deployment.',
+      });
+    }
+    if (!target.providerProjectId?.trim()) {
+      throw new BadRequestException(
+        'This service is not linked to a provider yet. Run Sync first.',
+      );
+    }
+    return { target, client: this.clientRegistry.getClient(target.provider) };
+  }
+
+  /** Token, provider id and team scope for one call on this target's provider. */
+  private async providerInputFor(
+    target: DeploymentTargetSummary,
+    userId: string,
+  ) {
+    const { token } = await this.resolveProviderToken(
+      target.provider,
+      userId,
+      this.tokenResolutionInputFor(target),
+    );
+    return {
+      token,
+      targetId: target.providerProjectId,
+      ...this.providerOperationInput(target),
+    };
+  }
+
+  private async storeRollbackState(
+    target: DeploymentTargetSummary,
+    rollback: DeployRollbackState | null,
+  ): Promise<void> {
+    const metadata: Record<string, unknown> = {
+      ...(target.providerMetadata ?? {}),
+    };
+    if (rollback) metadata[DEPLOY_ROLLBACK_METADATA_KEY] = rollback;
+    else if (!(DEPLOY_ROLLBACK_METADATA_KEY in metadata)) return;
+    else delete metadata[DEPLOY_ROLLBACK_METADATA_KEY];
+    await this.deploymentTargetsRepository.updateProviderMetadata(
+      target.id,
+      metadata,
+    );
+  }
+
+  /** Whether Roll back is offered for this target, and whether a hold can be resumed. */
+  private rollbackDescriptor(target: DeploymentTargetSummary): {
+    enabled: boolean;
+    resumable: boolean;
+    reason?: string;
+  } {
+    let client: ReturnType<ProviderClientRegistryPort['getClient']> | null =
+      null;
+    try {
+      client = this.clientRegistry.getClient(target.provider);
+    } catch {
+      client = null;
+    }
+    // Presence checks only (`in`), so no method is pulled off its client.
+    const supported =
+      client !== null &&
+      'rollbackDeploy' in client &&
+      'getDeployHistory' in client;
+    const resumable =
+      client !== null &&
+      'resumeDeploys' in client &&
+      readRollbackState(target.providerMetadata) !== null;
+    if (!supported) {
+      return {
+        enabled: false,
+        resumable,
+        reason: `${target.provider} deploys cannot be rolled back from ALPHACI.`,
+      };
+    }
+    return { enabled: true, resumable };
   }
 
   private async getProjectOrThrow(
