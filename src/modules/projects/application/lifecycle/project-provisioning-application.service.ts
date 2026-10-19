@@ -64,8 +64,15 @@ import { ProjectsRepository } from '../../infrastructure/projects.repository';
 import { WorkflowFragmentRegistry } from '#kernel/ports/workflow-fragment.port';
 import { validateProjectEnvironmentDefinitions } from '../../domain/project-environment.policy';
 import { environmentTargetsProblem } from '../../domain/environment-deployment-targets.policy';
+import { assignmentConfigForSlot } from '../../domain/host-assignment-slots.policy';
 
 export type * from './projects.service.types';
+
+/** A created repository row whose environments get hosts; `slot` only for a pair. */
+interface HostAssignmentRow {
+  projectId: string;
+  slot?: 'backend' | 'frontend';
+}
 
 /**
  * Dispatches project provisioning requests to focused use-case services.
@@ -165,11 +172,21 @@ export class ProjectProvisioningApplicationService {
         );
       }
       const shape = normalizeRepoShape(dto.repoShape);
-      if (shape === 'microservices' || shape === 'multi-repo') {
+      // One repository holding two services is a separate track; a pair of
+      // repositories gets one environment pipeline per repository.
+      if (shape === 'microservices') {
         throw new BadRequestException(
-          'Custom project environments are supported for single-repository projects. Create a ' +
-            shape +
-            ' project without an environments list for now.',
+          'Custom project environments are supported for single-repository projects and two-repository (multi-repo) projects. Create a microservices project without an environments list for now.',
+        );
+      }
+      if (
+        shape === 'multi-repo' &&
+        dto.deploymentProvisioning?.targets?.some(
+          (target) => target.slot === 'standalone',
+        )
+      ) {
+        throw new BadRequestException(
+          'A two-repository project deploys a backend and a frontend; give each target the backend or frontend slot.',
         );
       }
     }
@@ -238,7 +255,7 @@ export class ProjectProvisioningApplicationService {
     }
 
     if (repoShape === 'multi-repo') {
-      return this.multiRepository.createMultiRepoProject(
+      const created = await this.multiRepository.createMultiRepoProject(
         userId,
         userLogin,
         repositoryCreationToken,
@@ -246,6 +263,19 @@ export class ProjectProvisioningApplicationService {
         provisioningOwnerLogin,
         dto,
       );
+      // Hosted pairs have no environments of their own: unchanged.
+      if (!dto.environments) return created;
+      return this.assignCreatedEnvironments(created, userId, dto.environments, [
+        { projectId: created.id, slot: 'backend' },
+        ...(created.secondaryProjectId
+          ? [
+              {
+                projectId: created.secondaryProjectId,
+                slot: 'frontend' as const,
+              },
+            ]
+          : []),
+      ]);
     }
 
     const created = await this.singleRepository.createStandaloneProject(
@@ -256,18 +286,69 @@ export class ProjectProvisioningApplicationService {
       provisioningOwnerLogin,
       dto,
     );
-    const selected = dto.environments?.filter(
+    return this.assignCreatedEnvironments(created, userId, dto.environments, [
+      { projectId: created.id },
+    ]);
+  }
+
+  /**
+   * Put the new project's environments on hosts: each explicit
+   * `hostAssignment`, and every other environment on the workspace's only
+   * healthy machine when there is exactly one. Runs once per repository row;
+   * a two-repository project has two, each assigned with its own slot's part
+   * of an explicit config. Failures never undo the created repositories: they
+   * are reported per environment, and Hosting retries the assignment.
+   */
+  private async assignCreatedEnvironments(
+    created: CreateProjectResponse,
+    userId: string,
+    definitions: CreateProjectDto['environments'],
+    rows: ReadonlyArray<HostAssignmentRow>,
+  ): Promise<CreateProjectResponse> {
+    const selected = definitions?.filter(
       (environment) => environment.hostAssignment,
     );
     if (!selected?.length && !this.onpremAssignment) return created;
+    let hostAssignments: CreateProjectResponse['hostAssignments'];
+    const errors: string[] = [];
+    for (const row of rows) {
+      const outcome = await this.assignRowEnvironments(row, userId, selected);
+      if (outcome.hostAssignments)
+        hostAssignments = [
+          ...(hostAssignments ?? []),
+          ...outcome.hostAssignments,
+        ];
+      if (outcome.hostAssignmentError) errors.push(outcome.hostAssignmentError);
+    }
+    return {
+      ...created,
+      ...(hostAssignments && { hostAssignments }),
+      ...(errors.length > 0 && { hostAssignmentError: errors.join(' ') }),
+    };
+  }
+
+  /** One row's part of assignCreatedEnvironments, as a patch to the response. */
+  private async assignRowEnvironments(
+    row: HostAssignmentRow,
+    userId: string,
+    selected: NonNullable<CreateProjectDto['environments']> | undefined,
+  ): Promise<
+    Pick<CreateProjectResponse, 'hostAssignments' | 'hostAssignmentError'>
+  > {
+    // A pair names the repository in its messages and entries; a single
+    // repository keeps its response exactly as before.
+    const label = row.slot
+      ? (row.slot === 'backend' ? 'Backend' : 'Frontend') + ' repository: '
+      : '';
+    const owner = row.slot ? { projectId: row.projectId, slot: row.slot } : {};
     const environments = await this.support.projectsRepository
-      .listProjectEnvironments(created.id)
+      .listProjectEnvironments(row.projectId)
       .catch(() => null);
-    if (!environments && !selected?.length) return created;
+    if (!environments && !selected?.length) return {};
     if (!environments)
       return {
-        ...created,
         hostAssignmentError:
+          label +
           'Project created. Host assignments could not be read. Open Hosting to assign the existing environments.',
       };
     const hostAssignments: NonNullable<
@@ -280,7 +361,7 @@ export class ProjectProvisioningApplicationService {
       if (selected?.some((definition) => definition.slug === environment.slug))
         continue;
       const result = await this.onpremAssignment.ensureAutomaticAssignment(
-        created.id,
+        row.projectId,
         environment.id,
         userId,
       );
@@ -289,6 +370,7 @@ export class ProjectProvisioningApplicationService {
           environmentId: environment.id,
           status: 'assigned',
           assignmentId: result.assignmentId,
+          ...owner,
         });
     }
     for (const definition of selected ?? []) {
@@ -297,24 +379,31 @@ export class ProjectProvisioningApplicationService {
       );
       if (!environment)
         return {
-          ...created,
           hostAssignments,
           hostAssignmentError:
+            label +
             'Project created. An environment was unavailable for host assignment. Open Hosting to retry.',
         };
+      const assignment = definition.hostAssignment!;
       try {
         if (!this.onpremAssignment)
           throw new Error('Host assignment is unavailable.');
         const result = await this.onpremAssignment.assignProvisionedEnvironment(
-          created.id,
+          row.projectId,
           environment.id,
           userId,
-          definition.hostAssignment!,
+          row.slot
+            ? {
+                ...assignment,
+                config: assignmentConfigForSlot(assignment.config, row.slot),
+              }
+            : assignment,
         );
         hostAssignments.push({
           environmentId: environment.id,
           status: 'assigned',
           assignmentId: result.assignmentId,
+          ...owner,
         });
       } catch (error) {
         // The repository already exists. Keep it usable and retry through the
@@ -323,13 +412,15 @@ export class ProjectProvisioningApplicationService {
           environmentId: environment.id,
           status: 'failed',
           message:
-            error instanceof HttpException
+            label +
+            (error instanceof HttpException
               ? `Project created. Host assignment failed: ${error.message}`
-              : 'Project created. Assign or retry the host from this environment in Hosting.',
+              : 'Project created. Assign or retry the host from this environment in Hosting.'),
+          ...owner,
         });
       }
     }
-    return hostAssignments.length ? { ...created, hostAssignments } : created;
+    return hostAssignments.length ? { hostAssignments } : {};
   }
 
   async setupProject(

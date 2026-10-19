@@ -21,6 +21,13 @@ export interface CreateProjectResponse {
     status: 'assigned' | 'failed';
     assignmentId?: string;
     message?: string;
+    /**
+     * Two-repository projects only: the row the environment belongs to (`id`
+     * or `secondaryProjectId`) and the slot that repository deploys. Each
+     * repository has its own environments, so the pair reports both.
+     */
+    projectId?: string;
+    slot?: 'backend' | 'frontend';
   }>;
   id: string;
   repoFullName: string;
@@ -37,6 +44,10 @@ export interface CreateProjectResponse {
   additionalWorkflowPaths?: string[];
   secondaryRepoFullName?: string;
   secondaryRepoUrl?: string;
+  /** Two-repository projects: the frontend repository's project id. */
+  secondaryProjectId?: string;
+  /** Two-repository projects: why the frontend repository is missing. */
+  secondaryRepoError?: string;
   deploymentProvisioning: DeploymentProvisioningResult;
 }
 
