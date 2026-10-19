@@ -13,7 +13,10 @@ import {
 } from '#kernel/events/platform-event-publisher.js';
 import type { DeliveryProjectDataCleanupPort } from '#kernel/ports/delivery-project-data-cleanup.port';
 import type { PlatformAppRole } from '#kernel/ports/platform-admin.port';
-import { canSetProgress } from '../../domain/qa-run-access.rules';
+import {
+  canManageTestCases,
+  canSetProgress,
+} from '../../domain/qa-run-access.rules';
 import {
   QA_UNIQUE_VIOLATION,
   QaChecklistBatchInsertError,
@@ -27,6 +30,10 @@ import {
 } from '../../infrastructure/qa-project-runs.repository';
 import { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
 import { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
+import {
+  QaTestCasesRepository,
+  toTestCategories,
+} from '../../infrastructure/qa-test-cases.repository';
 import type { QaVerificationStatusCounts } from '../qa-runs/qa-runs.contracts';
 import { ProjectIterationsService } from './project-iterations.service';
 import { QaAccessService } from './qa-access.service';
@@ -64,6 +71,7 @@ import {
   type RequirementProgressResult,
   type RequirementSummary,
   type RequirementsOverview,
+  type TestCaseCategory,
 } from './qa-requirements.contracts';
 
 type AuditEventSink = Pick<AuditEventPublisher, 'recordProjectEvent'>;
@@ -108,6 +116,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     private readonly access: QaAccessService,
     private readonly projectContext: QaProjectContextService,
     private readonly iterations: ProjectIterationsService,
+    private readonly testCases: QaTestCasesRepository,
     // Explicit tokens: the sink aliases are type aliases, which TypeScript
     // emits as `Object` in design:paramtypes, so without @Inject Nest finds no
     // provider and @Optional() silently injects undefined.
@@ -170,6 +179,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       permissions: {
         canManage: await this.access.canManage(userId),
         canSetProgress: canSetProgress(role),
+        canManageTestCases: canManageTestCases(role),
       },
     };
   }
@@ -657,7 +667,12 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       itemId,
       change: 'edited',
     });
-    return this.toItem(updated, await this.access.findAppRole(userId), row);
+    return this.toItem(
+      updated,
+      await this.access.findAppRole(userId),
+      row,
+      (await this.testCategoriesFor([itemId])).get(itemId),
+    );
   }
 
   async deleteItem(id: string, itemId: string, userId: string): Promise<void> {
@@ -746,7 +761,15 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       readyForQaNotified = await this.onMarkedDone(row, updated, actor, dto);
     }
 
-    return { item: this.toItem(updated, role, row), readyForQaNotified };
+    return {
+      item: this.toItem(
+        updated,
+        role,
+        row,
+        (await this.testCategoriesFor([itemId])).get(itemId),
+      ),
+      readyForQaNotified,
+    };
   }
 
   /** The done path: reset returned run items, then notify QA. Returns whether anyone was notified. */
@@ -904,7 +927,13 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     role: PlatformAppRole,
   ): Promise<Requirement> {
     const items = await this.checklists.listItemsByChecklistIds([row.id]);
-    return this.toRequirement(row, items.get(row.id) ?? [], role);
+    const rowItems = items.get(row.id) ?? [];
+    return this.toRequirement(
+      row,
+      rowItems,
+      role,
+      await this.testCategoriesFor(rowItems.map((item) => item.id)),
+    );
   }
 
   private async assembleMany(
@@ -917,8 +946,24 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     const items = await this.checklists.listItemsByChecklistIds(
       rows.map((row) => row.id),
     );
+    const testCategories = await this.testCategoriesFor(
+      [...items.values()].flat().map((item) => item.id),
+    );
     return rows.map((row) =>
-      this.toRequirement(row, items.get(row.id) ?? [], role),
+      this.toRequirement(row, items.get(row.id) ?? [], role, testCategories),
+    );
+  }
+
+  /** QA's test cases of each story, keyed by item id; stories without any are absent. */
+  async testCategoriesFor(
+    itemIds: readonly string[],
+  ): Promise<Map<string, TestCaseCategory[]>> {
+    const definitions = await this.testCases.listByItemIds(itemIds);
+    return new Map(
+      [...definitions].map(([itemId, list]) => [
+        itemId,
+        toTestCategories(list),
+      ]),
     );
   }
 
@@ -926,6 +971,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     row: QaChecklistRow,
     items: QaChecklistItemRow[],
     role: PlatformAppRole,
+    testCategories: ReadonlyMap<string, TestCaseCategory[]> = new Map(),
   ): Requirement {
     return {
       id: row.id,
@@ -940,7 +986,9 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       legacyChecklistId: row.legacy_checklist_id,
-      items: items.map((item) => this.toItem(item, role, row)),
+      items: items.map((item) =>
+        this.toItem(item, role, row, testCategories.get(item.id)),
+      ),
       progressCounts: this.countProgress(items),
     };
   }
@@ -949,6 +997,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
     item: QaChecklistItemRow,
     role: PlatformAppRole,
     requirement: Pick<QaChecklistRow, 'archived_at'>,
+    testCategories: TestCaseCategory[] = [],
   ): RequirementItem {
     return {
       id: item.id,
@@ -964,6 +1013,7 @@ export class QaRequirementsService implements DeliveryProjectDataCleanupPort {
       progressAt: item.progress_at,
       rowVersion: item.row_version,
       canSetProgress: canSetProgress(role) && !requirement.archived_at,
+      testCategories,
     };
   }
 

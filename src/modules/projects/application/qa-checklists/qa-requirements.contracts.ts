@@ -28,6 +28,10 @@ export const QA_PROGRESS_VALUES: readonly QaProgress[] = [
 export const QA_REQUIREMENT_MAX_ITEMS = 200;
 /** Most requirements one batch create accepts. */
 export const QA_REQUIREMENT_BATCH_MAX = 20;
+/** Most test case categories one User story holds. */
+export const QA_TEST_CATEGORIES_MAX = 30;
+/** Most test cases one category holds. */
+export const QA_TEST_CASES_PER_CATEGORY_MAX = 100;
 
 /** Run items per Verification status. */
 export interface QaVerificationStatusCounts {
@@ -59,6 +63,36 @@ export interface RequirementItem {
   rowVersion: number;
   /** Caller-specific: whether the caller may PATCH this item's progress. */
   canSetProgress: boolean;
+  /**
+   * QA's test cases for this story, by category, in position order. Always
+   * empty for a system requirement's items: test cases belong to User stories.
+   */
+  testCategories: TestCaseCategory[];
+}
+
+/** One test case QA wrote under a story. */
+export interface TestCase {
+  id: string;
+  position: number;
+  title: string;
+  /** Max 2000 characters. */
+  expectedResult: string | null;
+  rowVersion: number;
+}
+
+/** A named group of test cases under one story ("Happy path", "Validation"). */
+export interface TestCaseCategory {
+  id: string;
+  position: number;
+  name: string;
+  rowVersion: number;
+  testCases: TestCase[];
+}
+
+/** What every test case write answers: the story's whole set of test cases. */
+export interface StoryTestCases {
+  itemId: string;
+  testCategories: TestCaseCategory[];
 }
 
 export interface Requirement {
@@ -89,7 +123,12 @@ export interface QaDeliveryProjectRef {
 export interface RequirementListResult {
   deliveryProject: QaDeliveryProjectRef;
   requirements: Requirement[];
-  permissions: { canManage: boolean; canSetProgress: boolean };
+  permissions: {
+    canManage: boolean;
+    canSetProgress: boolean;
+    /** QA and admins write test cases (categories and cases) under stories. */
+    canManageTestCases: boolean;
+  };
 }
 
 export interface RequirementProgressResult {

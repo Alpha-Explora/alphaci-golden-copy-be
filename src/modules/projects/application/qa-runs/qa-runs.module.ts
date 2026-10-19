@@ -28,9 +28,11 @@ import {
 import { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import { QaRunAttachmentsRepository } from '../../infrastructure/qa-run-attachments.repository';
 import { QaRunsRepository } from '../../infrastructure/qa-runs.repository';
+import { QaTestCasesRepository } from '../../infrastructure/qa-test-cases.repository';
 import { QaAttachmentStorageModule } from '../../qa-attachment-storage.module';
 import { QaChecklistsModule } from '../qa-checklists/qa-checklists.module';
 import { QaRequirementsService } from '../qa-checklists/qa-requirements.service';
+import { QaTestCasesService } from '../qa-checklists/qa-test-cases.service';
 import { QaAutomationDispatchService } from './qa-automation-dispatch.service';
 import { QaAutomationService } from './qa-automation.service';
 import { QaCommitResolutionService } from './qa-commit-resolution.service';
@@ -88,8 +90,10 @@ import { QaUatHeadsService } from './qa-uat-heads.service';
     QaRunsRepository,
     QaProjectRunsRepository,
     QaRunAttachmentsRepository,
+    QaTestCasesRepository,
     QaUatHeadsService,
     QaRequirementsService,
+    QaTestCasesService,
     QaProjectRunsService,
     QaRunAttachmentsService,
     QaCommitResolutionService,

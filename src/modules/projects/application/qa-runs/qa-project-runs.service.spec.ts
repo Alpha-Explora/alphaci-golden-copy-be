@@ -14,8 +14,11 @@ import type { ProjectIterationRow } from '../../infrastructure/project-iteration
 import type { QaChecklistsRepository } from '../../infrastructure/qa-checklists.repository';
 import type { QaProjectRunsRepository } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
+import type { QaTestCasesRepository } from '../../infrastructure/qa-test-cases.repository';
+import type { QaRunTestCaseRow } from '../../infrastructure/qa-test-cases.repository';
 import {
   QaProgressNotDoneError,
+  QaTestCasesOpenError,
   type QaProjectRunRow,
   type QaRunItemRow,
   type QaRunRepositoryRow,
@@ -235,6 +238,7 @@ function setup({
         id: item.id,
         progress: item.progress,
       })),
+    testCategoriesFor: jest.fn().mockResolvedValue(new Map()),
   } as unknown as jest.Mocked<QaRequirementsService>;
   const access = {
     findAppRole: jest.fn().mockResolvedValue(role),
@@ -261,6 +265,12 @@ function setup({
   } as unknown as jest.Mocked<QaRunAttachmentsService>;
   const audit = { recordProjectEvent: jest.fn().mockResolvedValue(undefined) };
   const notifications = { record: jest.fn().mockResolvedValue(undefined) };
+  const testCases = {
+    listForRun: jest.fn().mockResolvedValue([]),
+    countOpenForRun: jest.fn().mockResolvedValue(0),
+    syncOpenRuns: jest.fn().mockResolvedValue(0),
+    recordResult: jest.fn(),
+  } as unknown as jest.Mocked<QaTestCasesRepository>;
 
   const { service: iterations, repository: iterationRepository } =
     fakeIterations(iteration);
@@ -276,6 +286,7 @@ function setup({
     automation,
     attachments,
     iterations,
+    testCases,
     audit,
     notifications,
   );
@@ -283,6 +294,8 @@ function setup({
     service,
     iterationRepository,
     attachments,
+    testCases,
+    requirementsService,
     runs,
     projectRuns,
     checklists,
@@ -516,6 +529,24 @@ describe('QaProjectRunsService.updateItem (Verification track)', () => {
     expect(runs.updateItem.mock.calls[0]![6]).toEqual({
       requireProgressDoneForPass: true,
       resetProgressOnReturn: true,
+      requireTestCasesResolvedForPass: true,
+    });
+  });
+
+  it('maps open test cases on a pass to QA_TEST_CASES_OPEN with the count', async () => {
+    const { service, runs } = setup();
+    runs.updateItem.mockRejectedValue(new QaTestCasesOpenError('ri-1', 2));
+
+    await expect(
+      service.updateItem(
+        DP,
+        actor(),
+        'run-1',
+        'ri-1',
+        patch({ status: 'passed' }),
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'QA_TEST_CASES_OPEN', openTestCases: 2 },
     });
   });
 
@@ -1242,6 +1273,7 @@ describe('QaProjectRunsService - Iterations', () => {
           canSignOff: false,
           canReopen: false,
           canDispatch: false,
+          canManageTestCases: false,
         });
         expect(run.attachments.canAdd).toBe(false);
       }
@@ -1275,5 +1307,214 @@ describe('QaProjectRunsService - Iterations', () => {
       });
       expect(run.permissions.canSetVerification).toBe(false);
     });
+  });
+});
+
+describe('QaProjectRunsService test cases', () => {
+  const copy = (
+    overrides: Partial<QaRunTestCaseRow> = {},
+  ): QaRunTestCaseRow => ({
+    id: 'rtc-1',
+    run_id: 'run-1',
+    run_item_id: 'ri-1',
+    source_test_case_id: 'tc-1',
+    source_category_id: 'cat-1',
+    category_name: 'Happy path',
+    category_position: 0,
+    position: 0,
+    title: 'Logs in with a saved password',
+    expected_result: 'Profile in the header',
+    status: 'pending',
+    notes: null,
+    verified_by: null,
+    verified_by_login: null,
+    verified_at: null,
+    row_version: 1,
+    updated_at: '2026-10-01T00:00:00.000Z',
+    ...overrides,
+  });
+
+  it('shows each story its test cases by category, plus an empty category of an open run', async () => {
+    const { service, testCases, requirementsService } = setup({ role: 'qa' });
+    testCases.listForRun.mockResolvedValue([
+      copy({ id: 'rtc-2', source_test_case_id: 'tc-2', position: 1 }),
+      copy(),
+    ]);
+    requirementsService.testCategoriesFor.mockResolvedValue(
+      new Map([
+        [
+          'item-1',
+          [
+            {
+              id: 'cat-1',
+              position: 0,
+              name: 'Happy path',
+              rowVersion: 1,
+              testCases: [],
+            },
+            {
+              id: 'cat-2',
+              position: 1,
+              name: 'Session',
+              rowVersion: 1,
+              testCases: [],
+            },
+          ],
+        ],
+      ]),
+    );
+
+    const run = await service.getById(DP, actor(), 'run-1');
+
+    const categories = run.items[0]?.testCategories ?? [];
+    expect(categories.map((category) => category.name)).toEqual([
+      'Happy path',
+      'Session',
+    ]);
+    expect(categories[0]?.testCases.map((testCase) => testCase.id)).toEqual([
+      'rtc-1',
+      'rtc-2',
+    ]);
+    expect(categories[1]).toEqual({
+      id: 'cat-2',
+      name: 'Session',
+      rowVersion: 1,
+      testCases: [],
+    });
+    expect(run.permissions.canManageTestCases).toBe(true);
+  });
+
+  it('a signed-off run shows exactly its copies, and nobody manages test cases on it', async () => {
+    const { service, testCases, requirementsService } = setup({
+      role: 'qa',
+      run: runRow({ status: 'signed_off' }),
+    });
+    testCases.listForRun.mockResolvedValue([copy({ status: 'passed' })]);
+
+    const run = await service.getById(DP, actor(), 'run-1');
+
+    expect(requirementsService.testCategoriesFor).not.toHaveBeenCalled();
+    expect(run.items[0]?.testCategories).toHaveLength(1);
+    expect(run.permissions.canManageTestCases).toBe(false);
+  });
+
+  it('a Product owner verifies but does not write test cases', async () => {
+    const { service } = setup({ role: 'lead' });
+
+    const run = await service.getById(DP, actor('lead-1'), 'run-1');
+
+    expect(run.permissions).toMatchObject({
+      canSetVerification: true,
+      canManageTestCases: false,
+    });
+  });
+
+  it('records a result on the Verification track and answers the whole run', async () => {
+    const { service, testCases } = setup({ role: 'qa' });
+    testCases.recordResult.mockResolvedValue(copy({ status: 'passed' }));
+
+    const run = await service.updateTestCase(
+      DP,
+      actor(),
+      'run-1',
+      'ri-1',
+      'rtc-1',
+      {
+        expectedRowVersion: 1,
+        status: 'passed',
+      },
+    );
+
+    expect(testCases.recordResult).toHaveBeenCalledWith(
+      'run-1',
+      'ri-1',
+      'rtc-1',
+      1,
+      { status: 'passed', notes: undefined },
+      { id: 'qa-1', login: 'qa' },
+    );
+    expect(run.id).toBe('run-1');
+  });
+
+  it('a developer cannot record a result', async () => {
+    const { service, testCases } = setup({ role: 'member' });
+
+    await expect(
+      service.updateTestCase(DP, actor('dev-1'), 'run-1', 'ri-1', 'rtc-1', {
+        expectedRowVersion: 1,
+        status: 'passed',
+      }),
+    ).rejects.toMatchObject({ response: { code: 'VERIFICATION_FORBIDDEN' } });
+    expect(testCases.recordResult).not.toHaveBeenCalled();
+  });
+
+  it('a lost race is TEST_CASE_STALE; an unknown test case is 404', async () => {
+    const { service, testCases } = setup({ role: 'qa' });
+    testCases.recordResult.mockResolvedValue(null);
+    testCases.listForRun.mockResolvedValue([copy()]);
+
+    await expect(
+      service.updateTestCase(DP, actor(), 'run-1', 'ri-1', 'rtc-1', {
+        expectedRowVersion: 1,
+        status: 'failed',
+      }),
+    ).rejects.toMatchObject({ response: { code: 'TEST_CASE_STALE' } });
+    await expect(
+      service.updateTestCase(DP, actor(), 'run-1', 'ri-1', 'rtc-9', {
+        expectedRowVersion: 1,
+        status: 'failed',
+      }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('a signed-off run refuses a result', async () => {
+    const { service, testCases } = setup({
+      role: 'qa',
+      run: runRow({ status: 'signed_off' }),
+    });
+
+    await expect(
+      service.updateTestCase(DP, actor(), 'run-1', 'ri-1', 'rtc-1', {
+        expectedRowVersion: 1,
+        status: 'passed',
+      }),
+    ).rejects.toThrow(ConflictException);
+    expect(testCases.recordResult).not.toHaveBeenCalled();
+  });
+
+  it('APPROVED is refused while a test case is open, even with every story passed', async () => {
+    const { service, runs, testCases } = setup({
+      items: [
+        itemRow({
+          status: 'passed',
+          verified_by: 'qa-1',
+          verified_by_login: 'qa',
+        }),
+      ],
+    });
+    testCases.countOpenForRun.mockResolvedValue(1);
+
+    await expect(
+      service.signoff(DP, actor(), 'run-1', { verdict: 'APPROVED' }),
+    ).rejects.toMatchObject({
+      response: { code: 'QA_TEST_CASES_OPEN', openTestCases: 1 },
+    });
+    expect(runs.createSignoff).not.toHaveBeenCalled();
+  });
+
+  it('a new run copies its stories test cases and renders the rows as they are after the copy', async () => {
+    const { service, projectRuns, runs, testCases } = setup({ role: 'qa' });
+    projectRuns.createRun.mockResolvedValue({
+      created: true,
+      run: runRow(),
+      items: [itemRow()],
+      repositories: coverage,
+    });
+    runs.listItemsByRunId.mockResolvedValue([itemRow({ row_version: 2 })]);
+
+    const result = await service.create(DP, actor());
+
+    expect(testCases.syncOpenRuns).toHaveBeenCalledWith('it-1');
+    expect(result.run.items[0]?.rowVersion).toBe(2);
   });
 });

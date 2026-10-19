@@ -6,6 +6,7 @@ import type {
   QaRunItemFact,
 } from '../../infrastructure/qa-project-runs.repository';
 import type { QaRequirementsRepository } from '../../infrastructure/qa-requirements.repository';
+import type { QaTestCasesRepository } from '../../infrastructure/qa-test-cases.repository';
 import type {
   QaProjectRunRow,
   QaRunItemRow,
@@ -208,6 +209,7 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
         id: item.id,
         progress: item.progress,
       }),
+      testCategoriesFor: () => Promise.resolve(new Map()),
     } as unknown as QaRequirementsService,
     access,
     projectContext,
@@ -219,6 +221,9 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
       isEnabled: jest.fn().mockReturnValue(true),
     } as unknown as QaRunAttachmentsService,
     iterations,
+    {
+      listForRun: jest.fn().mockResolvedValue([]),
+    } as unknown as QaTestCasesRepository,
   );
   const feed = await feedService.myItems(DP, {
     userId: 'qa-1',
@@ -272,6 +277,9 @@ async function bothCounts(run: QaRunStatus | null, moved: boolean) {
     access,
     projectContext,
     iterations,
+    {
+      listByItemIds: jest.fn().mockResolvedValue(new Map()),
+    } as unknown as QaTestCasesRepository,
   );
   const overview = await overviewService.overview('group-1', 'qa-1', false);
 

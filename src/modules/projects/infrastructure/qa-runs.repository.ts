@@ -166,6 +166,11 @@ export interface QaProjectItemRules {
   requireProgressDoneForPass: boolean;
   /** 'returned_to_dev' puts the source item's Progress back to 'in_progress'. */
   resetProgressOnReturn: boolean;
+  /**
+   * 'passed' needs every test case of the run item to be passed or not
+   * applicable (ADR-0014, amendment 10). Optional: legacy runs have none.
+   */
+  requireTestCasesResolvedForPass?: boolean;
 }
 
 /**
@@ -176,6 +181,22 @@ export class QaProgressNotDoneError extends Error {
   constructor(itemId: string) {
     super(`QA run item ${itemId} cannot pass: its Progress is not done`);
     this.name = 'QaProgressNotDoneError';
+  }
+}
+
+/**
+ * 'passed' was refused inside the transaction: `open` test cases of the run
+ * item are still pending, failed or blocked.
+ */
+export class QaTestCasesOpenError extends Error {
+  constructor(
+    itemId: string,
+    readonly open: number,
+  ) {
+    super(
+      `QA run item ${itemId} cannot pass: ${open} test case(s) are not resolved`,
+    );
+    this.name = 'QaTestCasesOpenError';
   }
 }
 
@@ -623,6 +644,9 @@ export class QaRunsRepository {
       if (rules?.requireProgressDoneForPass && patch.status === 'passed') {
         await this.assertSourceProgressDone(client, runId, itemId);
       }
+      if (rules?.requireTestCasesResolvedForPass && patch.status === 'passed') {
+        await this.assertTestCasesResolved(client, runId, itemId);
+      }
       const result = await client.query<QaRunItemRow>(
         `
           UPDATE projects.qa_run_items
@@ -728,6 +752,33 @@ export class QaRunsRepository {
 
       return updated;
     });
+  }
+
+  /**
+   * Locks the run item (FOR UPDATE, so a test case result write, which takes
+   * the same lock first, cannot slip in between) and refuses the pass while
+   * any of its test cases is pending, failed or blocked.
+   */
+  private async assertTestCasesResolved(
+    client: PoolClient,
+    runId: string,
+    itemId: string,
+  ): Promise<void> {
+    await client.query(
+      `SELECT id FROM projects.qa_run_items WHERE id = $1 AND run_id = $2 FOR UPDATE;`,
+      [itemId, runId],
+    );
+    const open = await client.query<{ n: number }>(
+      `
+        SELECT COUNT(*)::int AS n FROM projects.qa_run_test_cases
+        WHERE run_item_id = $1 AND status IN ('pending', 'failed', 'blocked');
+      `,
+      [itemId],
+    );
+    const count = Number(open.rows[0]?.n ?? 0);
+    if (count > 0) {
+      throw new QaTestCasesOpenError(itemId, count);
+    }
   }
 
   /**

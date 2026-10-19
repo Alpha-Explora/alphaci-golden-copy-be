@@ -299,3 +299,64 @@ export const qaAttachmentsUnavailable = () =>
       'Screenshot storage is not configured.',
     ),
   );
+
+// ---------------------------------------------------------------------
+// Test cases (categories and cases under a User story)
+// ---------------------------------------------------------------------
+
+export const testCaseManageForbidden = () =>
+  new ForbiddenException(
+    body(
+      403,
+      'Forbidden',
+      'TEST_CASE_MANAGE_FORBIDDEN',
+      'The QA Team writes test cases.',
+    ),
+  );
+
+export const testCasesStoryOnly = () =>
+  new ConflictException(
+    body(
+      409,
+      'Conflict',
+      'TEST_CASES_STORY_ONLY',
+      'Test cases belong to User stories of a Feature, not to System requirement items.',
+    ),
+  );
+
+export const testCategoryNameTaken = (name: string) =>
+  new ConflictException(
+    body(
+      409,
+      'Conflict',
+      'TEST_CATEGORY_NAME_TAKEN',
+      `This story already has a test case category named "${name}".`,
+    ),
+  );
+
+export const testCasesLimit = (message: string) =>
+  new ConflictException(body(409, 'Conflict', 'TEST_CASES_LIMIT', message));
+
+export const testCaseStale = (expected: number) =>
+  new ConflictException(
+    body(
+      409,
+      'Conflict',
+      'TEST_CASE_STALE',
+      `This test case has changed (expected row version ${expected}); reload and try again.`,
+    ),
+  );
+
+/** A story cannot pass, or a run be APPROVED, while test cases are open. */
+export const qaTestCasesOpen = (open: number, scope: 'item' | 'run') =>
+  new ConflictException(
+    body(
+      409,
+      'Conflict',
+      'QA_TEST_CASES_OPEN',
+      scope === 'item'
+        ? `${open} test case${open === 1 ? ' is' : 's are'} still pending, failed or blocked. Pass them (or mark them not applicable) before passing the story.`
+        : `${open} test case${open === 1 ? ' is' : 's are'} still pending, failed or blocked. An APPROVED sign-off needs every test case passed or not applicable.`,
+      { openTestCases: open },
+    ),
+  );

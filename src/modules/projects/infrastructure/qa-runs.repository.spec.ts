@@ -3,6 +3,7 @@ import {
   QaRunItemsChangedError,
   QaRunNotOpenError,
   QaRunsRepository,
+  QaTestCasesOpenError,
   type CreateSignoffInput,
   type UpdateQaRunItemPatch,
 } from './qa-runs.repository';
@@ -125,6 +126,59 @@ describe('QaRunsRepository concurrency guards', () => {
       ),
     ).rejects.toBeInstanceOf(QaRunNotOpenError);
     expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a pass while a test case is open, under the run item lock, without writing', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'item-1' }] })
+      .mockResolvedValueOnce({ rows: [{ n: 2 }] });
+
+    await expect(
+      repository.updateItem(
+        'run-1',
+        'item-1',
+        1,
+        patch({ status: 'passed' }),
+        actor,
+        'pending',
+        {
+          requireProgressDoneForPass: false,
+          resetProgressOnReturn: false,
+          requireTestCasesResolvedForPass: true,
+        },
+      ),
+    ).rejects.toEqual(expect.any(QaTestCasesOpenError));
+    expect(query.mock.calls[1]?.[0]).toMatch(/qa_run_items[\s\S]*FOR UPDATE/);
+    expect(query.mock.calls[2]?.[0]).toContain(
+      "status IN ('pending', 'failed', 'blocked')",
+    );
+    expect(query).toHaveBeenCalledTimes(3);
+  });
+
+  it('passes once every test case is resolved', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ status: 'open' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'item-1' }] })
+      .mockResolvedValueOnce({ rows: [{ n: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'item-1', status: 'passed' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      repository.updateItem(
+        'run-1',
+        'item-1',
+        1,
+        patch({ status: 'passed' }),
+        actor,
+        'pending',
+        {
+          requireProgressDoneForPass: false,
+          resetProgressOnReturn: false,
+          requireTestCasesResolvedForPass: true,
+        },
+      ),
+    ).resolves.toMatchObject({ status: 'passed' });
   });
 
   it('refuses a re-test request once the run is signed off, without writing', async () => {

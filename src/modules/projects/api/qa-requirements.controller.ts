@@ -21,12 +21,17 @@ import {
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
 import { CreateRequirementDto } from '../application/qa-checklists/dto/create-requirement.dto';
 import { CreateRequirementsBatchDto } from '../application/qa-checklists/dto/create-requirements-batch.dto';
+import { CreateTestCaseDto } from '../application/qa-checklists/dto/create-test-case.dto';
+import { CreateTestCategoryDto } from '../application/qa-checklists/dto/create-test-category.dto';
 import { ReorderRequirementItemsDto } from '../application/qa-checklists/dto/reorder-requirement-items.dto';
 import { RequirementItemDto } from '../application/qa-checklists/dto/requirement-item.dto';
 import { SetProgressDto } from '../application/qa-checklists/dto/set-progress.dto';
 import { UpdateRequirementItemDto } from '../application/qa-checklists/dto/update-requirement-item.dto';
 import { UpdateRequirementDto } from '../application/qa-checklists/dto/update-requirement.dto';
+import { UpdateTestCaseDto } from '../application/qa-checklists/dto/update-test-case.dto';
+import { UpdateTestCategoryDto } from '../application/qa-checklists/dto/update-test-category.dto';
 import { QaRequirementsService } from '../application/qa-checklists/qa-requirements.service';
+import { QaTestCasesService } from '../application/qa-checklists/qa-test-cases.service';
 import { actorContext, requireUserId } from './qa-runs.controller';
 
 /**
@@ -83,12 +88,15 @@ export class DeliveryProjectRequirementsController {
   }
 }
 
-/** Requirement-id-scoped routes: read, edit, archive, items, and Progress. */
+/** Requirement-id-scoped routes: read, edit, archive, items, Progress, and test cases. */
 @Controller('requirements')
 @UseGuards(SessionAuthGuard, CapabilityGuard)
 @RequiresCapability('projects.qa-checklists')
 export class RequirementsController {
-  constructor(private readonly requirementsService: QaRequirementsService) {}
+  constructor(
+    private readonly requirementsService: QaRequirementsService,
+    private readonly testCasesService: QaTestCasesService,
+  ) {}
 
   @Get(':id')
   getById(@Req() req: Request, @Param('id') id: string) {
@@ -167,6 +175,106 @@ export class RequirementsController {
       itemId,
       { userId: actor.userId, userLogin: actor.userLogin },
       body,
+    );
+  }
+
+  // Test cases under a User story: QA and admins write; every write answers
+  // the story's whole set ({ itemId, testCategories }).
+
+  @Post(':id/items/:itemId/test-categories')
+  createTestCategory(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: CreateTestCategoryDto,
+  ) {
+    return this.testCasesService.createCategory(
+      id,
+      itemId,
+      requireUserId(req),
+      body,
+    );
+  }
+
+  @Patch(':id/items/:itemId/test-categories/:categoryId')
+  updateTestCategory(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Param('categoryId') categoryId: string,
+    @Body() body: UpdateTestCategoryDto,
+  ) {
+    return this.testCasesService.updateCategory(
+      id,
+      itemId,
+      categoryId,
+      requireUserId(req),
+      body,
+    );
+  }
+
+  /** Deletes the category with its test cases. */
+  @Delete(':id/items/:itemId/test-categories/:categoryId')
+  deleteTestCategory(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Param('categoryId') categoryId: string,
+  ) {
+    return this.testCasesService.deleteCategory(
+      id,
+      itemId,
+      categoryId,
+      requireUserId(req),
+    );
+  }
+
+  @Post(':id/items/:itemId/test-categories/:categoryId/test-cases')
+  createTestCase(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Param('categoryId') categoryId: string,
+    @Body() body: CreateTestCaseDto,
+  ) {
+    return this.testCasesService.createTestCase(
+      id,
+      itemId,
+      categoryId,
+      requireUserId(req),
+      body,
+    );
+  }
+
+  @Patch(':id/items/:itemId/test-cases/:testCaseId')
+  updateTestCase(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Param('testCaseId') testCaseId: string,
+    @Body() body: UpdateTestCaseDto,
+  ) {
+    return this.testCasesService.updateTestCase(
+      id,
+      itemId,
+      testCaseId,
+      requireUserId(req),
+      body,
+    );
+  }
+
+  @Delete(':id/items/:itemId/test-cases/:testCaseId')
+  deleteTestCase(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Param('testCaseId') testCaseId: string,
+  ) {
+    return this.testCasesService.deleteTestCase(
+      id,
+      itemId,
+      testCaseId,
+      requireUserId(req),
     );
   }
 }
