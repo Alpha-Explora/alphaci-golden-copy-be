@@ -13,6 +13,7 @@
 #        ./alphaci-ctl admin-grant --github-login <login>
 #        ./alphaci-ctl doctor
 #        ./alphaci-ctl registry-token --github-login <login>
+#        ./alphaci-ctl sonar --organization <sonarcloud org>
 #        sudo ./alphaci-ctl server-host --team <team> --github-login <login> [--name <host name>]
 set -eu
 
@@ -74,6 +75,36 @@ case "$command" in
     cd "$DIR" && docker compose up -d api
     echo "Registry token saved. Hosts pull release images with it from their next deployment."
     ;;
+  sonar)
+    # SonarCloud for every repository AlphaCI creates: the token (from stdin)
+    # and organization its projects and SONAR_* Actions secrets are made with.
+    # Written by the image's uid 1001, like registry-token, so the api reads it.
+    image=$(sed -n 's/^ALPHACI_API_IMAGE=//p' "$DIR/.env" | tail -n 1)
+    org=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --organization) org=$2; shift 2 ;;
+        --organization=*) org=${1#*=}; shift ;;
+        *) echo "sonar takes --organization <SonarCloud organization key>." >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$org" ] || { echo "sonar needs --organization <SonarCloud organization key>." >&2; exit 2; }
+    [ -t 0 ] && printf 'Paste the SonarCloud token, then press Enter: ' >&2
+    IFS= read -r token
+    [ -n "$token" ] || { echo "No token given; nothing changed." >&2; exit 2; }
+    printf '%s\n' "$token" | docker run --rm -i -v "$DIR/secrets:/secrets" --entrypoint sh "$image" -c \
+      'umask 0277 && cat > /secrets/sonar_token.new && mv -f /secrets/sonar_token.new /secrets/sonar_token'
+    for kv in "ALPHACI_SONAR_ORGANIZATION=$org" "ALPHACI_SONAR_TOKEN_FILE=/run/secrets/sonar_token"; do
+      key=${kv%%=*}
+      if grep -q "^$key=" "$DIR/alphaci.env"; then
+        sed -i "s|^$key=.*|$kv|" "$DIR/alphaci.env"
+      else
+        echo "$kv" >> "$DIR/alphaci.env"
+      fi
+    done
+    cd "$DIR" && docker compose up -d api
+    echo "SonarCloud set. Repositories created from now on get a SonarCloud project and the SONAR_* secrets."
+    ;;
   server-host)
     # This server also runs the deployments: enroll its own on-prem agent and
     # route each environment's address (ONPREM_APPS_DOMAIN) through this
@@ -107,6 +138,7 @@ alphaci-ctl - setup helper for the self-hosted AlphaCI appliance
   admin-grant --github-login <login>             make an existing user a platform super-admin
   doctor                                         check the database, migrations, signing key, settings and outbound HTTPS
   registry-token --github-login <login>          save the read-only token hosts pull release images with (from stdin)
+  sonar --organization <org>                     save the SonarCloud token (from stdin) new repositories are analysed with
   sudo server-host --team <team> --github-login <login> [--name <host name>]
                                                  enroll this server's own agent and route app addresses through Caddy
 USAGE

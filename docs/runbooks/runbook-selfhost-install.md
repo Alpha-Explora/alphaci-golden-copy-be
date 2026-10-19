@@ -109,7 +109,7 @@ Run each step from the install directory.
    ./alphaci-ctl init alphaci.acme.example --tls auto
    ```
 
-   `--tls` takes `auto` (Caddy's automatic public certificates), `internal` (Caddy's private CA, for a lab; browsers and GitHub do not trust it), or `custom` (place `fullchain.pem` and `privkey.pem` in `certs/`). `init` writes `alphaci.env` and, under `secrets/`, the session secret, the database password, the database URL, the P-256 release signing key, the environment-token encryption key (`env_provisioning_encryption_key`), and an empty `onprem_registry_token`. It never overwrites an existing file. It prints the release signing key ID; keep it, because on-prem hosts trust it.
+   `--tls` takes `auto` (Caddy's automatic public certificates), `internal` (Caddy's private CA, for a lab; browsers and GitHub do not trust it), or `custom` (place `fullchain.pem` and `privkey.pem` in `certs/`). `init` writes `alphaci.env` and, under `secrets/`, the session secret, the database password, the database URL, the P-256 release signing key, the environment-token encryption key (`env_provisioning_encryption_key`), and empty `onprem_registry_token` and `sonar_token` files. It never overwrites an existing file. It prints the release signing key ID; keep it, because on-prem hosts trust it.
 
 2. **Place the three GitHub secrets** in `secrets/`, with these exact names and no extension:
 
@@ -152,6 +152,7 @@ Run each step from the install directory.
 | `admin-grant --github-login <login>` | Makes an existing user a platform super-admin. |
 | `doctor` | Runs the installation checks. |
 | `registry-token --github-login <owner>` | Saves the read-only token hosts pull release images with. See [Private release images](#private-release-images). |
+| `sonar --organization <org>` | Saves the SonarCloud token new repositories are analysed with. See [SonarCloud](#sonarcloud). |
 | `sudo ./alphaci-ctl server-host --team <name or ID> --github-login <login> [--name <host name>]` | Enrolls this server's own on-prem agent. See [Run deployments on the AlphaCI server](#run-deployments-on-the-alphaci-server). |
 | `help` | Prints usage. |
 
@@ -187,6 +188,16 @@ On-prem hosts pull each project's release images from GHCR. If the images are pr
 ```
 
 Paste a token with `read:packages` for the organization at the prompt (or pipe it on stdin). The command writes `secrets/onprem_registry_token` as uid 1001, sets `ONPREM_REGISTRY_USERNAME` in `alphaci.env`, and restarts `api`. Hosts use it from their next deployment, with agent 0.4.3 or newer. Without a token, hosts pull with their own Docker login.
+
+## SonarCloud
+
+The Quality stage runs a SonarCloud scan when the repository has the `SONAR_TOKEN`, `SONAR_ORGANIZATION` and `SONAR_PROJECT_KEY` Actions secrets, and blocks on the quality gate for `uat` and `main`. AlphaCI creates the SonarCloud project and installs those secrets for every repository it creates, once it has a token:
+
+```bash
+./alphaci-ctl sonar --organization <SonarCloud organization key>
+```
+
+Paste a SonarCloud token that can create projects in that organization. The command writes `secrets/sonar_token` as uid 1001, sets `ALPHACI_SONAR_ORGANIZATION` and `ALPHACI_SONAR_TOKEN_FILE` in `alphaci.env`, and restarts `api`. Without it, the scan is skipped. SonarCloud's own Automatic Analysis may still comment on pull requests, but AlphaCI does not count it.
 
 ## Run deployments on the AlphaCI server
 
@@ -254,7 +265,7 @@ Store the backup encrypted and off the server.
 
 1. Take a backup.
 2. Copy the new release bundle's files over the install directory: `compose.yaml`, `alphaci-ctl`, `caddy/Caddyfile`, `postgres-init/`, and the `alphaci-app-routes` files. Keep `.env`, `alphaci.env`, `secrets/`, `certs/`, `caddy/apps/`, and any `compose.override.yaml`. On a server that runs `server-host`, also copy the new script into place: `sudo install -m 0755 alphaci-app-routes /opt/alphaci/bin/alphaci-app-routes`.
-3. In `.env`, set the new `ALPHACI_API_IMAGE` and `ALPHACI_WEB_IMAGE` digests from the release notes. Compare `alphaci.env` with the release's `alphaci.env.example` and add any new settings, such as `ONPREM_REGISTRY_TOKEN_FILE=/run/secrets/onprem_registry_token`.
+3. In `.env`, set the new `ALPHACI_API_IMAGE` and `ALPHACI_WEB_IMAGE` digests from the release notes. Compare `alphaci.env` with the release's `alphaci.env.example` and add any new settings, such as `ONPREM_REGISTRY_TOKEN_FILE=/run/secrets/onprem_registry_token`. Create any secret file the new `compose.yaml` mounts that you do not have yet, such as an empty `secrets/sonar_token` owned by uid 1001, or compose will not start.
 4. Run `./alphaci-ctl init <hostname> --tls <mode>` again. It keeps every existing file and creates any secret file the new `compose.yaml` mounts, such as the empty `secrets/onprem_registry_token`. Compose refuses to start while a mounted secret file is missing.
 5. Run:
 
