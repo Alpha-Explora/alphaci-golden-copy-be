@@ -335,8 +335,43 @@ export class ProjectProvisioningSupport {
     workflowFiles: StagedWorkflowFile[],
     branch = 'main',
   ): Promise<{ commitSha: string; commitUrl: string | null }> {
-    let latest: { commitSha: string; commitUrl: string | null } | null = null;
+    if (workflowFiles.length === 0) {
+      throw new UnprocessableEntityException(
+        'No workflow files were generated',
+      );
+    }
+    if (!this.workflowFilePusher) {
+      // One commit for the whole set. A commit per file was a push per file,
+      // and once the first file landed every later push started its own
+      // Access -> Quality -> Build chain: five chains per branch on a new
+      // project, whose duplicate first-environment builds then raced to
+      // register a release and failed with 409.
+      const committed = await this.githubService.commitFilesToNewBranch(
+        accessToken,
+        `${owner}/${repo}`,
+        {
+          fromBranch: branch,
+          newBranch: branch,
+          replaceExisting: true,
+          message: 'ci: add ALPHACI workflow',
+          files: workflowFiles.map((file) => ({
+            path: file.path,
+            content: file.yaml,
+          })),
+        },
+      );
+      if (!committed.committed) {
+        throw new UnprocessableEntityException(
+          `GitHub workflow commit failed: ${committed.message}`,
+        );
+      }
+      return {
+        commitSha: committed.commitSha,
+        commitUrl: `https://github.com/${owner}/${repo}/commit/${committed.commitSha}`,
+      };
+    }
 
+    let latest: { commitSha: string; commitUrl: string | null } | null = null;
     for (const file of workflowFiles) {
       latest = await this.pushWorkflowFile(
         accessToken,
