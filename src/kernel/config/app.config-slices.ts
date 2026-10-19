@@ -95,7 +95,15 @@ function githubOrgAndTeams(
       : rawEnforcedOrg;
 
   return {
-    internalOrg: env['GITHUB_INTERNAL_ORG']?.trim() ?? '',
+    // Who may sign in: members of this org. A self-hosted install belongs to
+    // one client, so it defaults to that client's org (GITHUB_ENFORCED_ORG);
+    // without it, any GitHub account could sign in to the client's AlphaCI.
+    // Set GITHUB_INTERNAL_ORG to name a different org.
+    internalOrg:
+      env['GITHUB_INTERNAL_ORG']?.trim() ||
+      (env['ALPHACI_DEPLOYMENT_MODE']?.trim() === 'selfhosted'
+        ? (resolvedEnforcedOrg ?? '')
+        : ''),
     // Force every created repository into this org. No default: see the
     // enforcedOrg doc comment on AppConfig for why an unset value resolves to
     // empty and fails loudly rather than picking an org.
