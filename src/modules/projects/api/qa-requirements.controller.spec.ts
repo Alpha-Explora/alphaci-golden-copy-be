@@ -334,7 +334,7 @@ describe('requirements and Project run controllers', () => {
 
     await http()
       .patch(path)
-      .send({ status: 'not_applicable', expectedRowVersion: 1 })
+      .send({ status: 'failed', expectedRowVersion: 1 })
       .expect(200);
     expect(fixture.projectRuns.updateTestCase).toHaveBeenCalledWith(
       ID,
@@ -342,8 +342,15 @@ describe('requirements and Project run controllers', () => {
       'run-1',
       ITEM,
       CASE,
-      { status: 'not_applicable', expectedRowVersion: 1 },
+      { status: 'failed', expectedRowVersion: 1 },
     );
+    // Pending, Passed and Failed only.
+    for (const status of ['blocked', 'not_applicable']) {
+      await http()
+        .patch(path)
+        .send({ status, expectedRowVersion: 1 })
+        .expect(400);
+    }
     await http()
       .patch(path)
       .send({ status: 'returned_to_dev', expectedRowVersion: 1 })

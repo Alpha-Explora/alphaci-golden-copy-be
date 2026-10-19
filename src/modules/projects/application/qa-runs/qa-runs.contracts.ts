@@ -292,9 +292,14 @@ export type QaProjectVerificationStatus =
   | 'blocked'
   | 'returned_to_dev';
 
-/** Settable through PATCH on a Project run item: every status except 'in_progress'. */
+/**
+ * Settable through PATCH on a Project run item: Pending, Passed or Failed
+ * (ADR-0014, amendment 11). Failed always sends the story back to the
+ * Developers, so 'returned_to_dev' and 'blocked' are no longer set; rows
+ * written before keep them and still read as open defects.
+ */
 export const QA_PROJECT_VERIFICATION_STATUSES: readonly QaProjectVerificationStatus[] =
-  ['pending', 'passed', 'failed', 'blocked', 'returned_to_dev'];
+  ['pending', 'passed', 'failed'];
 
 export type { QaVerificationStatusCounts };
 
@@ -348,6 +353,17 @@ export const QA_TEST_CASE_STATUSES: readonly QaTestCaseStatus[] = [
   'failed',
   'blocked',
   'not_applicable',
+];
+
+/**
+ * What QA may set on a test case: Pending, Passed or Failed (ADR-0014,
+ * amendment 11). 'blocked' and 'not_applicable' are only read, on rows
+ * written before.
+ */
+export const QA_SETTABLE_TEST_CASE_STATUSES: readonly QaTestCaseStatus[] = [
+  'pending',
+  'passed',
+  'failed',
 ];
 
 /** Results that keep a story from passing (and a run from an APPROVED sign-off). */

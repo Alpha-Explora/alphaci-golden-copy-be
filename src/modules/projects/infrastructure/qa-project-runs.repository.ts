@@ -692,7 +692,8 @@ export class QaProjectRunsRepository {
 
   /**
    * Run items of the Iteration's OPEN runs that were sent back to development
-   * for this requirement item: what a Progress -> done flips back to pending.
+   * for this requirement item (failed, or returned_to_dev on rows written
+   * before amendment 11): what a Progress -> done flips back to pending.
    */
   async findReturnedOpenRunItems(
     iterationId: string,
@@ -707,7 +708,7 @@ export class QaProjectRunsRepository {
           AND r.status = 'open'
           AND r.iteration_id = $1
           AND i.source_item_id = $2
-          AND i.status = 'returned_to_dev';
+          AND i.status IN ('failed', 'returned_to_dev');
       `,
       [iterationId, sourceItemId],
     );
