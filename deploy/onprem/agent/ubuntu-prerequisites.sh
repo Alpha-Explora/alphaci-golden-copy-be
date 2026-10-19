@@ -15,3 +15,26 @@ check_ubuntu_prerequisites() {
   available=$(df -Pk /opt | awk 'NR==2 {print $4}')
   [ "$available" -ge 1048576 ] || { echo 'At least 1 GiB free disk space is required.' >&2; exit 1; }
 }
+
+# The automatic HTTPS address (tunnel) runs cloudflared, and AlphaCI gives every
+# environment with a frontend that address by default, so install it when it is
+# missing. Not fatal: without it the machine still deploys, and Hosting reports
+# that the address is unavailable.
+install_cloudflared() {
+  command -v cloudflared >/dev/null 2>&1 && return 0
+  local arch deb
+  arch=$(dpkg --print-architecture)
+  case "$arch" in
+    amd64 | arm64) ;;
+    *) echo "cloudflared is not available for $arch; the automatic HTTPS address will be unavailable." >&2; return 0 ;;
+  esac
+  echo 'Installing cloudflared for the automatic HTTPS address...'
+  deb=$(mktemp --suffix=.deb)
+  if curl -fsSL --retry 3 -o "$deb" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch.deb" &&
+    dpkg -i "$deb" >/dev/null; then
+    echo "Installed $(cloudflared --version 2>/dev/null | head -n 1)."
+  else
+    echo 'cloudflared could not be installed; the automatic HTTPS address stays unavailable until it is.' >&2
+  fi
+  rm -f "$deb"
+}
