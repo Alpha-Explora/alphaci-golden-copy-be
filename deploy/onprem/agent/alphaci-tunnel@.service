@@ -12,6 +12,9 @@ Group=alphaci-tunnel
 UMask=0077
 EnvironmentFile=/opt/alphaci/tunnels/%i/tunnel.env
 Environment=HOME=/opt/alphaci/tunnels/%i/run
+# The only writable path: stdbuf (uutils coreutils, Ubuntu 25.10+) creates a temp
+# directory, and /tmp is read-only under ProtectSystem=strict.
+Environment=TMPDIR=/opt/alphaci/tunnels/%i/run
 ExecStart=/opt/alphaci/bin/tunnel-run %i
 Restart=always
 RestartSec=15
