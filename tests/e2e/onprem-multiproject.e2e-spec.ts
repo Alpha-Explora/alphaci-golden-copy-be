@@ -16,6 +16,7 @@ describe('Two projects on one real Docker daemon', () => {
     suffix = randomUUID().slice(0, 8),
     registry = 'alphaci-registry-' + suffix;
   const projects: string[] = [];
+  const linkNetworks: string[] = [];
   let registryPort: number;
   const docker = (args: string[]) =>
     execFileSync('docker', args, { encoding: 'utf8', timeout: 180_000 }).trim();
@@ -82,11 +83,17 @@ describe('Two projects on one real Docker daemon', () => {
       ]);
       if (networks) docker(['network', 'rm', ...networks.split(/\s+/)]);
     }
+    for (const network of linkNetworks)
+      try {
+        execFileSync('docker', ['network', 'rm', network], { stdio: 'ignore' });
+      } catch {
+        // Already gone.
+      }
     docker(['rm', '-f', registry]);
   });
   function image(status: number) {
     const context = join(f.work, 'image-' + status);
-    mkdirSync(context);
+    mkdirSync(context, { recursive: true });
     writeFileSync(
       join(context, 'server.cjs'),
       `require('http').createServer((q,s)=>{s.statusCode=${status};s.end('app-${status}');}).listen(3000,'0.0.0.0');`,
@@ -201,5 +208,70 @@ describe('Two projects on one real Docker daemon', () => {
     expect(await (await fetch('http://127.0.0.1:18272/')).text()).toBe(
       'app-200',
     );
+  }, 240_000);
+  it('links a backend and a frontend of two projects on one network, attaching the backend that was already running', async () => {
+    const good = image(200);
+    const backend = f.assignment(18273),
+      frontend = f.assignment(18274);
+    const backendConfig = backend.assignment.machine.config as {
+      ports: Array<{ slot: string; hostPort: number; containerPort: number }>;
+      health: Array<{ slot: string; path: string | null }>;
+    };
+    backendConfig.ports[0]!.slot = 'backend';
+    backendConfig.health[0]!.slot = 'backend';
+    backend.envelope.manifest.artifacts[0]!.slot = 'backend';
+    for (const item of [backend, frontend]) {
+      item.envelope.manifest.artifacts[0]!.image = `localhost:${registryPort}/e2e/web`;
+      item.envelope.manifest.artifacts[0]!.digest = good;
+      f.resign(item);
+      projects.push('ac-' + item.assignment.environmentId.replaceAll('-', ''));
+    }
+    const network = `alphaci-${suffix}0000-dev`;
+    linkNetworks.push(network);
+    // The backend ran before the frontend was assigned: no link yet.
+    await run(backend, 'backend.json');
+    (frontend.assignment as Record<string, unknown>)['link'] = {
+      network,
+      env: { frontend: { API_URL: 'http://backend:3000' } },
+      peers: [
+        { environmentId: backend.assignment.environmentId, slot: 'backend' },
+      ],
+    };
+    await run(frontend, 'frontend.json');
+    const container = (project: string) =>
+      docker([
+        'ps',
+        '-q',
+        '--filter',
+        'label=com.docker.compose.project=' + project,
+      ]);
+    const frontendId = container(projects.at(-1)!);
+    expect(docker(['exec', frontendId, 'printenv', 'API_URL'])).toBe(
+      'http://backend:3000',
+    );
+    expect(
+      docker(['exec', frontendId, 'wget', '-qO-', 'http://backend:3000/']),
+    ).toBe('app-200');
+    // The backend's own linked deployment keeps it on the network by its alias.
+    const relinked = JSON.parse(JSON.stringify(backend)) as typeof backend;
+    relinked.deploymentId = randomUUID();
+    (relinked.assignment as Record<string, unknown>)['link'] = {
+      network,
+      env: { backend: { FRONTEND_URL: 'https://shop.example.com' } },
+      peers: [
+        { environmentId: frontend.assignment.environmentId, slot: 'frontend' },
+      ],
+    };
+    await run(relinked, 'backend-linked.json');
+    const backendId = container(projects.at(-2)!);
+    expect(docker(['exec', backendId, 'printenv', 'FRONTEND_URL'])).toBe(
+      'https://shop.example.com',
+    );
+    expect(
+      docker(['exec', frontendId, 'wget', '-qO-', 'http://backend:3000/']),
+    ).toBe('app-200');
+    expect(
+      docker(['exec', backendId, 'wget', '-qO-', 'http://frontend:3000/']),
+    ).toBe('app-200');
   }, 240_000);
 });

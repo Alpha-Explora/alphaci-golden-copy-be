@@ -15,6 +15,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { OnpremAssignmentsRepository } from '../infrastructure/repositories/onprem-assignments.repository';
 import { MACHINE_TOKEN_PREFIX } from './onprem/onprem-hosts.service';
+import { OnpremServiceLinksService } from './onprem/onprem-service-links.service';
+import {
+  SERVICE_LINK_AGENT_VERSION,
+  type ServiceLink,
+} from '../domain/onprem-service-link';
+import { agentAtLeast } from '../domain/onprem-tunnel';
 
 import type { AppConfig } from '#kernel/config/app.config';
 import {
@@ -148,6 +154,8 @@ export class ReleaseRegistryService {
     @Optional()
     @Inject(RELEASE_SIGNER)
     private readonly releaseSigner?: ReleaseSigner,
+    @Optional()
+    private readonly serviceLinks?: OnpremServiceLinksService,
   ) {}
 
   async registerRelease(
@@ -656,7 +664,15 @@ export class ReleaseRegistryService {
         sha256(token),
         this.agentKind(token),
         async (auth, client) => {
-          const result = [];
+          const pending: Array<{
+            bindingId: string;
+            item: {
+              deploymentId: string;
+              status: DeploymentStatus;
+              assignment: Record<string, unknown>;
+              envelope: Record<string, unknown>;
+            };
+          }> = [];
           for (const binding of auth.bindings) {
             // Production is not handed to a machine whose tunnel is not running yet:
             // its HTTPS address is what makes production reachable.
@@ -677,24 +693,45 @@ export class ReleaseRegistryService {
             );
             for (const { deployment, release } of assignments) {
               if (deployment.projectId !== binding.projectId) continue;
-              result.push({
-                deploymentId: deployment.id,
-                status: deployment.status,
-                assignment: {
-                  projectId: binding.projectId,
-                  environmentId: binding.environmentId,
-                  targetIds: deployment.targetIds,
-                  ...(binding.machine ? { machine: binding.machine } : {}),
-                },
-                envelope: {
-                  manifest: release.manifest,
-                  manifestSha256: release.manifestSha256,
-                  signature: release.signature,
+              pending.push({
+                bindingId: binding.id,
+                item: {
+                  deploymentId: deployment.id,
+                  status: deployment.status,
+                  assignment: {
+                    projectId: binding.projectId,
+                    environmentId: binding.environmentId,
+                    targetIds: deployment.targetIds,
+                    ...(binding.machine ? { machine: binding.machine } : {}),
+                  },
+                  envelope: {
+                    manifest: release.manifest,
+                    manifestSha256: release.manifestSha256,
+                    signature: release.signature,
+                  },
                 },
               });
             }
           }
-          return result;
+          // The link sits beside the machine config, outside the signed
+          // envelope: like ports and health, it is placement, not the release.
+          // Only agents that apply links receive one; older agents get exactly
+          // the previous payload and deploy unlinked (readiness says so).
+          const links =
+            this.serviceLinks &&
+            pending.length &&
+            agentAtLeast(auth.agentVersion, SERVICE_LINK_AGENT_VERSION)
+              ? await this.serviceLinks.linksFor(
+                  auth.bindings,
+                  new Set(pending.map((entry) => entry.bindingId)),
+                )
+              : new Map<string, ServiceLink>();
+          return pending.map(({ bindingId, item }) => {
+            const link = links.get(bindingId);
+            return link
+              ? { ...item, assignment: { ...item.assignment, link } }
+              : item;
+          });
         },
       );
     }

@@ -35,10 +35,26 @@ printf '%s' "$KEY_ID" | jq -Rs --slurpfile trust "$ROOT/trust.json" '$trust[0][.
 openssl pkey -pubin -in "$WORK/key.pem" -noout >/dev/null 2>&1 || blocked 'Release key is not pinned on this host. Nothing was deployed.'
 jq -e '.assignment.machine.config.health | length>0 and all(.path!=null)' "$INPUT" >/dev/null || blocked 'Application health is unverified because a health path is absent. Configure every target health path before retrying. Nothing was deployed.'
 jq -r '.assignment.machine.config as $c | $c.health[] as $h | $c.ports[] | select(.slot==$h.slot) | "http://127.0.0.1:\(.hostPort)\($h.path)"' "$INPUT" > "$WORK/health-urls"
-jq '.assignment.machine.config as $c | {
-  services:($c.ports | map({key:.slot,value:{image:("${ALPHACI_IMAGE_"+(.slot|ascii_upcase)+"}"),restart:"unless-stopped",ports:[((.hostPort|tostring)+":"+(.containerPort|tostring))],volumes:[(.slot+"-data:/var/lib/alphaci-data")]}}) | from_entries),
+# Optional service link (agent 0.4.0): the backend and frontend of a two-repository
+# pair on this machine share one Docker network, each aliased by its slot, and get
+# runtime variables. Without a link the environment deploys exactly as before;
+# older agents never read it.
+jq -e '.assignment.link // null | . == null or (type=="object" and
+  (.network|type=="string" and test("^alphaci-[a-f0-9]{12}-[a-z0-9][a-z0-9-]{0,23}$")) and
+  ((.env // {})|type=="object" and (to_entries|all((.key=="frontend" or .key=="backend") and (.value|type=="object") and (.value|length<=32) and
+    (.value|to_entries|all((.key|test("^[A-Z_][A-Z0-9_]*$")) and (.key|length<=128) and
+      (.value|type=="string") and (.value|length<=2048) and (.value|test("[\\x00-\\x1f\\x7f]")|not)))))) and
+  ((.peers // [])|type=="array" and length<=1 and all(type=="object" and (.environmentId|type=="string" and test("^[0-9a-f-]{36}$")) and (.slot=="frontend" or .slot=="backend"))))' "$INPUT" >/dev/null || blocked 'The service link in this assignment is invalid. Nothing was deployed.'
+jq -e '((.assignment.link.env // {}) | keys) - [.assignment.machine.config.ports[].slot] == []' "$INPUT" >/dev/null || blocked 'The service link sets variables for a slot this environment does not run. Nothing was deployed.'
+NETWORK=$(jq -r '.assignment.link.network // ""' "$INPUT")
+# Values are JSON strings, so nothing can break out of them; Compose still
+# interpolates ${...} inside values, so a literal dollar is written as $$.
+jq '.assignment.machine.config as $c | (.assignment.link // null) as $l | {
+  services:($c.ports | map(.slot as $s | {key:$s,value:({image:("${ALPHACI_IMAGE_"+($s|ascii_upcase)+"}"),restart:"unless-stopped",ports:[((.hostPort|tostring)+":"+(.containerPort|tostring))],volumes:[($s+"-data:/var/lib/alphaci-data")]}
+    + (if $l == null then {} else {networks:{default:{},"alphaci-link":{aliases:[$s]}}} end)
+    + ((($l.env // {})[$s] // {}) | if length == 0 then {} else {environment:map_values(gsub("\\$";"$$"))} end))}) | from_entries),
   volumes:($c.ports|map({key:(.slot+"-data"),value:{}})|from_entries)
-}' "$INPUT" > "$WORK/compose.json"
+} + (if $l == null then {} else {networks:{"alphaci-link":{name:$l.network,external:true}}} end)' "$INPUT" > "$WORK/compose.json"
 # An occupied port is safe only when this environment's current container owns it.
 while IFS=$'\t' read -r slot host_port container_port; do
   if ss -H -ltn "sport = :$host_port" | grep -q .; then
@@ -46,6 +62,19 @@ while IFS=$'\t' read -r slot host_port container_port; do
     [ -n "$own" ] && docker inspect "$own" | jq -e --arg key "$container_port/tcp" --arg port "$host_port" '.[0].NetworkSettings.Ports[$key] | any(.HostPort==$port)' >/dev/null || blocked "Port $host_port is occupied outside this assignment; no stack changed."
   fi
 done < <(jq -r '.assignment.machine.config.ports[] | [.slot,.hostPort,.containerPort] | @tsv' "$INPUT")
+if [ -n "$NETWORK" ]; then
+  # Idempotent, and safe when the other half creates it at the same moment.
+  docker network inspect "$NETWORK" >/dev/null 2>&1 ||
+    docker network create --label com.alphaci.link=true "$NETWORK" >/dev/null 2>&1 ||
+    docker network inspect "$NETWORK" >/dev/null 2>&1 ||
+    blocked "The Docker network $NETWORK could not be created; no stack changed."
+  # The other half may still run a deployment made before the link existed:
+  # attach it now so this side reaches it without waiting for its next deployment.
+  while IFS=$'\t' read -r peer_environment peer_slot; do
+    peer=$(docker ps -q --filter "label=com.docker.compose.project=ac-${peer_environment//-/}" --filter "label=com.docker.compose.service=$peer_slot" | head -n 1)
+    [ -z "$peer" ] || docker network connect --alias "$peer_slot" "$NETWORK" "$peer" >/dev/null 2>&1 || true
+  done < <(jq -r '.assignment.link.peers // [] | .[] | [.environmentId, .slot] | @tsv' "$INPUT")
+fi
 mv "$WORK/compose.json" "$DIR/compose.json"
 mv "$WORK/key.pem" "$DIR/release-key.pem"
 mv "$WORK/health-urls" "$DIR/health-urls"
