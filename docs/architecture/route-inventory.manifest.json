@@ -1,11 +1,11 @@
 {
-  "routeCount": 268,
+  "routeCount": 269,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "22f0d29db977cfddd7f950d4249e3fc0e8d9e10d723e354c7e8af20f2c6d7ce1",
+  "referenceSha256": "59cb07829c80bc9018b5a8bdaa177091cae42bc5694429f9244126e409d24f1e",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "22f0d29db977cfddd7f950d4249e3fc0e8d9e10d723e354c7e8af20f2c6d7ce1",
+  "baselineSha256": "59cb07829c80bc9018b5a8bdaa177091cae42bc5694429f9244126e409d24f1e",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -299,6 +299,12 @@
         "PATCH /api/v1/requirements/{id}/items/{itemId}/test-cases/{testCaseId}",
         "DELETE /api/v1/requirements/{id}/items/{itemId}/test-cases/{testCaseId}",
         "PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/test-cases/{testCaseId}"
+      ]
+    },
+    {
+      "reason": "Product owner acceptance of a signed-off Project run item (ADR-0014 amendment 12)",
+      "routes": [
+        "PATCH /api/v1/delivery-projects/:deliveryProjectId/qa-runs/:runId/items/:itemId/acceptance"
       ]
     }
   ]

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -111,6 +112,10 @@ const itemRow = (overrides: Partial<QaRunItemRow> = {}): QaRunItemRow => ({
   requirement_name: 'Checkout',
   requirement_kind: 'functional',
   acceptance_criteria: 'Receipt shown',
+  po_status: 'pending',
+  po_by: null,
+  po_by_login: null,
+  po_at: null,
   ...overrides,
 });
 
@@ -157,6 +162,7 @@ function setup({
     findItemForRun: jest.fn().mockResolvedValue(items[0] ?? null),
     findPriorItemSummaries: jest.fn().mockResolvedValue(new Map()),
     updateItem: jest.fn(),
+    acceptItem: jest.fn(),
     createSignoff: jest.fn(),
     reopenRun: jest.fn(),
     listSupersededSignoffs: jest.fn().mockResolvedValue([]),
@@ -247,6 +253,7 @@ function setup({
     listWorkspaceLeadAndDeveloperIds: jest
       .fn()
       .mockResolvedValue(['lead-1', 'dev-1', 'qa-1']),
+    listWorkspaceQaIds: jest.fn().mockResolvedValue(['qa-1', 'qa-2']),
   } as unknown as jest.Mocked<QaAccessService>;
   const projectContext = {
     requireProject: jest.fn().mockResolvedValue(project),
@@ -1263,6 +1270,8 @@ describe('QaProjectRunsService - Iterations', () => {
           canReopen: false,
           canDispatch: false,
           canManageTestCases: false,
+          canRecordTestCases: false,
+          canAccept: false,
         });
         expect(run.attachments.canAdd).toBe(false);
       }
@@ -1433,7 +1442,25 @@ describe('QaProjectRunsService test cases', () => {
         expectedRowVersion: 1,
         status: 'passed',
       }),
-    ).rejects.toMatchObject({ response: { code: 'VERIFICATION_FORBIDDEN' } });
+    ).rejects.toMatchObject({
+      response: { code: 'TEST_CASE_RESULT_FORBIDDEN' },
+    });
+    expect(testCases.recordResult).not.toHaveBeenCalled();
+  });
+
+  it('a Product owner reads test case results but cannot record one', async () => {
+    const { service, testCases } = setup({ role: 'lead' });
+
+    const run = await service.getById(DP, actor('lead-1'), 'run-1');
+    expect(run.permissions).toMatchObject({ canRecordTestCases: false });
+    await expect(
+      service.updateTestCase(DP, actor('lead-1'), 'run-1', 'ri-1', 'rtc-1', {
+        expectedRowVersion: 1,
+        status: 'passed',
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'TEST_CASE_RESULT_FORBIDDEN' },
+    });
     expect(testCases.recordResult).not.toHaveBeenCalled();
   });
 
@@ -1505,5 +1532,184 @@ describe('QaProjectRunsService test cases', () => {
 
     expect(testCases.syncOpenRuns).toHaveBeenCalledWith('it-1');
     expect(result.run.items[0]?.rowVersion).toBe(2);
+  });
+});
+
+describe('QaProjectRunsService.acceptItem (the Product owner after QA)', () => {
+  const approved = (verdict: QaRunSignoffRow['verdict'] = 'APPROVED') =>
+    ({
+      id: 's-1',
+      run_id: 'run-1',
+      verdict,
+      summary: null,
+      conditions: null,
+      signed_by: 'qa-1',
+      signed_by_login: 'qa',
+      signed_at: '2026-10-01T01:00:00.000Z',
+      report_json: {},
+      superseded_at: null,
+      superseded_by: null,
+      superseded_by_login: null,
+    }) as QaRunSignoffRow;
+
+  function signedOff(
+    role: PlatformAppRole = 'lead',
+    verdict?: QaRunSignoffRow['verdict'],
+  ) {
+    const ctx = setup({ role, run: runRow({ status: 'signed_off' }) });
+    ctx.runs.findActiveSignoff.mockResolvedValue(approved(verdict));
+    return ctx;
+  }
+
+  const pass = { decision: 'passed' as const, expectedRowVersion: 1 };
+
+  it('a Product owner passes an item of a signed-off run', async () => {
+    const { service, runs, audit } = signedOff();
+    runs.acceptItem.mockResolvedValue(
+      itemRow({ po_status: 'passed', po_by: 'lead-1', po_by_login: 'po' }),
+    );
+
+    await service.acceptItem(DP, actor('lead-1'), 'run-1', 'ri-1', pass);
+
+    expect(runs.acceptItem).toHaveBeenCalledWith('run-1', 'ri-1', 1, {
+      id: 'lead-1',
+      login: 'qa',
+    });
+    expect(runs.reopenRun).not.toHaveBeenCalled();
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventCode: 'qa.item.po_accepted' }),
+    );
+  });
+
+  it('the run says who may accept, and each item whether it was accepted', async () => {
+    const lead = signedOff('lead');
+    lead.runs.listItemsByRunId.mockResolvedValue([
+      itemRow({
+        po_status: 'passed',
+        po_by: 'lead-1',
+        po_by_login: 'po',
+        po_at: '2026-10-02T00:00:00.000Z',
+      }),
+    ]);
+    const run = await lead.service.getById(DP, actor('lead-1'), 'run-1');
+    expect(run.permissions.canAccept).toBe(true);
+    expect(run.items[0]?.poAcceptance).toEqual({
+      status: 'passed',
+      acceptedBy: { id: 'lead-1', login: 'po' },
+      acceptedAt: '2026-10-02T00:00:00.000Z',
+    });
+
+    const qa = signedOff('qa');
+    expect(
+      (await qa.service.getById(DP, actor(), 'run-1')).permissions.canAccept,
+    ).toBe(false);
+    const rejected = signedOff('lead', 'REJECTED');
+    expect(
+      (await rejected.service.getById(DP, actor('lead-1'), 'run-1')).permissions
+        .canAccept,
+    ).toBe(false);
+  });
+
+  it('refuses QA, an open run and a Rejected sign-off', async () => {
+    const qa = signedOff('qa');
+    await expect(
+      qa.service.acceptItem(DP, actor(), 'run-1', 'ri-1', pass),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    const open = setup({ role: 'lead' });
+    await expect(
+      open.service.acceptItem(DP, actor('lead-1'), 'run-1', 'ri-1', pass),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    const rejected = signedOff('lead', 'REJECTED');
+    await expect(
+      rejected.service.acceptItem(DP, actor('lead-1'), 'run-1', 'ri-1', pass),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(rejected.runs.acceptItem).not.toHaveBeenCalled();
+  });
+
+  it('a stale row version is QA_ITEM_STALE before anything changes', async () => {
+    const { service, runs } = signedOff();
+    await expect(
+      service.acceptItem(DP, actor('lead-1'), 'run-1', 'ri-1', {
+        decision: 'failed',
+        expectedRowVersion: 9,
+        notes: 'Wrong header',
+      }),
+    ).rejects.toMatchObject({ response: { code: 'QA_ITEM_STALE' } });
+    expect(runs.reopenRun).not.toHaveBeenCalled();
+  });
+
+  it('failing needs notes saying what is wrong', async () => {
+    const { service, runs } = signedOff();
+    await expect(
+      service.acceptItem(DP, actor('lead-1'), 'run-1', 'ri-1', {
+        decision: 'failed',
+        expectedRowVersion: 1,
+        notes: '   ',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(runs.reopenRun).not.toHaveBeenCalled();
+  });
+
+  it('failing reopens the run, returns the story to the Developers as Failed, and tells QA and the Developers', async () => {
+    const { service, runs, notifications, audit } = signedOff();
+    runs.reopenRun.mockResolvedValue(runRow({ status: 'open' }));
+    runs.updateItem.mockResolvedValue(
+      itemRow({
+        status: 'failed',
+        defect_severity: 'major',
+        notes: 'Product owner: Wrong header',
+      }),
+    );
+
+    await service.acceptItem(DP, actor('lead-1'), 'run-1', 'ri-1', {
+      decision: 'failed',
+      expectedRowVersion: 1,
+      notes: ' Wrong header ',
+    });
+
+    expect(runs.reopenRun).toHaveBeenCalledWith('run-1', {
+      id: 'lead-1',
+      login: 'qa',
+    });
+    expect(runs.updateItem).toHaveBeenCalledWith(
+      'run-1',
+      'ri-1',
+      1,
+      expect.objectContaining({
+        status: 'failed',
+        notes: 'Product owner: Wrong header',
+        defectSeverity: 'major',
+      }),
+      { id: 'lead-1', login: 'qa' },
+      'pending',
+      expect.objectContaining({ resetProgressOnReturn: true }),
+    );
+    expect(audit.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventCode: 'qa.item.po_rejected' }),
+    );
+    const calls = notifications.record.mock.calls.map(
+      (call) =>
+        call[0] as {
+          userId: string;
+          eventCode: string;
+          title: string;
+          body: string;
+        },
+    );
+    expect(calls.map((call) => call.userId).sort()).toEqual([
+      'dev-1',
+      'owner-1',
+      'qa-1',
+      'qa-2',
+    ]);
+    expect(
+      calls.every((call) => call.eventCode === 'qa.item.po_rejected'),
+    ).toBe(true);
+    expect(calls[0]?.title).toBe(
+      'Product owner rejected "Pay by card" in Checkout',
+    );
+    expect(calls[0]?.body).toBe('Wrong header');
   });
 });

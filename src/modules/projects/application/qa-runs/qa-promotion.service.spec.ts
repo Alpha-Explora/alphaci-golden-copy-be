@@ -123,6 +123,7 @@ function setup({
   } as unknown as jest.Mocked<QaRequirementsRepository>;
   const projectRuns = {
     countIterationItemsNotPassed: jest.fn().mockResolvedValue(0),
+    countItemsNotAccepted: jest.fn().mockResolvedValue(0),
     findLatestSignedOff: jest.fn().mockResolvedValue(
       verdict === null && covered.length === 0
         ? null
@@ -331,6 +332,19 @@ describe('QaPromotionService.getStatus (per-Project gate)', () => {
     expect(status.reasons).toEqual([
       'Requirements changed after QA signed off: a Product owner reopens the run so QA verifies them',
     ]);
+  });
+
+  it('waits until the Product owner passed every item of the Approved run', async () => {
+    const { service, projectRuns } = setup();
+    projectRuns.countItemsNotAccepted.mockResolvedValue(2);
+
+    const status = await service.getStatus('p-api', actor);
+
+    expect(status.eligible).toBe(false);
+    expect(status.reasons).toEqual([
+      '2 items are waiting for the Product owner to pass them',
+    ]);
+    expect(projectRuns.countItemsNotAccepted).toHaveBeenCalledWith('run-1');
   });
 
   it('blocks this repository when ANOTHER repository of the Project moved', async () => {

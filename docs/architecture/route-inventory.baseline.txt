@@ -142,6 +142,7 @@ GET /api/v1/workspaces/{workspaceId}/qa-checklists
 GET /api/v1/workspaces/{workspaceId}/qa-requirements/overview
 PATCH /api/v1/admin/feedback/{id}
 PATCH /api/v1/admin/users/{id}/app-role
+PATCH /api/v1/delivery-projects/:deliveryProjectId/qa-runs/:runId/items/:itemId/acceptance
 PATCH /api/v1/delivery-projects/{deliveryProjectId}
 PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}
 PATCH /api/v1/delivery-projects/{deliveryProjectId}/qa-runs/{runId}/items/{itemId}/test-cases/{testCaseId}

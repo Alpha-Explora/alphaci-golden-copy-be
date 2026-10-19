@@ -86,6 +86,8 @@ const run = (items: ProjectQaRunItem[]): ProjectQaRun =>
       canReopen: true,
       canDispatch: false,
       canManageTestCases: false,
+      canRecordTestCases: false,
+      canAccept: false,
     },
     attachments: { enabled: true, canAdd: false },
     automation: { verify: null, quality: null },

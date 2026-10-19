@@ -663,6 +663,19 @@ export class QaProjectRunsRepository {
     return Number(result.rows[0]?.n ?? 0);
   }
 
+  /** Items of a signed-off run the Product owner has not passed yet (ADR-0014, amendment 12). */
+  async countItemsNotAccepted(runId: string): Promise<number> {
+    const result = await this.databaseService.query<{ n: number }>(
+      `
+        SELECT COUNT(*)::int AS n
+        FROM projects.qa_run_items
+        WHERE run_id = $1 AND po_status <> 'passed';
+      `,
+      [runId],
+    );
+    return Number(result.rows[0]?.n ?? 0);
+  }
+
   /** Verification status counts per requirement for one run (null key = source requirement deleted). */
   async verificationCountsByRequirement(
     runId: string,

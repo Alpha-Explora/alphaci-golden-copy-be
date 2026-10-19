@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-10-20
+
+- **Update**: Recorded ADR-0014 amendment 12: the Product owner accepts a signed-off run item by item, a failure reopens the run and returns the story to development, and Merge to main waits for every acceptance. Updated the persona matrix and section 7.2 of `docs/design/project-requirements.md`; the route inventory gained one route.
+
 ## 2026-10-19
 
 - **Update**: Generated workflow files land in one commit per branch, and the React scaffold no longer adds its own container publish workflow. See CHANGELOG.

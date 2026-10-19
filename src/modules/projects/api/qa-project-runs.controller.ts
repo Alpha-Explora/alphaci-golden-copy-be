@@ -19,6 +19,7 @@ import {
   RequiresCapability,
 } from '#kernel/composition/index.js';
 import { SessionAuthGuard } from '#kernel/auth/session-auth.guard';
+import { AcceptQaRunItemDto } from '../application/qa-runs/dto/accept-qa-run-item.dto';
 import { DispatchProjectRunDto } from '../application/qa-runs/dto/dispatch-project-run.dto';
 import { PatchQaRunItemDto } from '../application/qa-runs/dto/patch-qa-run-item.dto';
 import { PatchRunTestCaseDto } from '../application/qa-runs/dto/patch-run-test-case.dto';
@@ -179,6 +180,28 @@ export class DeliveryProjectQaRunsController {
       runId,
       itemId,
       testCaseId,
+      body,
+    );
+  }
+
+  /**
+   * The Product owner passes or fails one item of a signed-off run
+   * (ADR-0014, amendment 12). Failing reopens the run and returns the story
+   * to the Developers.
+   */
+  @Patch(':runId/items/:itemId/acceptance')
+  acceptItem(
+    @Req() req: Request,
+    @Param('deliveryProjectId') deliveryProjectId: string,
+    @Param('runId') runId: string,
+    @Param('itemId') itemId: string,
+    @Body() body: AcceptQaRunItemDto,
+  ) {
+    return this.qaProjectRunsService.acceptItem(
+      deliveryProjectId,
+      actorContext(req),
+      runId,
+      itemId,
       body,
     );
   }
