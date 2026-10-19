@@ -154,6 +154,29 @@ export function stageRunsOnBranch(
 export const ENVIRONMENT_PROMOTE_WORKFLOW_FILE = '30-alphaci-promote.yml';
 
 /**
+ * Inputs of an environment pipeline's verify workflow: the address of the
+ * deployed environment it tests. The generator declares them and ALPHACI
+ * passes them when it starts the workflow, so they are named once here.
+ */
+export const VERIFY_UI_URL_INPUT = 'ui-url';
+export const VERIFY_API_URL_INPUT = 'api-url';
+
+const ACCESS_WORKFLOW_BASENAME = /^00-alphaci-access(-[a-z0-9]+)?.ya?ml$/i;
+
+/**
+ * A project's generated verify workflow file, from its stored workflow_path
+ * (the access stage's file). Every stage of one bundle shares the suffix; a
+ * path outside the naming convention falls back to no suffix.
+ */
+export function verifyWorkflowFileFor(
+  workflowPath: string | null | undefined,
+): string {
+  const basename = workflowPath?.split('/').pop() ?? '';
+  const suffix = ACCESS_WORKFLOW_BASENAME.exec(basename)?.[1] ?? '';
+  return `30-alphaci-verify${suffix}.yml`;
+}
+
+/**
  * The branches a project's pipeline runs on. Its environments' source branches
  * come first, in position order, then the fixed tiers. `base` is where a
  * workflow fix is proposed: the first environment's branch, or the working tier

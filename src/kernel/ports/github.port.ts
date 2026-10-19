@@ -818,6 +818,7 @@ export interface GithubProjectPort {
     repoFullName: string,
     workflowFile: string,
     ref: string,
+    inputs?: Record<string, string>,
   ): Promise<GitHubDispatchWorkflowResult>;
   /**
    * Who GitHub attributes `sha` to, and whether it is a merge commit. Null

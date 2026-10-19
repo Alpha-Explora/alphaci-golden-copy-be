@@ -319,3 +319,50 @@ describe('release signer on the sign-release job', () => {
     ]);
   });
 });
+
+describe('verify stage of an environment pipeline', () => {
+  const reactTemplate: WorkflowTemplate = {
+    ...template,
+    id: 'fe-react',
+    stack: 'react',
+  };
+  const verifyOf = (bundleOptions: StagedWorkflowOptions, from = template) => {
+    const file = buildStagedWorkflowBundle(
+      from,
+      bundleOptions,
+      new WorkflowFragmentRegistry([
+        renderWorkflowFragment,
+        vercelWorkflowFragment,
+        onpremComposeWorkflowFragment,
+      ]),
+    ).workflowFiles.find((candidate) => candidate.stage === 'verify');
+    return (
+      file && { path: file.path, workflow: yaml.load(file.yaml) as Workflow }
+    );
+  };
+
+  it('is started by ALPHACI with the address to test, not chained to package', () => {
+    const verify = verifyOf(
+      { ...options, templateId: 'fe-react', workflowVariant: 'frontend' },
+      reactTemplate,
+    )!;
+    expect(verify.path).toBe(
+      '.github/workflows/30-alphaci-verify-frontend.yml',
+    );
+    expect(Object.keys(verify.workflow.on)).toEqual(['workflow_dispatch']);
+    expect(
+      Object.keys(verify.workflow.on['workflow_dispatch']!.inputs!),
+    ).toEqual(['ui-url', 'api-url']);
+    const resolve = verify.workflow.jobs['resolve-targets']!;
+    expect(resolve.steps![0]!.env!['VERIFY_UI_URL']).toBe(
+      '${{ inputs.ui-url }}',
+    );
+    expect(verify.workflow.jobs['ui-tests-uat']!.with!['e2e-base-url']).toBe(
+      '${{ needs.resolve-targets.outputs.ui-uat }}',
+    );
+  });
+
+  it('is not emitted for a stack with no suite to run', () => {
+    expect(verifyOf(options)).toBeUndefined();
+  });
+});

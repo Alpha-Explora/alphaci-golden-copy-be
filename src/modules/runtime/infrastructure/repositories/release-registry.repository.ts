@@ -371,6 +371,41 @@ export class ReleaseRegistryRepository {
     return toDeployment(requiredRow(result.rows[0]));
   }
 
+  /**
+   * Who asked for a deployment and the public address of its environment's
+   * on-prem host (configured, else a running tunnel's): what the verify stage
+   * is started with once the deployment is healthy.
+   */
+  async verifyTarget(
+    deploymentId: string,
+  ): Promise<{ requestedBy: string | null; address: string | null } | null> {
+    const result = await this.databaseService.query<{
+      requested_by: string | null;
+      public_url: string | null;
+    }>(
+      `SELECT d.requested_by, address.public_url
+         FROM env_provisioning.environment_deployments d
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(
+                    NULLIF(h.assignment_config->'ingress'->>'publicUrl', ''),
+                    CASE WHEN h.tunnel_status = 'running' THEN h.tunnel_url END
+                  ) AS public_url
+             FROM env_provisioning.onprem_hosts h
+            WHERE h.project_id = d.project_id
+              AND h.environment_id = d.environment_id
+              AND h.revoked_at IS NULL
+            ORDER BY h.created_at DESC
+            LIMIT 1
+         ) address ON true
+        WHERE d.id = $1`,
+      [deploymentId],
+    );
+    const row = result.rows[0];
+    return row
+      ? { requestedBy: row.requested_by, address: row.public_url }
+      : null;
+  }
+
   async findDeployment(
     deploymentId: string,
   ): Promise<EnvironmentDeploymentRecord | null> {

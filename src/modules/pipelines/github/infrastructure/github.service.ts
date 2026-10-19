@@ -2491,18 +2491,30 @@ export class GithubService
     repoFullName: string,
     workflowFile: string,
     ref: string,
+    inputs?: Record<string, string>,
   ): Promise<GitHubDispatchWorkflowResult> {
-    const response = await this.http.fetchWithRetry(
-      `https://api.github.com/repos/${repoFullName}/actions/workflows/${encodeURIComponent(workflowFile)}/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          ...this.http.workspaceHeaders(accessToken),
-          'Content-Type': 'application/json',
+    const dispatch = (body: Record<string, unknown>) =>
+      this.http.fetchWithRetry(
+        `https://api.github.com/repos/${repoFullName}/actions/workflows/${encodeURIComponent(workflowFile)}/dispatches`,
+        {
+          method: 'POST',
+          headers: {
+            ...this.http.workspaceHeaders(accessToken),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify({ ref }),
-      },
-    );
+      );
+    let response = await dispatch(inputs ? { ref, inputs } : { ref });
+    // A workflow generated before it declared these inputs refuses them
+    // (422 "Unexpected inputs provided"); it reads its addresses from
+    // repository variables instead, so dispatch it without them.
+    if (inputs && response.status === 422) {
+      const text = await response.clone().text();
+      if (/unexpected inputs/i.test(text)) {
+        response = await dispatch({ ref });
+      }
+    }
 
     if (response.status === 401) {
       return {

@@ -24,6 +24,8 @@ import {
   ENVIRONMENT_PROMOTE_WORKFLOW_FILE,
   HOSTED_BRANCHES,
   PIPELINE_BRANCHES,
+  VERIFY_API_URL_INPUT,
+  VERIFY_UI_URL_INPUT,
 } from '#kernel/config/pipeline-branches';
 import { BROWSER_TEST_DEPENDENCIES } from './browser-test-dependencies';
 import { defaultToolchainRegistry } from './toolchains';
@@ -345,6 +347,28 @@ const CHAINED_STAGE_GATE =
   "(github.event.workflow_run.conclusion == 'success' && " +
   `needs.${UPSTREAM_WORK_JOB_ID}.outputs.ran == 'true') }}`;
 const BRANCH_POLICY_JOB_ID = 'branch-policy';
+
+/** Shell names the dispatched verify stage reads its addresses into. */
+const DISPATCHED_UI_URL = 'VERIFY_UI_URL';
+const DISPATCHED_API_URL = 'VERIFY_API_URL';
+/**
+ * Both are always declared, whichever suites the stack has: GitHub refuses a
+ * dispatch carrying an input the workflow does not declare.
+ */
+const VERIFY_DISPATCH_INPUTS = {
+  [VERIFY_UI_URL_INPUT]: {
+    description: 'Address of the deployed frontend to test',
+    required: false,
+    type: 'string',
+    default: '',
+  },
+  [VERIFY_API_URL_INPUT]: {
+    description: 'Address of the deployed API to test',
+    required: false,
+    type: 'string',
+    default: '',
+  },
+};
 
 /**
  * A job `if:` matching any of the given branches.
@@ -794,8 +818,17 @@ function buildVerifyWorkflowFile(
     api?: ToolchainApiVerification | undefined;
     ui?: ToolchainUiVerification | undefined;
   },
+  addresses: 'variables' | 'dispatched' = 'variables',
 ): StagedWorkflowFile {
   const { verifyName, packageName, fileSuffix } = ctx.names;
+  /*
+   * Environment pipelines deploy outside the run: an on-prem host pulls the
+   * release, or a promotion lands later. Nothing in the chain knows when the
+   * service is up, so the stage is not chained to Package. ALPHACI starts it
+   * once the environment is healthy (and QA Studio's "Run Playwright" does),
+   * passing the environment's address as an input.
+   */
+  const dispatched = addresses === 'dispatched';
 
   /*
    * Where each kind of test points.
@@ -819,8 +852,9 @@ function buildVerifyWorkflowFile(
   const apiUrl = (branch: 'uat' | 'main') =>
     `\${{ needs.${RESOLVE_TARGETS_JOB_ID}.outputs.api-${branch} }}`;
 
+  // A dispatched run is handed a full URL; a Vercel alias is a bare host.
   const uiUrl = (branch: 'uat' | 'main') =>
-    `https://\${{ needs.${RESOLVE_TARGETS_JOB_ID}.outputs.ui-${branch} }}`;
+    `${dispatched ? '' : 'https://'}\${{ needs.${RESOLVE_TARGETS_JOB_ID}.outputs.ui-${branch} }}`;
 
   const apiTestJob = (branch: 'uat' | 'main') => ({
     needs: [VALIDATE_ACCESS_JOB_ID, RESOLVE_TARGETS_JOB_ID],
@@ -971,15 +1005,40 @@ function buildVerifyWorkflowFile(
      * been three copies of one hostname.
      */
     if (verification.ui) {
-      env[VERCEL_ALIAS_VARIABLE] = `\${{ vars.${VERCEL_ALIAS_VARIABLE} }}`;
+      if (dispatched) {
+        env[DISPATCHED_UI_URL] = `\${{ inputs.${VERIFY_UI_URL_INPUT} }}`;
+      } else {
+        env[VERCEL_ALIAS_VARIABLE] = `\${{ vars.${VERCEL_ALIAS_VARIABLE} }}`;
+      }
       outputs['ui-skipped'] = '${{ steps.resolve.outputs.ui-skipped }}';
     }
     if (verification.api) {
+      if (dispatched) {
+        env[DISPATCHED_API_URL] = `\${{ inputs.${VERIFY_API_URL_INPUT} }}`;
+      }
       outputs['api-skipped'] = '${{ steps.resolve.outputs.api-skipped }}';
     }
     outputs['skip-reason'] = '${{ steps.resolve.outputs.skip-reason }}';
 
     for (const branch of ['uat', 'main'] as const) {
+      /*
+       * Dispatched: ALPHACI passes the address of the environment being
+       * tested, the same one QA Studio previews. One input serves whichever
+       * branch the run is on, so both branches read the same value.
+       */
+      if (dispatched) {
+        for (const [kind, variable] of [
+          ['api', DISPATCHED_API_URL],
+          ['ui', DISPATCHED_UI_URL],
+        ] as const) {
+          if (!verification[kind]) continue;
+          outputs[`${kind}-${branch}`] =
+            `\${{ steps.resolve.outputs.${kind}-${branch} }}`;
+          lines.push(`  echo "${kind}-${branch}=\${${variable}}"`);
+          requiredByBranch[branch]!.push([kind, variable]);
+        }
+        continue;
+      }
       if (verification.api) {
         const variable = `RENDER_HEALTHCHECK_URL_${branch.toUpperCase()}`;
         outputs[`api-${branch}`] =
@@ -1057,7 +1116,9 @@ function buildVerifyWorkflowFile(
       '  # Variables, not secrets: public addresses that ALPHACI installs when the',
       '  # deployment target is provisioned. Missing means this project was never',
       '  # given hosting, or the variable was removed.',
-      '  echo "skip-reason=Nothing was deployed for ${BRANCH}: ${missing} ${verb} not set - provision hosting in ALPHACI." >> "$GITHUB_OUTPUT"',
+      dispatched
+        ? '  echo "skip-reason=No address was given for ${BRANCH}: ${missing} ${verb} empty - ALPHACI passes it once ${BRANCH} is deployed." >> "$GITHUB_OUTPUT"'
+        : '  echo "skip-reason=Nothing was deployed for ${BRANCH}: ${missing} ${verb} not set - provision hosting in ALPHACI." >> "$GITHUB_OUTPUT"',
       'fi',
     );
 
@@ -1106,13 +1167,15 @@ function buildVerifyWorkflowFile(
     yaml: dumpWorkflow({
       name: verifyName,
       'run-name': INHERITED_RUN_NAME,
-      on: {
-        workflow_run: {
-          workflows: [packageName],
-          types: ['completed'],
-        },
-        workflow_dispatch: {},
-      },
+      on: dispatched
+        ? { workflow_dispatch: { inputs: VERIFY_DISPATCH_INPUTS } }
+        : {
+            workflow_run: {
+              workflows: [packageName],
+              types: ['completed'],
+            },
+            workflow_dispatch: {},
+          },
       permissions: {
         contents: 'read',
       },
@@ -1415,6 +1478,19 @@ function buildEnvironmentWorkflowBundle(
       dto.releaseSigning === 'server',
     ),
   ];
+  // Verify, as in the hosted bundle, needs a suite and somewhere deployed.
+  if (
+    (toolchain.apiVerification || toolchain.uiVerification) &&
+    targets.length > 0
+  ) {
+    files.push(
+      buildVerifyWorkflowFile(
+        ctx,
+        { api: toolchain.apiVerification, ui: toolchain.uiVerification },
+        'dispatched',
+      ),
+    );
+  }
   if (dto.workflowVariant !== 'frontend') {
     files.push(buildPromoteWorkflowFile(ctx, registry, environments, targets));
     files.push(buildEnvGuardWorkflowFile(ctx.branches));
