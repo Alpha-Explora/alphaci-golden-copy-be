@@ -89,6 +89,7 @@ services:
       - github_app_webhook_secret
       - release_signing_key
       - env_provisioning_encryption_key
+      - onprem_registry_token
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -196,3 +197,5 @@ secrets:
     file: ./secrets/github_oauth_client_secret
   github_app_webhook_secret:
     file: ./secrets/github_app_webhook_secret
+  onprem_registry_token:
+    file: ./secrets/onprem_registry_token

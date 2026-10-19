@@ -29,6 +29,10 @@ import { parseArgs, UsageError, USAGE, type CliCommand } from './args';
 import { runDoctor, formatResults, type DoctorProbes } from './doctor';
 import { releaseKeyId } from './release-key';
 import { InitError, runInit, SECRET_FILES } from './selfhost-init';
+import {
+  createHostEnrollment,
+  HostEnrollmentError,
+} from './host-enrollment';
 
 export interface CliIo {
   readonly out: (line: string) => void;
@@ -64,6 +68,8 @@ export async function main(
       return runAdminGrant(command.githubLogin, env, io);
     case 'doctor':
       return runDoctorCommand(env, io);
+    case 'host-enrollment':
+      return runHostEnrollment(command, env, io);
   }
 }
 
@@ -148,6 +154,53 @@ async function runAdminGrant(
     return 0;
   } catch (error) {
     if (error instanceof AdminGrantError) {
+      io.err(error.message);
+      return 1;
+    }
+    io.err(`Database step failed: ${describe(error)}`);
+    return 1;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** Prints only the code on stdout, so server-host can capture it. */
+async function runHostEnrollment(
+  command: Extract<CliCommand, { name: 'host-enrollment' }>,
+  env: NodeJS.ProcessEnv,
+  io: CliIo,
+): Promise<number> {
+  const loaded = loadSecretFiles(env, io);
+  if (loaded !== 0) return loaded;
+  const url = env['DATABASE_URL']?.trim() ?? '';
+  if (url === '') {
+    io.err('DATABASE_URL (or DATABASE_URL_FILE) is not set.');
+    return 2;
+  }
+  const client = openClient(url, env);
+  try {
+    await client.connect();
+    const result = await createHostEnrollment(
+      {
+        query: async <Row extends Record<string, unknown>>(
+          text: string,
+          values?: readonly unknown[],
+        ) => ({
+          rows: (await client.query<Row>(text, values ? [...values] : undefined))
+            .rows,
+        }),
+      },
+      {
+        team: command.team,
+        githubLogin: command.githubLogin,
+        name: command.hostName,
+      },
+    );
+    io.err(`Enrollment created for team ${result.team}; it works once.`);
+    io.out(result.code);
+    return 0;
+  } catch (error) {
+    if (error instanceof HostEnrollmentError) {
       io.err(error.message);
       return 1;
     }
