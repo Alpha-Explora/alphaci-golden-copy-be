@@ -2,6 +2,7 @@
 
 ## 2026-10-19
 
+- **Update**: Generated pipelines name images after the repository, and every lockfile-less install the generator emits resolves as of one day ago (`--before`). The React Dockerfile installs without a lockfile. See CHANGELOG.
 - **Update**: Two-repository (`multi-repo`) projects accept an `environments` list at creation. Each repository gets the environment pipeline of a single-repository project for its own slot, and host assignment runs for both rows with each row's part of the config. A project with both services in one repository still rejects the list. Recorded in `docs/architecture/project-environments.md`.
 - **Update**: Recorded on-prem service links in the release registry contract and the host setup runbook. The backend and frontend environments of a two-repository project on one machine share a Docker network and get `API_URL`, `FRONTEND_URL` and `CORS_ORIGINS` through an unsigned `assignment.link` derived on each read and sent only to agents that reported 0.4.0 or newer. Agent 0.4.0 applies it; readiness reports it as `service-link`. Generated architecture maps gained the new runtime files.
 - **Update**: Recorded QA test cases under a User story as ADR-0014 amendment 10 and section 7 of `docs/design/project-requirements.md`: categories and test cases written by QA and admins, a per-run copy with QA's result, the strict pass and APPROVED rules, and the open-run sync. Route inventory gained seven routes; the generated maps were regenerated.

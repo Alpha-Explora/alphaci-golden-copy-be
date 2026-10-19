@@ -12,12 +12,12 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
       "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 34388,
-      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+      "bytes": 34455,
+      "sha256": "8ff796d73727c1eacca827a10e03600f32649dc871d6a39b2b2462cccf829c7b",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 26943,
-      "sha256": "e737eeb0a2e1f5680a6d12d9a39ed6739d9757636da242d6509564c36bf491d3",
+      "bytes": 27035,
+      "sha256": "b1c7febf4f2319d1f123ac04c8a2557ccf2383a1e38d237165598994797d7639",
     },
     ".github/workflows/30-alphaci-promote.yml": {
       "bytes": 4316,
@@ -253,7 +253,7 @@ jobs:
         with:
           node-version: 24
       - name: Install dependencies
-        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts --before="$(node -p 'new Date(Date.now() - 864e5).toISOString()')"; fi
       - run: npm run build
   image-backend:
     needs:
@@ -267,7 +267,7 @@ jobs:
     uses: Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1
     with:
       working-directory: .
-      image-name: orders-api-backend
+      image-name: \${{ github.event.repository.name }}-backend
       push-image: true
       checkout-ref: \${{ needs.pipeline-context.outputs.sha }}
       pipeline-branch: dev
@@ -564,12 +564,12 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
       "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 34388,
-      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+      "bytes": 34455,
+      "sha256": "8ff796d73727c1eacca827a10e03600f32649dc871d6a39b2b2462cccf829c7b",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 25993,
-      "sha256": "c3a57624c78a97f8bf9eecb748bdeba6b8f2f18f98eda444fbf4f09cd30d80ec",
+      "bytes": 26085,
+      "sha256": "ba2ae05e5e8f42e75b4613f5799b3ba82df384108c87fad49be005083709de18",
     },
     ".github/workflows/30-alphaci-promote.yml": {
       "bytes": 4316,
@@ -805,7 +805,7 @@ jobs:
         with:
           node-version: 24
       - name: Install dependencies
-        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts --before="$(node -p 'new Date(Date.now() - 864e5).toISOString()')"; fi
       - run: npm run build
   image-backend:
     needs:
@@ -819,7 +819,7 @@ jobs:
     uses: Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1
     with:
       working-directory: .
-      image-name: orders-api-backend
+      image-name: \${{ github.event.repository.name }}-backend
       push-image: true
       checkout-ref: \${{ needs.pipeline-context.outputs.sha }}
       pipeline-branch: dev
@@ -1093,12 +1093,12 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
       "sha256": "d7bc7f41106f94bddd5af0934c7d689b4a71dd72b06234d71e1d367bbac71cbb",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 34388,
-      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+      "bytes": 34455,
+      "sha256": "8ff796d73727c1eacca827a10e03600f32649dc871d6a39b2b2462cccf829c7b",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 26193,
-      "sha256": "a9f45f8bccbc7e7bb396deb1dd0f129d3cdc056e3db800c3dea9afa4f57b6b3c",
+      "bytes": 26285,
+      "sha256": "6b94601601bc73d9e6056ed896633487bdd6bc1b3849d42d9d758defa8b3a995",
     },
     ".github/workflows/30-alphaci-promote.yml": {
       "bytes": 4316,
@@ -1334,7 +1334,7 @@ jobs:
         with:
           node-version: 24
       - name: Install dependencies
-        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts --before="$(node -p 'new Date(Date.now() - 864e5).toISOString()')"; fi
       - run: npm run build
   image-backend:
     needs:
@@ -1348,7 +1348,7 @@ jobs:
     uses: Alpha-Explora/alphaci-workflow/.github/workflows/docker-build.yml@v1
     with:
       working-directory: .
-      image-name: orders-api-backend
+      image-name: \${{ github.event.repository.name }}-backend
       push-image: true
       checkout-ref: \${{ needs.pipeline-context.outputs.sha }}
       pipeline-branch: dev
@@ -1624,12 +1624,12 @@ exports[`runner-mode pipelines (SaaS golden) keeps the generated files byte-iden
       "sha256": "e46ba999af6c9c62152910807d3257de0bf969ab4891573e31ec6bffc23bf37f",
     },
     ".github/workflows/10-alphaci-quality.yml": {
-      "bytes": 34388,
-      "sha256": "cc92f1e07e844a9f525cec20335b8855d9eecc75fcb43c0d4e8cf7801c28ed3c",
+      "bytes": 34455,
+      "sha256": "8ff796d73727c1eacca827a10e03600f32649dc871d6a39b2b2462cccf829c7b",
     },
     ".github/workflows/20-alphaci-package.yml": {
-      "bytes": 24056,
-      "sha256": "4ee5dc8afc71f9fb1bb1ea569d91664728ebfb7913992601fede1fe91a9d20c7",
+      "bytes": 24123,
+      "sha256": "aa6550d3bc4ca285792fb91f630f8b231dfd577b8a6366ddbce10bb58c8d228c",
     },
   },
   "packageStage": "name: ALPHACI 3 Build and Deploy
@@ -1861,7 +1861,7 @@ jobs:
         with:
           node-version: 24
       - name: Install dependencies
-        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+        run: if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts --before="$(node -p 'new Date(Date.now() - 864e5).toISOString()')"; fi
       - run: npm run build
   production-gate:
     needs:
