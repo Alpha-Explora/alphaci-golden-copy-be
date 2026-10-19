@@ -6,6 +6,36 @@ import {
   type SignedInAgent,
 } from './support/application';
 import { required } from './support/database';
+import type { RecordedCall } from './support/recording-port';
+
+/**
+ * Every file written to a branch: one per putFileContent (starter files), and
+ * each file of a commitFilesToNewBranch (the generated workflows, one commit
+ * per branch).
+ */
+function filePushes(
+  calls: readonly RecordedCall[],
+): Array<{ path: string; content: string; branch: string }> {
+  return calls.flatMap(({ method, args }) => {
+    if (method === 'putFileContent') {
+      return [
+        {
+          path: args[3] as string,
+          content: args[4] as string,
+          branch: args[5] as string,
+        },
+      ];
+    }
+    if (method === 'commitFilesToNewBranch') {
+      const input = args[2] as {
+        newBranch: string;
+        files: Array<{ path: string; content: string }>;
+      };
+      return input.files.map((file) => ({ ...file, branch: input.newBranch }));
+    }
+    return [];
+  });
+}
 
 type Job = {
   if?: string;
@@ -76,6 +106,14 @@ describe('Project creation with environments', () => {
             commitUrl: null,
           });
         },
+        // Generated workflow files land in one commit per branch.
+        commitFilesToNewBranch: () => {
+          commits += 1;
+          return Promise.resolve({
+            committed: true,
+            commitSha: String(commits).padStart(40, 'a'),
+          });
+        },
         getFileContent: () => Promise.resolve(null),
         setActionsSecretStrict: () => Promise.resolve(),
         setActionsVariableStrict: () => Promise.resolve(),
@@ -114,14 +152,7 @@ describe('Project creation with environments', () => {
   });
 
   const pushesSince = (start: number) =>
-    e2e.externalCalls
-      .slice(start)
-      .filter(({ method }) => method === 'putFileContent')
-      .map(({ args }) => ({
-        path: args[3] as string,
-        content: args[4] as string,
-        branch: args[5] as string,
-      }));
+    filePushes(e2e.externalCalls.slice(start));
 
   it('creates hosted test and UAT with on-prem production, building every image production pulls', async () => {
     const start = e2e.externalCalls.length;
@@ -453,11 +484,7 @@ describe('Project creation with environments', () => {
     expect(new Set(targets.map(({ id }) => id)).size).toBe(3);
     expect(targetOf('qa').branch_name).toBe('dev');
 
-    const pushes = argsOf('putFileContent').map((args) => ({
-      path: args[3] as string,
-      content: args[4] as string,
-      branch: args[5] as string,
-    }));
+    const pushes = filePushes(calls);
     const pipeline = (path: string, branch: string) =>
       yaml.load(
         required(
