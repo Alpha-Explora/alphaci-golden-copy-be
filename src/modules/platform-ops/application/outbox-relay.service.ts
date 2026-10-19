@@ -71,6 +71,15 @@ export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
     );
   }
 
+  async processNotificationEventsOnce(limit = 50): Promise<number> {
+    return this.outboxRepository.processPending(
+      (event) => this.handle(event),
+      limit,
+      [PLATFORM_EVENT_TOPICS.notificationRequested],
+      this.processingOptions(),
+    );
+  }
+
   /**
    * Deliver hierarchy grant/revoke jobs, and nothing else.
    *
@@ -107,7 +116,10 @@ export class OutboxRelayService implements OnModuleInit, OutboxTopicHandler {
         await this.auditEventsService.recordProjectEvent(decoded.payload);
         return;
       case PLATFORM_EVENT_TOPICS.notificationRequested:
-        await this.notificationEventsService.record(decoded.payload);
+        await this.notificationEventsService.record({
+          ...decoded.payload,
+          sourceEventId: event.id,
+        });
         return;
       default:
         // The dispatcher should make this unreachable. Keep the exhaustive

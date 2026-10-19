@@ -1,6 +1,9 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
-import type { AuditEventPublisher } from '#kernel/events/platform-event-publisher';
+import type {
+  AuditEventPublisher,
+  NotificationEventPublisher,
+} from '#kernel/events/platform-event-publisher';
 import type { MemberDirectoryService } from '#modules/identity-access/directory/index.js';
 import type { GroupsRepository } from '../infrastructure/groups.repository';
 import { GroupMembersService } from './group-members.service';
@@ -12,11 +15,15 @@ describe('GroupMembersService.addMember', () => {
   let accessService: jest.Mocked<HierarchyAccessService>;
   let directory: jest.Mocked<MemberDirectoryService>;
   let service: GroupMembersService;
+  let notifications: { recordInTransaction: jest.Mock };
 
   beforeEach(() => {
+    notifications = {
+      recordInTransaction: jest.fn().mockResolvedValue(undefined),
+    };
     groupsRepository = {
       findActiveMembership: jest.fn().mockResolvedValue(null),
-      addMemberDirect: jest.fn().mockResolvedValue(undefined),
+      addMemberDirect: jest.fn().mockResolvedValue(true),
       listMembers: jest
         .fn()
         .mockResolvedValue([{ userId: 'ramos-id', login: 'bpramos-ae' }]),
@@ -36,6 +43,7 @@ describe('GroupMembersService.addMember', () => {
         recordProjectEvent: jest.fn(),
       } as unknown as AuditEventPublisher,
       directory,
+      notifications as unknown as NotificationEventPublisher,
     );
   });
 
@@ -50,6 +58,7 @@ describe('GroupMembersService.addMember', () => {
       'ramos-id',
       'member',
       'lead-id',
+      expect.any(Function),
     );
   });
 
@@ -73,5 +82,26 @@ describe('GroupMembersService.addMember', () => {
       service.addMember('group-1', lead, { userId: 'ramos-id' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(directory.assertEligible).not.toHaveBeenCalled();
+  });
+
+  it('addresses the membership notification to the added member in the transaction', async () => {
+    const client = { query: jest.fn() };
+    groupsRepository.addMemberDirect.mockImplementation(
+      async (_g, _u, _r, _a, onAdded) => {
+        await onAdded!(client as never, {
+          groupName: 'Team A',
+          actorLogin: 'lead',
+        });
+        return true;
+      },
+    );
+    await service.addMember('group-1', lead, { userId: 'ramos-id' });
+    expect(notifications.recordInTransaction).toHaveBeenCalledWith(client, {
+      userId: 'ramos-id',
+      workspaceId: 'group-1',
+      eventCode: 'hierarchy.group.member_added',
+      title: 'You were added to Team A',
+      body: '@lead added you as a Member.',
+    });
   });
 });

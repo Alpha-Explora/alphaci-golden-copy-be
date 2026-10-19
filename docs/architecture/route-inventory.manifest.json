@@ -1,11 +1,11 @@
 {
-  "routeCount": 260,
+  "routeCount": 261,
   "referenceFile": "route-inventory.baseline.txt",
-  "referenceSha256": "3f1853fd5bb450b67faa09b1597dfa155bc6c93e9f6f50c4911c0dd2adfb381b",
+  "referenceSha256": "795fbc6a65ba83abc561252ca130ac09aa9e524741143980d11a14d3ee5c87b0",
   "referenceKind": "pre-pr-baseline-equals-current",
   "baselineAvailable": true,
   "baselineFile": "route-inventory.baseline.txt",
-  "baselineSha256": "3f1853fd5bb450b67faa09b1597dfa155bc6c93e9f6f50c4911c0dd2adfb381b",
+  "baselineSha256": "795fbc6a65ba83abc561252ca130ac09aa9e524741143980d11a14d3ee5c87b0",
   "baselineSourceCommit": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "capturedAtCheckpoint": "e3751eb857ca8f8172da26f8ae61c26f333af19b",
   "amendments": [
@@ -281,6 +281,12 @@
       "routes": [
         "POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/rollback",
         "POST /api/v1/projects/{projectId}/deployment-targets/{targetId}/rollback/resume"
+      ]
+    },
+    {
+      "reason": "Deliver recipient-scoped live Inbox snapshots for workspace membership notifications, protected by session and notification capability guards.",
+      "routes": [
+        "GET /api/v1/notifications/stream"
       ]
     }
   ]

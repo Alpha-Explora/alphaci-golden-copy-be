@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
 import { OutboxRepository } from './outbox.repository';
 import {
@@ -50,6 +51,18 @@ export class NotificationEventPublisher {
   private readonly logger = new Logger(NotificationEventPublisher.name);
 
   constructor(private readonly outboxRepository: OutboxRepository) {}
+
+  recordInTransaction(
+    client: Pick<PoolClient, 'query'>,
+    input: NotificationRequestedEventPayload,
+  ): Promise<void> {
+    return this.outboxRepository.publishInTransaction(client, {
+      topic: PLATFORM_EVENT_TOPICS.notificationRequested,
+      aggregateType: 'notification',
+      aggregateId: aggregateIdFor(input),
+      payload: input,
+    });
+  }
 
   async record(input: NotificationRequestedEventPayload): Promise<void> {
     try {

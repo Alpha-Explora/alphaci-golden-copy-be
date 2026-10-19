@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
-import { AuditEventPublisher } from '#kernel/events/platform-event-publisher.js';
+import {
+  AuditEventPublisher,
+  NotificationEventPublisher,
+} from '#kernel/events/platform-event-publisher.js';
 import {
   MemberDirectoryService,
   type DirectoryCaller,
@@ -34,6 +37,7 @@ export class GroupMembersService {
     private readonly accessService: HierarchyAccessService,
     private readonly auditEventsService: AuditEventPublisher,
     private readonly directory: MemberDirectoryService,
+    private readonly notifications: NotificationEventPublisher,
   ) {}
 
   async addMember(
@@ -65,12 +69,25 @@ export class GroupMembersService {
       );
     }
 
-    await this.groupsRepository.addMemberDirect(
+    const added = await this.groupsRepository.addMemberDirect(
       groupId,
       input.userId,
       role,
       actorUserId,
+      (client, context) =>
+        this.notifications.recordInTransaction(client, {
+          userId: input.userId,
+          workspaceId: groupId,
+          eventCode: HIERARCHY_EVENT_CODES.memberAdded,
+          title: `You were added to ${context.groupName}`,
+          body: `${context.actorLogin ? `@${context.actorLogin}` : 'A workspace lead'} added you as a ${role === 'delegated_lead' ? 'Delegated lead' : role === 'viewer' ? 'Viewer' : 'Member'}.`,
+        }),
     );
+    if (!added) {
+      throw new BadRequestException(
+        'User is already an active member of this Group',
+      );
+    }
 
     // Re-read through listMembers so the response carries the same shape the
     // member table already renders (login, name, avatar, status) rather than a

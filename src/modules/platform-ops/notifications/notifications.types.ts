@@ -18,7 +18,7 @@ export interface NotificationItem {
 }
 
 export interface NotificationsResponse {
-  enabled: true;
+  enabled: boolean;
   items: NotificationItem[];
   unreadCount: number;
 }
@@ -33,6 +33,8 @@ export interface NotificationPreferences {
 export interface CreateNotificationInput {
   userId: string;
   projectId?: string | null;
+  workspaceId?: string | null;
+  sourceEventId?: string | null;
   eventCode: string;
   title: string;
   body: string;
