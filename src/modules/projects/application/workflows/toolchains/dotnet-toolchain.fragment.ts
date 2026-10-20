@@ -153,6 +153,9 @@ function buildDotnetQualityJobs(
     apiVerification: {
       collectionPath: 'tests/api',
       smokeFolder: 'smoke',
+      // ASP.NET Core's built-in OpenAPI document (MapOpenApi), served at
+      // runtime only; the scaffold's Bruno collection checks the same path.
+      schemaUrlPath: '/openapi/v1.json',
     },
     sonar: {
       // SonarQube Cloud analyses C#, but only through SonarScanner for .NET,

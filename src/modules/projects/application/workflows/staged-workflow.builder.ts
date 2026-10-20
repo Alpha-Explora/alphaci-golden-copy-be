@@ -891,6 +891,9 @@ function buildVerifyWorkflowFile(
       'working-directory': ctx.servicePath,
       'system-name': ctx.serviceName,
       'base-url': apiUrl('uat'),
+      ...(verification.api!.schemaUrlPath
+        ? { 'schema-url-path': verification.api!.schemaUrlPath }
+        : {}),
       'checkout-ref': HEAD_SHA_EXPR,
     },
   });
