@@ -142,6 +142,13 @@ export interface ToolchainApiVerification {
   readonly collectionPath: string;
   /** Subfolder of read-only requests, safe to run against production. */
   readonly smokeFolder: string;
+  /**
+   * Path the running service serves its OpenAPI document at. The contract
+   * tests read the schema from there; without it they look for a build-time
+   * file in the repository, which a stack that generates the document at
+   * runtime never has.
+   */
+  readonly schemaUrlPath?: string;
 }
 
 export interface ToolchainSonarConfig {

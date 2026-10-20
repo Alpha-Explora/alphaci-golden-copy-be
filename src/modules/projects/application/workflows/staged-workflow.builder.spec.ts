@@ -1311,6 +1311,18 @@ describe('the verify stage', () => {
   });
 
   /*
+   * ASP.NET Core serves its OpenAPI document only at runtime, so the contract
+   * tests read it from the deployed service. Without the path they looked for
+   * a build-time file, found none, and tested nothing.
+   */
+  it('points the contract tests at the schema the running service serves', () => {
+    const verify = verifyOf([renderTarget('uat')]);
+    expect(verify?.jobs['contract-tests-uat']?.with?.['schema-url-path']).toBe(
+      '/openapi/v1.json',
+    );
+  });
+
+  /*
    * The browser suite reported the way every other test job is.
    *
    * A Playwright run that executed forty tests and failed three used to leave
