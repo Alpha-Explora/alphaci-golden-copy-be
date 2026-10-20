@@ -2881,15 +2881,35 @@ export class GithubService
     }
   }
 
+  /** The enforced org's installation token, for a repository it owns. */
+  private async enforcedOrgInstallationToken(
+    repoFullName: string,
+  ): Promise<string | null> {
+    const org = this.getEnforcedOrg();
+    if (!org || repoFullName.split('/')[0]?.toLowerCase() !== org.toLowerCase())
+      return null;
+    try {
+      return (await this.getOrganizationProvisioningContextByLogin(org))
+        .accessToken;
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve the ${org} installation for ${repoFullName}: ${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
+
   private async requireInstallationToken(
     userId: string,
     repoFullName: string,
     consequence: string,
   ): Promise<string> {
-    const token = await this.getInstallationAccessTokenForUserRepo(
-      userId,
-      repoFullName,
-    );
+    // The client org's installation first: a repository AlphaCI created there
+    // is covered by it whoever asks, while a person's own linked installations
+    // are often none at all (the QA flow resolves the same way).
+    const token =
+      (await this.enforcedOrgInstallationToken(repoFullName)) ??
+      (await this.getInstallationAccessTokenForUserRepo(userId, repoFullName));
     if (!token) {
       throw new BadGatewayException(
         'The GitHub app is not installed for ' +
