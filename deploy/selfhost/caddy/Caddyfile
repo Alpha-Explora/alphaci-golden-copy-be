@@ -14,7 +14,11 @@
 # except the ACME exchange itself when auto mode is used.
 
 {$ALPHACI_HOSTNAME} {
-	tls {$ALPHACI_TLS_DIRECTIVE}
+	# A bare `tls` line is an error when the directive is empty (automatic
+	# HTTPS). A block with one setting accepts zero, one or two arguments.
+	tls {$ALPHACI_TLS_DIRECTIVE} {
+		protocols tls1.2
+	}
 
 	# Plain HTTP on port 80 only redirects to the HTTPS origin. Port 80 stays
 	# published for ACME (automatic mode), and it must never serve the app.
