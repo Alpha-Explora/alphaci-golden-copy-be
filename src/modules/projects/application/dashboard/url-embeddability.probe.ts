@@ -57,6 +57,15 @@ const MAX_SAME_HOST_REDIRECTS = 3;
 
 const PROBE_TIMEOUT_MS = 4_000;
 const CACHE_TTL_MS = 5 * 60 * 1_000;
+/**
+ * An unreachable deployment is checked again soon: right after a deploy (a new
+ * address still getting its certificate, a container still starting) the first
+ * probe often misses, and caching that for five minutes left the preview stuck
+ * on "Could not reach" long after the site was up.
+ */
+const UNREACHABLE_CACHE_TTL_MS = 15 * 1_000;
+const UNREACHABLE_REASON =
+  'Could not reach the deployment to check embedding support.';
 /** Bounded so a project churning through preview URLs cannot grow this without limit. */
 const CACHE_MAX_ENTRIES = 500;
 
@@ -145,7 +154,7 @@ export class UrlEmbeddabilityProbe {
       this.logger.debug(`Embeddability probe did not complete for ${url}`);
       return {
         embeddable: null,
-        reason: 'Could not reach the deployment to check embedding support.',
+        reason: UNREACHABLE_REASON,
       };
     }
   }
@@ -278,6 +287,10 @@ export class UrlEmbeddabilityProbe {
         this.cache.delete(oldest.value);
       }
     }
-    this.cache.set(url, { verdict, expiresAt: Date.now() + CACHE_TTL_MS });
+    const ttl =
+      verdict.reason === UNREACHABLE_REASON
+        ? UNREACHABLE_CACHE_TTL_MS
+        : CACHE_TTL_MS;
+    this.cache.set(url, { verdict, expiresAt: Date.now() + ttl });
   }
 }
