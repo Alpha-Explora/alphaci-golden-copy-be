@@ -15,3 +15,12 @@ yarn-error.log*
 test
 tests
 README.md
+# Local setup contains database backups, credentials and signing keys.
+.temp
+.tmp
+.claude
+.worktrees
+*.pem
+deploy/selfhost/secrets
+deploy/selfhost/certs
+deploy/selfhost/alphaci.env

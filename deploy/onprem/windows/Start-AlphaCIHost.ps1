@@ -77,7 +77,10 @@ function Write-PortFile([string] $Path, [int[]] $Ports) {
 }
 
 function Get-WslAddress([string] $Distro) {
-    $output = & wsl.exe -d $Distro -u root -- hostname -I 2>$null
+    # Windows PowerShell turns redirected native stderr into an error, which
+    # 'Stop' makes fatal; a distro that fails to start must only return nothing.
+    $ErrorActionPreference = 'Continue'
+    $output =& wsl.exe -d $Distro -u root -- hostname -I 2>$null
     foreach ($candidate in (($output -join ' ') -split '\s+')) {
         if ($candidate -match $ipv4) { return $candidate }
     }
@@ -95,7 +98,10 @@ function Get-PortProxyTargets {
 }
 
 function Update-AssignedPorts {
-    $raw = (& wsl.exe -d $config.Distro -u root -- cat $publishedPortsPath 2>$null) -join ''
+    # Until the agent publishes (and on a host without one) cat writes to
+    # stderr; see Get-WslAddress.
+    $ErrorActionPreference = 'Continue'
+    $raw =(& wsl.exe -d $config.Distro -u root -- cat $publishedPortsPath 2>$null) -join ''
     # An agent that has not published yet keeps the last known list.
     if ($LASTEXITCODE -ne 0 -or -not $raw) { return }
     try { $ports = ConvertTo-PortList @($raw | ConvertFrom-Json) } catch { return }

@@ -37,7 +37,9 @@ param(
     [Parameter(Mandatory)] [string] $Distro,
     [Parameter(Mandatory)] [string[]] $ClientSubnets,
     [int[]] $Ports,
-    [string] $ServiceAccount = ($env:USERDOMAIN + '\' + $env:USERNAME),
+    # The token's name, not USERDOMAIN: over OpenSSH that reads WORKGROUP, an
+    # account that does not exist, and the task registration fails.
+    [string] $ServiceAccount = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
     [string] $ApiUrl,
     [string] $EnrollCodeFile,
     [switch] $ReplaceCredential,
@@ -47,7 +49,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:ProgramData 'AlphaCI'
 $startScript = Join-Path $root 'Start-AlphaCIHost.ps1'
-$currentAccount = $env:USERDOMAIN + '\' + $env:USERNAME
+$currentAccount = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 # An enrolled machine forwards the ports of its assigned environments by itself;
 # -Ports adds static ones. The single-environment agent publishes 443.
 if (-not $PSBoundParameters.ContainsKey('Ports')) {

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -98,6 +98,23 @@ suite('Windows host port forwarding (%s)', (shell) => {
       'new AlphaCI TCP 443 from 10.20.0.0/16',
       'remove AlphaCI TCP 8081',
     ]);
+  });
+
+  // A host whose agent has not published (or with no agent, like a self-hosted
+  // AlphaCI server) gets stderr from wsl.exe. Windows PowerShell turns
+  // redirected native stderr into an error, so 'Stop' ended the keepalive.
+  it('keeps going when wsl.exe fails before the agent has published', () => {
+    const { root, calls } = powershell(
+      `function wsl.exe {
+         if ($env:OS -eq 'Windows_NT') { cmd.exe /c 'echo cat: No such file or directory 1>&2 & exit /b 1' }
+         else { sh -c 'echo "cat: No such file or directory" >&2; exit 1' }
+       }
+       Update-AssignedPorts
+       'address=' + (Get-WslAddress 'Ubuntu')`,
+      { Distro: 'Ubuntu', Ports: [] },
+    );
+    expect(calls).toEqual(['address=']);
+    expect(existsSync(join(root, 'assigned-ports.json'))).toBe(false);
   });
 
   it('ignores invalid published ports', () => {
