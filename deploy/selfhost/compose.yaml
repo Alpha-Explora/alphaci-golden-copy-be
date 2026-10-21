@@ -67,6 +67,7 @@ services:
       GITHUB_CLIENT_SECRET_FILE: ''
       GITHUB_APP_PRIVATE_KEY_FILE: ''
       GITHUB_APP_WEBHOOK_SECRET_FILE: ''
+      ALPHACI_SONAR_TOKEN_FILE: ''
     secrets:
       - database_url
     depends_on:
