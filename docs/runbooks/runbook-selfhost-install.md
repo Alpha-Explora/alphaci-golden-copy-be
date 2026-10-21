@@ -225,7 +225,9 @@ Before you start:
    ```
 
    The archive file must be readable by uid 1001. `ONPREM_INSTALLER_URL` lets **Add host** issue codes for other machines from the same archive.
-3. For permanent app addresses, create a wildcard DNS record `*.<apps domain>` pointing at the server, and set `ONPREM_APPS_DOMAIN=<apps domain>` in `alphaci.env`. Caddy obtains a public certificate for each name, so inbound 80 and 443 must be open.
+3. For permanent app addresses, create a wildcard DNS record `*.<apps domain>` pointing at the server, and set `ONPREM_APPS_DOMAIN=<apps domain>` in `alphaci.env`. Caddy obtains a public certificate for each name, so inbound 80 and 443 must be open. With `ALPHACI_TLS_DIRECTIVE=internal`, app sites use Caddy's private CA too.
+
+   To put the addresses directly under a domain that has other names (for example a company zone whose edge certificate covers one level only), also set `ONPREM_APPS_LABEL_SUFFIX=<suffix>`. Every address then ends in `-<suffix>.<domain>`, and only those names are routed or probed. A wildcard cannot cover part of a label, so create one DNS record per address. An invalid suffix turns app addresses off.
 4. Prepare the server as an Ubuntu host (Docker and the agent's tools), as the [on-prem host setup runbook](runbook-onprem-host-setup.md#ubuntu) describes.
 5. Run `docker compose up -d` and `./alphaci-ctl doctor`.
 
@@ -237,7 +239,7 @@ sudo ./alphaci-ctl server-host --team "Platform" --github-login <login>
 
 It creates a one-time enrollment code for that team, downloads and verifies the archive, runs `install.sh --enroll https://<ALPHACI_HOSTNAME> ubuntu`, installs `/opt/alphaci/bin/alphaci-app-routes`, and enables `alphaci-app-routes.timer`. The machine appears in Hosts as `alphaci-server` unless `--name` is given. One server can be enrolled in several teams; host ports stay unique across them.
 
-With `ONPREM_APPS_DOMAIN` set, every environment with a frontend gets `https://<environment>-<repository>.<domain>`, and production gets `https://<repository>.<domain>`. Production is then assigned automatically when the team has one connected machine. Every 30 seconds, `alphaci-app-routes` reads the agent's assignments, writes one Caddy site per address to `caddy/apps/apps.caddy` (proxied to the environment's host port through `host.docker.internal`), and reloads Caddy when the routes change. Without `ONPREM_APPS_DOMAIN`, environments get a Cloudflare quick tunnel instead.
+With `ONPREM_APPS_DOMAIN` set, every environment with a frontend gets `https://<environment>-<repository>.<domain>`, and production gets `https://<repository>.<domain>` (each with `-<suffix>` before the domain when `ONPREM_APPS_LABEL_SUFFIX` is set). Production is then assigned automatically when the team has one connected machine. Every 30 seconds, `alphaci-app-routes` reads the agent's assignments, writes one Caddy site per address to `caddy/apps/apps.caddy` (proxied to the environment's host port through `host.docker.internal`), and reloads Caddy when the routes change. Without `ONPREM_APPS_DOMAIN`, environments get a Cloudflare quick tunnel instead.
 
 ## Backup
 

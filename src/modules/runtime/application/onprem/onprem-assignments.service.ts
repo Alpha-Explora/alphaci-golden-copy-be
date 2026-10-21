@@ -27,6 +27,11 @@ import type {
   AssignmentRequestConfig,
   OnpremAssignmentPort,
 } from '#kernel/ports/onprem-assignment.port';
+import {
+  onpremAppsAddress,
+  resolveOnpremAppsDomain,
+  type OnpremAppsDomain,
+} from '#kernel/config/onprem-apps-domain';
 import { canManageHosting } from '#kernel/rules/persona-access.rules';
 import {
   effectivePublicAddress,
@@ -86,23 +91,22 @@ export function defaultAssignmentConfig(
 
 /**
  * `https://<environment>-<repository>.<apps domain>`, and for production the
- * plain `https://<repository>.<apps domain>`: one DNS label, so a single
- * wildcard record (`*.<apps domain>`) and certificate per name cover them all.
+ * plain `https://<repository>.<apps domain>` (each with `-<suffix>` before the
+ * domain when ONPREM_APPS_LABEL_SUFFIX is set): one DNS label, so a single
+ * wildcard record (`*.<apps domain>`) covers them all, or with a suffix one
+ * record per name, and a certificate per name.
  */
 export function appsDomainAddress(
-  domain: string,
+  apps: OnpremAppsDomain,
   environmentSlug: string,
   repoFullName: string,
   production = false,
 ): string {
   const repo = repoFullName.split('/').at(-1) ?? repoFullName;
-  const label = (production ? repo : `${environmentSlug}-${repo}`)
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/^-+/, '')
-    .slice(0, 63)
-    .replace(/-+$/, '');
-  return `https://${label}.${domain}`;
+  return onpremAppsAddress(
+    apps,
+    production ? repo : `${environmentSlug}-${repo}`,
+  );
 }
 
 /**
@@ -114,18 +118,18 @@ export function appsDomainAddress(
  */
 export function withAppsDomain(
   config: AssignmentRequestConfig,
-  domain: string | undefined,
+  apps: OnpremAppsDomain | undefined,
   environmentSlug: string,
   repoFullName: string,
   production = false,
 ): AssignmentRequestConfig {
-  if (!domain || config.ingress?.mode !== 'tunnel') return config;
+  if (!apps || config.ingress?.mode !== 'tunnel') return config;
   return {
     ...config,
     ingress: {
       mode: 'configured',
       publicUrl: appsDomainAddress(
-        domain,
+        apps,
         environmentSlug,
         repoFullName,
         production,
@@ -258,12 +262,9 @@ export class OnpremAssignmentsService implements OnpremAssignmentPort {
     private readonly targets: DeploymentTargetsQuery,
     private readonly config: ConfigService,
   ) {}
-  /** ONPREM_APPS_DOMAIN: `*.<domain>` points at this server, which routes it. */
-  private appsDomain(): string | undefined {
-    return (
-      this.config.get<string>('ONPREM_APPS_DOMAIN')?.trim().toLowerCase() ||
-      undefined
-    );
+  /** ONPREM_APPS_DOMAIN: its addresses point at this server, which routes them. */
+  private appsDomain(): OnpremAppsDomain | undefined {
+    return resolveOnpremAppsDomain((key) => this.config.get<string>(key));
   }
   async current(projectId: string, environmentId: string, userId: string) {
     await this.visible(projectId, environmentId, userId);

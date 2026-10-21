@@ -1,4 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import {
+  onpremAppsHostEnding,
+  resolveOnpremAppsDomain,
+} from '#kernel/config/onprem-apps-domain';
 
 /**
  * Whether a deployed site can be shown inside an iframe.
@@ -34,8 +38,9 @@ const PROBEABLE_HOST_SUFFIXES = ['.vercel.app', '.onrender.com'] as const;
  * Studio never framed one.
  */
 function onpremHostSuffixes(): string[] {
-  const domain = process.env['ONPREM_APPS_DOMAIN']?.trim().toLowerCase();
-  return ['.trycloudflare.com', ...(domain ? [`.${domain}`] : [])];
+  // With a label suffix the domain is shared, so only `*-<suffix>.<domain>`.
+  const apps = resolveOnpremAppsDomain();
+  return ['.trycloudflare.com', ...(apps ? [onpremAppsHostEnding(apps)] : [])];
 }
 
 /**
