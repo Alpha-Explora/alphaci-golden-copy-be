@@ -214,6 +214,37 @@ describe('UrlEmbeddabilityProbe', () => {
       expect(fetch).not.toHaveBeenCalled();
     });
 
+    describe('on-prem app addresses', () => {
+      const saved = { ...process.env };
+      afterEach(() => {
+        process.env = { ...saved };
+      });
+      const probes = async (candidate: string) => {
+        global.fetch = jest.fn().mockResolvedValue(headResponse({}));
+        await new UrlEmbeddabilityProbe().check(candidate);
+        return (fetch as jest.Mock).mock.calls.length > 0;
+      };
+
+      it('probes any name under the apps domain without a suffix', async () => {
+        process.env['ONPREM_APPS_DOMAIN'] = 'apps.example.com';
+        expect(await probes('https://uat-shop.apps.example.com')).toBe(true);
+      });
+
+      // A suffix means the domain is shared: its other names are not apps.
+      it('with a label suffix, probes only names that end with it', async () => {
+        process.env['ONPREM_APPS_DOMAIN'] = 'example.com';
+        process.env['ONPREM_APPS_LABEL_SUFFIX'] = 'stpeter';
+        expect(await probes('https://uat-shop-stpeter.example.com')).toBe(true);
+        expect(await probes('https://alphaci.example.com')).toBe(false);
+      });
+
+      it('probes no apps-domain name when the suffix is invalid', async () => {
+        process.env['ONPREM_APPS_DOMAIN'] = 'example.com';
+        process.env['ONPREM_APPS_LABEL_SUFFIX'] = 'not a label';
+        expect(await probes('https://uat-shop.example.com')).toBe(false);
+      });
+    });
+
     it('probes an allowlisted Render host', async () => {
       global.fetch = jest.fn().mockResolvedValueOnce(headResponse({}));
 
